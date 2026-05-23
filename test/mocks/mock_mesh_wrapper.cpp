@@ -57,6 +57,7 @@ int exportContacts(char names[][32], int max) { return 0; }
 int getChannelCount() { return 0; }
 int exportChannels(char names[][32], int max) { return 0; }
 bool addChannel(const char* name, const char* psk) { return false; }
+bool addHashtagChannel(const char* name) { (void)name; return false; }
 
 // ── Radio stats ──────────────────────────────────
 
@@ -73,6 +74,7 @@ void mock_push_message(const char* sender, const char* text) {
     if (mock_msg_count >= 8) return;
     MeshMessage& m = mock_msgs[mock_msg_count++];
     strncpy(m.sender, sender, sizeof(m.sender) - 1);
+    m.channel[0] = '\0';
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.timestamp = 0;
     m.is_self = false;

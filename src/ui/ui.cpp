@@ -118,7 +118,7 @@ void loop()
             slopos::mesh::MeshMessage msgs[4];
             int n = slopos::mesh::pollMessages(msgs, 4);
             for (int i = 0; i < n; i++) {
-                chat_screen_add_msg(msgs[i].sender, msgs[i].text, msgs[i].is_self);
+                chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text, msgs[i].is_self);
             }
         }
     }

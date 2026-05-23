@@ -46,7 +46,7 @@ class SlopMesh : public ::mesh::Mesh {
     int  _nMatches = 0;
 
     slopos::NodePrefs _prefs;
-    void (*_onMessage)(const char* sender, const char* text);
+    void (*_onMessage)(const char* sender, const char* channel, const char* text);
 
     // Trace result storage
     bool     _has_trace_result = false;
@@ -83,7 +83,7 @@ protected:
         int idx = _matchIdxs[sender_idx];
         const char* sender = _contacts[idx].name;
         if (sender[0]) {
-            _onMessage(sender, text);
+            _onMessage(sender, "", text);
         }
     }
 
@@ -150,7 +150,8 @@ protected:
                 break;
             }
         }
-        _onMessage(chname ? chname : "[group]", text);
+        const char* channel = chname ? chname : "[group]";
+        _onMessage(channel, channel, text);
     }
 
 public:
@@ -165,7 +166,7 @@ public:
         }
     }
 
-    void setMessageCallback(void (*cb)(const char* sender, const char* text)) { _onMessage = cb; }
+    void setMessageCallback(void (*cb)(const char* sender, const char* channel, const char* text)) { _onMessage = cb; }
 
     // ── Path learning ────────────────────────────────
     void onPathRecv(::mesh::Packet* pkt, ::mesh::Identity& sender,
@@ -317,6 +318,42 @@ public:
         ::mesh::Utils::sha256(ch.channel.hash, sizeof(ch.channel.hash),
                               ch.channel.secret, len);
         strncpy(ch.name, name, sizeof(ch.name) - 1);
+        ch.name[sizeof(ch.name) - 1] = '\0';
+        _nChannels++;
+        return true;
+    }
+
+    bool addHashtagChannel(const char* name) {
+        if (_nChannels >= SLOP_MAX_CHANNELS || !name) return false;
+
+        char normalized[32];
+        size_t src = 0;
+        while (name[src] == ' ' || name[src] == '\t') src++;
+
+        size_t out = 0;
+        if (name[src] != '#') normalized[out++] = '#';
+        while (name[src] && name[src] != ' ' && name[src] != '\t' &&
+               name[src] != '\r' && name[src] != '\n' && out < sizeof(normalized) - 1) {
+            normalized[out++] = name[src++];
+        }
+        if (name[src] && name[src] != ' ' && name[src] != '\t' &&
+            name[src] != '\r' && name[src] != '\n') {
+            return false;
+        }
+        normalized[out] = '\0';
+        if (out <= 1) return false;
+
+        for (int j = 0; j < _nChannels; j++) {
+            if (strcmp(_channels[j].name, normalized) == 0) return true;
+        }
+
+        SlopChannel& ch = _channels[_nChannels];
+        memset(&ch, 0, sizeof(ch));
+        ::mesh::Utils::sha256(ch.channel.secret, CIPHER_KEY_SIZE,
+                              (const uint8_t*)normalized, strlen(normalized));
+        ::mesh::Utils::sha256(ch.channel.hash, sizeof(ch.channel.hash),
+                              ch.channel.secret, CIPHER_KEY_SIZE);
+        strncpy(ch.name, normalized, sizeof(ch.name) - 1);
         ch.name[sizeof(ch.name) - 1] = '\0';
         _nChannels++;
         return true;

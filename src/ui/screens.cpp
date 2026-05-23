@@ -1082,7 +1082,7 @@ static void refresh_channel_list(lv_obj_t* list);
 
 static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
 {
-    auto dlg_sz = dialog_size(260, 180);
+    auto dlg_sz = dialog_size(260, 140);
     lv_obj_t* dialog = lv_obj_create(parent);
     lv_obj_set_size(dialog, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dialog);
@@ -1092,13 +1092,13 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
     lv_obj_set_style_pad_all(dialog, 8, 0);
 
     lv_obj_t* title = lv_label_create(dialog);
-    lv_label_set_text(title, "Create Channel");
+    lv_label_set_text(title, "Add # Channel");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     lv_obj_t* name_label = lv_label_create(dialog);
-    lv_label_set_text(name_label, "Name:");
+    lv_label_set_text(name_label, "Hashtag:");
     lv_obj_set_style_text_color(name_label, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_align(name_label, LV_ALIGN_TOP_LEFT, 4, 28);
 
@@ -1112,25 +1112,9 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
     lv_textarea_set_one_line(name_input, true);
     lv_textarea_set_placeholder_text(name_input, "e.g. #general");
 
-    lv_obj_t* psk_label = lv_label_create(dialog);
-    lv_label_set_text(psk_label, "PSK (base64):");
-    lv_obj_set_style_text_color(psk_label, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_align(psk_label, LV_ALIGN_TOP_LEFT, 4, 82);
-
-    lv_obj_t* psk_input = lv_textarea_create(dialog);
-    lv_obj_set_size(psk_input, dlg_sz.w - 16, 28);
-    lv_obj_align(psk_input, LV_ALIGN_TOP_MID, 0, 100);
-    lv_obj_set_style_bg_color(psk_input, lv_color_hex(BG_INPUT), 0);
-    lv_obj_set_style_text_color(psk_input, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(psk_input, &lv_font_montserrat_10, 0);
-    lv_obj_set_style_border_width(psk_input, 0, 0);
-    lv_textarea_set_one_line(psk_input, true);
-    lv_textarea_set_placeholder_text(psk_input, "base64 key");
-
     lv_group_t* g = lv_group_get_default();
     if (g) {
         lv_group_add_obj(g, name_input);
-        lv_group_add_obj(g, psk_input);
         lv_group_focus_obj(name_input);
     }
 
@@ -1145,32 +1129,28 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
     lv_obj_set_style_bg_color(create_btn, lv_color_hex(ACCENT_GREEN), 0);
     lv_obj_set_style_radius(create_btn, 0, 0);
     lv_obj_t* cbl = lv_label_create(create_btn);
-    lv_label_set_text(cbl, "Create");
+    lv_label_set_text(cbl, "Add");
     lv_obj_center(cbl);
 
     lv_obj_add_event_cb(create_btn, [](lv_event_t* e) {
-        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e));
+        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
         lv_obj_t* scr = lv_obj_get_screen(dlg);
         lv_obj_t* fb  = (lv_obj_t*)lv_event_get_user_data(e);
 
         uint32_t n = lv_obj_get_child_cnt(dlg);
         lv_obj_t* name_in = nullptr;
-        lv_obj_t* psk_in  = nullptr;
         for (uint32_t i = 0; i < n; i++) {
             lv_obj_t* child = lv_obj_get_child(dlg, i);
             if (lv_obj_check_type(child, &lv_textarea_class)) {
                 if (!name_in) name_in = child;
-                else          psk_in  = child;
             }
         }
 
         const char* name = name_in ? lv_textarea_get_text(name_in) : "";
-        const char* psk  = psk_in  ? lv_textarea_get_text(psk_in)  : "";
 
-        if (!name[0]) { if (fb) lv_label_set_text(fb, "Enter a channel name"); return; }
-        if (!psk[0])  { if (fb) lv_label_set_text(fb, "Enter a PSK");          return; }
+        if (!name[0]) { if (fb) lv_label_set_text(fb, "Enter a hashtag"); return; }
 
-        bool ok = slopos::mesh::addChannel(name, psk);
+        bool ok = slopos::mesh::addHashtagChannel(name);
         if (ok) {
             lv_obj_del_async(dlg);
             for (uint32_t i = 0; i < lv_obj_get_child_cnt(scr); i++) {
@@ -1181,7 +1161,7 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
                 }
             }
         } else {
-            if (fb) lv_label_set_text(fb, "Invalid PSK (must be base64, 16 or 32 bytes)");
+            if (fb) lv_label_set_text(fb, "Invalid or full");
         }
     }, LV_EVENT_CLICKED, (void*)feedback);
 
@@ -1223,7 +1203,7 @@ void channels_screen_show()
     lv_obj_set_style_bg_color(add_btn, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_radius(add_btn, 0, 0);
     lv_obj_t* al = lv_label_create(add_btn);
-    lv_label_set_text(al, LV_SYMBOL_PLUS "  Create Channel");
+    lv_label_set_text(al, LV_SYMBOL_PLUS "  Add # Channel");
     lv_obj_set_style_text_font(al, &lv_font_montserrat_10, 0);
     lv_obj_center(al);
 

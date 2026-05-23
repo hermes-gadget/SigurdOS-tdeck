@@ -25,6 +25,6 @@ namespace slopos::ui {
 void chat_screen_show();
 
 // Add a message to the chat display
-void chat_screen_add_msg(const char* sender, const char* text, bool is_self);
+void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self);
 
 } // namespace slopos::ui

@@ -12,6 +12,7 @@ namespace mesh {
 
 struct MeshMessage {
     char sender[32];
+    char channel[32];
     char text[256];
     uint32_t timestamp;
     bool is_self;
@@ -39,6 +40,7 @@ int  exportContactsFull(ContactInfo* out, int max);
 int  getChannelCount();
 int  exportChannels(char names[][32], int max);
 bool addChannel(const char* name, const char* psk_base64);
+bool addHashtagChannel(const char* name);
 bool joinPublicChannel();
 
 void setOwnName(const char* name);

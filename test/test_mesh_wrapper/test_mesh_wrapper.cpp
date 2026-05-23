@@ -67,6 +67,12 @@ TEST_F(MeshWrapperTest, SendChannelSignature) {
     SUCCEED();
 }
 
+TEST_F(MeshWrapperTest, AddHashtagChannelSignature) {
+    using add_fn = bool (*)(const char*);
+    (void)static_cast<add_fn>(slopos::mesh::addHashtagChannel);
+    SUCCEED();
+}
+
 TEST_F(MeshWrapperTest, GetNoiseFloorReturnsInt) {
     using fn = int (*)();
     (void)static_cast<fn>(slopos::mesh::getNoiseFloor);

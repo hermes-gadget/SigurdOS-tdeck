@@ -32,6 +32,31 @@ namespace slopos::ui {
 
 using namespace theme;
 
+static constexpr lv_obj_flag_t no_scroll_flags()
+{
+    return (lv_obj_flag_t)(
+        LV_OBJ_FLAG_SCROLLABLE |
+        LV_OBJ_FLAG_SCROLL_ELASTIC |
+        LV_OBJ_FLAG_SCROLL_MOMENTUM |
+        LV_OBJ_FLAG_SCROLL_CHAIN |
+        LV_OBJ_FLAG_SCROLL_ON_FOCUS |
+        LV_OBJ_FLAG_SCROLL_WITH_ARROW);
+}
+
+static void disable_scroll(lv_obj_t* obj)
+{
+    lv_obj_remove_flag(obj, no_scroll_flags());
+    lv_obj_set_scroll_dir(obj, LV_DIR_NONE);
+    lv_obj_set_scrollbar_mode(obj, LV_SCROLLBAR_MODE_OFF);
+}
+
+static void stabilize_topbar_pill(lv_obj_t* obj)
+{
+    disable_scroll(obj);
+    lv_obj_set_style_outline_width(obj, 0, LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(obj, 0, (lv_state_t)(LV_STATE_FOCUSED | LV_STATE_EDITED));
+}
+
 // ── Messaging-view widgets ─────────────────────────────────
 static lv_obj_t* scr            = nullptr;
 static lv_obj_t* top_bar        = nullptr;
@@ -53,7 +78,7 @@ static constexpr int TOP_H      = TOP_BAR_H;
 static constexpr int INPUT_H    = 35;
 // BOT_BAR_H, DIVIDER_H used directly from responsive namespace
 static constexpr int BUBBLE_PAD = 6;
-static constexpr int MAX_MSGS   = 50;
+static constexpr int MAX_MSGS   = 8;
 static constexpr int MSG_LIST_Y = TOP_H + DIVIDER_H;
 static constexpr int MSG_LIST_H = DISPLAY_H - TOP_H - DIVIDER_H - INPUT_H - DIVIDER_H - BOT_BAR_H;
 
@@ -78,11 +103,75 @@ struct ChannelMeta {
 };
 static ChannelMeta ch_meta[MAX_CHANNELS];
 
+struct ChannelMessage {
+    char     sender[32];
+    char     text[160];
+    uint32_t timestamp;
+    bool     is_self;
+};
+static ChannelMessage ch_msgs[MAX_CHANNELS][MAX_MSGS];
+static uint8_t        ch_msg_count[MAX_CHANNELS];
+
 // ── Forward declarations ───────────────────────────────────
 static void show_channel_list(lv_scr_load_anim_t anim);
 static void open_channel_messaging(int idx);
 static void rebuild_channel_ribbon();
 static void show_add_channel_options(lv_obj_t* parent);
+static void render_active_messages();
+
+static int channel_pill_width(const char* name)
+{
+    const size_t len = name ? strnlen(name, 31) : 0;
+    int width = 20 + (int)len * 7;
+    if (width < 48) width = 48;
+    if (width > 112) width = 112;
+    return width;
+}
+
+static lv_obj_t* create_channel_pill(lv_obj_t* parent, int idx)
+{
+    const bool selected = idx == active_channel;
+    const int width = channel_pill_width(dyn_channels[idx]);
+
+    lv_obj_t* pill = lv_obj_create(parent);
+    lv_obj_set_size(pill, width, TOP_H - 8);
+    lv_obj_add_flag(pill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_radius(pill, 0, 0);
+    lv_obj_set_style_border_width(pill, 0, 0);
+    lv_obj_set_style_pad_all(pill, 0, 0);
+    lv_obj_set_style_shadow_width(pill, 0, 0);
+    lv_obj_set_style_outline_width(pill, 0, 0);
+    stabilize_topbar_pill(pill);
+
+    const lv_color_t bg = lv_color_hex(selected ? ACCENT : BG_TERTIARY);
+    lv_obj_set_style_bg_color(pill, bg, 0);
+    lv_obj_set_style_bg_color(pill, bg, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(pill, bg, LV_STATE_FOCUSED);
+    lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, LV_STATE_FOCUSED);
+
+    lv_obj_t* label = lv_label_create(pill);
+    lv_label_set_text(label, dyn_channels[idx]);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(label, width - 8);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(label,
+        selected ? lv_color_hex(0xffffff) : lv_color_hex(CHANNEL_HASH), 0);
+    disable_scroll(label);
+    lv_obj_center(label);
+
+    lv_obj_add_event_cb(pill, [](lv_event_t* e) {
+        int ch = (int)(intptr_t)lv_event_get_user_data(e);
+        active_channel = ch;
+        ch_meta[ch].unread = 0;
+        rebuild_channel_ribbon();
+        render_active_messages();
+    }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
+
+    return pill;
+}
 
 // ════════════════════════════════════════════════════
 // Dynamic channels — pulled from mesh, sorted by MRU
@@ -100,18 +189,11 @@ static void refresh_channels()
         }
     }
     if (active_channel >= dyn_count) active_channel = 0;
-    memset(ch_meta, 0, sizeof(ch_meta));
 }
 
 static void mark_channel_used(int idx)
 {
-    if (idx < 0 || idx >= dyn_count || idx == 0) return;
-    char tmp[32];
-    strncpy(tmp, dyn_channels[idx], 31);
-    for (int i = idx; i > 0; i--)
-        strncpy(dyn_channels[i], dyn_channels[i-1], 31);
-    strncpy(dyn_channels[0], tmp, 31);
-    active_channel = 0;
+    if (idx >= 0 && idx < dyn_count) active_channel = idx;
 }
 
 // ════════════════════════════════════════════════════
@@ -204,6 +286,47 @@ static void populate_channel_rows(lv_obj_t* list) {
             open_channel_messaging(idx);
         }, LV_EVENT_CLICKED, (void*)(intptr_t)ch_idx);
     }
+}
+
+static int find_channel_idx(const char* channel)
+{
+    if (!channel || !channel[0]) return active_channel;
+    for (int i = 0; i < dyn_count; i++) {
+        if (strcmp(dyn_channels[i], channel) == 0) return i;
+    }
+    return -1;
+}
+
+static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
+{
+    if (idx < 0 || idx >= MAX_CHANNELS) return;
+    strncpy(ch_meta[idx].preview, text ? text : "", sizeof(ch_meta[idx].preview) - 1);
+    ch_meta[idx].preview[sizeof(ch_meta[idx].preview) - 1] = '\0';
+    ch_meta[idx].timestamp = timestamp;
+}
+
+static void append_channel_message(int idx, const char* sender, const char* text,
+                                   uint32_t timestamp, bool is_self)
+{
+    if (idx < 0 || idx >= MAX_CHANNELS) return;
+
+    uint8_t pos = ch_msg_count[idx];
+    if (pos >= MAX_MSGS) {
+        for (int i = 1; i < MAX_MSGS; i++) ch_msgs[idx][i - 1] = ch_msgs[idx][i];
+        pos = MAX_MSGS - 1;
+    } else {
+        ch_msg_count[idx]++;
+    }
+
+    ChannelMessage& msg = ch_msgs[idx][pos];
+    strncpy(msg.sender, sender ? sender : "", sizeof(msg.sender) - 1);
+    msg.sender[sizeof(msg.sender) - 1] = '\0';
+    strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
+    msg.text[sizeof(msg.text) - 1] = '\0';
+    msg.timestamp = timestamp;
+    msg.is_self = is_self;
+
+    update_channel_meta(idx, msg.text, timestamp);
 }
 
 static lv_obj_t* make_chat_list_screen()
@@ -339,6 +462,7 @@ static void show_channel_list(lv_scr_load_anim_t anim)
     lv_obj_t* list = lv_obj_create(s);
     lv_obj_set_size(list, LV_PCT(100), LIST_CONT_H - 32);
     lv_obj_align(list, LV_ALIGN_TOP_MID, 0, LIST_CONT_Y);
+    lv_obj_set_user_data(list, (void*)0xCA7C);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_style_pad_all(list, 0, 0);
@@ -354,7 +478,7 @@ static void show_channel_list(lv_scr_load_anim_t anim)
     lv_obj_set_style_bg_color(add_btn, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_radius(add_btn, 0, 0);
     lv_obj_t* al = lv_label_create(add_btn);
-    lv_label_set_text(al, LV_SYMBOL_PLUS " Add Channel");
+    lv_label_set_text(al, LV_SYMBOL_PLUS " Add # Channel");
     lv_obj_set_style_text_font(al, &lv_font_montserrat_10, 0);
     lv_obj_center(al);
     lv_obj_add_event_cb(add_btn, [](lv_event_t* e) {
@@ -371,38 +495,16 @@ static void show_channel_list(lv_scr_load_anim_t anim)
 static void rebuild_channel_ribbon()
 {
     if (!channel_ribbon) return;
+    lv_obj_set_style_bg_color(channel_ribbon, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(channel_ribbon, LV_OPA_COVER, 0);
     lv_obj_clean(channel_ribbon);
 
     for (int i = 0; i < dyn_count; i++) {
-        lv_obj_t* pill = lv_btn_create(channel_ribbon);
-        lv_obj_set_height(pill, TOP_H - 8);
-        lv_obj_set_style_radius(pill, 0, 0);
-        lv_obj_set_style_border_width(pill, 0, 0);
-        lv_obj_set_style_pad_hor(pill, 8, 0);
-        lv_obj_set_style_pad_ver(pill, 2, 0);
-
-        if (i == active_channel) {
-            lv_obj_set_style_bg_color(pill, lv_color_hex(ACCENT), 0);
-            lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
-        } else {
-            lv_obj_set_style_bg_color(pill, lv_color_hex(BG_TERTIARY), 0);
-            lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
-        }
-
-        lv_obj_t* pill_label = lv_label_create(pill);
-        lv_label_set_text(pill_label, dyn_channels[i]);
-        lv_obj_set_style_text_font(pill_label, &lv_font_montserrat_10, 0);
-        lv_obj_set_style_text_color(pill_label,
-            i == active_channel ? lv_color_hex(0xffffff) : lv_color_hex(CHANNEL_HASH), 0);
-        lv_obj_center(pill_label);
-
-        int idx = i;
-        lv_obj_add_event_cb(pill, [](lv_event_t* e) {
-            int ch = (int)(intptr_t)lv_event_get_user_data(e);
-            active_channel = ch;
-            rebuild_channel_ribbon();
-        }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
+        create_channel_pill(channel_ribbon, i);
     }
+
+    lv_obj_invalidate(channel_ribbon);
+    if (top_bar) lv_obj_invalidate(top_bar);
 }
 
 // ════════════════════════════════════════════════════
@@ -417,6 +519,7 @@ static void create_top_bar()
     lv_obj_set_style_bg_opa(top_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(top_bar, 0, 0);
     lv_obj_set_style_border_width(top_bar, 0, 0);
+    disable_scroll(top_bar);
 
     // ← back button → return to channel list
     lv_obj_t* back = lv_btn_create(top_bar);
@@ -430,6 +533,7 @@ static void create_top_bar()
     lv_obj_set_style_text_color(bl, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(bl, &lv_font_montserrat_12, 0);
     lv_obj_center(bl);
+    disable_scroll(bl);
     lv_obj_add_event_cb(back, [](lv_event_t*) {
         show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
     }, LV_EVENT_CLICKED, nullptr);
@@ -439,7 +543,8 @@ static void create_top_bar()
     channel_ribbon = lv_obj_create(top_bar);
     lv_obj_set_size(channel_ribbon, ribbon_w, TOP_H - 4);
     lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 28, 0);
-    lv_obj_set_style_bg_opa(channel_ribbon, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(channel_ribbon, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(channel_ribbon, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(channel_ribbon, 0, 0);
     lv_obj_set_style_pad_all(channel_ribbon, 0, 0);
     lv_obj_set_flex_flow(channel_ribbon, LV_FLEX_FLOW_ROW);
@@ -447,6 +552,12 @@ static void create_top_bar()
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scroll_dir(channel_ribbon, LV_DIR_HOR);
     lv_obj_set_scrollbar_mode(channel_ribbon, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(channel_ribbon, (lv_obj_flag_t)(
+        LV_OBJ_FLAG_SCROLL_ELASTIC |
+        LV_OBJ_FLAG_SCROLL_MOMENTUM |
+        LV_OBJ_FLAG_SCROLL_CHAIN |
+        LV_OBJ_FLAG_SCROLL_ON_FOCUS |
+        LV_OBJ_FLAG_SCROLL_WITH_ARROW));
 
     // 24h time (right side)
     {
@@ -465,34 +576,7 @@ static void create_top_bar()
     }
 
     for (int i = 0; i < dyn_count; i++) {
-        lv_obj_t* pill = lv_btn_create(channel_ribbon);
-        lv_obj_set_height(pill, TOP_H - 8);
-        lv_obj_set_style_radius(pill, 0, 0);
-        lv_obj_set_style_border_width(pill, 0, 0);
-        lv_obj_set_style_pad_hor(pill, 8, 0);
-        lv_obj_set_style_pad_ver(pill, 2, 0);
-
-        if (i == active_channel) {
-            lv_obj_set_style_bg_color(pill, lv_color_hex(ACCENT), 0);
-            lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
-        } else {
-            lv_obj_set_style_bg_color(pill, lv_color_hex(BG_TERTIARY), 0);
-            lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
-        }
-
-        lv_obj_t* pill_label = lv_label_create(pill);
-        lv_label_set_text(pill_label, dyn_channels[i]);
-        lv_obj_set_style_text_font(pill_label, &lv_font_montserrat_10, 0);
-        lv_obj_set_style_text_color(pill_label,
-            i == active_channel ? lv_color_hex(0xffffff) : lv_color_hex(CHANNEL_HASH), 0);
-        lv_obj_center(pill_label);
-
-        int idx = i;
-        lv_obj_add_event_cb(pill, [](lv_event_t* e) {
-            int ch = (int)(intptr_t)lv_event_get_user_data(e);
-            active_channel = ch;
-            rebuild_channel_ribbon();
-        }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
+        create_channel_pill(channel_ribbon, i);
     }
 
     // Divider
@@ -517,6 +601,7 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(container, 0, 0);
     lv_obj_set_style_pad_all(container, BUBBLE_PAD / 2, 0);
+    disable_scroll(container);
 
     lv_obj_set_flex_flow(container, LV_FLEX_FLOW_ROW);
     if (is_self) {
@@ -531,6 +616,7 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_obj_set_style_pad_all(bubble, 6, 0);
     lv_obj_set_style_border_width(bubble, 0, 0);
     lv_obj_set_flex_flow(bubble, LV_FLEX_FLOW_COLUMN);
+    disable_scroll(bubble);
 
     if (is_self) {
         lv_obj_set_style_bg_color(bubble, lv_color_hex(ACCENT), 0);
@@ -548,6 +634,7 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_obj_set_style_border_width(header, 0, 0);
     lv_obj_set_style_pad_all(header, 0, 0);
     lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    disable_scroll(header);
     lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN,
                           LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -584,12 +671,30 @@ static void create_message_list()
     msg_list = lv_obj_create(scr);
     lv_obj_set_size(msg_list, LV_PCT(100), MSG_LIST_H);
     lv_obj_align(msg_list, LV_ALIGN_TOP_MID, 0, MSG_LIST_Y);
-    lv_obj_set_style_bg_opa(msg_list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_color(msg_list, lv_color_hex(BG_PRIMARY), 0);
+    lv_obj_set_style_bg_opa(msg_list, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(msg_list, 0, 0);
     lv_obj_set_style_pad_all(msg_list, 2, 0);
     lv_obj_set_flex_flow(msg_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(msg_list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(msg_list, LV_SCROLLBAR_MODE_OFF);
+}
+
+static void render_active_messages()
+{
+    if (!msg_list || active_channel < 0 || active_channel >= MAX_CHANNELS) return;
+
+    lv_obj_clean(msg_list);
+    for (uint8_t i = 0; i < ch_msg_count[active_channel]; i++) {
+        ChannelMessage& msg = ch_msgs[active_channel][i];
+        create_bubble(msg_list, msg.sender, msg.text, msg.timestamp, msg.is_self);
+    }
+
+    uint32_t count = lv_obj_get_child_cnt(msg_list);
+    if (count > 0) {
+        lv_obj_t* last = lv_obj_get_child(msg_list, count - 1);
+        if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
+    }
 }
 
 // ════════════════════════════════════════════════════
@@ -607,10 +712,11 @@ static void do_send()
     if (is_dm) slopos::mesh::sendMessage(dest, text);
     else       slopos::mesh::sendChannelMessage(dest, text);
 
-    mark_channel_used(active_channel);
-
     uint32_t now = slopos::mesh::getCurrentTime();
-    create_bubble(msg_list, slopos::mesh::getOwnName(), text, now, true);
+    int sent_channel = active_channel;
+    append_channel_message(sent_channel, slopos::mesh::getOwnName(), text, now, true);
+    mark_channel_used(sent_channel);
+    render_active_messages();
     lv_textarea_set_text(input_field, "");
 
     lv_obj_t* last = lv_obj_get_child(msg_list, lv_obj_get_child_cnt(msg_list) - 1);
@@ -631,6 +737,7 @@ static void create_input_bar()
     lv_obj_set_style_bg_opa(input_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(input_bar, 4, 0);
     lv_obj_set_style_border_width(input_bar, 0, 0);
+    disable_scroll(input_bar);
 
     lv_obj_t* div = lv_obj_create(scr);
     lv_obj_set_size(div, LV_PCT(100), DIVIDER_H);
@@ -653,6 +760,9 @@ static void create_input_bar()
     lv_obj_set_style_pad_all(input_field, 4, 0);
     lv_textarea_set_one_line(input_field, true);
     lv_textarea_set_placeholder_text(input_field, "Message #channel");
+    lv_obj_remove_flag(input_field, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    lv_obj_set_style_outline_width(input_field, 0, LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(input_field, 0, (lv_state_t)(LV_STATE_FOCUSED | LV_STATE_EDITED));
 
     lv_obj_t* send_btn = lv_btn_create(input_bar);
     lv_obj_set_size(send_btn, 52, INPUT_H - 8);
@@ -731,6 +841,7 @@ static void open_channel_messaging(int idx)
 
     scr = lv_obj_create(nullptr);
     apply_dark_bg(scr);
+    disable_scroll(scr);
 
     // When the messaging screen is auto-deleted (e.g. user navigates
     // away without pressing back), null all global widget pointers
@@ -741,6 +852,7 @@ static void open_channel_messaging(int idx)
 
     create_top_bar();
     create_message_list();
+    render_active_messages();
     create_input_bar();
     create_bottom_bar();
 
@@ -767,7 +879,7 @@ static void refresh_chat_list_view(lv_obj_t* scr) {
 }
 
 static void show_add_channel_options(lv_obj_t* parent) {
-    auto dlg_sz = dialog_size(220, 110);
+    auto dlg_sz = dialog_size(260, 140);
     lv_obj_t* dlg = lv_obj_create(parent);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -777,144 +889,86 @@ static void show_add_channel_options(lv_obj_t* parent) {
     lv_obj_set_style_pad_all(dlg, 8, 0);
 
     lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Add Channel");
+    lv_label_set_text(title, "Add # Channel");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
-    lv_obj_t* pub_btn = lv_btn_create(dlg);
-    lv_obj_set_size(pub_btn, dlg_sz.w - 16, 28);
-    lv_obj_align(pub_btn, LV_ALIGN_TOP_MID, 0, 30);
-    lv_obj_set_style_bg_color(pub_btn, lv_color_hex(BG_TERTIARY), 0);
-    lv_obj_set_style_radius(pub_btn, 0, 0);
-    lv_obj_t* pl = lv_label_create(pub_btn);
-    lv_label_set_text(pl, "Public (standard)");
-    lv_obj_center(pl);
+    lv_obj_t* nl = lv_label_create(dlg);
+    lv_label_set_text(nl, "Hashtag:");
+    lv_obj_set_style_text_color(nl, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_align(nl, LV_ALIGN_TOP_LEFT, 4, 28);
 
-    lv_obj_t* cus_btn = lv_btn_create(dlg);
-    lv_obj_set_size(cus_btn, dlg_sz.w - 16, 28);
-    lv_obj_align(cus_btn, LV_ALIGN_TOP_MID, 0, 62);
-    lv_obj_set_style_bg_color(cus_btn, lv_color_hex(BG_TERTIARY), 0);
-    lv_obj_set_style_radius(cus_btn, 0, 0);
-    lv_obj_t* cl = lv_label_create(cus_btn);
-    lv_label_set_text(cl, "Custom (name + PSK)");
-    lv_obj_center(cl);
+    lv_obj_t* ni = lv_textarea_create(dlg);
+    lv_obj_set_size(ni, dlg_sz.w - 16, 28);
+    lv_obj_align(ni, LV_ALIGN_TOP_MID, 0, 46);
+    lv_obj_set_style_bg_color(ni, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_text_color(ni, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(ni, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_border_width(ni, 0, 0);
+    lv_textarea_set_one_line(ni, true);
+    lv_textarea_set_placeholder_text(ni, "e.g. #general");
+
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_add_obj(g, ni);
+        lv_group_focus_obj(ni);
+    }
 
     lv_obj_t* fb = lv_label_create(dlg);
     lv_obj_set_style_text_color(fb, lv_color_hex(ACCENT_RED), 0);
     lv_obj_set_style_text_font(fb, &lv_font_montserrat_10, 0);
-    lv_obj_align(fb, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_align(fb, LV_ALIGN_BOTTOM_MID, 0, -32);
 
-    lv_obj_add_event_cb(pub_btn, [](lv_event_t* e) {
-        lv_obj_t* d = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e));
+    lv_obj_t* add = lv_btn_create(dlg);
+    lv_obj_set_size(add, 100, 28);
+    lv_obj_align(add, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_style_bg_color(add, lv_color_hex(ACCENT_GREEN), 0);
+    lv_obj_set_style_radius(add, 0, 0);
+    lv_obj_t* al = lv_label_create(add);
+    lv_label_set_text(al, "Add");
+    lv_obj_center(al);
+
+    auto submit = [](lv_event_t* e) {
+        lv_obj_t* d = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
         lv_obj_t* sc = lv_obj_get_screen(d);
-        bool ok = slopos::mesh::joinPublicChannel();
-        if (ok) {
+        lv_obj_t* feedback = (lv_obj_t*)lv_event_get_user_data(e);
+
+        lv_obj_t* namei = nullptr;
+        for (uint32_t j = 0; j < lv_obj_get_child_cnt(d); j++) {
+            lv_obj_t* child = lv_obj_get_child(d, j);
+            if (lv_obj_check_type(child, &lv_textarea_class)) {
+                namei = child;
+                break;
+            }
+        }
+
+        const char* nm = namei ? lv_textarea_get_text(namei) : "";
+        if (!nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter hashtag"); return; }
+        if (slopos::mesh::addHashtagChannel(nm)) {
             lv_obj_del_async(d);
             refresh_chat_list_view(sc);
         } else {
-            lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), "Failed to add public");
+            if (feedback) lv_label_set_text(feedback, "Invalid or full");
         }
-    }, LV_EVENT_CLICKED, (void*)fb);
+    };
 
-    lv_obj_add_event_cb(cus_btn, [](lv_event_t* e) {
-        lv_obj_t* d = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e));
+    lv_obj_add_event_cb(add, submit, LV_EVENT_CLICKED, (void*)fb);
+    lv_obj_add_event_cb(ni, [](lv_event_t* e) {
+        if (lv_event_get_code(e) != LV_EVENT_READY) return;
+        lv_obj_t* input = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_t* d = lv_obj_get_parent(input);
         lv_obj_t* sc = lv_obj_get_screen(d);
-        lv_obj_del_async(d);
-        // inline custom dialog for this focus
-        auto sz = dialog_size(260, 180);
-        lv_obj_t* cd = lv_obj_create(sc);
-        lv_obj_set_size(cd, sz.w, sz.h);
-        lv_obj_center(cd);
-        lv_obj_set_style_bg_color(cd, lv_color_hex(BG_SECONDARY), 0);
-        lv_obj_set_style_radius(cd, 0, 0);
-        lv_obj_set_style_border_width(cd, 0, 0);
-        lv_obj_set_style_pad_all(cd, 8, 0);
-
-        lv_obj_t* t = lv_label_create(cd);
-        lv_label_set_text(t, "Create Channel");
-        lv_obj_set_style_text_color(t, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(t, &lv_font_montserrat_12, 0);
-        lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 4);
-
-        lv_obj_t* nl = lv_label_create(cd);
-        lv_label_set_text(nl, "Name:");
-        lv_obj_set_style_text_color(nl, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_align(nl, LV_ALIGN_TOP_LEFT, 4, 28);
-
-        lv_obj_t* ni = lv_textarea_create(cd);
-        lv_obj_set_size(ni, sz.w - 16, 28);
-        lv_obj_align(ni, LV_ALIGN_TOP_MID, 0, 46);
-        lv_obj_set_style_bg_color(ni, lv_color_hex(BG_INPUT), 0);
-        lv_obj_set_style_text_color(ni, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(ni, &lv_font_montserrat_10, 0);
-        lv_obj_set_style_border_width(ni, 0, 0);
-        lv_textarea_set_one_line(ni, true);
-        lv_textarea_set_placeholder_text(ni, "e.g. #general");
-
-        lv_obj_t* plb = lv_label_create(cd);
-        lv_label_set_text(plb, "PSK (base64):");
-        lv_obj_set_style_text_color(plb, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_align(plb, LV_ALIGN_TOP_LEFT, 4, 82);
-
-        lv_obj_t* pi = lv_textarea_create(cd);
-        lv_obj_set_size(pi, sz.w - 16, 28);
-        lv_obj_align(pi, LV_ALIGN_TOP_MID, 0, 100);
-        lv_obj_set_style_bg_color(pi, lv_color_hex(BG_INPUT), 0);
-        lv_obj_set_style_text_color(pi, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(pi, &lv_font_montserrat_10, 0);
-        lv_obj_set_style_border_width(pi, 0, 0);
-        lv_textarea_set_one_line(pi, true);
-        lv_textarea_set_placeholder_text(pi, "base64 key");
-
-        lv_group_t* g = lv_group_get_default();
-        if (g) {
-            lv_group_add_obj(g, ni);
-            lv_group_add_obj(g, pi);
-            lv_group_focus_obj(ni);
+        lv_obj_t* feedback = (lv_obj_t*)lv_event_get_user_data(e);
+        const char* nm = lv_textarea_get_text(input);
+        if (!nm || !nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter hashtag"); return; }
+        if (slopos::mesh::addHashtagChannel(nm)) {
+            lv_obj_del_async(d);
+            refresh_chat_list_view(sc);
+        } else {
+            if (feedback) lv_label_set_text(feedback, "Invalid or full");
         }
-
-        lv_obj_t* ffb = lv_label_create(cd);
-        lv_obj_set_style_text_color(ffb, lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_text_font(ffb, &lv_font_montserrat_10, 0);
-        lv_obj_align(ffb, LV_ALIGN_BOTTOM_MID, 0, -32);
-
-        lv_obj_t* cb = lv_btn_create(cd);
-        lv_obj_set_size(cb, 100, 28);
-        lv_obj_align(cb, LV_ALIGN_BOTTOM_MID, 0, -4);
-        lv_obj_set_style_bg_color(cb, lv_color_hex(ACCENT_GREEN), 0);
-        lv_obj_set_style_radius(cb, 0, 0);
-        lv_obj_t* cbl = lv_label_create(cb);
-        lv_label_set_text(cbl, "Create");
-        lv_obj_center(cbl);
-
-        lv_obj_add_event_cb(cb, [](lv_event_t* ev) {
-            lv_obj_t* cdg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev));
-            lv_obj_t* scg = lv_obj_get_screen(cdg);
-            lv_obj_t* ffbg = (lv_obj_t*)lv_event_get_user_data(ev);
-
-            uint32_t nc = lv_obj_get_child_cnt(cdg);
-            lv_obj_t* namei = nullptr;
-            lv_obj_t* pski = nullptr;
-            for (uint32_t j = 0; j < nc; j++) {
-                lv_obj_t* ch = lv_obj_get_child(cdg, j);
-                if (lv_obj_check_type(ch, &lv_textarea_class)) {
-                    if (!namei) namei = ch; else pski = ch;
-                }
-            }
-            const char* nm = namei ? lv_textarea_get_text(namei) : "";
-            const char* ps = pski ? lv_textarea_get_text(pski) : "";
-            if (!nm[0]) { if (ffbg) lv_label_set_text(ffbg, "Enter name"); return; }
-            if (!ps[0])  { if (ffbg) lv_label_set_text(ffbg, "Enter PSK"); return; }
-            bool ook = slopos::mesh::addChannel(nm, ps);
-            if (ook) {
-                lv_obj_del_async(cdg);
-                refresh_chat_list_view(scg);
-            } else {
-                if (ffbg) lv_label_set_text(ffbg, "Invalid PSK");
-            }
-        }, LV_EVENT_CLICKED, (void*)ffb);
-    }, LV_EVENT_CLICKED, nullptr);
+    }, LV_EVENT_ALL, (void*)fb);
 }
 
 void chat_screen_show()
@@ -922,23 +976,19 @@ void chat_screen_show()
     show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
 }
 
-void chat_screen_add_msg(const char* sender, const char* text, bool is_self)
+void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self)
 {
-    // Update channel metadata regardless of view state
     uint32_t now = slopos::mesh::getCurrentTime();
-    if (active_channel < MAX_CHANNELS) {
-        strncpy(ch_meta[active_channel].preview, text, 63);
-        ch_meta[active_channel].preview[63] = '\0';
-        ch_meta[active_channel].timestamp = now;
-        // Increment unread only when messaging view is not open
-        if (!is_self && !msg_list)
-            ch_meta[active_channel].unread++;
-    }
+    int idx = find_channel_idx(channel);
+    if (idx < 0 || idx >= MAX_CHANNELS) return;
 
-    if (!msg_list) return;
+    append_channel_message(idx, sender, text, now, is_self);
+
+    bool visible = msg_list && idx == active_channel;
+    if (!is_self && !visible) ch_meta[idx].unread++;
+    if (!visible) return;
 
     create_bubble(msg_list, sender, text, now, is_self);
-
     if (lv_obj_get_child_cnt(msg_list) > MAX_MSGS)
         lv_obj_del(lv_obj_get_child(msg_list, 0));
 

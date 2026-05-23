@@ -53,11 +53,13 @@ static constexpr int MAX_QUEUED = 64;
 static MeshMessage   msg_buf[MAX_QUEUED];
 static int           msg_head = 0, msg_tail = 0, msg_count = 0;
 
-static void queue_push(const char* sender, const char* text) {
+static void queue_push(const char* sender, const char* channel, const char* text) {
     if (msg_count >= MAX_QUEUED) return;
     MeshMessage& m = msg_buf[msg_head];
     strncpy(m.sender, sender, sizeof(m.sender) - 1);
     m.sender[sizeof(m.sender) - 1] = '\0';
+    strncpy(m.channel, channel ? channel : "", sizeof(m.channel) - 1);
+    m.channel[sizeof(m.channel) - 1] = '\0';
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = rtc_clock.getCurrentTime();
@@ -74,10 +76,12 @@ static bool queue_pop(MeshMessage* out) {
     return true;
 }
 
-static void onMeshMessage(const char* sender, const char* text) {
-    queue_push(sender, text);
+static void onMeshMessage(const char* sender, const char* channel, const char* text) {
+    queue_push(sender, channel, text);
 #if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
-    Serial.printf("[mesh] MSG from %s: %s\n", sender, text);
+    Serial.printf("[mesh] MSG from %s%s%s: %s\n",
+                  sender, channel && channel[0] ? " in " : "",
+                  channel && channel[0] ? channel : "", text);
 #endif
 }
 
@@ -298,6 +302,10 @@ int exportChannels(char names[][32], int max) {
 
 bool addChannel(const char* name, const char* psk) {
     return g_mesh ? g_mesh->addChannel(name, psk) : false;
+}
+
+bool addHashtagChannel(const char* name) {
+    return g_mesh ? g_mesh->addHashtagChannel(name) : false;
 }
 
 bool joinPublicChannel() {
