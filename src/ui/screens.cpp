@@ -1700,31 +1700,25 @@ void radio_setup_screen_show()
     lv_obj_set_style_text_font(warn, &lv_font_montserrat_10, 0);
     lv_obj_align(warn, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 2);
 
-    // Frequency presets — centered 2-column layout (3 left, 2 right)
+    // ── Left column: frequency presets ────────────────────
+    int lx = 4;
+    int lw = 148;
     static const struct { const char* label; float freq; } freqs[] = {
-        {"868.000 MHz (EU)", 868.000f},
-        {"869.525 MHz (UK)", 869.525f},
-        {"869.618 MHz (UK)", 869.618f},
-        {"915.000 MHz (US)", 915.000f},
-        {"433.500 MHz (EU)", 433.500f},
+        {"868.000 (EU)",   868.000f},
+        {"869.525 (UK)",   869.525f},
+        {"869.618 (UK)",   869.618f},
+        {"915.000 (US)",   915.000f},
+        {"433.500 (EU)",   433.500f},
     };
     static constexpr int NUM_FREQS = 5;
     static lv_obj_t* freq_btns[NUM_FREQS] = {};
 
-    int btn_w = 150;
+    int ly = CONTENT_Y + 26;
     int btn_h = 18;
-    int col1_x = (DISPLAY_W - btn_w * 2 - 8) / 2;
-    int col2_x = col1_x + btn_w + 8;
-    int y = CONTENT_Y + 26;
-
     for (int i = 0; i < NUM_FREQS; i++) {
-        int cx = (i < 3) ? col1_x : col2_x;
-        int cy = y + (i < 3 ? i * 22 : (i - 3) * 22);
-        if (i == 3) cy = y + 66; // second column starts lower
-
         auto* btn = lv_btn_create(scr);
-        lv_obj_set_size(btn, btn_w, btn_h);
-        lv_obj_align(btn, LV_ALIGN_TOP_LEFT, cx, cy);
+        lv_obj_set_size(btn, lw, btn_h);
+        lv_obj_align(btn, LV_ALIGN_TOP_LEFT, lx, ly);
         lv_obj_set_style_bg_color(btn, lv_color_hex(
             fabsf(s_rf_freq - freqs[i].freq) < 0.001f ? 0x2a5a2a : BG_TERTIARY), 0);
         lv_obj_set_style_radius(btn, 0, 0);
@@ -1738,20 +1732,24 @@ void radio_setup_screen_show()
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
             int idx = (int)(intptr_t)lv_event_get_user_data(e);
             s_rf_freq = freqs[idx].freq;
-            // De-highlight all, highlight this one
             for (int j = 0; j < NUM_FREQS; j++) {
                 lv_obj_set_style_bg_color(freq_btns[j],
                     lv_color_hex(j == idx ? 0x2a5a2a : BG_TERTIARY), 0);
             }
         }, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+        ly += 22;
     }
 
-    y += 96; // skip past the 2-column layout
+    // ── Right column: controls ────────────────────────────
+    int rx = lx + lw + 6;
+    int rw = DISPLAY_W - rx - 4;
+    int ry = CONTENT_Y + 26;
+    char buf[64];
 
-    // Custom RF button (prominent)
+    // Custom RF button
     auto* custom_btn = lv_btn_create(scr);
-    lv_obj_set_size(custom_btn, 160, 22);
-    lv_obj_align(custom_btn, LV_ALIGN_TOP_MID, 0, y);
+    lv_obj_set_size(custom_btn, rw, 22);
+    lv_obj_align(custom_btn, LV_ALIGN_TOP_LEFT, rx, ry);
     lv_obj_set_style_bg_color(custom_btn, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_radius(custom_btn, 0, 0);
     lv_obj_set_style_border_width(custom_btn, 0, 0);
@@ -1762,108 +1760,103 @@ void radio_setup_screen_show()
     lv_obj_add_event_cb(custom_btn, [](lv_event_t*) {
         custom_rf_screen_show();
     }, LV_EVENT_CLICKED, nullptr);
-    y += 28;
+    ry += 28;
 
-    // SF + BW + TX power — three columns
-    int mid = DISPLAY_W / 2;
-    int col_w = DISPLAY_W / 3;
-    int col_pad = 4;
-    char buf[64];
-
-    // SF (column 1)
-    snprintf(buf, sizeof(buf), "SF: %d", s_rf_sf);
+    // SF row
+    snprintf(buf, sizeof(buf), "SF:%d", s_rf_sf);
     auto* sf_lbl = lv_label_create(scr);
     lv_label_set_text(sf_lbl, buf);
     lv_obj_set_style_text_color(sf_lbl, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(sf_lbl, &lv_font_montserrat_10, 0);
-    lv_obj_align(sf_lbl, LV_ALIGN_TOP_LEFT, col_pad, y);
-
-    auto* sf_plus = lv_btn_create(scr);
-    lv_obj_set_size(sf_plus, 28, 20);
-    lv_obj_align(sf_plus, LV_ALIGN_TOP_LEFT, col_w - 34, y - 2);
-    lv_obj_set_style_bg_color(sf_plus, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_radius(sf_plus, 0, 0);
-    auto* spl = lv_label_create(sf_plus); lv_label_set_text(spl, "+"); lv_obj_center(spl);
-    lv_obj_add_event_cb(sf_plus, [](lv_event_t* e) {
-        if (s_rf_sf < 12) { s_rf_sf++; char b[16]; snprintf(b, sizeof(b), "SF: %d", s_rf_sf); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
-    }, LV_EVENT_CLICKED, (void*)sf_lbl);
+    lv_obj_align(sf_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
 
     auto* sf_minus = lv_btn_create(scr);
-    lv_obj_set_size(sf_minus, 28, 20);
-    lv_obj_align(sf_minus, LV_ALIGN_TOP_LEFT, col_w - 66, y - 2);
+    lv_obj_set_size(sf_minus, 24, 20);
+    lv_obj_align(sf_minus, LV_ALIGN_TOP_LEFT, rx + rw - 54, ry - 2);
     lv_obj_set_style_bg_color(sf_minus, lv_color_hex(ACCENT_RED), 0);
     lv_obj_set_style_radius(sf_minus, 0, 0);
     auto* sml = lv_label_create(sf_minus); lv_label_set_text(sml, "-"); lv_obj_center(sml);
     lv_obj_add_event_cb(sf_minus, [](lv_event_t* e) {
-        if (s_rf_sf > 6) { s_rf_sf--; char b[16]; snprintf(b, sizeof(b), "SF: %d", s_rf_sf); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
+        if (s_rf_sf > 6) { s_rf_sf--; char b[16]; snprintf(b, sizeof(b), "SF:%d", s_rf_sf); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
     }, LV_EVENT_CLICKED, (void*)sf_lbl);
 
-    // BW (column 2)
-    snprintf(buf, sizeof(buf), "BW: %.1f", s_rf_bw);
+    auto* sf_plus = lv_btn_create(scr);
+    lv_obj_set_size(sf_plus, 24, 20);
+    lv_obj_align(sf_plus, LV_ALIGN_TOP_LEFT, rx + rw - 26, ry - 2);
+    lv_obj_set_style_bg_color(sf_plus, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(sf_plus, 0, 0);
+    auto* spl = lv_label_create(sf_plus); lv_label_set_text(spl, "+"); lv_obj_center(spl);
+    lv_obj_add_event_cb(sf_plus, [](lv_event_t* e) {
+        if (s_rf_sf < 12) { s_rf_sf++; char b[16]; snprintf(b, sizeof(b), "SF:%d", s_rf_sf); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
+    }, LV_EVENT_CLICKED, (void*)sf_lbl);
+    ry += 24;
+
+    // BW row
+    snprintf(buf, sizeof(buf), "BW:%.1f", s_rf_bw);
     auto* bw_lbl = lv_label_create(scr);
     lv_label_set_text(bw_lbl, buf);
     lv_obj_set_style_text_color(bw_lbl, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(bw_lbl, &lv_font_montserrat_10, 0);
-    lv_obj_align(bw_lbl, LV_ALIGN_TOP_LEFT, col_w + col_pad, y);
-
-    auto* bw_plus = lv_btn_create(scr);
-    lv_obj_set_size(bw_plus, 28, 20);
-    lv_obj_align(bw_plus, LV_ALIGN_TOP_LEFT, mid + col_w - 34, y - 2);
-    lv_obj_set_style_bg_color(bw_plus, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_radius(bw_plus, 0, 0);
-    auto* bpl = lv_label_create(bw_plus); lv_label_set_text(bpl, "+"); lv_obj_center(bpl);
-    lv_obj_add_event_cb(bw_plus, [](lv_event_t* e) {
-        float v[] = {7.8f,10.4f,15.6f,20.8f,31.25f,41.7f,62.5f,125.0f,250.0f,500.0f};
-        for (auto& x : v) if (s_rf_bw < x - 0.01f) { s_rf_bw = x; break; }
-        char b[24]; snprintf(b, sizeof(b), "BW: %.1f", s_rf_bw); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b);
-    }, LV_EVENT_CLICKED, (void*)bw_lbl);
+    lv_obj_align(bw_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
 
     auto* bw_minus = lv_btn_create(scr);
-    lv_obj_set_size(bw_minus, 28, 20);
-    lv_obj_align(bw_minus, LV_ALIGN_TOP_LEFT, mid + col_w - 66, y - 2);
+    lv_obj_set_size(bw_minus, 24, 20);
+    lv_obj_align(bw_minus, LV_ALIGN_TOP_LEFT, rx + rw - 54, ry - 2);
     lv_obj_set_style_bg_color(bw_minus, lv_color_hex(ACCENT_RED), 0);
     lv_obj_set_style_radius(bw_minus, 0, 0);
     auto* bml = lv_label_create(bw_minus); lv_label_set_text(bml, "-"); lv_obj_center(bml);
     lv_obj_add_event_cb(bw_minus, [](lv_event_t* e) {
         float v[] = {500.0f,250.0f,125.0f,62.5f,41.7f,31.25f,20.8f,15.6f,10.4f,7.8f};
         for (auto& x : v) if (s_rf_bw > x + 0.01f) { s_rf_bw = x; break; }
-        char b[24]; snprintf(b, sizeof(b), "BW: %.1f", s_rf_bw); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b);
+        char b[24]; snprintf(b, sizeof(b), "BW:%.1f", s_rf_bw); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b);
     }, LV_EVENT_CLICKED, (void*)bw_lbl);
 
-    // TX power (column 3)
-    snprintf(buf, sizeof(buf), "TX: %d", s_rf_pwr);
+    auto* bw_plus = lv_btn_create(scr);
+    lv_obj_set_size(bw_plus, 24, 20);
+    lv_obj_align(bw_plus, LV_ALIGN_TOP_LEFT, rx + rw - 26, ry - 2);
+    lv_obj_set_style_bg_color(bw_plus, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(bw_plus, 0, 0);
+    auto* bpl = lv_label_create(bw_plus); lv_label_set_text(bpl, "+"); lv_obj_center(bpl);
+    lv_obj_add_event_cb(bw_plus, [](lv_event_t* e) {
+        float v[] = {7.8f,10.4f,15.6f,20.8f,31.25f,41.7f,62.5f,125.0f,250.0f,500.0f};
+        for (auto& x : v) if (s_rf_bw < x - 0.01f) { s_rf_bw = x; break; }
+        char b[24]; snprintf(b, sizeof(b), "BW:%.1f", s_rf_bw); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b);
+    }, LV_EVENT_CLICKED, (void*)bw_lbl);
+    ry += 24;
+
+    // TX power row
+    snprintf(buf, sizeof(buf), "TX:%d", s_rf_pwr);
     auto* pwr_lbl = lv_label_create(scr);
     lv_label_set_text(pwr_lbl, buf);
     lv_obj_set_style_text_color(pwr_lbl, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(pwr_lbl, &lv_font_montserrat_10, 0);
-    lv_obj_align(pwr_lbl, LV_ALIGN_TOP_LEFT, mid + col_w + col_pad, y);
-
-    auto* pwr_plus = lv_btn_create(scr);
-    lv_obj_set_size(pwr_plus, 28, 20);
-    lv_obj_align(pwr_plus, LV_ALIGN_TOP_LEFT, DISPLAY_W - 34, y - 2);
-    lv_obj_set_style_bg_color(pwr_plus, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_radius(pwr_plus, 0, 0);
-    auto* ppl = lv_label_create(pwr_plus); lv_label_set_text(ppl, "+"); lv_obj_center(ppl);
-    lv_obj_add_event_cb(pwr_plus, [](lv_event_t* e) {
-        if (s_rf_pwr < 22) { s_rf_pwr++; char b[24]; snprintf(b, sizeof(b), "TX: %d", s_rf_pwr); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
-    }, LV_EVENT_CLICKED, (void*)pwr_lbl);
+    lv_obj_align(pwr_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
 
     auto* pwr_minus = lv_btn_create(scr);
-    lv_obj_set_size(pwr_minus, 28, 20);
-    lv_obj_align(pwr_minus, LV_ALIGN_TOP_LEFT, DISPLAY_W - 66, y - 2);
+    lv_obj_set_size(pwr_minus, 24, 20);
+    lv_obj_align(pwr_minus, LV_ALIGN_TOP_LEFT, rx + rw - 54, ry - 2);
     lv_obj_set_style_bg_color(pwr_minus, lv_color_hex(ACCENT_RED), 0);
     lv_obj_set_style_radius(pwr_minus, 0, 0);
     auto* pml = lv_label_create(pwr_minus); lv_label_set_text(pml, "-"); lv_obj_center(pml);
     lv_obj_add_event_cb(pwr_minus, [](lv_event_t* e) {
-        if (s_rf_pwr > 2) { s_rf_pwr--; char b[24]; snprintf(b, sizeof(b), "TX: %d", s_rf_pwr); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
+        if (s_rf_pwr > 2) { s_rf_pwr--; char b[24]; snprintf(b, sizeof(b), "TX:%d", s_rf_pwr); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
     }, LV_EVENT_CLICKED, (void*)pwr_lbl);
 
-    y += 28;
+    auto* pwr_plus = lv_btn_create(scr);
+    lv_obj_set_size(pwr_plus, 24, 20);
+    lv_obj_align(pwr_plus, LV_ALIGN_TOP_LEFT, rx + rw - 26, ry - 2);
+    lv_obj_set_style_bg_color(pwr_plus, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(pwr_plus, 0, 0);
+    auto* ppl = lv_label_create(pwr_plus); lv_label_set_text(ppl, "+"); lv_obj_center(ppl);
+    lv_obj_add_event_cb(pwr_plus, [](lv_event_t* e) {
+        if (s_rf_pwr < 22) { s_rf_pwr++; char b[24]; snprintf(b, sizeof(b), "TX:%d", s_rf_pwr); lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
+    }, LV_EVENT_CLICKED, (void*)pwr_lbl);
+    ry += 28;
 
     // Save & Reboot
     auto* save_btn = lv_btn_create(scr);
-    lv_obj_set_size(save_btn, 160, 32);
-    lv_obj_align(save_btn, LV_ALIGN_TOP_MID, 0, y);
+    lv_obj_set_size(save_btn, rw, 28);
+    lv_obj_align(save_btn, LV_ALIGN_TOP_LEFT, rx, ry);
     lv_obj_set_style_bg_color(save_btn, lv_color_hex(ACCENT_GREEN), 0);
     lv_obj_set_style_radius(save_btn, 0, 0);
     auto* svl = lv_label_create(save_btn);
