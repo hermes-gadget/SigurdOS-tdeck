@@ -30,6 +30,7 @@
 #include <cstring>
 #include <cstdio>
 #include <SPIFFS.h>
+#include <esp_heap_caps.h>
 
 namespace slopos::ui {
 
@@ -122,8 +123,28 @@ struct ChannelMessage {
     uint32_t timestamp;
     bool     is_self;
 };
-static ChannelMessage ch_msgs[MAX_CHANNELS][CHAT_MSGS_MAX];
+static ChannelMessage* ch_msgs[MAX_CHANNELS] = {nullptr};
+static uint16_t       ch_msg_capacity[MAX_CHANNELS] = {0};
 static uint16_t       ch_msg_count[MAX_CHANNELS];
+
+static void ensure_channel_buffer(int idx)
+{
+    if (idx < 0 || idx >= MAX_CHANNELS) return;
+    if (ch_msgs[idx] || ch_msg_capacity[idx] == CHAT_MSGS_MAX) return;
+
+    const size_t bytes = CHAT_MSGS_MAX * sizeof(ChannelMessage);
+    ch_msgs[idx] = (ChannelMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!ch_msgs[idx]) {
+        ch_msg_capacity[idx] = 0;
+    } else {
+        ch_msg_capacity[idx] = CHAT_MSGS_MAX;
+    }
+}
+
+static bool has_channel_buffer(int idx)
+{
+    return idx >= 0 && idx < MAX_CHANNELS && ch_msgs[idx] != nullptr;
+}
 
 static uint16_t chat_msg_cap()
 {
@@ -139,12 +160,20 @@ static void trim_channel_history(int idx, uint16_t cap)
     if (idx < 0 || idx >= MAX_CHANNELS || cap == 0) {
         return;
     }
+    ensure_channel_buffer(idx);
+    if (!has_channel_buffer(idx)) {
+        return;
+    }
 
-    if (ch_msg_count[idx] <= cap) return;
+    const uint16_t buf_cap = ch_msg_capacity[idx];
+    const uint16_t effective_cap = (cap < buf_cap) ? cap : buf_cap;
+    if (ch_msg_count[idx] <= effective_cap) {
+        return;
+    }
 
-    uint16_t drop = ch_msg_count[idx] - cap;
-    memmove(&ch_msgs[idx][0], &ch_msgs[idx][drop], cap * sizeof(ChannelMessage));
-    ch_msg_count[idx] = cap;
+    uint16_t drop = ch_msg_count[idx] - effective_cap;
+    memmove(&ch_msgs[idx][0], &ch_msgs[idx][drop], effective_cap * sizeof(ChannelMessage));
+    ch_msg_count[idx] = effective_cap;
 }
 
 // ── Forward declarations ───────────────────────────────────
@@ -372,6 +401,8 @@ static void append_channel_message(int idx, const char* sender, const char* text
                                    uint32_t timestamp, bool is_self)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
+    ensure_channel_buffer(idx);
+    if (!has_channel_buffer(idx)) return;
 
     const uint16_t cap = chat_msg_cap();
     trim_channel_history(idx, cap);
@@ -770,6 +801,7 @@ static void render_active_messages()
 
     const uint16_t cap = chat_msg_cap();
     trim_channel_history(active_channel, cap);
+    if (!has_channel_buffer(active_channel)) return;
 
     lv_obj_clean(msg_list);
     for (uint16_t i = 0; i < ch_msg_count[active_channel]; i++) {
@@ -1425,6 +1457,7 @@ void chat_save_messages()
 
     for (int i = 0; i < dyn_count && i < MSG_MAX_CHANNELS; i++) {
         if (ch_msg_count[i] == 0) continue;
+        if (!has_channel_buffer(i)) continue;
         uint8_t mc = ch_msg_count[i] > cap ? (uint8_t)cap : (uint8_t)ch_msg_count[i];
 
         uint8_t ch_buf[32] = {0};
