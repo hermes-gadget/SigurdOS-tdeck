@@ -175,10 +175,10 @@ static bool load_tile_jpeg(int zoom, int tx, int ty) {
 
     // Try .jpg first
     char path[64];
-    snprintf(path, sizeof(path), "/maps/%d/%d/%d.jpg", zoom, tx, ty);
+    snprintf(path, sizeof(path), "/tiles/%d/%d/%d.jpg", zoom, tx, ty);
 
     if (!SD.exists(path)) {
-        snprintf(path, sizeof(path), "/maps/%d/%d/%d.jpeg", zoom, tx, ty);
+        snprintf(path, sizeof(path), "/tiles/%d/%d/%d.jpeg", zoom, tx, ty);
         if (!SD.exists(path)) {
             lv_free(slot->pixels);
             slot->pixels = nullptr;
@@ -294,7 +294,7 @@ static void draw_tile_from_cache(lv_layer_t* layer, CachedTile* tile,
 static void load_metadata() {
     if (!slopos_sdcard_mounted()) return;
 
-    File f = SD.open("/maps/metadata.json", FILE_READ);
+    File f = SD.open("/tiles/metadata.json", FILE_READ);
     if (!f) return;
 
     char buf[512];
@@ -516,8 +516,8 @@ void slopos_map_render() {
         lv_draw_label_dsc_init(&label_dsc);
         label_dsc.color = lv_color_hex(0x8e9297);
         label_dsc.text = slopos_sdcard_mounted() ?
-            "No map tiles found\nCopy maps/ folder\nto SD card root" :
-            "No SD card\nInsert SD card with\nmaps/ folder";
+            "No map tiles found\nCopy tiles/ folder\nto SD card root" :
+            "No SD card\nInsert SD card with\ntiles/ folder";
         label_dsc.text_local = true;
 
         lv_area_t label_area;
@@ -552,7 +552,7 @@ bool slopos_map_tiles_available() {
     int tx = (int)lon_to_tile_x(center_lon, zoom_level);
     int ty = (int)lat_to_tile_y(center_lat, zoom_level);
     char path[64];
-    snprintf(path, sizeof(path), "/maps/%d/%d/%d.jpg", zoom_level, tx, ty);
+    snprintf(path, sizeof(path), "/tiles/%d/%d/%d.jpg", zoom_level, tx, ty);
     return SD.exists(path);
 }
 
