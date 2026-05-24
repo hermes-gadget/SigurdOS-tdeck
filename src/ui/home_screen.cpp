@@ -169,12 +169,28 @@ static void build_channel_string(char* buf, size_t sz)
 {
     char names[8][32];
     int n = slopos::mesh::exportChannels(names, 8);
-    if (n == 0) { strncpy(buf, "no channels", sz); return; }
+    if (sz == 0) return;
+    if (n == 0) {
+        snprintf(buf, sz, "no channels");
+        return;
+    }
+
     int pos = 0;
     for (int i = 0; i < n && pos < (int)sz - 20; i++) {
         const char* nm = names[i];
-        pos += snprintf(buf + pos, sz - pos, "%s%s*  ",
-                        nm[0] == '#' ? "" : "#", nm);
+        int written = snprintf(
+            buf + pos,
+            sz - pos,
+            "%s%s*  ",
+            (nm && nm[0] == '#') ? "" : "#",
+            nm ? nm : "");
+
+        if (written < 0) break;
+        if ((size_t)written >= sz - (size_t)pos) {
+            pos = (int)sz - 1;
+            break;
+        }
+        pos += written;
     }
     while (pos > 0 && buf[pos-1] == ' ') buf[--pos] = '\0';
 }
