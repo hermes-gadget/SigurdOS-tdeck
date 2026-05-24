@@ -192,6 +192,7 @@ bool init(bool spiffs_ok)
         return false;
     }
     g_mesh->setMessageCallback(onMeshMessage);
+    g_mesh->setOwnName(own_name);
 
     // Generate or load identity
     if (!loadIdentity(g_mesh->self_id)) {
@@ -318,6 +319,7 @@ void setOwnName(const char* name) {
     if (!name) return;
     strncpy(own_name, name, sizeof(own_name) - 1);
     own_name[sizeof(own_name) - 1] = '\0';
+    if (g_mesh) g_mesh->setOwnName(own_name);
 }
 
 const char* getOwnName() { return own_name; }

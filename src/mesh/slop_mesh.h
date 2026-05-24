@@ -48,6 +48,8 @@ class SlopMesh : public ::mesh::Mesh {
     slopos::NodePrefs _prefs;
     void (*_onMessage)(const char* sender, const char* channel, const char* text);
 
+    char _own_name[32];
+
     // Trace result storage
     bool     _has_trace_result = false;
     uint32_t _last_trace_tag = 0;
@@ -71,13 +73,15 @@ protected:
             memcpy(dest, _contacts[_matchIdxs[peer_idx]].secret, PUB_KEY_SIZE);
     }
 
-    // ── Incoming text ────────────────────────────────
+    // ── Incoming peer data (DM / REQ / RESPONSE) ────
     void onPeerDataRecv(::mesh::Packet* pkt, uint8_t type, int sender_idx,
                         const uint8_t* secret, uint8_t* data, size_t len) override
     {
-        if (type != PAYLOAD_TYPE_TXT_MSG || _nMatches == 0 || !_onMessage) return;
+        // Accept TXT_MSG, REQ, and RESPONSE payloads as incoming messages
+        if (type != PAYLOAD_TYPE_TXT_MSG && type != PAYLOAD_TYPE_REQ &&
+            type != PAYLOAD_TYPE_RESPONSE) return;
+        if (_nMatches == 0 || !_onMessage) return;
         // Data layout: [4-byte LE timestamp][null-terminated text]
-        // Safety: force null-termination — packet data may lack a terminator
         if (len > 4) data[len - 1] = '\0';
         const char* text = (len > 4) ? (const char*)(data + 4) : "";
         int idx = _matchIdxs[sender_idx];
@@ -136,12 +140,36 @@ protected:
         return n;
     }
 
+    // Parse sender name from formatted group text ("sender_name: message")
+    static void parse_group_sender(const char* raw_text, char* sender_out, size_t sender_cap,
+                                   const char** text_out)
+    {
+        const char* colon = strstr(raw_text, ": ");
+        if (colon && colon > raw_text) {
+            size_t name_len = colon - raw_text;
+            if (name_len >= sender_cap) name_len = sender_cap - 1;
+            memcpy(sender_out, raw_text, name_len);
+            sender_out[name_len] = '\0';
+            *text_out = colon + 2;
+        } else {
+            strncpy(sender_out, raw_text, sender_cap - 1);
+            sender_out[sender_cap - 1] = '\0';
+            *text_out = "";
+        }
+    }
+
     void onGroupDataRecv(::mesh::Packet*, uint8_t type, const ::mesh::GroupChannel& ch,
                           uint8_t* data, size_t len) override
     {
-        if (type != PAYLOAD_TYPE_GRP_TXT || !_onMessage) return;
+        if (type != PAYLOAD_TYPE_GRP_TXT && type != PAYLOAD_TYPE_GRP_DATA) return;
+        if (!_onMessage || len <= 5) return;
+
+        // data[0..3] = LE timestamp
+        // data[4]    = text_type (0 = plain text)
+        // data[5..]  = "<sender_name>: <message>\0"  (BaseChatMesh-compatible format)
         if (len > 5) data[len - 1] = '\0';
-        const char* text = (len > 5) ? (const char*)(data + 5) : "";
+
+        const char* raw_text = (const char*)(data + 5);
 
         const char* chname = nullptr;
         for (int i = 0; i < _nChannels; i++) {
@@ -151,24 +179,48 @@ protected:
             }
         }
         const char* channel = chname ? chname : "[group]";
-        _onMessage(channel, channel, text);
+
+        // Parse "<sender_name>: <message>" — this is the format used by
+        // MeshCore's BaseChatMesh (and now by SlopOS sendGroupText).
+        // Falls back to raw_text as sender if no colon separator found.
+        char sender_buf[32];
+        const char* message;
+        parse_group_sender(raw_text, sender_buf, sizeof(sender_buf), &message);
+
+        _onMessage(sender_buf, channel, message);
     }
 
-public:
-    SlopMesh(::mesh::Radio& r, ::mesh::MillisecondClock& ms, ::mesh::RNG& rng,
-             ::mesh::RTCClock& rtc, ::mesh::PacketManager& mgr, ::mesh::MeshTables& tbl)
-        : ::mesh::Mesh(r, ms, rng, rtc, mgr, tbl),
-          _onMessage(nullptr)
+    // ── Anonymous data ────────────────────────────────
+    void onAnonDataRecv(::mesh::Packet* pkt, const uint8_t* secret,
+                        const ::mesh::Identity& sender,
+                        uint8_t* data, size_t len) override
     {
-        _prefs.set_defaults();
-        for (int i = 0; i < SLOP_MAX_CONTACTS; i++) {
-            _contacts[i].out_path_len = OUT_PATH_UNKNOWN;
-        }
+        if (!_onMessage || len <= 4) return;
+        // Data layout: [4-byte LE timestamp][null-terminated text]
+        if (len > 4) data[len - 1] = '\0';
+        const char* text = (const char*)(data + 4);
+
+        // Generate a fallback name from the sender's public key
+        char fallback[16];
+        snprintf(fallback, sizeof(fallback), "anon_%02x", sender.pub_key[0]);
+        _onMessage(fallback, "", text);
     }
 
-    void setMessageCallback(void (*cb)(const char* sender, const char* channel, const char* text)) { _onMessage = cb; }
+    // ── Path learning (from peer-path callbacks) ──────
+    bool onPeerPathRecv(::mesh::Packet* pkt, int sender_idx, const uint8_t* secret,
+                        uint8_t* path, uint8_t path_len, uint8_t extra_type,
+                        uint8_t* extra, uint8_t extra_len) override
+    {
+        if (sender_idx >= _nMatches) return false;
+        int idx = _matchIdxs[sender_idx];
+        if (idx < 0 || idx >= _nContacts) return false;
+        if (!::mesh::Packet::isValidPathLen(path_len)) return false;
+        _contacts[idx].out_path_len =
+            ::mesh::Packet::copyPath(_contacts[idx].out_path, path, path_len);
+        return true;  // accept path — Mesh will send a reciprocal return path
+    }
 
-    // ── Path learning ────────────────────────────────
+    // ── Path learning (from flood path callbacks) ─────
     void onPathRecv(::mesh::Packet* pkt, ::mesh::Identity& sender,
                     uint8_t* path, uint8_t path_len,
                     uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override
@@ -176,8 +228,6 @@ public:
         // Find contact by matching identity
         for (int i = 0; i < _nContacts; i++) {
             if (_contacts[i].id.matches(sender)) {
-                // Use MeshCore's validated path copy — handles encoded path_len
-                // correctly and rejects invalid/oversized paths
                 if (!::mesh::Packet::isValidPathLen(path_len)) {
                     _contacts[i].out_path_len = OUT_PATH_UNKNOWN;
                     return;
@@ -189,17 +239,15 @@ public:
         }
     }
 
+public:
     // ── Trace route ──────────────────────────────────
     bool sendTrace(int contact_idx, uint32_t tag) {
         if (contact_idx < 0 || contact_idx >= _nContacts) return false;
         SlopContact& c = _contacts[contact_idx];
         if (c.out_path_len == OUT_PATH_UNKNOWN) return false;
 
-    ::mesh::Packet* pkt = createTrace(tag, 0, 0);  // auth_code=0 for now
+    ::mesh::Packet* pkt = createTrace(tag, 0, 0);
     if (!pkt) return false;
-    // sendDirect() for TRACE packets treats path_len as raw bytes
-    // (memcpy's path_len bytes into payload). out_path_len is encoded
-    // (hash_count | hash_size_shift), so decode to raw byte count.
     uint8_t hash_count = c.out_path_len & 63;
     uint8_t hash_size = (c.out_path_len >> 6) + 1;
     uint8_t raw_len = hash_count * hash_size;
@@ -208,19 +256,43 @@ public:
         return true;
     }
 
-    // Called when a trace reaches its destination (us) and we have the full path
     void onTraceRecv(::mesh::Packet*, uint32_t tag, uint32_t auth_code, uint8_t flags,
                      const uint8_t* path_snrs, const uint8_t* path_hashes, uint8_t path_len) override
     {
-        // Store the trace result for the UI to display
         _last_trace_tag = tag;
-        // Clamp BEFORE storing — getTracePathLen() returns _last_trace_len,
-        // and the UI buffer size must not be exceeded
         if (path_len > MAX_PATH_SIZE) path_len = MAX_PATH_SIZE;
         _last_trace_len = path_len;
         memcpy(_last_trace_snrs, path_snrs, path_len);
         memcpy(_last_trace_hashes, path_hashes, path_len);
         _has_trace_result = true;
+    }
+
+    // ── ACK ───────────────────────────────────────────
+    void onAckRecv(::mesh::Packet* pkt, uint32_t ack_crc) override {
+        // ACK received — handled internally by MeshCore for reliable delivery
+    }
+
+    // ── Control data ──────────────────────────────────
+    void onControlDataRecv(::mesh::Packet* pkt) override {
+        // Future: handle discovery/control packets
+    }
+
+    // ── Raw custom data ───────────────────────────────
+    void onRawDataRecv(::mesh::Packet* pkt) override {
+        // Future: handle application-specific raw data
+    }
+
+
+    SlopMesh(::mesh::Radio& r, ::mesh::MillisecondClock& ms, ::mesh::RNG& rng,
+             ::mesh::RTCClock& rtc, ::mesh::PacketManager& mgr, ::mesh::MeshTables& tbl)
+        : ::mesh::Mesh(r, ms, rng, rtc, mgr, tbl),
+          _onMessage(nullptr)
+    {
+        _own_name[0] = '\0';
+        _prefs.set_defaults();
+        for (int i = 0; i < SLOP_MAX_CONTACTS; i++) {
+            _contacts[i].out_path_len = OUT_PATH_UNKNOWN;
+        }
     }
 
     bool hasTraceResult() const { return _has_trace_result; }
@@ -232,13 +304,17 @@ public:
     }
     void clearTraceResult() { _has_trace_result = false; }
 
+    void setMessageCallback(void (*cb)(const char* sender, const char* channel, const char* text)) { _onMessage = cb; }
+    void setOwnName(const char* name) {
+        if (!name) return;
+        strncpy(_own_name, name, sizeof(_own_name) - 1);
+        _own_name[sizeof(_own_name) - 1] = '\0';
+    }
+
     // ── Send helpers ──────────────────────────────────
     bool sendTextTo(const char* dest_name, const char* text) {
         for (int i = 0; i < _nContacts; i++) {
             if (strcmp(_contacts[i].name, dest_name) != 0) continue;
-            // Payload: 4-byte LE timestamp + null-terminated text, max 150 chars text
-            // MeshCore caps encrypted payload at MAX_PACKET_PAYLOAD - 16 = 168 bytes.
-            // With 4-byte ts + 1-byte null, 150 chars text → 155 bytes plaintext fits.
             static constexpr size_t MAX_PAYLOAD = 150;
             uint8_t buf[4 + MAX_PAYLOAD];
             uint32_t ts = getRTCClock()->getCurrentTime();
@@ -285,7 +361,6 @@ public:
     }
 
     // ── Channel management ────────────────────────────
-    // Minimal base64 decode (avoids external dependency — MeshCore uses base64.hpp)
     static int decode_b64(const char* in, size_t in_len, uint8_t* out, size_t out_cap) {
         static const char T[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         int o = 0;
@@ -368,19 +443,33 @@ public:
         if (channel_idx < 0 || channel_idx >= _nChannels) return false;
         if (!text || !text[0]) return false;
 
-        // Group text payload: [4-byte LE ts][txt_type=0][null-terminated text]
-        // MeshCore caps encrypted payload at MAX_PACKET_PAYLOAD - 16 = 168 bytes.
-        // With 4+1+1 overhead, 150 chars text → 156 bytes plaintext fits.
+        // Group text payload: [4-byte LE ts][txt_type=0]["<sender_name>: <text>\0"]
+        // Matches BaseChatMesh format for full interoperability.
+        // MeshCore caps encrypted payload at MAX_PACKET_PAYLOAD - CIPHER_BLOCK_SIZE - 3 = 165 bytes.
+        // With 5-byte header + name overhead, we leave generous room.
         static constexpr size_t MAX_GRP_PAYLOAD = 150;
         uint8_t buf[5 + MAX_GRP_PAYLOAD];
         uint32_t ts = getRTCClock()->getCurrentTime();
         memcpy(buf, &ts, 4);
         buf[4] = 0;   // text_type = 0 (plain text)
-        size_t text_len = strnlen(text, MAX_GRP_PAYLOAD - 1);
-        memcpy(buf + 5, text, text_len);
-        buf[5 + text_len] = '\0';   // null-terminate the payload
-        size_t total = 5 + text_len + 1;  // include null terminator in sent length
-        if (total > sizeof(buf)) total = sizeof(buf);  // safety clamp
+
+        // Build "<sender_name>: <text>" — matching BaseChatMesh wire format
+        char* text_start = (char*)(buf + 5);
+        size_t remaining = MAX_GRP_PAYLOAD - 1;
+        int prefix_len = 0;
+        if (_own_name[0]) {
+            prefix_len = snprintf(text_start, remaining, "%s: ", _own_name);
+            if (prefix_len < 0) prefix_len = 0;
+            if ((size_t)prefix_len >= remaining) prefix_len = remaining - 1;
+        }
+        size_t text_len = strnlen(text, remaining - (size_t)prefix_len);
+        if (text_len > remaining - (size_t)prefix_len)
+            text_len = remaining - (size_t)prefix_len - 1;
+        memcpy(text_start + prefix_len, text, text_len);
+        text_start[prefix_len + text_len] = '\0';
+
+        size_t total = 5 + (size_t)prefix_len + text_len + 1;
+        if (total > sizeof(buf)) total = sizeof(buf);
 
         ::mesh::Packet* pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT,
                                                    _channels[channel_idx].channel,
