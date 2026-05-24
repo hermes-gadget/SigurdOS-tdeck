@@ -20,6 +20,7 @@ struct NodePrefs {
     uint8_t cr;             // coding rate denominator (5=4/5, 6=4/6, etc.)
     int8_t  tx_power_dbm;   // dBm (2-22)
     bool    configured;     // false until user explicitly saves settings
+    uint8_t kbd_backlight;  // 0-255, keyboard backlight brightness
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -31,6 +32,7 @@ struct NodePrefs {
         cr   = 0;
         tx_power_dbm = 0;
         configured = false;
+        kbd_backlight = 127;
     }
 };
 

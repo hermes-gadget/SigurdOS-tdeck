@@ -18,8 +18,9 @@ bool prefs_load(NodePrefs& p) {
     p.bw           = nvs.getFloat("bw", 0.0f);
     p.sf           = nvs.getUChar("sf", 0);
     p.cr           = nvs.getUChar("cr", 0);
-    p.tx_power_dbm = nvs.getChar("txpwr", 0);
-    p.configured   = nvs.getBool("cfg", false);
+    p.tx_power_dbm  = nvs.getChar("txpwr", 0);
+    p.configured    = nvs.getBool("cfg", false);
+    p.kbd_backlight = nvs.getUChar("kbd_bl", 127);
 
     nvs.end();
     return true;
@@ -36,6 +37,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("cr", p.cr);
     nvs.putChar("txpwr", p.tx_power_dbm);
     nvs.putBool("cfg", p.configured);
+    nvs.putUChar("kbd_bl", p.kbd_backlight);
 
     nvs.end();
     return true;

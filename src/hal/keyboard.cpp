@@ -19,6 +19,7 @@
 
 #include "keyboard.h"
 #include "tdeck_pins.h"
+#include "prefs.h"
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -89,10 +90,18 @@ bool slopos_keyboard_init()
         return false;
     }
 
-    // Set initial backlight and ensure keyboard is in key mode
+    // Set initial backlight from stored preferences
+    uint8_t brightness = slopos::prefs_get().kbd_backlight;
+    Wire.beginTransmission(KB_I2C_ADDR);
+    Wire.write(CMD_BRIGHTNESS);
+    Wire.write(brightness);
+    if (Wire.endTransmission() != 0) {
+        initialized = false;
+        return false;
+    }
     Wire.beginTransmission(KB_I2C_ADDR);
     Wire.write(CMD_DEFAULT_BRIGHTNESS);
-    Wire.write(KB_BACKLIGHT_DEFAULT);
+    Wire.write(brightness < 30 ? 30 : brightness);
     if (Wire.endTransmission() != 0) {
         initialized = false;
         return false;
