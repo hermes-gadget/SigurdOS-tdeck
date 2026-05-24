@@ -21,6 +21,7 @@ struct NodePrefs {
     int8_t  tx_power_dbm;   // dBm (2-22)
     bool    configured;     // false until user explicitly saves settings
     uint8_t kbd_backlight;  // 0-255, keyboard backlight brightness
+    uint16_t chat_msg_cap;  // Per-channel in-memory message history cap
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -33,6 +34,7 @@ struct NodePrefs {
         tx_power_dbm = 0;
         configured = false;
         kbd_backlight = 127;
+        chat_msg_cap = 200;
     }
 };
 

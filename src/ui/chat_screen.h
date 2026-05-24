@@ -21,6 +21,7 @@
 
 #include "../hal/trackball.h"
 #include <lvgl.h>
+#include <cstdint>
 
 namespace slopos::ui {
 
@@ -38,6 +39,10 @@ bool chat_screen_handle_trackball(SlopOSTrackballEvent event);
 
 // Return the chat input textarea object if the messaging view is active, else nullptr.
 lv_obj_t* chat_screen_get_input_field();
+
+// Chat message history cap (per-channel): get/set and persistence-backed config.
+uint16_t chat_screen_get_message_cap();
+void     chat_screen_set_message_cap(uint16_t cap);
 
 // Persist/restore per-channel message history to/from SPIFFS
 void chat_save_messages();
