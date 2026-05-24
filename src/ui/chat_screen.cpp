@@ -724,6 +724,7 @@ static void create_message_list()
     lv_obj_set_style_bg_opa(msg_list, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(msg_list, 0, 0);
     lv_obj_set_style_pad_all(msg_list, 2, 0);
+    lv_obj_set_style_pad_bottom(msg_list, 0, 0);
     lv_obj_set_flex_flow(msg_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(msg_list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(msg_list, LV_SCROLLBAR_MODE_OFF);
@@ -875,7 +876,7 @@ static void do_send()
     lv_textarea_set_text(input_field, "");
 
     lv_obj_t* last = lv_obj_get_child(msg_list, lv_obj_get_child_cnt(msg_list) - 1);
-    if (last) lv_obj_scroll_to_view(last, LV_ANIM_ON);
+    if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
 }
 
 // ════════════════════════════════════════════════════
@@ -915,6 +916,7 @@ static void create_input_bar()
     lv_obj_set_style_pad_all(input_field, 4, 0);
     lv_textarea_set_one_line(input_field, true);
     lv_textarea_set_placeholder_text(input_field, "Message #channel");
+    lv_textarea_set_max_length(input_field, 160);
     lv_obj_remove_flag(input_field, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_set_style_outline_width(input_field, 0, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_width(input_field, 0, (lv_state_t)(LV_STATE_FOCUSED | LV_STATE_EDITED));
@@ -1171,7 +1173,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
         lv_obj_del(lv_obj_get_child(msg_list, 0));
 
     lv_obj_t* last = lv_obj_get_child(msg_list, lv_obj_get_child_cnt(msg_list) - 1);
-    if (last) lv_obj_scroll_to_view(last, LV_ANIM_ON);
+    if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
 }
 
 // ════════════════════════════════════════════════════
@@ -1182,10 +1184,10 @@ bool chat_screen_handle_trackball(SlopOSTrackballEvent event)
     if (msg_list) {
         switch (event) {
         case SlopOSTrackballEvent::Up:
-            lv_obj_scroll_by(msg_list, 0, -44, LV_ANIM_ON);
+            lv_obj_scroll_by(msg_list, 0, -44, LV_ANIM_OFF);
             return true;
         case SlopOSTrackballEvent::Down:
-            lv_obj_scroll_by(msg_list, 0, 44, LV_ANIM_ON);
+            lv_obj_scroll_by(msg_list, 0, 44, LV_ANIM_OFF);
             return true;
         case SlopOSTrackballEvent::Left:
             show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);

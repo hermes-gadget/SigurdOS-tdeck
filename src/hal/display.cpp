@@ -86,8 +86,10 @@ public:
 
 static LGFX_SlopOS tft;
 static lv_display_t* lv_disp = nullptr;
-static constexpr int LVGL_DRAW_BUF_LINES = 80;  // 80 lines = 50KB from PSRAM — larger buffer reduces partial-render warping on style changes
-static lv_color_t draw_buf[TFT_WIDTH * LVGL_DRAW_BUF_LINES];
+// Full-screen PSRAM buffer: 320×240×2 = 153,600 bytes.
+// Full rendering mode flushes the entire frame in one go,
+// which eliminates the multiple tear lines caused by partial flushes.
+static lv_color_t* draw_buf = nullptr;
 
 // ── Debug: expose last flush area for diagnostics ────────
 #if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
@@ -281,8 +283,21 @@ bool slopos_display_init()
     lv_tick_set_cb(slopos_display_millis);
     lv_disp = lv_display_create(TFT_WIDTH, TFT_HEIGHT);
     lv_display_set_flush_cb(lv_disp, lvgl_flush_cb);
-    lv_display_set_buffers(lv_disp, draw_buf, nullptr, sizeof(draw_buf),
-                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+    draw_buf = (lv_color_t*)heap_caps_malloc(
+        TFT_WIDTH * TFT_HEIGHT * sizeof(lv_color_t),
+        MALLOC_CAP_SPIRAM);
+    if (draw_buf) {
+        lv_display_set_buffers(lv_disp, draw_buf, nullptr,
+                               TFT_WIDTH * TFT_HEIGHT * sizeof(lv_color_t),
+                               LV_DISPLAY_RENDER_MODE_FULL);
+    } else {
+        // Fallback: partial mode with a smaller DRAM buffer
+        static lv_color_t fallback_buf[TFT_WIDTH * 80];
+        lv_display_set_buffers(lv_disp, fallback_buf, nullptr,
+                               sizeof(fallback_buf),
+                               LV_DISPLAY_RENDER_MODE_PARTIAL);
+    }
 
 #if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
     lv_display_add_event_cb(lv_disp, lvgl_invalidate_cb, LV_EVENT_INVALIDATE_AREA, nullptr);
