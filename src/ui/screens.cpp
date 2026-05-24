@@ -22,6 +22,7 @@
 #include "theme.h"
 #include "responsive.h"
 #include "home_screen.h"
+#include "chat_screen.h"
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
 #include "../hal/sdcard.h"
@@ -360,24 +361,26 @@ void heard_screen_show()
 // ════════════════════════════════════════════════════════
 // Contacts — tap-to-message directory
 // ════════════════════════════════════════════════════════
+static char  g_contact_names[32][32];
+static int   g_n_contacts = 0;
+
 void contacts_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Contacts");
 
-    char names[32][32];
-    int n = slopos::mesh::exportContacts(names, 32);
+    g_n_contacts = slopos::mesh::exportContacts(g_contact_names, 32);
 
     // Sort alphabetically
-    for (int i = 0; i < n-1; i++)
-        for (int j = i+1; j < n; j++)
-            if (strcmp(names[j], names[i]) < 0) {
+    for (int i = 0; i < g_n_contacts-1; i++)
+        for (int j = i+1; j < g_n_contacts; j++)
+            if (strcmp(g_contact_names[j], g_contact_names[i]) < 0) {
                 char tmp[32];
-                strncpy(tmp, names[i], 31); tmp[31] = '\0';
-                strncpy(names[i], names[j], 31); names[i][31] = '\0';
-                strncpy(names[j], tmp, 31); names[j][31] = '\0';
+                strncpy(tmp, g_contact_names[i], 31); tmp[31] = '\0';
+                strncpy(g_contact_names[i], g_contact_names[j], 31); g_contact_names[i][31] = '\0';
+                strncpy(g_contact_names[j], tmp, 31); g_contact_names[j][31] = '\0';
             }
 
-    if (n == 0) {
+    if (g_n_contacts == 0) {
         lv_obj_t* info = lv_label_create(scr);
         lv_label_set_text(info,
             "No contacts yet.\n\n"
@@ -400,13 +403,16 @@ void contacts_screen_show()
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(list, 0, 0);
 
-    for (int i = 0; i < n; i++) {
-        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_CALL, names[i]);
+    for (int i = 0; i < g_n_contacts; i++) {
+        lv_obj_t* btn = lv_list_add_btn(list, LV_SYMBOL_CALL, g_contact_names[i]);
         lv_obj_set_style_bg_color(btn,
             lv_color_hex(i % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
-        lv_obj_add_event_cb(btn, [](lv_event_t*) {
-            navigate_to(Screen::Chat);
-        }, LV_EVENT_CLICKED, nullptr);
+        int idx = i;
+        lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+            int ci = (int)(intptr_t)lv_event_get_user_data(e);
+            if (ci >= 0 && ci < g_n_contacts)
+                chat_screen_open_dm(g_contact_names[ci]);
+        }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
     }
 
     show_screen(scr);

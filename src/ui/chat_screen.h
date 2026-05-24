@@ -24,6 +24,9 @@ namespace slopos::ui {
 // Create and show the chat screen
 void chat_screen_show();
 
+// Open a direct message conversation with a specific contact
+void chat_screen_open_dm(const char* contact_name);
+
 // Add a message to the chat display
 void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self);
 

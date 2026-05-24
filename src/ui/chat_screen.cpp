@@ -978,6 +978,37 @@ static void show_add_channel_options(lv_obj_t* parent) {
     }, LV_EVENT_ALL, (void*)fb);
 }
 
+void chat_screen_open_dm(const char* contact_name)
+{
+    refresh_channels();
+
+    char dm_name[32];
+    snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
+
+    // Check if DM channel already exists
+    int idx = -1;
+    for (int i = 0; i < dyn_count; i++) {
+        if (strcmp(dyn_channels[i], dm_name) == 0) { idx = i; break; }
+    }
+
+    // Create DM channel if not found
+    if (idx < 0) {
+        if (dyn_count >= MAX_CHANNELS) {
+            show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
+            return;
+        }
+        idx = dyn_count++;
+        strncpy(dyn_channels[idx], dm_name, 31);
+        dyn_channels[idx][31] = '\0';
+        ch_msg_count[idx] = 0;
+        ch_meta[idx].preview[0] = '\0';
+        ch_meta[idx].timestamp = 0;
+        ch_meta[idx].unread = 0;
+    }
+
+    open_channel_messaging(idx);
+}
+
 void chat_screen_show()
 {
     show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
