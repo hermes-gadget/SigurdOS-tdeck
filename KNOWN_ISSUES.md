@@ -113,17 +113,8 @@ Common commands that should be documented:
 
 ## Radio Setup
 
-### Custom RF parameters
-The Radio Setup screen only offers preset bands (e.g. 868 MHz, 915 MHz) with fixed spreading factor, bandwidth, and coding rate. Users who want to operate on non-standard frequencies or tweak individual RF parameters can't — they're locked to presets.
-
-**What's needed:** A "Custom" option in the frequency selector that opens a popup window where the user can individually configure:
-- Frequency (MHz)
-- Spreading Factor (SF7–SF12)
-- Bandwidth (125 kHz, 250 kHz, 500 kHz)
-- Coding Rate (4/5 through 4/8)
-- Transmit power (dBm)
-
-The popup should follow the pixel theme — dark background, 2px borders, cyan accents. Each parameter should be a selectable/dial control, not a text input. Once configured, the custom values should persist in NVS like the presets do.
+### Custom RF parameters — ✅ Fixed
+The Radio Setup screen now has a "Custom RF..." button below the frequency presets that opens a pixel-themed dialog with +/- dial controls for all five radio parameters (frequency, spreading factor, bandwidth, coding rate, transmit power). Values persist through the existing Save & Reboot flow.
 
 ---
 

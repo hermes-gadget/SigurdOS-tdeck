@@ -1537,6 +1537,236 @@ void advertise_screen_show()
 }
 
 // ════════════════════════════════════════════════════════
+// Custom RF dialog — dial controls for all radio params
+// ════════════════════════════════════════════════════════
+
+// Radio Setup state — shared between main screen and Custom RF dialog
+static float s_rf_freq = 869.618f;
+static int   s_rf_sf   = 8;
+static float s_rf_bw   = 62.5f;
+static int   s_rf_cr   = 5;
+static int   s_rf_pwr  = 22;
+
+struct CustomRFContext {
+    float freq;
+    int   sf;
+    float bw;
+    int   cr;
+    int   pwr;
+    lv_obj_t* freq_lbl;
+    lv_obj_t* sf_lbl;
+    lv_obj_t* bw_lbl;
+    lv_obj_t* cr_lbl;
+    lv_obj_t* pwr_lbl;
+    lv_obj_t*   dialog;
+    lv_timer_t* timer;
+};
+
+static void custom_rf_dialog(lv_obj_t* parent)
+{
+    using namespace slopos::theme;
+    using responsive::dialog_size;
+
+    auto dlg_sz = dialog_size(290, 210);
+    lv_obj_t* dialog = lv_obj_create(parent);
+    lv_obj_set_size(dialog, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dialog);
+    lv_obj_set_style_bg_color(dialog, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(dialog, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(dialog, 0, 0);
+    lv_obj_set_style_border_width(dialog, PIXEL_BORDER, 0);
+    lv_obj_set_style_border_color(dialog, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_pad_all(dialog, 6, 0);
+
+    // Context for temp values and label refs
+    CustomRFContext* ctx = new CustomRFContext();
+    ctx->freq = s_rf_freq;
+    ctx->sf   = s_rf_sf;
+    ctx->bw   = s_rf_bw;
+    ctx->cr   = s_rf_cr;
+    ctx->pwr  = s_rf_pwr;
+    ctx->freq_lbl = nullptr;
+    ctx->sf_lbl   = nullptr;
+    ctx->bw_lbl   = nullptr;
+    ctx->cr_lbl   = nullptr;
+    ctx->pwr_lbl  = nullptr;
+    ctx->dialog   = dialog;
+    ctx->timer    = nullptr;
+
+    // Title
+    lv_obj_t* title = lv_label_create(dialog);
+    lv_label_set_text(title, "Custom RF Parameters");
+    lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
+
+    // ── Row helper struct for button callbacks ──────
+    struct BtnCtx { CustomRFContext* ctx; uint8_t field; };
+    enum { RF_FREQ_MINUS, RF_FREQ_PLUS, RF_SF_MINUS, RF_SF_PLUS,
+           RF_BW_MINUS, RF_BW_PLUS, RF_CR_MINUS, RF_CR_PLUS,
+           RF_PWR_MINUS, RF_PWR_PLUS };
+
+    auto dial_click = [](lv_event_t* e) {
+        BtnCtx* b = (BtnCtx*)lv_event_get_user_data(e);
+        if (!b || !b->ctx) return;
+        auto* c = b->ctx;
+        switch (b->field) {
+            case RF_FREQ_MINUS: if (c->freq > 400.0f) c->freq -= 0.1f; break;
+            case RF_FREQ_PLUS:  if (c->freq < 930.0f) c->freq += 0.1f; break;
+            case RF_SF_MINUS:   if (c->sf > 6)  c->sf--;  break;
+            case RF_SF_PLUS:    if (c->sf < 12) c->sf++;  break;
+            case RF_BW_MINUS: {
+                float v[] = {125.0f,62.5f,41.7f,31.25f,20.8f,15.6f,10.4f,7.8f};
+                for (auto& x : v) if (c->bw > x + 0.01f) { c->bw = x; break; }
+                break;
+            }
+            case RF_BW_PLUS: {
+                float v[] = {7.8f,10.4f,15.6f,20.8f,31.25f,41.7f,62.5f,125.0f,250.0f,500.0f};
+                for (auto& x : v) if (c->bw < x - 0.01f) { c->bw = x; break; }
+                break;
+            }
+            case RF_CR_MINUS:   if (c->cr > 5) c->cr--;  break;
+            case RF_CR_PLUS:    if (c->cr < 8) c->cr++;  break;
+            case RF_PWR_MINUS:  if (c->pwr > 2)  c->pwr--; break;
+            case RF_PWR_PLUS:   if (c->pwr < 22) c->pwr++; break;
+        }
+    };
+
+    // ── Helper to create a dial row ────────────────
+    int row_y = 18;
+    int row_step = 28;
+    int btn_w = 28;
+    int btn_h = 22;
+
+    auto add_row = [&](const char* name, lv_obj_t** out_lbl,
+                       uint8_t minus_field, uint8_t plus_field)
+    {
+        // Label
+        lv_obj_t* l = lv_label_create(dialog);
+        lv_label_set_text(l, name);
+        lv_obj_set_style_text_color(l, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 4, row_y + 3);
+
+        // Value label
+        lv_obj_t* vl = lv_label_create(dialog);
+        lv_obj_set_style_text_color(vl, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(vl, &lv_font_montserrat_10, 0);
+        lv_obj_align(vl, LV_ALIGN_TOP_LEFT, 74, row_y + 3);
+        *out_lbl = vl;
+
+        // Minus button
+        BtnCtx* m_ctx = new BtnCtx{ctx, minus_field};
+        auto* minus = lv_btn_create(dialog);
+        lv_obj_set_size(minus, btn_w, btn_h);
+        lv_obj_align(minus, LV_ALIGN_TOP_LEFT, dlg_sz.w - 64, row_y);
+        lv_obj_set_style_bg_color(minus, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_radius(minus, 0, 0);
+        lv_obj_set_style_border_width(minus, 0, 0);
+        auto* ml = lv_label_create(minus); lv_label_set_text(ml, "-"); lv_obj_center(ml);
+        lv_obj_add_event_cb(minus, dial_click, LV_EVENT_CLICKED, m_ctx);
+
+        // Plus button
+        BtnCtx* p_ctx = new BtnCtx{ctx, plus_field};
+        auto* plus = lv_btn_create(dialog);
+        lv_obj_set_size(plus, btn_w, btn_h);
+        lv_obj_align(plus, LV_ALIGN_TOP_LEFT, dlg_sz.w - 30, row_y);
+        lv_obj_set_style_bg_color(plus, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_radius(plus, 0, 0);
+        lv_obj_set_style_border_width(plus, 0, 0);
+        auto* pl = lv_label_create(plus); lv_label_set_text(pl, "+"); lv_obj_center(pl);
+        lv_obj_add_event_cb(plus, dial_click, LV_EVENT_CLICKED, p_ctx);
+
+        row_y += row_step;
+    };
+
+    // ── 5 parameter rows ──────────────────────────
+    add_row("Frequency", &ctx->freq_lbl, RF_FREQ_MINUS, RF_FREQ_PLUS);
+    add_row("SF",        &ctx->sf_lbl,   RF_SF_MINUS,   RF_SF_PLUS);
+    add_row("BW",        &ctx->bw_lbl,   RF_BW_MINUS,   RF_BW_PLUS);
+    add_row("CR",        &ctx->cr_lbl,   RF_CR_MINUS,   RF_CR_PLUS);
+    add_row("TX Pwr",    &ctx->pwr_lbl,  RF_PWR_MINUS,  RF_PWR_PLUS);
+
+    // ── Value label refresh timer ─────────────────────
+    ctx->timer = lv_timer_create([](lv_timer_t* t) {
+        CustomRFContext* c = (CustomRFContext*)lv_timer_get_user_data(t);
+        if (!c) return;
+        char buf[24];
+
+        snprintf(buf, sizeof(buf), "%.3f MHz", c->freq);
+        lv_label_set_text(c->freq_lbl, buf);
+
+        snprintf(buf, sizeof(buf), "SF%d", c->sf);
+        lv_label_set_text(c->sf_lbl, buf);
+
+        if (c->bw < 1000.0f)
+            snprintf(buf, sizeof(buf), "%.1f kHz", c->bw);
+        else
+            snprintf(buf, sizeof(buf), "%.0f kHz", c->bw);
+        lv_label_set_text(c->bw_lbl, buf);
+
+        snprintf(buf, sizeof(buf), "4/%d", c->cr);
+        lv_label_set_text(c->cr_lbl, buf);
+
+        snprintf(buf, sizeof(buf), "%d dBm", c->pwr);
+        lv_label_set_text(c->pwr_lbl, buf);
+    }, 100, ctx);
+
+    // ── Save / Cancel buttons ─────────────────────────
+    int btn_spacing = 8;
+    int btn_w2 = (dlg_sz.w - 16 - btn_spacing) / 2;
+
+    // Apply button
+    auto* save_btn = lv_btn_create(dialog);
+    lv_obj_set_size(save_btn, btn_w2, 28);
+    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 6, -(btn_spacing));
+    lv_obj_set_style_bg_color(save_btn, lv_color_hex(ACCENT_GREEN), 0);
+    lv_obj_set_style_radius(save_btn, 0, 0);
+    auto* sv_lbl = lv_label_create(save_btn);
+    lv_label_set_text(sv_lbl, "Apply");
+    lv_obj_center(sv_lbl);
+    lv_obj_add_event_cb(save_btn, [](lv_event_t* e) {
+        CustomRFContext* c = (CustomRFContext*)lv_event_get_user_data(e);
+        if (!c) return;
+        if (c->timer) lv_timer_del(c->timer);
+        s_rf_freq = c->freq;
+        s_rf_sf   = c->sf;
+        s_rf_bw   = c->bw;
+        s_rf_cr   = c->cr;
+        s_rf_pwr  = c->pwr;
+        lv_obj_del(c->dialog);
+        delete c;
+    }, LV_EVENT_CLICKED, ctx);
+
+    // Cancel button
+    auto* cancel_btn = lv_btn_create(dialog);
+    lv_obj_set_size(cancel_btn, btn_w2, 28);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 6 + btn_w2 + btn_spacing, -(btn_spacing));
+    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_border_width(cancel_btn, PIXEL_BORDER, 0);
+    lv_obj_set_style_border_color(cancel_btn, lv_color_hex(DIVIDER), 0);
+    lv_obj_set_style_radius(cancel_btn, 0, 0);
+    auto* cn_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cn_lbl, "Cancel");
+    lv_obj_set_style_text_color(cn_lbl, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_center(cn_lbl);
+    lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
+        CustomRFContext* c = (CustomRFContext*)lv_event_get_user_data(e);
+        if (!c) return;
+        if (c->timer) lv_timer_del(c->timer);
+        lv_obj_del(c->dialog);
+        delete c;
+    }, LV_EVENT_CLICKED, ctx);
+
+    // Cleanup on dialog delete (back button, etc.)
+    lv_obj_add_event_cb(dialog, [](lv_event_t* e) {
+        CustomRFContext* c = (CustomRFContext*)lv_event_get_user_data(e);
+        if (c && c->timer) lv_timer_del(c->timer);
+        delete c;
+    }, LV_EVENT_DELETE, ctx);
+}
+
+// ════════════════════════════════════════════════════════
 // Radio Setup — configure frequency, SF, power
 // ════════════════════════════════════════════════════════
 void radio_setup_screen_show()
@@ -1545,14 +1775,11 @@ void radio_setup_screen_show()
 
     const slopos::NodePrefs& p = slopos::prefs_get();
 
-    static float s_freq = 869.618f;
-    static int   s_sf   = 8;
-    static int   s_cr   = 5;
-    static int   s_pwr  = 22;
-    s_freq = p.configured ? p.freq          : 869.618f;
-    s_sf   = p.configured ? p.sf            : 8;
-    s_cr   = p.configured ? p.cr            : 5;
-    s_pwr  = p.configured ? p.tx_power_dbm  : 22;
+    s_rf_freq = p.configured ? p.freq          : 869.618f;
+    s_rf_sf   = p.configured ? p.sf            : 8;
+    s_rf_bw   = p.configured ? p.bw            : 62.5f;
+    s_rf_cr   = p.configured ? p.cr            : 5;
+    s_rf_pwr  = p.configured ? p.tx_power_dbm  : 22;
 
     // Warning (2 lines — compact to save vertical space)
     auto* warn = lv_label_create(scr);
@@ -1581,7 +1808,7 @@ void radio_setup_screen_show()
         lv_obj_set_size(btn, 200, 18);
         lv_obj_align(btn, LV_ALIGN_TOP_LEFT, 8, y);
         lv_obj_set_style_bg_color(btn, lv_color_hex(
-            fabsf(s_freq - f.freq) < 0.001f ? 0x2a5a2a : BG_TERTIARY), 0);
+            fabsf(s_rf_freq - f.freq) < 0.001f ? 0x2a5a2a : BG_TERTIARY), 0);
         lv_obj_set_style_radius(btn, 0, 0);
         lv_obj_set_style_border_width(btn, 0, 0);
         auto* tl = lv_label_create(btn);
@@ -1590,12 +1817,28 @@ void radio_setup_screen_show()
         lv_obj_center(tl);
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
             float* pf = (float*)lv_event_get_user_data(e);
-            s_freq = *pf;
+            s_rf_freq = *pf;
             lv_obj_set_style_bg_color((lv_obj_t*)lv_event_get_target(e),
                 lv_color_hex(0x2a5a2a), 0);
         }, LV_EVENT_CLICKED, (void*)&f.freq);
         y += 20;
     }
+
+    // Custom RF button
+    auto* custom_btn = lv_btn_create(scr);
+    lv_obj_set_size(custom_btn, 200, 18);
+    lv_obj_align(custom_btn, LV_ALIGN_TOP_LEFT, 8, y);
+    lv_obj_set_style_bg_color(custom_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(custom_btn, 0, 0);
+    lv_obj_set_style_border_width(custom_btn, 0, 0);
+    auto* ctl = lv_label_create(custom_btn);
+    lv_label_set_text(ctl, "Custom RF...");
+    lv_obj_set_style_text_font(ctl, &lv_font_montserrat_10, 0);
+    lv_obj_center(ctl);
+    lv_obj_add_event_cb(custom_btn, [](lv_event_t*) {
+        custom_rf_dialog(lv_scr_act());
+    }, LV_EVENT_CLICKED, nullptr);
+    y += 20;
 
     // SF + TX power side-by-side on one row — centered layout
     int row_y = y + 2;
@@ -1603,7 +1846,7 @@ void radio_setup_screen_show()
     char buf[64];
 
     // SF (left side: label at 8, +/- at mid-58/mid-24)
-    snprintf(buf, sizeof(buf), "SF: %d", s_sf);
+    snprintf(buf, sizeof(buf), "SF: %d", s_rf_sf);
     auto* sf_lbl = lv_label_create(scr);
     lv_label_set_text(sf_lbl, buf);
     lv_obj_set_style_text_color(sf_lbl, lv_color_hex(TEXT_PRIMARY), 0);
@@ -1617,8 +1860,8 @@ void radio_setup_screen_show()
     lv_obj_set_style_radius(sf_plus, 0, 0);
     auto* spl = lv_label_create(sf_plus); lv_label_set_text(spl, "+"); lv_obj_center(spl);
     lv_obj_add_event_cb(sf_plus, [](lv_event_t* e) {
-        if (s_sf < 12) { s_sf++;
-            char b[16]; snprintf(b, sizeof(b), "SF: %d", s_sf);
+        if (s_rf_sf < 12) { s_rf_sf++;
+            char b[16]; snprintf(b, sizeof(b), "SF: %d", s_rf_sf);
             lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
     }, LV_EVENT_CLICKED, (void*)sf_lbl);
 
@@ -1629,13 +1872,13 @@ void radio_setup_screen_show()
     lv_obj_set_style_radius(sf_minus, 0, 0);
     auto* sml = lv_label_create(sf_minus); lv_label_set_text(sml, "-"); lv_obj_center(sml);
     lv_obj_add_event_cb(sf_minus, [](lv_event_t* e) {
-        if (s_sf > 6) { s_sf--;
-            char b[16]; snprintf(b, sizeof(b), "SF: %d", s_sf);
+        if (s_rf_sf > 6) { s_rf_sf--;
+            char b[16]; snprintf(b, sizeof(b), "SF: %d", s_rf_sf);
             lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
     }, LV_EVENT_CLICKED, (void*)sf_lbl);
 
     // TX power (right side: label at mid+4, +/- at DISPLAY_W-78/DISPLAY_W-44)
-    snprintf(buf, sizeof(buf), "TX: %d dBm", s_pwr);
+    snprintf(buf, sizeof(buf), "TX: %d dBm", s_rf_pwr);
     auto* pwr_lbl = lv_label_create(scr);
     lv_label_set_text(pwr_lbl, buf);
     lv_obj_set_style_text_color(pwr_lbl, lv_color_hex(TEXT_PRIMARY), 0);
@@ -1649,8 +1892,8 @@ void radio_setup_screen_show()
     lv_obj_set_style_radius(pwr_plus, 0, 0);
     auto* ppl = lv_label_create(pwr_plus); lv_label_set_text(ppl, "+"); lv_obj_center(ppl);
     lv_obj_add_event_cb(pwr_plus, [](lv_event_t* e) {
-        if (s_pwr < 22) { s_pwr++;
-            char b[24]; snprintf(b, sizeof(b), "TX: %d dBm", s_pwr);
+        if (s_rf_pwr < 22) { s_rf_pwr++;
+            char b[24]; snprintf(b, sizeof(b), "TX: %d dBm", s_rf_pwr);
             lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
     }, LV_EVENT_CLICKED, (void*)pwr_lbl);
 
@@ -1661,8 +1904,8 @@ void radio_setup_screen_show()
     lv_obj_set_style_radius(pwr_minus, 0, 0);
     auto* pml = lv_label_create(pwr_minus); lv_label_set_text(pml, "-"); lv_obj_center(pml);
     lv_obj_add_event_cb(pwr_minus, [](lv_event_t* e) {
-        if (s_pwr > 2) { s_pwr--;
-            char b[24]; snprintf(b, sizeof(b), "TX: %d dBm", s_pwr);
+        if (s_rf_pwr > 2) { s_rf_pwr--;
+            char b[24]; snprintf(b, sizeof(b), "TX: %d dBm", s_rf_pwr);
             lv_label_set_text((lv_obj_t*)lv_event_get_user_data(e), b); }
     }, LV_EVENT_CLICKED, (void*)pwr_lbl);
 
@@ -1677,11 +1920,11 @@ void radio_setup_screen_show()
     lv_obj_center(svl);
     lv_obj_add_event_cb(save_btn, [](lv_event_t*) {
         slopos::NodePrefs np = slopos::prefs_get();
-        np.freq         = s_freq;
-        np.bw           = 62.5f;
-        np.sf           = (uint8_t)s_sf;
-        np.cr           = (uint8_t)s_cr;
-        np.tx_power_dbm = (int8_t)s_pwr;
+        np.freq         = s_rf_freq;
+        np.bw           = s_rf_bw;
+        np.sf           = (uint8_t)s_rf_sf;
+        np.cr           = (uint8_t)s_rf_cr;
+        np.tx_power_dbm = (int8_t)s_rf_pwr;
         np.configured   = true;
         slopos::prefs_set(np);
         slopos::prefs_save(np);
