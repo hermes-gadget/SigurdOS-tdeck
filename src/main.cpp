@@ -21,6 +21,7 @@ static slopos::TDeckBoard board;
 
 void setup()
 {
+    delay(250);  // Let WebSerial port close before claiming USB CDC endpoint
     Serial.begin(115200);
     delay(500);
 #if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
