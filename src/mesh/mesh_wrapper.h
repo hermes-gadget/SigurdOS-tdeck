@@ -51,6 +51,9 @@ int   getLastRSSI();
 float getLastSNR();
 
 bool sendAdvert();
+uint32_t getLastAdvertTime();
+bool     getLastAdvertSuccess();
+bool     getLastAdvertUsedGps();
 void saveState();
 void saveChannels();
 void loadChannels();

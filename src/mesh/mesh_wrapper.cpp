@@ -45,6 +45,9 @@ static slopos::mesh::SlopMesh*   g_mesh = nullptr;
 
 static bool initialized = false;
 static char own_name[32] = "SlopOS";
+static uint32_t last_advert_time = 0;
+static bool     last_advert_success = false;
+static bool     last_advert_used_gps = false;
 
 // ════════════════════════════════════════════════════
 // Message queue
@@ -335,14 +338,36 @@ int getLastRSSI()     { return (int)radio_driver.getLastRSSI(); }
 float getLastSNR()    { return radio_driver.getLastSNR(); }
 
 bool sendAdvert() {
-    if (!g_mesh) return false;
-    if (slopos_gps_has_fix()) {
+    bool has_fix = slopos_gps_has_fix();
+    last_advert_time = getCurrentTime();
+    last_advert_used_gps = has_fix;
+
+    if (!g_mesh) {
+        last_advert_success = false;
+        return false;
+    }
+
+    if (has_fix) {
         g_mesh->broadcastAdvert(own_name,
             slopos_gps_latitude(), slopos_gps_longitude());
     } else {
         g_mesh->broadcastAdvert(own_name);
     }
+
+    last_advert_success = true;
     return true;
+}
+
+uint32_t getLastAdvertTime() {
+    return last_advert_time;
+}
+
+bool getLastAdvertSuccess() {
+    return last_advert_success;
+}
+
+bool getLastAdvertUsedGps() {
+    return last_advert_used_gps;
 }
 
 uint32_t getCurrentTime() {
