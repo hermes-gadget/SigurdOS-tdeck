@@ -1547,27 +1547,18 @@ static float s_rf_bw   = 62.5f;
 static int   s_rf_cr   = 5;
 static int   s_rf_pwr  = 22;
 
-struct CustomRFContext {
-    float freq;
-    int   sf;
-    float bw;
-    int   cr;
-    int   pwr;
-    lv_obj_t* freq_lbl;
-    lv_obj_t* sf_lbl;
-    lv_obj_t* bw_lbl;
-    lv_obj_t* cr_lbl;
-    lv_obj_t* pwr_lbl;
-    lv_obj_t*   dialog;
-    lv_timer_t* timer;
-};
-
 static void custom_rf_dialog(lv_obj_t* parent)
 {
     using namespace slopos::theme;
     using responsive::dialog_size;
 
-    auto dlg_sz = dialog_size(290, 210);
+    // 5 rows: title + 5 inputs + 2 buttons
+    int row_h = 26;
+    int pad_top = 4;
+    int pad_bot = 34;
+    int dlg_h = pad_top + 14 + 5 * row_h + pad_bot;
+
+    auto dlg_sz = dialog_size(300, dlg_h);
     lv_obj_t* dialog = lv_obj_create(parent);
     lv_obj_set_size(dialog, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dialog);
@@ -1576,22 +1567,7 @@ static void custom_rf_dialog(lv_obj_t* parent)
     lv_obj_set_style_radius(dialog, 0, 0);
     lv_obj_set_style_border_width(dialog, PIXEL_BORDER, 0);
     lv_obj_set_style_border_color(dialog, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_pad_all(dialog, 6, 0);
-
-    // Context for temp values and label refs
-    CustomRFContext* ctx = new CustomRFContext();
-    ctx->freq = s_rf_freq;
-    ctx->sf   = s_rf_sf;
-    ctx->bw   = s_rf_bw;
-    ctx->cr   = s_rf_cr;
-    ctx->pwr  = s_rf_pwr;
-    ctx->freq_lbl = nullptr;
-    ctx->sf_lbl   = nullptr;
-    ctx->bw_lbl   = nullptr;
-    ctx->cr_lbl   = nullptr;
-    ctx->pwr_lbl  = nullptr;
-    ctx->dialog   = dialog;
-    ctx->timer    = nullptr;
+    lv_obj_set_style_pad_all(dialog, 4, 0);
 
     // Title
     lv_obj_t* title = lv_label_create(dialog);
@@ -1600,148 +1576,130 @@ static void custom_rf_dialog(lv_obj_t* parent)
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
 
-    // ── Row helper struct for button callbacks ──────
-    struct BtnCtx { CustomRFContext* ctx; uint8_t field; };
-    enum { RF_FREQ_MINUS, RF_FREQ_PLUS, RF_SF_MINUS, RF_SF_PLUS,
-           RF_BW_MINUS, RF_BW_PLUS, RF_CR_MINUS, RF_CR_PLUS,
-           RF_PWR_MINUS, RF_PWR_PLUS };
+    // ── 5 input fields ─────────────────────────────
+    // Label and textarea side by side per row
+    // Label width: ~50px, textarea: rest
+    int inp_x = 54;
+    int inp_w = dlg_sz.w - inp_x - 6;
 
-    auto dial_click = [](lv_event_t* e) {
-        BtnCtx* b = (BtnCtx*)lv_event_get_user_data(e);
-        if (!b || !b->ctx) return;
-        auto* c = b->ctx;
-        switch (b->field) {
-            case RF_FREQ_MINUS: if (c->freq > 400.0f) c->freq -= 0.1f; break;
-            case RF_FREQ_PLUS:  if (c->freq < 930.0f) c->freq += 0.1f; break;
-            case RF_SF_MINUS:   if (c->sf > 6)  c->sf--;  break;
-            case RF_SF_PLUS:    if (c->sf < 12) c->sf++;  break;
-            case RF_BW_MINUS: {
-                float v[] = {125.0f,62.5f,41.7f,31.25f,20.8f,15.6f,10.4f,7.8f};
-                for (auto& x : v) if (c->bw > x + 0.01f) { c->bw = x; break; }
-                break;
-            }
-            case RF_BW_PLUS: {
-                float v[] = {7.8f,10.4f,15.6f,20.8f,31.25f,41.7f,62.5f,125.0f,250.0f,500.0f};
-                for (auto& x : v) if (c->bw < x - 0.01f) { c->bw = x; break; }
-                break;
-            }
-            case RF_CR_MINUS:   if (c->cr > 5) c->cr--;  break;
-            case RF_CR_PLUS:    if (c->cr < 8) c->cr++;  break;
-            case RF_PWR_MINUS:  if (c->pwr > 2)  c->pwr--; break;
-            case RF_PWR_PLUS:   if (c->pwr < 22) c->pwr++; break;
-        }
+    struct Field {
+        const char* label;
+        char        initial[16];
+        lv_obj_t*   ta;
     };
 
-    // ── Helper to create a dial row ────────────────
+    char freq_buf[16], sf_buf[8], bw_buf[12], cr_buf[8], pwr_buf[8];
+    snprintf(freq_buf, sizeof(freq_buf), "%.3f", s_rf_freq);
+    snprintf(sf_buf,   sizeof(sf_buf),   "%d",   s_rf_sf);
+    snprintf(bw_buf,   sizeof(bw_buf),   "%.1f",  s_rf_bw);
+    snprintf(cr_buf,   sizeof(cr_buf),   "%d",   s_rf_cr);
+    snprintf(pwr_buf,  sizeof(pwr_buf),  "%d",   s_rf_pwr);
+
+    Field fields[5] = {
+        {"Freq", "", nullptr},
+        {"SF",   "", nullptr},
+        {"BW",   "", nullptr},
+        {"CR",   "", nullptr},
+        {"Pwr",  "", nullptr},
+    };
+    memcpy(fields[0].initial, freq_buf, sizeof(freq_buf));
+    memcpy(fields[1].initial, sf_buf,   sizeof(sf_buf));
+    memcpy(fields[2].initial, bw_buf,   sizeof(bw_buf));
+    memcpy(fields[3].initial, cr_buf,   sizeof(cr_buf));
+    memcpy(fields[4].initial, pwr_buf,  sizeof(pwr_buf));
+
     int row_y = 18;
-    int row_step = 28;
-    int btn_w = 28;
-    int btn_h = 22;
+    lv_group_t* grp = lv_group_get_default();
 
-    auto add_row = [&](const char* name, lv_obj_t** out_lbl,
-                       uint8_t minus_field, uint8_t plus_field)
-    {
+    for (int i = 0; i < 5; i++) {
         // Label
-        lv_obj_t* l = lv_label_create(dialog);
-        lv_label_set_text(l, name);
-        lv_obj_set_style_text_color(l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
-        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 4, row_y + 3);
+        lv_obj_t* lbl = lv_label_create(dialog);
+        lv_label_set_text(lbl, fields[i].label);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 4, row_y + 4);
 
-        // Value label
-        lv_obj_t* vl = lv_label_create(dialog);
-        lv_obj_set_style_text_color(vl, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(vl, &lv_font_montserrat_10, 0);
-        lv_obj_align(vl, LV_ALIGN_TOP_LEFT, 74, row_y + 3);
-        *out_lbl = vl;
+        // Input
+        lv_obj_t* ta = lv_textarea_create(dialog);
+        lv_obj_set_size(ta, inp_w, 20);
+        lv_obj_align(ta, LV_ALIGN_TOP_LEFT, inp_x, row_y + 1);
+        lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
+        lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(ta, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_border_width(ta, 0, 0);
+        lv_textarea_set_one_line(ta, true);
+        lv_textarea_set_text(ta, fields[i].initial);
+        fields[i].ta = ta;
 
-        // Minus button
-        BtnCtx* m_ctx = new BtnCtx{ctx, minus_field};
-        auto* minus = lv_btn_create(dialog);
-        lv_obj_set_size(minus, btn_w, btn_h);
-        lv_obj_align(minus, LV_ALIGN_TOP_LEFT, dlg_sz.w - 64, row_y);
-        lv_obj_set_style_bg_color(minus, lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_radius(minus, 0, 0);
-        lv_obj_set_style_border_width(minus, 0, 0);
-        auto* ml = lv_label_create(minus); lv_label_set_text(ml, "-"); lv_obj_center(ml);
-        lv_obj_add_event_cb(minus, dial_click, LV_EVENT_CLICKED, m_ctx);
+        if (grp) lv_group_add_obj(grp, ta);
 
-        // Plus button
-        BtnCtx* p_ctx = new BtnCtx{ctx, plus_field};
-        auto* plus = lv_btn_create(dialog);
-        lv_obj_set_size(plus, btn_w, btn_h);
-        lv_obj_align(plus, LV_ALIGN_TOP_LEFT, dlg_sz.w - 30, row_y);
-        lv_obj_set_style_bg_color(plus, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_radius(plus, 0, 0);
-        lv_obj_set_style_border_width(plus, 0, 0);
-        auto* pl = lv_label_create(plus); lv_label_set_text(pl, "+"); lv_obj_center(pl);
-        lv_obj_add_event_cb(plus, dial_click, LV_EVENT_CLICKED, p_ctx);
+        row_y += row_h;
+    }
 
-        row_y += row_step;
-    };
+    // Focus first field
+    if (grp && fields[0].ta) lv_group_focus_obj(fields[0].ta);
 
-    // ── 5 parameter rows ──────────────────────────
-    add_row("Frequency", &ctx->freq_lbl, RF_FREQ_MINUS, RF_FREQ_PLUS);
-    add_row("SF",        &ctx->sf_lbl,   RF_SF_MINUS,   RF_SF_PLUS);
-    add_row("BW",        &ctx->bw_lbl,   RF_BW_MINUS,   RF_BW_PLUS);
-    add_row("CR",        &ctx->cr_lbl,   RF_CR_MINUS,   RF_CR_PLUS);
-    add_row("TX Pwr",    &ctx->pwr_lbl,  RF_PWR_MINUS,  RF_PWR_PLUS);
+    // ── Feedback label ─────────────────────────────
+    lv_obj_t* fb = lv_label_create(dialog);
+    lv_obj_set_style_text_color(fb, lv_color_hex(ACCENT_RED), 0);
+    lv_obj_set_style_text_font(fb, &lv_font_montserrat_10, 0);
+    lv_obj_align(fb, LV_ALIGN_BOTTOM_MID, 0, -(row_h + 4));
 
-    // ── Value label refresh timer ─────────────────────
-    ctx->timer = lv_timer_create([](lv_timer_t* t) {
-        CustomRFContext* c = (CustomRFContext*)lv_timer_get_user_data(t);
-        if (!c) return;
-        char buf[24];
-
-        snprintf(buf, sizeof(buf), "%.3f MHz", c->freq);
-        lv_label_set_text(c->freq_lbl, buf);
-
-        snprintf(buf, sizeof(buf), "SF%d", c->sf);
-        lv_label_set_text(c->sf_lbl, buf);
-
-        if (c->bw < 1000.0f)
-            snprintf(buf, sizeof(buf), "%.1f kHz", c->bw);
-        else
-            snprintf(buf, sizeof(buf), "%.0f kHz", c->bw);
-        lv_label_set_text(c->bw_lbl, buf);
-
-        snprintf(buf, sizeof(buf), "4/%d", c->cr);
-        lv_label_set_text(c->cr_lbl, buf);
-
-        snprintf(buf, sizeof(buf), "%d dBm", c->pwr);
-        lv_label_set_text(c->pwr_lbl, buf);
-    }, 100, ctx);
-
-    // ── Save / Cancel buttons ─────────────────────────
+    // ── Apply / Cancel buttons ─────────────────────
     int btn_spacing = 8;
-    int btn_w2 = (dlg_sz.w - 16 - btn_spacing) / 2;
+    int btn_w2 = (dlg_sz.w - 12 - btn_spacing) / 2;
 
-    // Apply button
-    auto* save_btn = lv_btn_create(dialog);
-    lv_obj_set_size(save_btn, btn_w2, 28);
-    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 6, -(btn_spacing));
-    lv_obj_set_style_bg_color(save_btn, lv_color_hex(ACCENT_GREEN), 0);
-    lv_obj_set_style_radius(save_btn, 0, 0);
-    auto* sv_lbl = lv_label_create(save_btn);
-    lv_label_set_text(sv_lbl, "Apply");
-    lv_obj_center(sv_lbl);
-    lv_obj_add_event_cb(save_btn, [](lv_event_t* e) {
-        CustomRFContext* c = (CustomRFContext*)lv_event_get_user_data(e);
-        if (!c) return;
-        if (c->timer) lv_timer_del(c->timer);
-        s_rf_freq = c->freq;
-        s_rf_sf   = c->sf;
-        s_rf_bw   = c->bw;
-        s_rf_cr   = c->cr;
-        s_rf_pwr  = c->pwr;
-        lv_obj_del(c->dialog);
-        delete c;
-    }, LV_EVENT_CLICKED, ctx);
+    auto* apply_btn = lv_btn_create(dialog);
+    lv_obj_set_size(apply_btn, btn_w2, 24);
+    lv_obj_align(apply_btn, LV_ALIGN_BOTTOM_LEFT, 4, -(btn_spacing));
+    lv_obj_set_style_bg_color(apply_btn, lv_color_hex(ACCENT_GREEN), 0);
+    lv_obj_set_style_radius(apply_btn, 0, 0);
+    auto* ap_lbl = lv_label_create(apply_btn);
+    lv_label_set_text(ap_lbl, "Apply");
+    lv_obj_center(ap_lbl);
+    lv_obj_add_event_cb(apply_btn, [](lv_event_t* e) {
+        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e));
+        // Textareas are at children[2,4,6,8,10] (each preceded by a label)
+        lv_obj_t* ta_freq = lv_obj_get_child(dlg, 2);
+        lv_obj_t* ta_sf   = lv_obj_get_child(dlg, 4);
+        lv_obj_t* ta_bw   = lv_obj_get_child(dlg, 6);
+        lv_obj_t* ta_cr   = lv_obj_get_child(dlg, 8);
+        lv_obj_t* ta_pwr  = lv_obj_get_child(dlg, 10);
+
+        float freq = atof(lv_textarea_get_text(ta_freq));
+        int   sf   = atoi(lv_textarea_get_text(ta_sf));
+        float bw   = atof(lv_textarea_get_text(ta_bw));
+        int   cr   = atoi(lv_textarea_get_text(ta_cr));
+        int   pwr  = atoi(lv_textarea_get_text(ta_pwr));
+
+        // Validate
+        lv_obj_t* fb = lv_obj_get_child(dlg, 11); // feedback label
+        const char* err = nullptr;
+        if (freq < 400.0f || freq > 930.0f)              err = "Freq: 400.0 - 930.0 MHz";
+        else if (sf < 7 || sf > 12)                      err = "SF: 7 - 12";
+        else if (bw < 7.8f || bw > 500.0f)               err = "BW: 7.8 - 500 kHz";
+        else if (cr < 5 || cr > 8)                       err = "CR: 4/5 - 4/8";
+        else if (pwr < 2 || pwr > 22)                    err = "TX Pwr: 2 - 22 dBm";
+
+        if (err) {
+            lv_label_set_text(fb, err);
+            return;
+        }
+
+        lv_label_set_text(fb, "");
+        s_rf_freq = freq;
+        s_rf_sf   = sf;
+        s_rf_bw   = bw;
+        s_rf_cr   = cr;
+        s_rf_pwr  = pwr;
+
+        lv_obj_del_async(dlg);
+    }, LV_EVENT_CLICKED, nullptr);
 
     // Cancel button
     auto* cancel_btn = lv_btn_create(dialog);
-    lv_obj_set_size(cancel_btn, btn_w2, 28);
-    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 6 + btn_w2 + btn_spacing, -(btn_spacing));
+    lv_obj_set_size(cancel_btn, btn_w2, 24);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_RIGHT, -4, -(btn_spacing));
     lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_border_width(cancel_btn, PIXEL_BORDER, 0);
     lv_obj_set_style_border_color(cancel_btn, lv_color_hex(DIVIDER), 0);
@@ -1751,19 +1709,8 @@ static void custom_rf_dialog(lv_obj_t* parent)
     lv_obj_set_style_text_color(cn_lbl, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_center(cn_lbl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
-        CustomRFContext* c = (CustomRFContext*)lv_event_get_user_data(e);
-        if (!c) return;
-        if (c->timer) lv_timer_del(c->timer);
-        lv_obj_del(c->dialog);
-        delete c;
-    }, LV_EVENT_CLICKED, ctx);
-
-    // Cleanup on dialog delete (back button, etc.)
-    lv_obj_add_event_cb(dialog, [](lv_event_t* e) {
-        CustomRFContext* c = (CustomRFContext*)lv_event_get_user_data(e);
-        if (c && c->timer) lv_timer_del(c->timer);
-        delete c;
-    }, LV_EVENT_DELETE, ctx);
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
 }
 
 // ════════════════════════════════════════════════════════
