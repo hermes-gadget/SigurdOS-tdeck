@@ -3,6 +3,7 @@
 #include "theme.h"
 #include "responsive.h"
 #include "chat_screen.h"
+#include "screens.h"
 #include "../hal/prefs.h"
 #include "../mesh/mesh_wrapper.h"
 #include <Arduino.h>
@@ -337,6 +338,22 @@ static void build_step3()
     lv_obj_add_event_cb(pwr_plus, [](lv_event_t*) {
         if (s_pwr < 22) { s_pwr++;
             if (s_pwr_label) { char b[24]; snprintf(b, sizeof(b), "TX:%d dBm", s_pwr); lv_label_set_text(s_pwr_label, b); } }
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Custom RF button
+    int custom_y = row_y + 28;
+    auto* custom_btn = lv_btn_create(s_content);
+    lv_obj_set_size(custom_btn, 160, 20);
+    lv_obj_align(custom_btn, LV_ALIGN_TOP_MID, 0, custom_y);
+    lv_obj_set_style_bg_color(custom_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(custom_btn, 0, 0);
+    lv_obj_set_style_border_width(custom_btn, 0, 0);
+    auto* ctl = lv_label_create(custom_btn);
+    lv_label_set_text(ctl, "Full Radio Setup...");
+    lv_obj_set_style_text_font(ctl, &lv_font_montserrat_10, 0);
+    lv_obj_center(ctl);
+    lv_obj_add_event_cb(custom_btn, [](lv_event_t*) {
+        slopos::ui::radio_setup_screen_show();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Bottom: Back + Done

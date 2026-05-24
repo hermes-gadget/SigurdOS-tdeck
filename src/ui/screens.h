@@ -31,4 +31,5 @@ void channels_screen_show();
 void network_screen_show();
 void advertise_screen_show();
 void radio_setup_screen_show();
+void custom_rf_screen_show();
 } // namespace slopos::ui
