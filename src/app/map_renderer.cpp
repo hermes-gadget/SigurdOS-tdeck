@@ -610,7 +610,6 @@ void slopos_map_init() {
 
     initialized = true;
 }
-
 void slopos_map_reparent(lv_obj_t* new_parent) {
     if (!initialized || !new_parent || !canvas_pixels) return;
 
@@ -620,6 +619,7 @@ void slopos_map_reparent(lv_obj_t* new_parent) {
         map_canvas = lv_canvas_create(new_parent);
     } else {
         lv_obj_set_parent(map_canvas, new_parent);
+        lv_obj_move_to_index(map_canvas, 0);
     }
 
     lv_obj_set_size(map_canvas, TFT_WIDTH, TFT_HEIGHT);
@@ -628,9 +628,13 @@ void slopos_map_reparent(lv_obj_t* new_parent) {
                          TFT_WIDTH, TFT_HEIGHT, LV_COLOR_FORMAT_RGB565);
     lv_obj_move_to_index(map_canvas, 0);
 
-    lv_obj_add_event_cb(new_parent, [](lv_event_t* e) {
-        slopos_map_deinit();
-    }, LV_EVENT_DELETE, nullptr);
+    static bool delete_cb_registered = false;
+    if (!delete_cb_registered) {
+        lv_obj_add_event_cb(new_parent, [](lv_event_t* e) {
+            slopos_map_deinit();
+        }, LV_EVENT_DELETE, nullptr);
+        delete_cb_registered = true;
+    }
 }
 
 void slopos_map_deinit() {

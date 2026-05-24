@@ -32,7 +32,7 @@ static ButtonState buttons[] = {
     {PIN_TRACKBALL_DOWN,  SlopOSTrackballEvent::Down,  true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
     {PIN_TRACKBALL_LEFT,  SlopOSTrackballEvent::Left,  true,  HIGH, false, false, 0, 0, LEFT_DEADTIME_MS},
     {PIN_TRACKBALL_RIGHT, SlopOSTrackballEvent::Right, true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
-    {PIN_TRACKBALL_BTN,   SlopOSTrackballEvent::Click, false, HIGH, false, false, 0, 0, 0},
+    {PIN_TRACKBALL_BTN,   SlopOSTrackballEvent::Click, false, HIGH, false, false, 0, 0, CLICK_DEBOUNCE_MS},
 };
 
 static bool initialized = false;

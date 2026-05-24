@@ -1428,6 +1428,8 @@ void trace_screen_show()
                     lv_obj_align(result_lbl, LV_ALIGN_BOTTOM_MID, 0,
                                  -(BOT_BAR_H + DIVIDER_H + 24));
                     lv_label_set_text(result_lbl, "Trace sent, waiting...");
+                    // Delete previous label if it exists
+                    if (trace_result_label) lv_obj_del(trace_result_label);
                     trace_result_label = result_lbl;
 
                     lv_timer_create([](lv_timer_t* t) {
@@ -1994,7 +1996,6 @@ void radio_setup_screen_show()
         np.tx_power_dbm = (int8_t)s_rf_pwr;
         np.configured   = true;
         slopos::prefs_set(np);
-        slopos::prefs_save(np);
         slopos::mesh::saveChannels();
         chat_save_messages();
         ESP.restart();

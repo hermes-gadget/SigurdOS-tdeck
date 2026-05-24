@@ -346,7 +346,7 @@ static void create_icon_grid()
         tile_w[i] = base_w;
         tile_h[i] = base_h + (row < extra_h ? 1 : 0);
         tile_x[i] = GRID_PAD + col * (base_w + GRID_PAD);
-        tile_y[i] = GRID_PAD + row * (base_h + GRID_PAD) + (row < extra_h ? row : extra_h);
+        tile_y[i] = GRID_PAD + row * (base_h + GRID_PAD) + (row < extra_h ? 1 : 0);
     }
 
     grid = lv_obj_create(scr);

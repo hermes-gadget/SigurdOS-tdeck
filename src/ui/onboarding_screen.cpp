@@ -390,7 +390,6 @@ static void build_step3()
         np.configured = true;
         slopos::mesh::setOwnName(s_name);
         slopos::prefs_set(np);
-        slopos::prefs_save(np);
         slopos::mesh::saveChannels();
         chat_save_messages();
         ESP.restart();

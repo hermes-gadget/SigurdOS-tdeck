@@ -203,7 +203,7 @@ void slopos_touch_loop()
         if (raw_x == 0 && raw_y == 0) continue;
 
         // Bounds check against GT911 native (pre-swap) portrait resolution
-        if (raw_x > (uint16_t)TOUCH_SENSOR_X || raw_y > (uint16_t)TOUCH_SENSOR_Y) continue;
+        if (raw_x >= (uint16_t)TOUCH_SENSOR_X || raw_y >= (uint16_t)TOUCH_SENSOR_Y) continue;
 
         // ── Coordinate transformation ──────────────────
         int sx = raw_x, sy = raw_y;

@@ -114,7 +114,7 @@ protected:
         const char* name = parser.getName();
         if (!name || !name[0]) {
             // No name — generate a fallback from pub_key
-            static char fallback[16];
+            char fallback[16];
             snprintf(fallback, sizeof(fallback), "node_%02x", id.pub_key[0]);
             name = fallback;
         }
