@@ -62,13 +62,19 @@ static lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_style_pad_all(top, 0, 0);
     lv_obj_set_style_border_width(top, 0, 0);
 
-    // ≡ hamburger — tapping goes back on secondary screens
-    lv_obj_t* menu = lv_label_create(top);
-    lv_label_set_text(menu, LV_SYMBOL_LIST);
-    lv_obj_set_style_text_color(menu, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_align(menu, LV_ALIGN_LEFT_MID, 4, 0);
-    lv_obj_add_flag(menu, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(menu, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
+    // ← back button — tapping goes back on secondary screens
+    lv_obj_t* back = lv_btn_create(top);
+    lv_obj_set_size(back, 24, TOP_BAR_H - 4);
+    lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_set_style_bg_color(back, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_radius(back, 0, 0);
+    lv_obj_set_style_border_width(back, 0, 0);
+    lv_obj_t* bl = lv_label_create(back);
+    lv_label_set_text(bl, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_color(bl, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(bl, &lv_font_montserrat_12, 0);
+    lv_obj_center(bl);
+    lv_obj_add_event_cb(back, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
 
     // Dynamic channel hashtags (snapshot at screen creation)
     char ch_buf[100] = "";
@@ -90,7 +96,7 @@ static lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_width(ch_lbl, HASHTAG_LABEL_W());
     lv_obj_set_style_text_color(ch_lbl, lv_color_hex(CHANNEL_HASH), 0);
     lv_obj_set_style_text_font(ch_lbl, &lv_font_montserrat_10, 0);
-    lv_obj_align(ch_lbl, LV_ALIGN_LEFT_MID, 22, 0);
+    lv_obj_align(ch_lbl, LV_ALIGN_LEFT_MID, 28, 0);
 
     // Time (24h snapshot)
     {
