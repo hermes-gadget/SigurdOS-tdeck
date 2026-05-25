@@ -347,7 +347,12 @@ static void populate_channel_rows(lv_obj_t* list) {
         lv_obj_set_style_text_color(prev, lv_color_hex(TEXT_SECONDARY), 0);
         lv_obj_set_style_text_font(prev, emoji_wrapped_montserrat_10, 0);
         lv_label_set_long_mode(prev, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(prev, CONTENT_W - 70);
+        // Available width: start at x=46, leave room for right-side elements
+        // Timestamp ~60px, unread badge ~24px, padding ~6px
+        int preview_w = CONTENT_W - 70;
+        if (ch_meta[i].timestamp > 0) preview_w -= 60;
+        if (ch_meta[i].unread > 0)    preview_w -= 24;
+        lv_obj_set_width(prev, preview_w);
         lv_obj_align(prev, LV_ALIGN_TOP_LEFT, 46, 26);
 
         if (ch_meta[i].unread > 0) {
