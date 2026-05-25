@@ -1237,6 +1237,53 @@ static void term_add_line(lv_obj_t* log, const char* text)
     lv_obj_scroll_to_view(lbl, LV_ANIM_OFF);
 }
 
+// ── Terminal help system ──────────────────────────────────
+struct HelpEntry {
+    const char* name;
+    const char* desc;
+};
+
+static const HelpEntry HELP_ENTRIES[] = {
+    {"help",    "Show help for commands"},
+    {"status",  "Mesh status, node count, uptime"},
+    {"channels","List joined channels"},
+    {"nodes",   "List known nodes/contacts"},
+    {"signal",  "RSSI/SNR of last heard transmission"},
+    {"send",    "Send text to first joined channel"},
+    {"advert",  "Send advert broadcast"},
+    {"ping",    "Check device responsiveness"},
+    {"save",    "Force save state to NVS"},
+    {"gps",     "Show current GPS fix data"},
+    {"reset",   "Reboot the device"},
+};
+
+static constexpr int NUM_HELP = sizeof(HELP_ENTRIES) / sizeof(HELP_ENTRIES[0]);
+
+static const char* HELP_DETAILS[] = {
+    "help [command] — show help list or detail for a specific command",
+    "status — RSSI, SNR, noise floor, contacts, channels, uptime",
+    "channels — list all joined channel names",
+    "nodes — list known mesh contacts with RSSI",
+    "signal — RSSI, SNR, noise floor from last received packet",
+    "send <text> — send a message to the first joined channel",
+    "advert — broadcast an advert to the mesh",
+    "ping — returns uptime in milliseconds",
+    "save — persist current state to NVS (config, channels)",
+    "gps — latitude, longitude, altitude, speed, heading, satellites, fix quality",
+    "reset — software reboot the device",
+};
+
+// Emit help listing line by line into the terminal log
+static void term_print_help(lv_obj_t* log_cont)
+{
+    term_add_line(log_cont, "Commands:");
+    for (int i = 0; i < NUM_HELP; i++) {
+        char line[64];
+        snprintf(line, sizeof(line), "  %-12s %s", HELP_ENTRIES[i].name, HELP_ENTRIES[i].desc);
+        term_add_line(log_cont, line);
+    }
+}
+
 // ════════════════════════════════════════════════════════
 // Terminal — colored log output + command input
 // ════════════════════════════════════════════════════════
@@ -1360,9 +1407,49 @@ void terminal_screen_show()
         term_add_line(log_cont, echo);
 
         char result[256] = "";
-        if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping");
-        } else if (strcmp(cmd, "status") == 0) {
+
+        // Parse: skip leading whitespace, then copy command token
+        const char* p = cmd;
+        while (*p == ' ' || *p == '\t') p++;
+        char cbuf[32];
+        int ci = 0;
+        while (*p && *p != ' ' && *p != '\t' && ci < (int)sizeof(cbuf) - 1) {
+            cbuf[ci++] = *p++;
+        }
+        cbuf[ci] = '\0';
+        // Skip whitespace between command and argument
+        while (*p == ' ' || *p == '\t') p++;
+        const char* arg = p;
+
+        if (strcmp(cbuf, "help") == 0) {
+            if (arg && arg[0]) {
+                // help <cmd> — find and show detail (trim trailing whitespace)
+                char arg_buf[32];
+                int ai = 0;
+                while (arg[ai] && arg[ai] != ' ' && arg[ai] != '\t' && ai < (int)sizeof(arg_buf) - 1) {
+                    arg_buf[ai] = arg[ai];
+                    ai++;
+                }
+                arg_buf[ai] = '\0';
+                const char* detail = nullptr;
+                for (int i = 0; i < NUM_HELP; i++) {
+                    if (strcmp(arg_buf, HELP_ENTRIES[i].name) == 0) {
+                        detail = HELP_DETAILS[i];
+                        break;
+                    }
+                }
+                if (detail) {
+                    snprintf(result, sizeof(result), "%s", detail);
+                } else {
+                    snprintf(result, sizeof(result), "Unknown command: %s", arg);
+                }
+            } else {
+                // Bare help — output line by line (too large for single result buffer)
+                term_print_help(log_cont);
+                lv_textarea_set_text(ta, "");
+                return;
+            }
+        } else if (strcmp(cbuf, "status") == 0) {
             int rssi  = slopos::mesh::getLastRSSI();
             float snr = slopos::mesh::getLastSNR();
             int noise = slopos::mesh::getNoiseFloor();
@@ -1371,13 +1458,87 @@ void terminal_screen_show()
                 rssi, snr, noise,
                 slopos::mesh::getContactCount(),
                 slopos::mesh::getChannelCount());
-        } else if (strcmp(cmd, "advert") == 0) {
+        } else if (strcmp(cbuf, "channels") == 0) {
+            char names[8][32];
+            int n = slopos::mesh::exportChannels(names, 8);
+            if (n == 0) {
+                snprintf(result, sizeof(result), "No channels joined");
+            } else {
+                char buf[192] = "";
+                for (int i = 0; i < n; i++) {
+                    if (i > 0) strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
+                    strncat(buf, names[i], sizeof(buf) - strlen(buf) - 1);
+                }
+                snprintf(result, sizeof(result), "Channels (%d): %s", n, buf);
+            }
+        } else if (strcmp(cbuf, "nodes") == 0) {
+            slopos::mesh::ContactInfo contacts[16];
+            int n = slopos::mesh::exportContactsFull(contacts, 16);
+            if (n == 0) {
+                snprintf(result, sizeof(result), "No known nodes");
+            } else {
+                char buf[192] = "";
+                for (int i = 0; i < n && i < 4; i++) {
+                    char line[48];
+                    snprintf(line, sizeof(line), "%s(%ddBm) ", contacts[i].name, contacts[i].rssi);
+                    strncat(buf, line, sizeof(buf) - strlen(buf) - 1);
+                }
+                if (n > 4) {
+                    char more[16];
+                    snprintf(more, sizeof(more), "+%d more", n - 4);
+                    strncat(buf, more, sizeof(buf) - strlen(buf) - 1);
+                }
+                snprintf(result, sizeof(result), "Nodes (%d): %s", n, buf);
+            }
+        } else if (strcmp(cbuf, "signal") == 0) {
+            int rssi  = slopos::mesh::getLastRSSI();
+            float snr = slopos::mesh::getLastSNR();
+            int noise = slopos::mesh::getNoiseFloor();
+            snprintf(result, sizeof(result),
+                "RSSI:%ddBm SNR:%.1fdB Noise:%ddBm", rssi, snr, noise);
+        } else if (strcmp(cbuf, "send") == 0) {
+            if (arg && arg[0]) {
+                // Send to first joined channel
+                char channels[8][32];
+                int n = slopos::mesh::exportChannels(channels, 8);
+                const char* chan = (n > 0) ? channels[0] : "general";
+                bool ok = slopos::mesh::sendChannelMessage(chan, arg);
+                snprintf(result, sizeof(result), ok ? "Sent to #%s" : "Send failed to #%s", chan);
+            } else {
+                snprintf(result, sizeof(result), "Usage: send <text>");
+            }
+        } else if (strcmp(cbuf, "advert") == 0) {
             bool ok = slopos::mesh::sendAdvert();
             snprintf(result, sizeof(result), ok ? "Advert sent" : "Send failed");
-        } else if (strcmp(cmd, "ping") == 0) {
+        } else if (strcmp(cbuf, "ping") == 0) {
             snprintf(result, sizeof(result), "Pong! Uptime: %lums", millis());
+        } else if (strcmp(cbuf, "save") == 0) {
+            slopos::mesh::saveState();
+            slopos::NodePrefs p = slopos::prefs_get();
+            slopos::prefs_save(p);
+            snprintf(result, sizeof(result), "State saved to NVS");
+        } else if (strcmp(cbuf, "gps") == 0) {
+            bool fix = slopos_gps_has_fix();
+            if (fix) {
+                snprintf(result, sizeof(result),
+                    "Fix:%d SAT:%d  %.5f,%.5f  %.1fm %.1fkn %.1fdeg",
+                    slopos_gps_fix_quality(), slopos_gps_satellites(),
+                    (double)slopos_gps_latitude(), (double)slopos_gps_longitude(),
+                    (double)slopos_gps_altitude_m(),
+                    (double)slopos_gps_speed_kn(),
+                    (double)slopos_gps_heading());
+            } else {
+                snprintf(result, sizeof(result), "No GPS fix");
+            }
+        } else if (strcmp(cbuf, "reset") == 0) {
+            term_add_line(log_cont, "Rebooting...");
+            lv_textarea_set_text(ta, "");
+            lv_timer_handler();
+            delay(100);
+            ESP.restart();
+            return;
         } else {
-            snprintf(result, sizeof(result), "Unknown: %s  (type 'help')", cmd);
+            snprintf(result, sizeof(result), "Unknown: %s  (type 'help')", cbuf);
         }
 
         term_add_line(log_cont, result);

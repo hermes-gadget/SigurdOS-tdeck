@@ -43,30 +43,6 @@ The finder feature needs a proper implementation that sends a zero-hop (TTL=1) p
 - Display results grouped by RSSI (strongest first)
 - Cooldown of 30 seconds between pings to avoid flooding
 
----
-
-## Terminal
-
-### Undocumented commands
-The built-in serial/diagnostics terminal exposes several internal commands but there's no documentation on what's available or what each command does. Users have to read the source code to discover features.
-
-**What's needed:** A `help` command that lists all available commands with a one-line description. A `help <command>` variant that shows usage details. The help text should be stored as a single `const char*` array in `src/ui/terminal.cpp` so it stays easy to update.
-
-Common commands that should be documented:
-| Command | Description |
-|---------|-------------|
-| `help` | List available commands |
-| `status` | Show mesh status, node count, uptime |
-| `channels` | List joined channels |
-| `nodes` | List known nodes |
-| `signal` | Show RSSI/SNR for last heard transmission |
-| `send <text>` | Send a text message to the current channel |
-| `save` | Force save state to NVS |
-| `reset` | Reboot the device |
-| `gps` | Show current GPS fix data |
-
----
-
 ## Launcher Compatibility
 
 ### SlopOS doesn't work under bmorcelli/Launcher
