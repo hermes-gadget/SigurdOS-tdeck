@@ -27,6 +27,7 @@
 #include "../hal/prefs.h"
 #include "../fonts/emoji_font.h"
 #include "../fonts/emoji_data.h"
+#include "../fonts/emoji_images/emoji_picker_index.h"
 #include <lvgl.h>
 #include <cstring>
 #include <cstdio>
@@ -1016,8 +1017,10 @@ static void emoji_ac_check(lv_obj_t* ta)
 }
 
 // ════════════════════════════════════════════════════
-// Emoji picker
+// Emoji picker — uses pre-rendered color images
 // ════════════════════════════════════════════════════
+
+// UTF-8 emoji strings for text insertion (must match image order)
 static const char* emoji_picker_items[] = {
     // Faces
     "\xF0\x9F\x98\x80", "\xF0\x9F\x98\x81", "\xF0\x9F\x98\x82", "\xF0\x9F\x98\x83",
@@ -1038,7 +1041,8 @@ static const char* emoji_picker_items[] = {
     "\xF0\x9F\x8E\x88", "\xF0\x9F\x92\xA1", "\xF0\x9F\x94\x94", "\xF0\x9F\x8E\xAF",
     "\xF0\x9F\x94\x8B", "\xE2\x9A\x99", "\xF0\x9F\x93\xA1", "\xF0\x9F\x8C\x8D"
 };
-static constexpr int EMOJI_COUNT = sizeof(emoji_picker_items) / sizeof(emoji_picker_items[0]);
+static_assert(sizeof(emoji_picker_items)/sizeof(emoji_picker_items[0]) == EMOJI_PICKER_IMG_COUNT,
+              "emoji_picker_items count must match EMOJI_PICKER_IMG_COUNT");
 
 static void show_emoji_picker(lv_obj_t* parent)
 {
@@ -1051,6 +1055,8 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_radius(dlg, 0, 0);
     lv_obj_set_style_border_width(dlg, 0, 0);
     lv_obj_set_style_pad_all(dlg, 4, 0);
+    lv_obj_clear_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(dlg, LV_SCROLLBAR_MODE_OFF);
 
     // Close button
     lv_obj_t* close_btn = lv_btn_create(dlg);
@@ -1076,7 +1082,7 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
-    // Scrollable grid container
+    // Scrollable image grid
     lv_obj_t* grid = lv_obj_create(dlg);
     lv_obj_set_size(grid, dlg_sz.w - 8, dlg_sz.h - 32);
     lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 24);
@@ -1087,23 +1093,24 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(grid, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_remove_flag(grid, (lv_obj_flag_t)(
+    lv_obj_clear_flag(grid, (lv_obj_flag_t)(
         LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN |
         LV_OBJ_FLAG_SCROLL_ON_FOCUS | LV_OBJ_FLAG_SCROLL_WITH_ARROW));
 
-    for (int i = 0; i < EMOJI_COUNT; i++) {
+    static constexpr int IMG_SZ = 24;
+    for (int i = 0; i < EMOJI_PICKER_IMG_COUNT; i++) {
         lv_obj_t* btn = lv_btn_create(grid);
-        lv_obj_set_size(btn, 28, 26);
+        lv_obj_set_size(btn, 28, 28);
         lv_obj_set_style_bg_color(btn, lv_color_hex(BG_TERTIARY), 0);
         lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(btn, 2, 0);
         lv_obj_set_style_border_width(btn, 0, 0);
         lv_obj_set_style_pad_all(btn, 0, 0);
 
-        lv_obj_t* lbl = lv_label_create(btn);
-        lv_label_set_text(lbl, emoji_picker_items[i]);
-        lv_obj_set_style_text_font(lbl, &emoji_font, 0);
-        lv_obj_center(lbl);
+        // Use pre-rendered image instead of font glyph
+        lv_obj_t* img = lv_img_create(btn);
+        lv_img_set_src(img, emoji_picker_images[i]);
+        lv_obj_center(img);
 
         const char* emoji_text = emoji_picker_items[i];
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
