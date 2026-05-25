@@ -727,3 +727,13 @@ void slopos_test_controller_loop() {
         }
     }
 }
+
+// ── Stub implementations for functions declared in screens.h ──
+// These are needed by the test controller dispatch table but only
+// meaningful when a real terminal screen is active.
+namespace slopos::ui {
+void term_dump_log()  { Serial.println("[term] dump: no terminal screen (test mode)"); }
+void term_clear_log() { Serial.println("[term] cleared (test mode)"); }
+void term_submit(const char* text) { Serial.printf("[term] submit: %s (test mode, ignored)\n", text); }
+lv_obj_t* term_get_input() { return nullptr; }
+} // namespace slopos::ui
