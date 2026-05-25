@@ -18,6 +18,9 @@
 //   inject <from> channel=<ch> <text>  Simulate incoming channel msg
 //   screen                        Show current screen name
 //   status                        Show device info (heap, psram, batt)
+//   term-log                      Dump terminal log content to serial
+//   term-clear                    Clear terminal log
+//   term-submit <text>            Submit a command directly to the terminal
 
 #include "test_controller.h"
 #include "hal/trackball.h"
