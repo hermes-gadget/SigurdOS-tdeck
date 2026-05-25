@@ -962,6 +962,10 @@ static void emoji_ac_check(lv_obj_t* ta)
         lv_obj_set_style_border_width(emoji_ac_list, 0, 0);
         lv_obj_set_style_pad_all(emoji_ac_list, 0, 0);
         lv_obj_set_flex_flow(emoji_ac_list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_scrollbar_mode(emoji_ac_list, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_remove_flag(emoji_ac_list, (lv_obj_flag_t)(
+            LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM |
+            LV_OBJ_FLAG_SCROLL_ON_FOCUS | LV_OBJ_FLAG_SCROLL_WITH_ARROW));
 
         int rows = (match_count > 5) ? 5 : match_count;
         for (int i = 0; i < rows && i < match_count; i++) {
@@ -1084,7 +1088,8 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_scroll_dir(grid, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(grid, (lv_obj_flag_t)(
-        LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN));
+        LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN |
+        LV_OBJ_FLAG_SCROLL_ON_FOCUS | LV_OBJ_FLAG_SCROLL_WITH_ARROW));
 
     for (int i = 0; i < EMOJI_COUNT; i++) {
         lv_obj_t* btn = lv_btn_create(grid);

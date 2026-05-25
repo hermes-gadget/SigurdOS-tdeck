@@ -13,7 +13,11 @@ OUTPUT_DIR="$(dirname "$0")/../src/fonts"
 OUTPUT_C="${OUTPUT_DIR}/emoji_font.c"
 OUTPUT_H="${OUTPUT_DIR}/emoji_font.h"
 FONT_SIZE=16
-BPP=4
+BPP=8
+# --use-color-info tells lv_font_conv to preserve color information from
+# color emoji fonts (CBDT/CBLC) instead of converting to pure grayscale.
+# Combined with 8bpp, this gives 256-color output that looks much closer
+# to the original emoji.
 
 # Comprehensive emoji subset (200+ codepoints covering common chat emoji)
 # Organized into groups for readability but all combined in one lv_font_conv call
@@ -337,6 +341,7 @@ lv_font_conv \
     --font "$FONT_TMP" \
     --size $FONT_SIZE \
     --bpp $BPP \
+    --use-color-info \
     --format lvgl \
     --no-compress \
     --output "$OUTPUT_C" \
