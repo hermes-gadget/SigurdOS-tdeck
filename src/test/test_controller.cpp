@@ -274,7 +274,7 @@ static void cmd_emoji() {
     lv_obj_set_style_pad_all(dlg, 4, 0);
 
     lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Emoji Test Grid (362)");
+    lv_label_set_text(title, "Emoji Test Grid (100 of 362)");
     lv_obj_set_style_text_color(title, lv_color_hex(0x00BFFF), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
@@ -311,25 +311,24 @@ static void cmd_emoji() {
     lv_obj_remove_flag(grid, (lv_obj_flag_t)(
         LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN));
 
-    int count = emoji_font_get_count();
+    // Limit to 100 emoji to avoid DRAM exhaustion on ESP32-S3
+    int total = emoji_font_get_count();
+    int count = (total > 100) ? 100 : total;
+    // Use a single label with all emoji concatenated to avoid per-emoji LVGL object overhead
+    char all_buf[800];
+    int pos = 0;
     for (int i = 0; i < count; i++) {
-        if (const char* emoji_str = emoji_font_get_by_index(i)) {
-            lv_obj_t* btn = lv_btn_create(grid);
-            lv_obj_set_size(btn, 28, 26);
-            lv_obj_set_style_bg_color(btn, lv_color_hex(0x1A1A2E), 0);
-            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-            lv_obj_set_style_radius(btn, 0, 0);
-            lv_obj_set_style_border_width(btn, 0, 0);
-            lv_obj_set_style_pad_all(btn, 0, 0);
-
-            lv_obj_t* lbl = lv_label_create(btn);
-            lv_label_set_text(lbl, emoji_str);
-            lv_obj_set_style_text_font(lbl, &emoji_font, 0);
-            lv_obj_center(lbl);
+        if (const char* e = emoji_font_get_by_index(i)) {
+            pos += snprintf(all_buf + pos, sizeof(all_buf) - pos, "%s ", e);
         }
     }
+    lv_obj_t* grid_lbl = lv_label_create(grid);
+    lv_label_set_text(grid_lbl, all_buf);
+    lv_obj_set_style_text_font(grid_lbl, &emoji_font, 0);
+    lv_obj_set_width(grid_lbl, LV_PCT(100));
+    lv_label_set_long_mode(grid_lbl, LV_LABEL_LONG_WRAP);
 
-    Serial.printf("[test] emoji grid: %d emoji displayed\n", count);
+    Serial.printf("[test] emoji grid: %d emoji displayed in label (limited from %d for safety)\n", count, total);
 }
 
 // ── Command parsing ──────────────────────────────────────

@@ -338,6 +338,7 @@ lv_font_conv \
     --size $FONT_SIZE \
     --bpp $BPP \
     --format lvgl \
+    --no-compress \
     --output "$OUTPUT_C" \
     --lv-include 'lvgl.h' \
     --lv-font-name emoji_font \
