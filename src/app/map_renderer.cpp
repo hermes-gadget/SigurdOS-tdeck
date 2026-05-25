@@ -30,6 +30,7 @@
 #include <strings.h>
 #include <lodepng.h>
 #include <esp_heap_caps.h>
+#include "../diagnostics/debug_cfg.h"
 
 extern void lodepng_free(void* ptr);
 
@@ -65,7 +66,7 @@ static TileCoverage tile_coverage[MAX_ZOOM + 1];
 static int min_available_zoom = MIN_ZOOM;
 static int max_available_zoom = MAX_ZOOM;
 static bool have_tile_coverage = false;
-#if defined(SLOPOS_DEBUG) || defined(SLOPOS_MAP_DEBUG)
+#if SLOPOS_DEBUG_MAP
 #define SLOPOS_MAP_DIAGNOSTICS 1
 #define MAP_DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
 #define MAP_DEBUG_PRINTLN(msg) Serial.println(msg)

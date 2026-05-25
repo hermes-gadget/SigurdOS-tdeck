@@ -4,15 +4,18 @@
 // Comprehensive debug module for SlopOS-TDeck.
 // Build with -D SLOPOS_DEBUG=1 (env:SlopOS_TDeck_debug in platformio.ini).
 //
+// Per-feature flags can be set independently — see debug_cfg.h.
+//
 // Outputs to Serial at 115200 baud:
-//   - Periodic full system dumps every 5s  (level >= 2)
-//   - LVGL flush area on every display update (level >= 2)
-//   - LVGL invalidation areas (level >= 2)
-//   - Trackball GPIO raw state (level >= 2)
-//   - Home screen tile layout diagnostics (level >= 3)
-//   - Memory, task, mesh radio detail (level >= 3)
+//   - Periodic full system dumps every 5s  (level >= 2, DIAG enabled)
+//   - LVGL flush area on every display update (DISPLAY enabled)
+//   - LVGL invalidation areas (DISPLAY enabled)
+//   - Trackball GPIO raw state (level >= 2, DIAG enabled)
+//   - Home screen tile layout diagnostics (DIAG enabled, level >= 3)
+//   - Memory, task, mesh radio detail (DIAG enabled, level >= 3)
 
 #include "debug.h"
+#include "debug_cfg.h"
 
 #if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
 
@@ -43,6 +46,55 @@ static uint8_t  current_level =
     (SLOPOS_DEBUG_LEVEL > 3) ? 3 :
     (uint8_t)SLOPOS_DEBUG_LEVEL;
 
+// ── Per-feature runtime state ─────────────────────────────
+// Default to the compile-time flag so builds with individual
+// flags start with that feature on, and full-SLOPOS_DEBUG builds
+// start with everything on.
+static bool feat_display = SLOPOS_DEBUG_DISPLAY ? true : false;
+static bool feat_mesh    = SLOPOS_DEBUG_MESH    ? true : false;
+static bool feat_ui      = SLOPOS_DEBUG_UI      ? true : false;
+static bool feat_map     = SLOPOS_DEBUG_MAP     ? true : false;
+static bool feat_diag    = SLOPOS_DEBUG_DIAG    ? true : false;
+
+void feat_set_display(bool on) { feat_display = on; }
+bool feat_get_display() { return feat_display; }
+void feat_set_mesh(bool on)    { feat_mesh = on; }
+bool feat_get_mesh()    { return feat_mesh; }
+void feat_set_ui(bool on)      { feat_ui = on; }
+bool feat_get_ui()      { return feat_ui; }
+void feat_set_map(bool on)     { feat_map = on; }
+bool feat_get_map()     { return feat_map; }
+void feat_set_diag(bool on)    { feat_diag = on; }
+bool feat_get_diag()    { return feat_diag; }
+
+void feat_set_all_mask(bool on)
+{
+    feat_display = on;
+    feat_mesh    = on;
+    feat_ui      = on;
+    feat_map     = on;
+    feat_diag    = on;
+}
+
+void feat_from_mask(uint8_t mask)
+{
+    feat_display = (mask & 0x01) != 0;
+    feat_mesh    = (mask & 0x02) != 0;
+    feat_ui      = (mask & 0x04) != 0;
+    feat_map     = (mask & 0x08) != 0;
+    feat_diag    = (mask & 0x10) != 0;
+}
+
+uint8_t feat_to_mask()
+{
+    return (uint8_t)(
+        (feat_display ? 0x01 : 0) |
+        (feat_mesh    ? 0x02 : 0) |
+        (feat_ui      ? 0x04 : 0) |
+        (feat_map     ? 0x08 : 0) |
+        (feat_diag    ? 0x10 : 0));
+}
+
 void set_level(uint8_t level) {
     if (level < 1) level = 1;
     if (level > 3) level = 3;
@@ -61,7 +113,16 @@ void init()
     Serial.println("║   SlopOS-TDeck DEBUG build                  ║");
     Serial.println("║   (light periodic status; heavy dumps on demand) ║");
     Serial.printf(  "║   Debug level: %u                               ║\n", (unsigned)current_level);
+    uint8_t mask = feat_to_mask();
+    Serial.printf(  "║   Features: %s%s%s%s%s          ║\n",
+        (mask & 0x01) ? "D" : "d",
+        (mask & 0x02) ? "M" : "m",
+        (mask & 0x04) ? "U" : "u",
+        (mask & 0x08) ? "P" : "p",
+        (mask & 0x10) ? "S" : "s");
     Serial.println("╚══════════════════════════════════════════════╝");
+    Serial.println();
+    Serial.println("  Feature keys: D=display M=mesh U=ui P=map S=diag");
     Serial.println();
 
     // Light one-line status only — full tree walks are too slow for setup/loop
@@ -76,6 +137,7 @@ void init()
 
 void loop()
 {
+    if (!feat_diag) return;
     // Level 1 (quiet): no periodic output
     if (current_level < 2) return;
 
@@ -84,13 +146,14 @@ void loop()
         last_dump_ms = now;
 
         // === LIGHT periodic status (safe, non-blocking) ===
-        Serial.printf("[stat] t=%lu  heap=%u/%u  psram=%u  batt=%u%%  flush=%lu\n",
+        Serial.printf("[stat] t=%lu  heap=%u/%u  psram=%u  batt=%u%%  flush=%lu  feat=%02x\n",
                       (unsigned long)(now/1000),
                       (unsigned)ESP.getFreeHeap(),
                       (unsigned)ESP.getMinFreeHeap(),
                       (unsigned)ESP.getFreePsram(),
                       (unsigned)slopos_battery_pct(),
-                      (unsigned long)0 /* flush count is local to display.cpp */);
+                      (unsigned long)0 /* flush count is local to display.cpp */,
+                      (unsigned)feat_to_mask());
 
         // Quick pin snapshot (non-intrusive)
         Serial.printf("[pins] U=%d D=%d L=%d R=%d BTN=%d\n",
@@ -99,18 +162,13 @@ void loop()
                       digitalRead(PIN_TRACKBALL_LEFT),
                       digitalRead(PIN_TRACKBALL_RIGHT),
                       digitalRead(PIN_TRACKBALL_BTN));
-
-        // If you need the full LVGL object tree / layout math / etc.,
-        // call the heavy helpers manually from a debugger or add a
-        // serial command handler:
-        //     dump_lvgl_rendering();
-        //     dump_home_screen_layout();
-        //     dump_system();   // the heavy version below
     }
 }
 
 void dump_system()
 {
+    if (!feat_diag) return;
+
     uint32_t now = millis();
 
     Serial.println();
@@ -132,12 +190,13 @@ void dump_system()
     uint8_t pct = slopos_battery_pct();
     Serial.printf("[batt] mv=%u  pct=%u%%\n", (unsigned)mv, (unsigned)pct);
 
-    dump_display_config();
-    dump_lvgl_rendering();
-    dump_trackball_state();
-    dump_home_screen_layout();
-    dump_memory();
-    dump_mesh_state();
+    // Feature-conditional dumps
+    if (feat_display) dump_display_config();
+    if (feat_ui)      dump_lvgl_rendering();
+    if (feat_display) dump_trackball_state();
+    if (feat_ui)      dump_home_screen_layout();
+    if (feat_diag)    dump_memory();
+    if (feat_mesh)    dump_mesh_state();
 
     Serial.printf("[tasks] num=%u  stack_hwm=%u\n",
                   (unsigned)uxTaskGetNumberOfTasks(),

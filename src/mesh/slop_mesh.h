@@ -11,6 +11,7 @@
 #include <helpers/AdvertDataHelpers.h>
 #include <hal/prefs.h>
 #include "utils/utf8_util.h"
+#include "../diagnostics/debug_cfg.h"
 
 namespace slopos {
 namespace mesh {
@@ -313,7 +314,7 @@ public:
         int rssi = (int)_radio->getLastRSSI();
         float snr = pkt->getSNR();
         pushPacketLog("RADIO", rssi, snr, tname);
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_MESH
         Serial.printf("[rx] %s  RSSI:%ddBm SNR:%.1fdB\n",
                       tname, rssi, snr);
 #endif

@@ -114,7 +114,9 @@ static void print_help() {
     Serial.println(F("║  inject <from> [channel=<ch>] <msg>  ║"));
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
-    Serial.println(F("║  debug <1|2|3> Set debug level       ║"));
+    Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
+    Serial.println(F("║  debug <feat> <1|0>  Toggle feature: display/mesh/ui/map/diag║"));
+    Serial.println(F("║  debug all <1|0>     Enable/disable all debug features      ║"));
     Serial.println(F("║  term-log    Dump terminal log       ║"));
     Serial.println(F("║  term-clear  Clear terminal log      ║"));
     Serial.println(F("║  term-submit <cmd>  Run cmd in terminal║"));
@@ -283,21 +285,97 @@ static void cmd_status() {
 }
 
 static void cmd_debug(const char* arg) {
-    if (!arg) {
+    if (!arg || !arg[0]) {
+        // No args: show current state
         Serial.printf("[test] debug level: %u\n", (unsigned)slopos::debug::get_level());
+        Serial.printf("[test] features: display=%d mesh=%d ui=%d map=%d diag=%d\n",
+                      slopos::debug::feat_get_display() ? 1 : 0,
+                      slopos::debug::feat_get_mesh() ? 1 : 0,
+                      slopos::debug::feat_get_ui() ? 1 : 0,
+                      slopos::debug::feat_get_map() ? 1 : 0,
+                      slopos::debug::feat_get_diag() ? 1 : 0);
         return;
     }
     // Skip leading whitespace
     while (*arg == ' ') arg++;
-    char* end;
-    long level = strtol(arg, &end, 10);
-    // Allow trailing whitespace
-    while (*end == ' ') end++;
-    if (*end != '\0' || level < 1 || level > 3) {
-        Serial.println("[test] debug: usage: debug <1|2|3>  (1=quiet, 2=normal, 3=verbose)");
+
+    // Check for sub-commands: debug display 1|0, debug mesh 1|0, etc.
+    struct FeatEntry {
+        const char* name;
+        void (*set)(bool);
+        bool (*get)();
+    };
+    static const FeatEntry feat_table[] = {
+        {"display", slopos::debug::feat_set_display, slopos::debug::feat_get_display},
+        {"mesh",    slopos::debug::feat_set_mesh,    slopos::debug::feat_get_mesh},
+        {"ui",      slopos::debug::feat_set_ui,      slopos::debug::feat_get_ui},
+        {"map",     slopos::debug::feat_set_map,     slopos::debug::feat_get_map},
+        {"diag",    slopos::debug::feat_set_diag,    slopos::debug::feat_get_diag},
+    };
+
+    char buf[64];
+    strncpy(buf, arg, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    char* subcmd = strtok(buf, " ");
+    char* val_str = strtok(nullptr, " ");
+
+    // Check for "level" sub-command
+    if (strcmp(subcmd, "level") == 0) {
+        if (!val_str) {
+            Serial.printf("[test] debug level: %u\n", (unsigned)slopos::debug::get_level());
+            return;
+        }
+        char* end;
+        long level = strtol(val_str, &end, 10);
+        while (*end == ' ') end++;
+        if (*end != '\0' || level < 1 || level > 3) {
+            Serial.println("[test] debug: usage: debug level <1|2|3>  (1=quiet, 2=normal, 3=verbose)");
+            return;
+        }
+        slopos::debug::set_level((uint8_t)level);
         return;
     }
-    slopos::debug::set_level((uint8_t)level);
+
+    // Check feature sub-commands
+    for (auto& feat : feat_table) {
+        if (strcmp(subcmd, feat.name) == 0) {
+            if (!val_str) {
+                // Show current state for this feature
+                Serial.printf("[test] debug %s: %d\n", feat.name, feat.get() ? 1 : 0);
+                return;
+            }
+            long val = strtol(val_str, nullptr, 10);
+            feat.set(val != 0);
+            Serial.printf("[test] debug %s: %s\n", feat.name, val ? "ON" : "OFF");
+            return;
+        }
+    }
+
+    // "all on" / "all off"
+    if (strcmp(subcmd, "all") == 0 && val_str) {
+        long val = strtol(val_str, nullptr, 10);
+        slopos::debug::feat_set_all_mask(val != 0);
+        Serial.printf("[test] debug all features: %s\n", val ? "ON" : "OFF");
+        return;
+    }
+
+    // Fallback: try parsing as a plain level number (backward compat)
+    bool all_digits = true;
+    for (const char* p = subcmd; *p; p++) { if (!isdigit((unsigned char)*p)) { all_digits = false; break; } }
+    if (all_digits) {
+        char* end;
+        long level = strtol(subcmd, &end, 10);
+        while (*end == ' ') end++;
+        if (*end != '\0' || level < 1 || level > 3) {
+            Serial.println("[test] debug: usage: debug <1|2|3> or debug <feature> <1|0>");
+            return;
+        }
+        slopos::debug::set_level((uint8_t)level);
+        return;
+    }
+
+    Serial.println("[test] debug: usage: debug <1|2|3>  |  debug <display|mesh|ui|map|diag|all> <1|0>  |  debug level <1|2|3>");
 }
 
 // Show full emoji grid for visual verification

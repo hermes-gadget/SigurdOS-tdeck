@@ -24,7 +24,8 @@
 #include "responsive.h"
 #include "../hal/tdeck_pins.h"
 #include "../mesh/mesh_wrapper.h"
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#include "../diagnostics/debug_cfg.h"
+#if SLOPOS_DEBUG_UI
 #include "../diagnostics/debug.h"
 #include <Arduino.h>
 #endif
@@ -127,7 +128,7 @@ static void apply_selection(int old_idx = -1)
         force_full_tile_redraw(selected_icon);
     }
 
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_UI
     Serial.printf("[home] apply_selection old=%d new=%d", old_idx, selected_icon);
     if (selected_icon >= 0 && selected_icon < ICON_COUNT) {
         lv_area_t coords;

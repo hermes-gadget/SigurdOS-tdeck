@@ -10,6 +10,7 @@
 #include "hal/gps.h"
 #include "hal/prefs.h"
 #include "slop_mesh.h"
+#include "../diagnostics/debug_cfg.h"
 
 #include <SPIFFS.h>
 #include <Preferences.h>
@@ -89,7 +90,7 @@ static bool queue_pop(MeshMessage* out) {
 
 static void onMeshMessage(const char* sender, const char* channel, const char* text) {
     queue_push(sender, channel, text);
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_MESH
     int rssi = (int)radio_driver.getLastRSSI();
     float snr = radio_driver.getLastSNR();
     Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
@@ -171,7 +172,7 @@ void injectMessage(const char* sender, const char* channel, const char* text)
     } else {
         pushPacketLog(sender, -50, 8.0f, "CHANNEL");
     }
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_MESH
     Serial.printf("[test] injected msg from %s%s%s: %s\n",
                   sender, channel && channel[0] ? " in " : "",
                   channel && channel[0] ? channel : "", text);
@@ -192,7 +193,7 @@ bool init(bool spiffs_ok)
     int     tx_power = p.configured ? p.tx_power_dbm : LORA_TX_PWR;
 
     if (!p.configured) {
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_MESH
         Serial.println("[mesh] Using compile-time defaults — open Settings to customize");
 #endif
     }
@@ -201,7 +202,7 @@ bool init(bool spiffs_ok)
     //     If BUSY pin is stuck HIGH from a previous crash, std_init() hangs
     //     in waitForBusyPin() → watchdog reset → infinite bootloop.
     //     Solution: assert RST LOW for 100µs, release, wait 10ms for TCXO.
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_MESH
     Serial.println("[mesh] hard-resetting SX1262 via RST pin...");
 #endif
     pinMode(P_LORA_RESET, OUTPUT);
@@ -210,11 +211,11 @@ bool init(bool spiffs_ok)
     digitalWrite(P_LORA_RESET, HIGH);
     delay(10);  // TCXO stabilization + radio calibration
 
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_MESH
     Serial.println("[mesh] initializing LoRa SPI bus...");
 #endif
     lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_MESH
     Serial.println("[mesh] calling radio_module.std_init()...");
 #endif
     if (!radio_module.std_init(&lora_spi)) {
@@ -227,7 +228,7 @@ bool init(bool spiffs_ok)
     radio_module.setSpreadingFactor(sf);
     radio_module.setCodingRate(cr);   // denominator (5–8); RadioLib rejects the SX126X enum constants
     radio_module.setOutputPower(tx_power);
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_MESH
     Serial.printf("[mesh] Radio: %.3f MHz / %.1f kHz / SF%d / CR4/%d / %d dBm\n",
                   freq, bw, sf, cr, tx_power);
 #endif
@@ -265,7 +266,7 @@ bool init(bool spiffs_ok)
     }
 
     initialized = true;
-#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#if SLOPOS_DEBUG_MESH
     Serial.println("[mesh] SlopMesh initialized");
 #endif
     // Test entry to verify packet log works
