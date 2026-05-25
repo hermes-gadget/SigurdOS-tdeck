@@ -136,7 +136,10 @@ static void ensure_channel_buffer(int idx)
     const size_t bytes = CHAT_MSGS_MAX * sizeof(ChannelMessage);
     ch_msgs[idx] = (ChannelMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!ch_msgs[idx]) {
-        ch_msg_capacity[idx] = 0;
+        // PSRAM exhausted — fall back to DRAM at reduced capacity
+        size_t dram_bytes = CHAT_MSGS_MIN_CAP * sizeof(ChannelMessage);
+        ch_msgs[idx] = (ChannelMessage*)heap_caps_malloc(dram_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        ch_msg_capacity[idx] = ch_msgs[idx] ? CHAT_MSGS_MIN_CAP : 0;
     } else {
         ch_msg_capacity[idx] = CHAT_MSGS_MAX;
     }

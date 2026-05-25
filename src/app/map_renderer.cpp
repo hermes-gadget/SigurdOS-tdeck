@@ -590,6 +590,8 @@ static void load_metadata() {
 // PUBLIC API
 // ════════════════════════════════════════════════════════
 
+static bool delete_cb_registered = false;
+
 void slopos_map_init() {
     if (initialized) return;
 
@@ -628,7 +630,6 @@ void slopos_map_reparent(lv_obj_t* new_parent) {
                          TFT_WIDTH, TFT_HEIGHT, LV_COLOR_FORMAT_RGB565);
     lv_obj_move_to_index(map_canvas, 0);
 
-    static bool delete_cb_registered = false;
     if (!delete_cb_registered) {
         lv_obj_add_event_cb(new_parent, [](lv_event_t* e) {
             slopos_map_deinit();
@@ -638,6 +639,8 @@ void slopos_map_reparent(lv_obj_t* new_parent) {
 }
 
 void slopos_map_deinit() {
+    if (!initialized) return;
+    delete_cb_registered = false;
     // Free LRU tile cache pixels
     for (int i = 0; i < TILE_CACHE_SIZE; i++) {
         if (tile_cache[i].pixels) {

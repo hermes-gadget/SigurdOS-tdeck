@@ -106,6 +106,8 @@ static void build_step1()
             if (text && text[0]) {
                 strncpy(s_name, text, sizeof(s_name) - 1);
                 s_name[sizeof(s_name) - 1] = '\0';
+            } else {
+                return;  // reject empty name
             }
         }
         s_step = 1;
@@ -226,6 +228,12 @@ static void build_step2()
 static void build_step3()
 {
     clear_widget_ptrs();
+
+    // Reload from prefs — "Full Radio Setup" may have changed freq/SF/power
+    const auto& p = slopos::prefs_get();
+    s_freq = p.configured ? p.freq : 869.618f;
+    s_sf   = p.configured ? p.sf   : 8;
+    s_pwr  = p.configured ? p.tx_power_dbm : 22;
 
     lv_obj_t* title = lv_label_create(s_content);
     lv_label_set_text(title, "Set Frequency");

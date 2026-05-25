@@ -462,7 +462,11 @@ uint32_t makeEpoch(int year, int month, int day, int hour, int minute) {
 
     // Force UTC so that the wall-clock values the user typed become the correct epoch
     // (getCurrentLocalDateTime uses gmtime, so we must match on the write side)
-    const char* old_tz = getenv("TZ");
+    // Copy to stack buffer first — setenv() can invalidate the getenv() pointer on ESP32/newlib
+    char old_tz_buf[64] = {};
+    const char* old_tz_raw = getenv("TZ");
+    if (old_tz_raw) strncpy(old_tz_buf, old_tz_raw, sizeof(old_tz_buf) - 1);
+    const char* old_tz = old_tz_buf[0] ? old_tz_buf : nullptr;
     setenv("TZ", "UTC0", 1);
     tzset();
     time_t t = mktime(&tm);
