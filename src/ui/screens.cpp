@@ -1201,6 +1201,11 @@ void settings_screen_show()
 // ════════════════════════════════════════════════════════
 // Terminal — colored log output helpers
 // ════════════════════════════════════════════════════════
+
+// Keep a pointer so the test controller can dump terminal log content via serial
+static lv_obj_t* g_term_log = nullptr;
+static lv_obj_t* g_term_input = nullptr;  // terminal textarea for direct injection
+
 static uint32_t term_classify_line(const char* text)
 {
     if (strstr(text, "ERROR") || strstr(text, "FAIL") || strstr(text, "failed"))
@@ -1220,6 +1225,9 @@ static uint32_t term_classify_line(const char* text)
 
 static void term_add_line(lv_obj_t* log, const char* text)
 {
+    // Echo to Serial so the remote test controller can read terminal output
+    Serial.println(text);
+
     lv_obj_t* lbl = lv_label_create(log);
     lv_label_set_text(lbl, text);
     lv_obj_set_style_text_color(lbl, lv_color_hex(term_classify_line(text)), 0);
@@ -1232,6 +1240,54 @@ static void term_add_line(lv_obj_t* log, const char* text)
 // ════════════════════════════════════════════════════════
 // Terminal — colored log output + command input
 // ════════════════════════════════════════════════════════
+
+// Dump terminal log content to Serial (for remote test controller)
+void term_dump_log()
+{
+    if (!g_term_log) {
+        Serial.println("[term] no terminal log container (terminal screen not active)");
+        return;
+    }
+    uint32_t n = lv_obj_get_child_count(g_term_log);
+    Serial.printf("[term] log lines: %u\n", (unsigned)n);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t* child = lv_obj_get_child(g_term_log, i);
+        if (child) {
+            const char* text = lv_label_get_text(child);
+            if (text) Serial.printf("[term]   %s\n", text);
+        }
+    }
+}
+
+// Clear all terminal log lines
+void term_clear_log()
+{
+    if (!g_term_log) return;
+    lv_obj_clean(g_term_log);
+    Serial.println("[term] log cleared");
+}
+
+// Directly submit a command to the terminal input (bypasses keyboard layer)
+void term_submit(const char* text)
+{
+    if (!g_term_input) {
+        Serial.println("[term] no terminal textarea (terminal screen not active)");
+        return;
+    }
+    if (!text || !text[0]) return;
+    
+    // Set the text and simulate LV_EVENT_READY to trigger the command handler
+    lv_textarea_set_text(g_term_input, text);
+    lv_obj_send_event(g_term_input, LV_EVENT_READY, nullptr);
+    Serial.printf("[term] submitted: %s\n", text);
+}
+
+// Get the terminal textarea object (for test controller)
+lv_obj_t* term_get_input()
+{
+    return g_term_input;
+}
+
 void terminal_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Terminal");
@@ -1250,6 +1306,7 @@ void terminal_screen_show()
     lv_obj_set_flex_flow(log, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(log, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(log, LV_SCROLLBAR_MODE_OFF);
+    g_term_log = log;  // for remote test controller access
 
     // Boot header lines
     const slopos::NodePrefs& p = slopos::prefs_get();
@@ -1282,6 +1339,7 @@ void terminal_screen_show()
     lv_obj_set_style_pad_all(input, 4, 0);
     lv_textarea_set_one_line(input, true);
     lv_textarea_set_placeholder_text(input, "> enter command...");
+    g_term_input = input;
 
     lv_group_t* g = lv_group_get_default();
     if (g) {

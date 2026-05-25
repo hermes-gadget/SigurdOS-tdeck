@@ -24,9 +24,11 @@
 #include "hal/keyboard.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
+#include "ui/screens.h"
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 
 // ── Constants ────────────────────────────────────────────
 static constexpr uint32_t CMD_POLL_MS = 50;   // check Serial every 50ms
@@ -98,6 +100,9 @@ static void print_help() {
     Serial.println(F("║  inject <from> [channel=<ch>] <msg>  ║"));
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
+    Serial.println(F("║  term-log    Dump terminal log       ║"));
+    Serial.println(F("║  term-clear  Clear terminal log      ║"));
+    Serial.println(F("║  term-submit <cmd>  Run cmd in terminal║"));
     Serial.println(F("╚══════════════════════════════════════╝"));
     Serial.println();
 }
@@ -293,6 +298,13 @@ static bool dispatch(const char* line) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {
         cmd_status();
+    } else if (strcmp(cmd, "term-log") == 0) {
+        slopos::ui::term_dump_log();
+    } else if (strcmp(cmd, "term-clear") == 0) {
+        slopos::ui::term_clear_log();
+    } else if (strcmp(cmd, "term-submit") == 0) {
+        if (!arg) { Serial.println("[test] term-submit: missing command text"); return true; }
+        slopos::ui::term_submit(arg);
     } else {
         Serial.printf("[test] unknown command: %s (try 'help')\n", cmd);
     }
