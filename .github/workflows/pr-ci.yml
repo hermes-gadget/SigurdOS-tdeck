@@ -1,6 +1,6 @@
 name: Pull Request CI
 
-on:
+"on":
   pull_request:
     branches:
       - dev
