@@ -1465,10 +1465,11 @@ void terminal_screen_show()
             float snr = slopos::mesh::getLastSNR();
             int noise = slopos::mesh::getNoiseFloor();
             snprintf(result, sizeof(result),
-                "RSSI:%ddBm SNR:%.1fdB Noise:%ddBm  Contacts:%d Channels:%d",
+                "RSSI:%ddBm SNR:%.1fdB Noise:%ddBm  Contacts:%d Channels:%d  Up:%lums",
                 rssi, snr, noise,
                 slopos::mesh::getContactCount(),
-                slopos::mesh::getChannelCount());
+                slopos::mesh::getChannelCount(),
+                millis());
         } else if (strcmp(cbuf, "channels") == 0) {
             char names[8][32];
             int n = slopos::mesh::exportChannels(names, 8);
