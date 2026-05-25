@@ -365,6 +365,22 @@ bool slopos_display_init()
 
 void slopos_display_loop()
 {
+    // Serial screenshot trigger: send "SCREENSHOT" over USB serial
+    if (Serial.available()) {
+        static char cmd_buf[32];
+        static uint8_t cmd_pos = 0;
+        char c = (char)Serial.read();
+        if (c == '\n' || c == '\r') {
+            cmd_buf[cmd_pos] = '\0';
+            if (strcmp(cmd_buf, "SCREENSHOT") == 0) {
+                slopos_display_capture_framebuffer();
+            }
+            cmd_pos = 0;
+        } else if (cmd_pos < sizeof(cmd_buf) - 1) {
+            cmd_buf[cmd_pos++] = c;
+        }
+    }
+
     slopos_touch_loop();
     slopos_keyboard_scan();
     slopos_trackball_scan();
@@ -423,3 +439,92 @@ void slopos_test_set_touch(int x, int y)
     test_touch_pressed = true;
 }
 #endif
+
+// ════════════════════════════════════════════════════════
+// Screenshot capture (all builds)
+// ════════════════════════════════════════════════════════
+void* slopos_display_get_buffer()
+{
+    return draw_buf;
+}
+
+uint32_t slopos_display_get_width()
+{
+    return TFT_WIDTH;
+}
+
+uint32_t slopos_display_get_height()
+{
+    return TFT_HEIGHT;
+}
+
+void slopos_display_capture_framebuffer()
+{
+    // Force a full LVGL render into the buffer
+    lv_refr_now(NULL);
+
+    lv_display_t* disp = lv_display_get_default();
+    if (!disp) {
+        Serial.println("[capture] ERROR: no display");
+        return;
+    }
+
+    uint32_t w = TFT_WIDTH;
+    uint32_t h = TFT_HEIGHT;
+    uint32_t stride = w * sizeof(lv_color_t);
+    uint32_t total_bytes = w * h * sizeof(lv_color_t);
+
+    // If we have a PSRAM draw buffer, snapshot directly; otherwise allocate temp.
+    uint8_t* snap_buf = nullptr;
+    bool own_buf = false;
+
+    if (draw_buf) {
+        snap_buf = (uint8_t*)draw_buf;
+    } else {
+        snap_buf = (uint8_t*)heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!snap_buf) {
+            snap_buf = (uint8_t*)malloc(total_bytes);
+        }
+        if (snap_buf) {
+            own_buf = true;
+            lv_draw_buf_t snap_db;
+            lv_draw_buf_init(&snap_db, w, h, LV_COLOR_FORMAT_RGB565, stride, snap_buf, total_bytes);
+            if (lv_snapshot_take_to_draw_buf(lv_scr_act(), LV_COLOR_FORMAT_RGB565, &snap_db) != LV_RES_OK) {
+                Serial.println("[capture] ERROR: snapshot failed");
+                free(snap_buf);
+                return;
+            }
+        } else {
+            Serial.println("[capture] ERROR: no memory");
+            return;
+        }
+    }
+
+    Serial.printf("[capture] W=%lu H=%lu S=%lu\n",
+                  (unsigned long)w, (unsigned long)h, (unsigned long)stride);
+
+    char hex_line[128];
+    const int HEX_PER_LINE = 64;
+
+    for (uint32_t y = 0; y < h; y++) {
+        uint8_t* row = snap_buf + y * stride;
+        uint32_t offset = 0;
+        while (offset < stride) {
+            uint32_t remaining = stride - offset;
+            uint32_t chunk = (remaining > (HEX_PER_LINE / 2))
+                             ? (HEX_PER_LINE / 2) : remaining;
+            int n = 0;
+            for (uint32_t i = 0; i < chunk; i++) {
+                n += snprintf(hex_line + n, sizeof(hex_line) - n, "%02X", row[offset + i]);
+            }
+            hex_line[n] = '\0';
+            Serial.printf("[cdata] %s\n", hex_line);
+            offset += chunk;
+        }
+    }
+
+    if (own_buf) {
+        free(snap_buf);
+    }
+    Serial.println("[capture] END");
+}

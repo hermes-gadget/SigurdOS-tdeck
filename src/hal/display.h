@@ -33,6 +33,16 @@ void slopos_display_wake();
 bool slopos_display_is_on();
 void slopos_display_set_brightness(uint8_t brightness);
 
+// Return the current screen buffer for screenshot capture.
+// Only available when full-screen buffer mode is active (PSRAM present).
+void* slopos_display_get_buffer();
+uint32_t slopos_display_get_width();
+uint32_t slopos_display_get_height();
+
+// Capture the current screen and dump it over Serial as hex-encoded RGB565.
+// Uses lv_snapshot_take_to_draw_buf for a clean capture.
+void slopos_display_capture_framebuffer();
+
 #if defined(SLOPOS_REMOTE_TEST)
 void slopos_test_set_touch(int x, int y);
 #endif
