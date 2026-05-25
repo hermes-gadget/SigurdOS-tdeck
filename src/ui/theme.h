@@ -56,6 +56,57 @@ constexpr uint32_t DIVIDER        = 0x2a2a2a;
 // ── Pixel border width ───────────────────────────────────
 constexpr int32_t PIXEL_BORDER    = 2;
 
+// ── Signal bar constants ─────────────────────────────────
+constexpr int SIGNAL_BAR_COUNT = 5;
+constexpr int SIGNAL_BAR_W     = 5;     // each bar width (px)
+constexpr int SIGNAL_BAR_GAP   = 2;     // gap between bars (px)
+constexpr int SIGNAL_BAR_H     = 22;    // container height (px)
+// Bar heights from weakest to strongest
+constexpr int SIGNAL_BAR_HEIGHTS[SIGNAL_BAR_COUNT] = {4, 8, 12, 16, 20};
+
+// Convert RSSI dBm to number of active bars (1-5)
+inline int rssi_to_bars(int rssi)
+{
+    if (rssi > -70)  return 5;
+    if (rssi > -85)  return 4;
+    if (rssi > -95)  return 3;
+    if (rssi > -105) return 2;
+    return 1;
+}
+
+// Create a container of pixel-art signal bars (1-5 blocky rectangles).
+// Bars are bottom-aligned, growing taller left-to-right. Active bars are
+// ACCENT (cyan), inactive are BG_INPUT (dark). Returns the container.
+inline lv_obj_t* create_signal_bars(lv_obj_t* parent, int rssi)
+{
+    int total_w = SIGNAL_BAR_COUNT * SIGNAL_BAR_W
+                + (SIGNAL_BAR_COUNT - 1) * SIGNAL_BAR_GAP;
+
+    lv_obj_t* cont = lv_obj_create(parent);
+    lv_obj_set_size(cont, total_w, SIGNAL_BAR_H);
+    lv_obj_set_style_bg_opa(cont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(cont, 0, 0);
+    lv_obj_set_style_pad_all(cont, 0, 0);
+    lv_obj_remove_flag(cont, LV_OBJ_FLAG_CLICKABLE);
+
+    int active = rssi_to_bars(rssi);
+
+    for (int i = 0; i < SIGNAL_BAR_COUNT; i++) {
+        lv_obj_t* bar = lv_obj_create(cont);
+        lv_obj_set_size(bar, SIGNAL_BAR_W, SIGNAL_BAR_HEIGHTS[i]);
+        lv_obj_set_style_bg_color(bar,
+            lv_color_hex(i < active ? ACCENT : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(bar, 0, 0);
+        lv_obj_set_style_radius(bar, 0, 0);
+        lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_align(bar, LV_ALIGN_BOTTOM_LEFT,
+                     i * (SIGNAL_BAR_W + SIGNAL_BAR_GAP), 0);
+    }
+
+    return cont;
+}
+
 // ── Apply dark background to an object ──────────────────
 inline void apply_dark_bg(lv_obj_t* obj) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(BG_PRIMARY), 0);

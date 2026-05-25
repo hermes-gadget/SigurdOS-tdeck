@@ -239,16 +239,7 @@ static lv_obj_t* make_screen_full(const char* title)
     // Signal bars (center, snapshot)
     {
         int rssi = slopos::mesh::getLastRSSI();
-        const char* bars;
-        if (rssi > -70)       bars = "▂▄▆█";
-        else if (rssi > -85)  bars = "▂▄▆ ";
-        else if (rssi > -100) bars = "▂▄  ";
-        else if (rssi > -115) bars = "▂   ";
-        else                  bars = "    ";
-        lv_obj_t* sig = lv_label_create(bot);
-        lv_label_set_text(sig, bars);
-        lv_obj_set_style_text_color(sig, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_text_font(sig, &lv_font_montserrat_10, 0);
+        lv_obj_t* sig = create_signal_bars(bot, rssi);
         lv_obj_align(sig, LV_ALIGN_CENTER, -20, 0);
     }
 
@@ -533,14 +524,9 @@ void contacts_screen_show()
         lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
         lv_obj_align(name_l, LV_ALIGN_LEFT_MID, 28, 0);
 
-        // RSSI
-        char rssi_buf[12];
-        snprintf(rssi_buf, sizeof(rssi_buf), "%ddBm", c.rssi);
-        lv_obj_t* rssi_l = lv_label_create(row);
-        lv_label_set_text(rssi_l, rssi_buf);
-        lv_obj_set_style_text_color(rssi_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(rssi_l, &lv_font_montserrat_10, 0);
-        lv_obj_align(rssi_l, LV_ALIGN_RIGHT_MID, -6, 0);
+        // Signal bars
+        lv_obj_t* sig = create_signal_bars(row, c.rssi);
+        lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -6, 0);
 
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
@@ -1201,6 +1187,11 @@ void settings_screen_show()
 // ════════════════════════════════════════════════════════
 // Terminal — colored log output helpers
 // ════════════════════════════════════════════════════════
+
+// Keep a pointer so the test controller can dump terminal log content via serial
+static lv_obj_t* g_term_log = nullptr;
+static lv_obj_t* g_term_input = nullptr;  // terminal textarea for direct injection
+
 static uint32_t term_classify_line(const char* text)
 {
     if (strstr(text, "ERROR") || strstr(text, "FAIL") || strstr(text, "failed"))
@@ -1220,6 +1211,16 @@ static uint32_t term_classify_line(const char* text)
 
 static void term_add_line(lv_obj_t* log, const char* text)
 {
+    // Echo to Serial so the remote test controller can read terminal output
+    Serial.println(text);
+
+    // Prune oldest lines when log exceeds 64 entries to prevent heap exhaustion
+    static constexpr uint32_t MAX_LOG_LINES = 64;
+    while (lv_obj_get_child_count(log) >= MAX_LOG_LINES) {
+        lv_obj_t* oldest = lv_obj_get_child(log, 0);
+        if (oldest) lv_obj_delete(oldest);
+    }
+
     lv_obj_t* lbl = lv_label_create(log);
     lv_label_set_text(lbl, text);
     lv_obj_set_style_text_color(lbl, lv_color_hex(term_classify_line(text)), 0);
@@ -1229,9 +1230,108 @@ static void term_add_line(lv_obj_t* log, const char* text)
     lv_obj_scroll_to_view(lbl, LV_ANIM_OFF);
 }
 
+// ── Terminal help system ──────────────────────────────────
+struct HelpEntry {
+    const char* name;
+    const char* desc;
+};
+
+static const HelpEntry HELP_ENTRIES[] = {
+    {"help",    "Show help for commands"},
+    {"status",  "Mesh status, node count, uptime"},
+    {"channels","List joined channels"},
+    {"nodes",   "List known nodes/contacts"},
+    {"signal",  "RSSI/SNR of last heard transmission"},
+    {"send",    "Send text to first joined channel"},
+    {"advert",  "Send advert broadcast"},
+    {"ping",    "Check device responsiveness"},
+    {"save",    "Force save state to NVS"},
+    {"gps",     "Show current GPS fix data"},
+    {"reset",   "Reboot the device"},
+};
+
+static constexpr int NUM_HELP = sizeof(HELP_ENTRIES) / sizeof(HELP_ENTRIES[0]);
+
+static const char* HELP_DETAILS[] = {
+    "help [command] — show help list or detail for a specific command",
+    "status — RSSI, SNR, noise floor, contacts, channels, uptime",
+    "channels — list all joined channel names",
+    "nodes — list known mesh contacts with RSSI",
+    "signal — RSSI, SNR, noise floor from last received packet",
+    "send <text> — send a message to the first joined channel",
+    "advert — broadcast an advert to the mesh",
+    "ping — returns uptime in milliseconds",
+    "save — persist current state to NVS (config, channels)",
+    "gps — latitude, longitude, altitude, speed, heading, satellites, fix quality",
+    "reset — software reboot the device",
+};
+
+// Assert that both arrays have the same length so detail lookups stay safe
+static_assert(NUM_HELP == (int)(sizeof(HELP_DETAILS) / sizeof(HELP_DETAILS[0])),
+              "HELP_ENTRIES and HELP_DETAILS must have the same number of entries");
+
+// Emit help listing line by line into the terminal log
+static void term_print_help(lv_obj_t* log_cont)
+{
+    term_add_line(log_cont, "Commands:");
+    for (int i = 0; i < NUM_HELP; i++) {
+        char line[64];
+        snprintf(line, sizeof(line), "  %-12s %s", HELP_ENTRIES[i].name, HELP_ENTRIES[i].desc);
+        term_add_line(log_cont, line);
+    }
+}
+
 // ════════════════════════════════════════════════════════
 // Terminal — colored log output + command input
 // ════════════════════════════════════════════════════════
+
+// Dump terminal log content to Serial (for remote test controller)
+void term_dump_log()
+{
+    if (!g_term_log) {
+        Serial.println("[term] no terminal log container (terminal screen not active)");
+        return;
+    }
+    uint32_t n = lv_obj_get_child_count(g_term_log);
+    Serial.printf("[term] log lines: %u\n", (unsigned)n);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t* child = lv_obj_get_child(g_term_log, i);
+        if (child) {
+            const char* text = lv_label_get_text(child);
+            if (text) Serial.printf("[term]   %s\n", text);
+        }
+    }
+}
+
+// Clear all terminal log lines
+void term_clear_log()
+{
+    if (!g_term_log) return;
+    lv_obj_clean(g_term_log);
+    Serial.println("[term] log cleared");
+}
+
+// Directly submit a command to the terminal input (bypasses keyboard layer)
+void term_submit(const char* text)
+{
+    if (!g_term_input) {
+        Serial.println("[term] no terminal textarea (terminal screen not active)");
+        return;
+    }
+    if (!text || !text[0]) return;
+    
+    // Set the text and simulate LV_EVENT_READY to trigger the command handler
+    lv_textarea_set_text(g_term_input, text);
+    lv_obj_send_event(g_term_input, LV_EVENT_READY, nullptr);
+    Serial.printf("[term] submitted: %s\n", text);
+}
+
+// Get the terminal textarea object (for test controller)
+lv_obj_t* term_get_input()
+{
+    return g_term_input;
+}
+
 void terminal_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Terminal");
@@ -1250,6 +1350,7 @@ void terminal_screen_show()
     lv_obj_set_flex_flow(log, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(log, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(log, LV_SCROLLBAR_MODE_OFF);
+    g_term_log = log;  // for remote test controller access
 
     // Boot header lines
     const slopos::NodePrefs& p = slopos::prefs_get();
@@ -1282,6 +1383,7 @@ void terminal_screen_show()
     lv_obj_set_style_pad_all(input, 4, 0);
     lv_textarea_set_one_line(input, true);
     lv_textarea_set_placeholder_text(input, "> enter command...");
+    g_term_input = input;
 
     lv_group_t* g = lv_group_get_default();
     if (g) {
@@ -1302,24 +1404,139 @@ void terminal_screen_show()
         term_add_line(log_cont, echo);
 
         char result[256] = "";
-        if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping");
-        } else if (strcmp(cmd, "status") == 0) {
+
+        // Parse: skip leading whitespace, then copy command token
+        const char* p = cmd;
+        while (*p == ' ' || *p == '\t') p++;
+        char cbuf[32];
+        int ci = 0;
+        while (*p && *p != ' ' && *p != '\t' && ci < (int)sizeof(cbuf) - 1) {
+            cbuf[ci++] = *p++;
+        }
+        cbuf[ci] = '\0';
+        // Skip whitespace between command and argument
+        while (*p == ' ' || *p == '\t') p++;
+        const char* arg = p;
+
+        if (strcmp(cbuf, "help") == 0) {
+            if (arg && arg[0]) {
+                // help <cmd> — find and show detail (trim trailing whitespace)
+                char arg_buf[32];
+                int ai = 0;
+                while (arg[ai] && arg[ai] != ' ' && arg[ai] != '\t' && ai < (int)sizeof(arg_buf) - 1) {
+                    arg_buf[ai] = arg[ai];
+                    ai++;
+                }
+                arg_buf[ai] = '\0';
+                const char* detail = nullptr;
+                for (int i = 0; i < NUM_HELP; i++) {
+                    if (strcmp(arg_buf, HELP_ENTRIES[i].name) == 0) {
+                        detail = HELP_DETAILS[i];
+                        break;
+                    }
+                }
+                if (detail) {
+                    snprintf(result, sizeof(result), "%s", detail);
+                } else {
+                    snprintf(result, sizeof(result), "Unknown command: %s", arg_buf);
+                }
+            } else {
+                // Bare help — output line by line (too large for single result buffer)
+                term_print_help(log_cont);
+                lv_textarea_set_text(ta, "");
+                return;
+            }
+        } else if (strcmp(cbuf, "status") == 0) {
             int rssi  = slopos::mesh::getLastRSSI();
             float snr = slopos::mesh::getLastSNR();
             int noise = slopos::mesh::getNoiseFloor();
             snprintf(result, sizeof(result),
-                "RSSI:%ddBm SNR:%.1fdB Noise:%ddBm  Contacts:%d Channels:%d",
+                "RSSI:%ddBm SNR:%.1fdB Noise:%ddBm  Contacts:%d Channels:%d  Up:%lums",
                 rssi, snr, noise,
                 slopos::mesh::getContactCount(),
-                slopos::mesh::getChannelCount());
-        } else if (strcmp(cmd, "advert") == 0) {
+                slopos::mesh::getChannelCount(),
+                millis());
+        } else if (strcmp(cbuf, "channels") == 0) {
+            char names[8][32];
+            int n = slopos::mesh::exportChannels(names, 8);
+            if (n == 0) {
+                snprintf(result, sizeof(result), "No channels joined");
+            } else {
+                char buf[192] = "";
+                for (int i = 0; i < n; i++) {
+                    if (i > 0) strncat(buf, " ", sizeof(buf) - strlen(buf) - 1);
+                    strncat(buf, names[i], sizeof(buf) - strlen(buf) - 1);
+                }
+                snprintf(result, sizeof(result), "Channels (%d): %s", n, buf);
+            }
+        } else if (strcmp(cbuf, "nodes") == 0) {
+            slopos::mesh::ContactInfo contacts[16];
+            int n = slopos::mesh::exportContactsFull(contacts, 16);
+            if (n == 0) {
+                snprintf(result, sizeof(result), "No known nodes");
+            } else {
+                char buf[192] = "";
+                for (int i = 0; i < n && i < 4; i++) {
+                    char line[48];
+                    snprintf(line, sizeof(line), "%s(%ddBm) ", contacts[i].name, contacts[i].rssi);
+                    strncat(buf, line, sizeof(buf) - strlen(buf) - 1);
+                }
+                if (n > 4) {
+                    char more[16];
+                    snprintf(more, sizeof(more), "+%d more", n - 4);
+                    strncat(buf, more, sizeof(buf) - strlen(buf) - 1);
+                }
+                snprintf(result, sizeof(result), "Nodes (%d): %s", n, buf);
+            }
+        } else if (strcmp(cbuf, "signal") == 0) {
+            int rssi  = slopos::mesh::getLastRSSI();
+            float snr = slopos::mesh::getLastSNR();
+            int noise = slopos::mesh::getNoiseFloor();
+            snprintf(result, sizeof(result),
+                "RSSI:%ddBm SNR:%.1fdB Noise:%ddBm", rssi, snr, noise);
+        } else if (strcmp(cbuf, "send") == 0) {
+            if (arg && arg[0]) {
+                // Send to first joined channel
+                char channels[8][32];
+                int n = slopos::mesh::exportChannels(channels, 8);
+                const char* chan = (n > 0) ? channels[0] : "general";
+                bool ok = slopos::mesh::sendChannelMessage(chan, arg);
+                snprintf(result, sizeof(result), ok ? "Sent to #%s" : "Send failed to #%s", chan);
+            } else {
+                snprintf(result, sizeof(result), "Usage: send <text>");
+            }
+        } else if (strcmp(cbuf, "advert") == 0) {
             bool ok = slopos::mesh::sendAdvert();
             snprintf(result, sizeof(result), ok ? "Advert sent" : "Send failed");
-        } else if (strcmp(cmd, "ping") == 0) {
+        } else if (strcmp(cbuf, "ping") == 0) {
             snprintf(result, sizeof(result), "Pong! Uptime: %lums", millis());
+        } else if (strcmp(cbuf, "save") == 0) {
+            slopos::mesh::saveState();
+            slopos::NodePrefs p = slopos::prefs_get();
+            slopos::prefs_save(p);
+            snprintf(result, sizeof(result), "State saved to NVS");
+        } else if (strcmp(cbuf, "gps") == 0) {
+            bool fix = slopos_gps_has_fix();
+            if (fix) {
+                snprintf(result, sizeof(result),
+                    "Fix:%d SAT:%d  %.5f,%.5f  %.1fm %.1fkn %.1fdeg",
+                    slopos_gps_fix_quality(), slopos_gps_satellites(),
+                    (double)slopos_gps_latitude(), (double)slopos_gps_longitude(),
+                    (double)slopos_gps_altitude_m(),
+                    (double)slopos_gps_speed_kn(),
+                    (double)slopos_gps_heading());
+            } else {
+                snprintf(result, sizeof(result), "No GPS fix");
+            }
+        } else if (strcmp(cbuf, "reset") == 0) {
+            term_add_line(log_cont, "Rebooting...");
+            lv_textarea_set_text(ta, "");
+            lv_timer_handler();
+            delay(100);
+            ESP.restart();
+            return;
         } else {
-            snprintf(result, sizeof(result), "Unknown: %s  (type 'help')", cmd);
+            snprintf(result, sizeof(result), "Unknown: %s  (type 'help')", cbuf);
         }
 
         term_add_line(log_cont, result);

@@ -18,6 +18,9 @@
 //   inject <from> channel=<ch> <text>  Simulate incoming channel msg
 //   screen                        Show current screen name
 //   status                        Show device info (heap, psram, batt)
+//   term-log                      Dump terminal log content to serial
+//   term-clear                    Clear terminal log
+//   term-submit <text>            Submit a command directly to the terminal
 
 #include "test_controller.h"
 #include "hal/trackball.h"
@@ -25,9 +28,11 @@
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
 #include "diagnostics/debug.h"
+#include "ui/screens.h"
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 
 // ── Constants ────────────────────────────────────────────
 static constexpr uint32_t CMD_POLL_MS = 50;   // check Serial every 50ms
@@ -100,6 +105,9 @@ static void print_help() {
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
     Serial.println(F("║  debug <1|2|3> Set debug level       ║"));
+    Serial.println(F("║  term-log    Dump terminal log       ║"));
+    Serial.println(F("║  term-clear  Clear terminal log      ║"));
+    Serial.println(F("║  term-submit <cmd>  Run cmd in terminal║"));
     Serial.println(F("╚══════════════════════════════════════╝"));
     Serial.println();
 }
@@ -315,6 +323,13 @@ static bool dispatch(const char* line) {
         cmd_status();
     } else if (strcmp(cmd, "debug") == 0) {
         cmd_debug(arg);
+    } else if (strcmp(cmd, "term-log") == 0) {
+        slopos::ui::term_dump_log();
+    } else if (strcmp(cmd, "term-clear") == 0) {
+        slopos::ui::term_clear_log();
+    } else if (strcmp(cmd, "term-submit") == 0) {
+        if (!arg) { Serial.println("[test] term-submit: missing command text"); return true; }
+        slopos::ui::term_submit(arg);
     } else {
         Serial.printf("[test] unknown command: %s (try 'help')\n", cmd);
     }

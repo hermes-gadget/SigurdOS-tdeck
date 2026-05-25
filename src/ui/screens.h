@@ -18,6 +18,7 @@
 // You should have received a copy of the GNU General Public License
 // along with SlopOS-TDeck.  If not, see <https://www.gnu.org/licenses/>.
 
+#include <lvgl.h>
 
 namespace slopos::ui {
 void heard_screen_show();
@@ -26,6 +27,10 @@ void signal_screen_show();
 void map_screen_show();
 void settings_screen_show();
 void terminal_screen_show();
+void term_dump_log();
+void term_clear_log();
+void term_submit(const char* text);
+lv_obj_t* term_get_input();
 void trace_screen_show();
 void channels_screen_show();
 void finder_screen_show();
