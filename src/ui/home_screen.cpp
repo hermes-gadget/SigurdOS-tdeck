@@ -129,6 +129,7 @@ static void apply_selection(int old_idx = -1)
     }
 
 #if SLOPOS_DEBUG_UI
+    SLOPOS_RUNTIME_FEAT(ui) {
     Serial.printf("[home] apply_selection old=%d new=%d", old_idx, selected_icon);
     if (selected_icon >= 0 && selected_icon < ICON_COUNT) {
         lv_area_t coords;
@@ -156,6 +157,7 @@ static void apply_selection(int old_idx = -1)
         }
     }
     Serial.println();
+    }
 #endif
 }
 

@@ -315,8 +315,10 @@ public:
         float snr = pkt->getSNR();
         pushPacketLog("RADIO", rssi, snr, tname);
 #if SLOPOS_DEBUG_MESH
+        SLOPOS_RUNTIME_FEAT(mesh) {
         Serial.printf("[rx] %s  RSSI:%ddBm SNR:%.1fdB\n",
                       tname, rssi, snr);
+        }
 #endif
     }
 

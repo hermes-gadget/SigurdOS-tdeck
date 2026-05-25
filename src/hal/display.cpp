@@ -162,8 +162,11 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
 #if SLOPOS_DEBUG_DISPLAY
     dbg_last_flush_area = *area;
     dbg_flush_count++;
-    // Only print flush details at debug level >= 2 AND display feature enabled
-    if (slopos::debug::get_level() >= 2 && slopos::debug::feat_get_display()) {
+    // Runtime level + feature check only when full debug module is compiled
+#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+    if (slopos::debug::get_level() >= 2 && slopos::debug::feat_get_display())
+#endif
+    {
         Serial.printf("[flush] #%lu  area=(%ld,%ld,%ld,%ld) w=%ld h=%ld pixels=%ld\n",
                       (unsigned long)dbg_flush_count,
                       (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
@@ -285,7 +288,12 @@ static void lvgl_trackball_cb(lv_indev_t* indev, lv_indev_data_t* data)
 static void lvgl_invalidate_cb(lv_event_t* e)
 {
     lv_area_t* area = (lv_area_t*)lv_event_get_param(e);
-    if (area && slopos::debug::get_level() >= 2 && slopos::debug::feat_get_display()) {
+#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+    if (area && slopos::debug::get_level() >= 2 && slopos::debug::feat_get_display())
+#else
+    if (area)
+#endif
+    {
         Serial.printf("[inv] area=(%ld,%ld,%ld,%ld) w=%ld h=%ld\n",
                       (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
                       (long)(area->x2 - area->x1 + 1), (long)(area->y2 - area->y1 + 1));

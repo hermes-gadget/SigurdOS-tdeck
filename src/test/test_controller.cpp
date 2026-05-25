@@ -345,18 +345,25 @@ static void cmd_debug(const char* arg) {
                 Serial.printf("[test] debug %s: %d\n", feat.name, feat.get() ? 1 : 0);
                 return;
             }
-            long val = strtol(val_str, nullptr, 10);
-            feat.set(val != 0);
-            Serial.printf("[test] debug %s: %s\n", feat.name, val ? "ON" : "OFF");
+            // Validate: must be exactly "0" or "1"
+            if ((val_str[0] == '0' || val_str[0] == '1') && val_str[1] == '\0') {
+                feat.set(val_str[0] != '0');
+                Serial.printf("[test] debug %s: %s\n", feat.name, val_str[0] != '0' ? "ON" : "OFF");
+            } else {
+                Serial.printf("[test] debug: invalid value \"%s\" for %s (use 0 or 1)\n", val_str, feat.name);
+            }
             return;
         }
     }
 
     // "all on" / "all off"
     if (strcmp(subcmd, "all") == 0 && val_str) {
-        long val = strtol(val_str, nullptr, 10);
-        slopos::debug::feat_set_all_mask(val != 0);
-        Serial.printf("[test] debug all features: %s\n", val ? "ON" : "OFF");
+        if ((val_str[0] == '0' || val_str[0] == '1') && val_str[1] == '\0') {
+            slopos::debug::feat_set_all_mask(val_str[0] != '0');
+            Serial.printf("[test] debug all features: %s\n", val_str[0] != '0' ? "ON" : "OFF");
+        } else {
+            Serial.printf("[test] debug: invalid value \"%s\" for all (use 0 or 1)\n", val_str);
+        }
         return;
     }
 

@@ -51,6 +51,17 @@
 // These are always compiled so the test controller can call them
 // regardless of compile-time gating. In non-debug builds the stubs
 // in debug.h handle them as no-ops.
+
+// Convenience macros for runtime feature checks at call sites.
+// When the full debug module (SLOPOS_DEBUG) is compiled, these wrap
+// the call with a runtime feat_get_*() check so 'debug feat 0' works.
+// In standalone per-feature builds, they compile to nothing.
+#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+#define SLOPOS_RUNTIME_FEAT(feat) if (slopos::debug::feat_get_##feat())
+#else
+#define SLOPOS_RUNTIME_FEAT(feat)
+#endif
+
 namespace slopos {
 namespace debug {
 
