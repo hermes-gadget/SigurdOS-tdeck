@@ -41,4 +41,8 @@ void custom_rf_screen_show();
 // Highlight the current screen's back button border for back-swipe visual feedback.
 // Passing true sets a 2px accent border; false reverts to the default divider border.
 void highlight_back_button(bool show);
+
+// Clear the saved back-button reference (call when switching to a screen without
+// a back button, e.g. Home, Chat, Onboarding).
+void screens_clear_back_btn();
 } // namespace slopos::ui

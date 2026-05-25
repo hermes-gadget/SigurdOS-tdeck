@@ -424,6 +424,7 @@ static void rebuild_content()
 // ═══════════════════════════════════════════════════════════
 void onboarding_screen_show()
 {
+    screens_clear_back_btn();
     const slopos::NodePrefs& p = slopos::prefs_get();
 
     strncpy(s_name, p.node_name, sizeof(s_name) - 1);

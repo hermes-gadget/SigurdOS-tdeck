@@ -19,6 +19,7 @@
 
 #include "chat_screen.h"
 #include "navigation.h"
+#include "screens.h"
 #include "theme.h"
 #include "responsive.h"
 #include "../hal/tdeck_pins.h"
@@ -1240,6 +1241,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
 
 void chat_screen_show()
 {
+    screens_clear_back_btn();
     show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
 }
 

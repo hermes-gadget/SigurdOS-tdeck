@@ -18,6 +18,7 @@
 
 
 #include "home_screen.h"
+#include "screens.h"
 #include "navigation.h"
 #include "theme.h"
 #include "responsive.h"
@@ -367,6 +368,7 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
 {
     // Reset dangling pointers before rebuilding
     hashtag_label = nullptr;
+    screens_clear_back_btn();
     time_label    = nullptr;
     batt_label    = nullptr;
     signal_label  = nullptr;

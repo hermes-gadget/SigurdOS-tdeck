@@ -2040,4 +2040,9 @@ void highlight_back_button(bool show)
     }
 }
 
+void screens_clear_back_btn()
+{
+    s_back_btn = nullptr;
+}
+
 } // namespace slopos::ui
