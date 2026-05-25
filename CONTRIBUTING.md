@@ -56,7 +56,7 @@ tolerated.
 1. **Open an issue first** describing what you want to work on — even for small changes. This lets maintainers know someone is working on it and avoids duplicate effort.
 2. Label the issue appropriately (`bug`, `enhancement`, `docs`, etc.).
 3. Small fixes (typos, comments, one-line bug fixes) can skip the issue step if discussed with a maintainer first.
-4. **Check `MISSING_FEATURES.md`** before implementing a new feature. If the capability is already catalogued there, you have a head start — MeshCore source references and effort estimates are provided.
+4. **Check `docs/MISSING_FEATURES.md`** before implementing a new feature. If the capability is already catalogued there, you have a head start — MeshCore source references and effort estimates are provided.
 
 ### Work on it
 
@@ -80,7 +80,7 @@ tolerated.
    ```
 6. **Push to your fork** and open a PR against the `dev` branch.
 7. In the PR description, reference the related issue (`Fixes #123`).
-8. If you discovered new issues during testing, add them to `KNOWN_ISSUES.md`.
+8. If you discovered new issues during testing, add them to `docs/KNOWN_ISSUES.md`.
 9. Respond to review feedback promptly.
 
 ### After merging
@@ -133,7 +133,7 @@ Physical hardware test = flashed to real T-Deck, verified by human
 - [ ] `pio test -e native_test -v` passes
 - [ ] `pio run -e SlopOS_TDeck` builds
 - [ ] No new warnings or errors
-- [ ] KNOWN_ISSUES.md updated (if applicable)
+- [ ] docs/KNOWN_ISSUES.md updated (if applicable)
 ```
 
 ### Protected Files
@@ -142,8 +142,8 @@ The following files require separate PRs and cannot be bundled with feature or b
 
 - `AGENTS.md`, `CLAUDE.md` — AI agent context
 - `CONTRIBUTING.md` — contribution guidelines
-- `KNOWN_ISSUES.md` — known issues tracker
-- `MISSING_FEATURES.md` — missing features roadmap
+- `docs/KNOWN_ISSUES.md` — known issues tracker
+- `docs/MISSING_FEATURES.md` — missing features roadmap
 - `.github/workflows/*` — CI/CD pipeline
 
 If you need to change one of these, open a dedicated PR with only that change. Do not bury protected file changes inside a larger feature PR — they will be rejected.

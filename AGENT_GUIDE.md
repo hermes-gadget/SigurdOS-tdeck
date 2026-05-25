@@ -156,8 +156,8 @@ Use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 | 7 | Map (touch pan, auto-center) | `screens.cpp` | ✅ |
 | 8 | Advertise (broadcast presence, status timer) | `screens.cpp` | ✅ |
 | 9 | Settings (radio, keyboard BL, date/time) | `screens.cpp` | ✅ |
-| 10 | Trace (path discovery per contact) | `screens.cpp` | ⚠️ see KNOWN_ISSUES.md |
-| 11 | Terminal (colored log + commands) | `screens.cpp` | ⚠️ see KNOWN_ISSUES.md |
+| 10 | Trace (path discovery per contact) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
+| 11 | Terminal (colored log + commands) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
 | 12 | Signal (live RSSI, SNR, noise floor, radio params) | `screens.cpp` | ✅ |
 | 13 | Radio Setup (freq presets, SF/BW/CR/Pwr controls, save & reboot) | `screens.cpp` | ✅ |
 | 14 | Onboarding (wizard) | `onboarding_screen.cpp` | ✅ |
@@ -391,8 +391,8 @@ On "Apply", validated values are written to the shared state and `go_back()` is 
 | Custom RF error label lookup | Uses `lv_obj_get_child(scr, lv_obj_get_child_cnt(scr) - 2)` to find the error label — fragile, assumes exact child ordering relative to the Apply button |
 | Radio Setup static state | Shared `s_rf_*` statics persist across screen navigate/show cycles — if the screen is shown twice, the second view preserves the first session's unsaved edits |
 | Unsaved changes on go_back() | Navigating away from Radio Setup or Custom RF without pressing "Save & Reboot" discards all edits — state resets to defaults on next `radio_setup_screen_show()` |
-| Terminal `term_add_line` unbounded | Each line creates a new `lv_label_create(log)` — no model-level cap. The KNOWN_ISSUES.md entry about unbounded label accumulation has NOT been fixed. |
-| Radio Setup Save & Reboot no delay | Calls `ESP.restart()` immediately after `prefs_set()`, `saveChannels()`, and `chat_save_messages()` — no delay for flash writes to complete (see KNOWN_ISSUES.md) |
+| Terminal `term_add_line` unbounded | Each line creates a new `lv_label_create(log)` — no model-level cap. The docs/KNOWN_ISSUES.md entry about unbounded label accumulation has NOT been fixed. |
+| Radio Setup Save & Reboot no delay | Calls `ESP.restart()` immediately after `prefs_set()`, `saveChannels()`, and `chat_save_messages()` — no delay for flash writes to complete (see docs/KNOWN_ISSUES.md) |
 | SF label via `user_data` | The SF −/+ buttons use `(void*)sf_lbl` as event user_data, but `sf_lbl` is a stack-local variable in `radio_setup_screen_show`. While `sf_lbl` is alive for the screen's lifetime, the pointer is only valid as long as the widget exists — fragile if screen is recreated |
 | BW discrete stepping | BW uses a hardcoded float array and cycles through values via a loop with `x + 0.01f` tolerance — values near boundaries may not snap correctly due to float comparison |
 | `src/utils/` empty directory | Exists but contains no files — may be a leftover or placeholder, not currently used |
@@ -401,7 +401,7 @@ On "Apply", validated values are written to the shared state and `go_back()` is 
 
 ## Known Issues Reference
 
-All known issues are documented in `KNOWN_ISSUES.md`. Key categories:
+All known issues are documented in `docs/KNOWN_ISSUES.md`. Key categories:
 - **Chat Screen:** Channel selection preview clipping, text input max_length off-by-one, emoji truncation on multi-byte codepoints, three home tiles mapping to same screen
 - **Emoji Support:** Incomplete glyph coverage (PR #25)
 - **Trackball:** LEFT fires on both edges, universal back-swipe not implemented

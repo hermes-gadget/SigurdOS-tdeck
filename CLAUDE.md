@@ -18,15 +18,15 @@ These are the reference documents you should load before starting work. Which on
 | **`AGENTS.md`** | Every session | Agent instructions, architecture, conventions, pitfalls |
 | **`CLAUDE.md`** ← you are here | Claude Code sessions | Same content — mirror of AGENTS.md |
 | **`CONTRIBUTING.md`** | Before ANY task or PR | **Mandatory.** Full contribution workflow, issue-first requirement, PR checklist. AI agents must follow every step. |
-| **`KNOWN_ISSUES.md`** | Before feature work | What's broken or unfinished — don't duplicate effort |
-| **`MISSING_FEATURES.md`** | Before implementing new features | Catalog of MeshCore protocol features not yet implemented, with source references and effort estimates |
+| **`docs/KNOWN_ISSUES.md`** | Before feature work | What's broken or unfinished — don't duplicate effort |
+| **`docs/MISSING_FEATURES.md`** | Before implementing new features | Catalog of MeshCore protocol features not yet implemented, with source references and effort estimates |
 | **`firmware/README.md`** | Releasing or CI work | Release artifact structure, web flasher manifest format |
 | **`test/README.md`** | Writing new tests | Test framework, mock structure, naming conventions |
 
 **Critical rules — follow all:**
 1. **Check for an existing issue on the upstream repo.** Before writing any code, check if there's already an open GitHub issue on `hermes-gadget/SlopOS-tdeck` covering what you plan to do. If not, open one. No issue = no PR accepted.
-2. **Read `KNOWN_ISSUES.md`** before starting any feature work. If someone already tried and documented a problem, you'll find it there.
-3. **Read `MISSING_FEATURES.md`** before implementing any new feature. If the capability is listed there, don't duplicate the research — use the MeshCore source references and effort estimates provided.
+2. **Read `docs/KNOWN_ISSUES.md`** before starting any feature work. If someone already tried and documented a problem, you'll find it there.
+3. **Read `docs/MISSING_FEATURES.md`** before implementing any new feature. If the capability is listed there, don't duplicate the research — use the MeshCore source references and effort estimates provided.
 4. **Follow `CONTRIBUTING.md`** — it's not optional. Every step applies to AI agents the same as human contributors.
 
 ---
@@ -196,8 +196,8 @@ Use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 | 7 | Map (touch pan, auto-center) | `screens.cpp` | ✅ |
 | 8 | Advertise (broadcast presence) | `screens.cpp` | ✅ |
 | 9 | Settings (radio, keyboard BL, date/time) | `screens.cpp` | ✅ |
-| 10 | Trace (path discovery per contact) | `screens.cpp` | ⚠️ see KNOWN_ISSUES.md |
-| 11 | Terminal (colored log + commands) | `screens.cpp` | ⚠️ see KNOWN_ISSUES.md |
+| 10 | Trace (path discovery per contact) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
+| 11 | Terminal (colored log + commands) | `screens.cpp` | ⚠️ see docs/KNOWN_ISSUES.md |
 | 12 | Signal (live RSSI, SNR, radio params) | `screens.cpp` | ✅ |
 | 13 | Radio Setup (freq, SF, BW, CR, power) | `screens.cpp` | ✅ |
 | 14 | Onboarding (wizard) | `onboarding_screen.cpp` | ✅ |
@@ -395,7 +395,7 @@ When working on this codebase, follow this sequence:
 
 1. **Open an issue on the upstream repo** — check if an open issue on `hermes-gadget/SlopOS-tdeck` already covers what you plan to do. If not, create one. No issue = no PR accepted.
 2. **Read `CONTRIBUTING.md`** — follow every step. It applies to AI agents the same as human contributors.
-3. **Load context** — read `AGENTS.md` (or `CLAUDE.md`, they are identical), `KNOWN_ISSUES.md`, and any relevant source files
+3. **Load context** — read `AGENTS.md` (or `CLAUDE.md`, they are identical), `docs/KNOWN_ISSUES.md`, and any relevant source files
 4. **Check the branch** — work is always on `dev`. PRs target `dev`, not `main`
 5. **Run tests first** — `pio test -e native_test` before any changes to confirm baseline
 6. **Make changes** — use the file tools (`read_file`, `patch`, `write_file`)
@@ -405,9 +405,9 @@ When working on this codebase, follow this sequence:
 
 ### Bug Spotting
 
-If you find a bug while working that is not directly related to your PR, do not ignore it. Add it to `KNOWN_ISSUES.md` using the standard format below. This lets the project catch bugs faster — you found it, you document it, and a maintainer validates it during PR review.
+If you find a bug while working that is not directly related to your PR, do not ignore it. Add it to `docs/KNOWN_ISSUES.md` using the standard format below. This lets the project catch bugs faster — you found it, you document it, and a maintainer validates it during PR review.
 
-**Standard entry format — insert a new section in `KNOWN_ISSUES.md`:**
+**Standard entry format — insert a new section in `docs/KNOWN_ISSUES.md`:**
 
 ```
 ## Category Area (e.g. GPS, Terminal, Chat Screen)
@@ -484,9 +484,9 @@ Before submitting a PR (or before merging someone else's), use this checklist to
 - [ ] PR body declares how hardware testing was done: "Remote test" (serial-controlled), "Physical hardware test", or both. If neither is stated, auto-decline.
 
 #### Known Issue Detection
-- [ ] Does this PR fix a documented issue in `KNOWN_ISSUES.md`? If so, remove that section.
-- [ ] Does the PR add new entries to `KNOWN_ISSUES.md`? Verify each one is real — check the source code or reproduce the issue. Remove any that are speculative.
-- [ ] Did testing reveal new issues? If so, add them to `KNOWN_ISSUES.md`.
+- [ ] Does this PR fix a documented issue in `docs/KNOWN_ISSUES.md`? If so, remove that section.
+- [ ] Does the PR add new entries to `docs/KNOWN_ISSUES.md`? Verify each one is real — check the source code or reproduce the issue. Remove any that are speculative.
+- [ ] Did testing reveal new issues? If so, add them to `docs/KNOWN_ISSUES.md`.
 - [ ] Does the PR introduce a new dependency? Check GPL-3.0 compatibility.
 - [ ] Is there any comment saying "this might break" or "temporary fix"? Investigate before merging.
 
@@ -533,7 +533,7 @@ Before submitting a PR (or before merging someone else's), use this checklist to
 | **Pull regularly** | Before starting work: `git checkout dev && git pull origin dev` |
 | **Rebase your feature branch** | Before opening a PR: `git rebase dev` to avoid stale-commit noise |
 | **Run the full test suite** | `pio test -e native_test` must pass all tests before pushing |
-| **Read `KNOWN_ISSUES.md`** | Before starting feature work to avoid duplicating effort |
+| **Read `docs/KNOWN_ISSUES.md`** | Before starting feature work to avoid duplicating effort |
 | **Follow screen conventions** | New screens need `apply_dark_bg()`, `make_screen_full()`, and consistent pixel helpers |
 
 ---
