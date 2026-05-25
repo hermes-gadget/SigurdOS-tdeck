@@ -17,13 +17,15 @@ These are the reference documents you should load before starting work. Which on
 | **`CLAUDE.md`** | Claude Code sessions | Same content — mirror of AGENTS.md |
 | **`CONTRIBUTING.md`** | Before ANY task or PR | **Mandatory.** Full contribution workflow, issue-first requirement, PR checklist. AI agents must follow every step. |
 | **`KNOWN_ISSUES.md`** | Before feature work | What's broken or unfinished — don't duplicate effort |
+| **`MISSING_FEATURES.md`** | Before implementing new features | Catalog of MeshCore protocol features not yet implemented, with source references and effort estimates |
 | **`firmware/README.md`** | Releasing or CI work | Release artifact structure, web flasher manifest format |
 | **`test/README.md`** | Writing new tests | Test framework, mock structure, naming conventions |
 
-**Critical rules — follow both:**
+**Critical rules — follow all:**
 1. **Check for an existing issue on the upstream repo.** Before writing any code, check if there's already an open GitHub issue on `hermes-gadget/SlopOS-tdeck` covering what you plan to do. If not, open one. No issue = no PR accepted.
 2. **Read `KNOWN_ISSUES.md`** before starting any feature work. If someone already tried and documented a problem, you'll find it there.
-3. **Follow `CONTRIBUTING.md`** — it's not optional. Every step applies to AI agents the same as human contributors.
+3. **Read `MISSING_FEATURES.md`** before implementing any new feature. If the capability is listed there, don't duplicate the research — use the MeshCore source references and effort estimates provided.
+4. **Follow `CONTRIBUTING.md`** — it's not optional. Every step applies to AI agents the same as human contributors.
 
 ---
 

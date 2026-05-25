@@ -56,6 +56,7 @@ tolerated.
 1. **Open an issue first** describing what you want to work on — even for small changes. This lets maintainers know someone is working on it and avoids duplicate effort.
 2. Label the issue appropriately (`bug`, `enhancement`, `docs`, etc.).
 3. Small fixes (typos, comments, one-line bug fixes) can skip the issue step if discussed with a maintainer first.
+4. **Check `MISSING_FEATURES.md`** before implementing a new feature. If the capability is already catalogued there, you have a head start — MeshCore source references and effort estimates are provided.
 
 ### Work on it
 
@@ -142,6 +143,7 @@ The following files require separate PRs and cannot be bundled with feature or b
 - `AGENTS.md`, `CLAUDE.md` — AI agent context
 - `CONTRIBUTING.md` — contribution guidelines
 - `KNOWN_ISSUES.md` — known issues tracker
+- `MISSING_FEATURES.md` — missing features roadmap
 - `.github/workflows/*` — CI/CD pipeline
 
 If you need to change one of these, open a dedicated PR with only that change. Do not bury protected file changes inside a larger feature PR — they will be rejected.
