@@ -99,6 +99,8 @@ const lv_area_t* slopos_debug_last_flush_area() { return &dbg_last_flush_area; }
 uint32_t slopos_debug_flush_count() { return dbg_flush_count; }
 #endif
 
+#include "../diagnostics/debug.h"
+
 // ── Auto-off timer ──────────────────────────────────
 // Based on MeshCore's AUTO_OFF_MILLIS pattern (MIT license)
 static constexpr uint32_t AUTO_OFF_MS  = 30000;  // 30 seconds
@@ -160,11 +162,13 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
 #if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
     dbg_last_flush_area = *area;
     dbg_flush_count++;
-    Serial.printf("[flush] #%lu  area=(%ld,%ld,%ld,%ld) w=%ld h=%ld pixels=%ld\n",
-                  (unsigned long)dbg_flush_count,
-                  (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
-                  (long)(area->x2 - area->x1 + 1), (long)(area->y2 - area->y1 + 1),
-                  (long)((area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1)));
+    if (slopos::debug::get_level() >= 2) {
+        Serial.printf("[flush] #%lu  area=(%ld,%ld,%ld,%ld) w=%ld h=%ld pixels=%ld\n",
+                      (unsigned long)dbg_flush_count,
+                      (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
+                      (long)(area->x2 - area->x1 + 1), (long)(area->y2 - area->y1 + 1),
+                      (long)((area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1)));
+    }
 #endif
     uint32_t w = area->x2 - area->x1 + 1;
     uint32_t h = area->y2 - area->y1 + 1;
@@ -359,12 +363,14 @@ void slopos_display_loop()
         restore_display_after_sleep();
     }
 
-    // Auto-off: turn off backlight after inactivity
+    // Auto-off: turn off backlight after inactivity (disabled in debug builds)
+#if !defined(SLOPOS_DEBUG)
     if (display_on && millis() > auto_off_at) {
         tft.setBrightness(0);
         slopos_keyboard_set_brightness(0);
         display_on = false;
     }
+#endif
 
     uint32_t next = lv_timer_handler();
     delay(next > 5 ? 5 : next);

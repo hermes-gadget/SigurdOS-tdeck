@@ -5,12 +5,12 @@
 // Build with -D SLOPOS_DEBUG=1 (env:SlopOS_TDeck_debug in platformio.ini).
 //
 // Outputs to Serial at 115200 baud:
-//   - Periodic full system dumps every 5s
-//   - LVGL flush area on every display update
-//   - LVGL invalidation areas
-//   - Trackball GPIO raw state
-//   - Home screen tile layout diagnostics
-//   - Memory, task, mesh radio detail
+//   - Periodic full system dumps every 5s  (level >= 2)
+//   - LVGL flush area on every display update (level >= 2)
+//   - LVGL invalidation areas (level >= 2)
+//   - Trackball GPIO raw state (level >= 2)
+//   - Home screen tile layout diagnostics (level >= 3)
+//   - Memory, task, mesh radio detail (level >= 3)
 
 #include "debug.h"
 
@@ -38,6 +38,18 @@ using namespace theme;
 
 static constexpr uint32_t DUMP_INTERVAL_MS = 5000;
 static uint32_t last_dump_ms = 0;
+static uint8_t  current_level = SLOPOS_DEBUG_LEVEL;
+
+void set_level(uint8_t level) {
+    if (level < 1) level = 1;
+    if (level > 3) level = 3;
+    current_level = level;
+    Serial.printf("[debug] level set to %u\n", (unsigned)level);
+}
+
+uint8_t get_level() {
+    return current_level;
+}
 
 void init()
 {
@@ -45,12 +57,14 @@ void init()
     Serial.println("╔══════════════════════════════════════════════╗");
     Serial.println("║   SlopOS-TDeck DEBUG build                  ║");
     Serial.println("║   (light periodic status; heavy dumps on demand) ║");
+    Serial.printf(  "║   Debug level: %u                               ║\n", (unsigned)current_level);
     Serial.println("╚══════════════════════════════════════════════╝");
     Serial.println();
 
     // Light one-line status only — full tree walks are too slow for setup/loop
     uint32_t now = millis();
-    Serial.printf("[boot] debug enabled  heap=%u  psram=%u  batt=%u%%\n",
+    Serial.printf("[boot] debug enabled level=%u heap=%u psram=%u batt=%u%%\n",
+                  (unsigned)current_level,
                   (unsigned)ESP.getFreeHeap(),
                   (unsigned)ESP.getFreePsram(),
                   (unsigned)slopos_battery_pct());
@@ -59,6 +73,9 @@ void init()
 
 void loop()
 {
+    // Level 1 (quiet): no periodic output
+    if (current_level < 2) return;
+
     uint32_t now = millis();
     if (now - last_dump_ms >= DUMP_INTERVAL_MS) {
         last_dump_ms = now;

@@ -339,6 +339,7 @@ Once connected, the T-Deck shows a test controller banner. Type commands directl
 | `inject Alice Hello!` | `inject Bob channel=general hi` | Simulate incoming mesh message (no radio!) |
 | `screen` | `screen` | Show current screen name |
 | `status` | `status` | Show heap and PSRAM |
+| `debug <1\|2\|3>` | `debug 1` | Set debug verbosity (1=quiet, 2=normal, 3=verbose) |
 
 Safety guarantees:
 - No LoRa radio initialised — `slopos::mesh::init()` is never called
@@ -354,6 +355,18 @@ Safety guarantees:
 - Any issue where the root cause is in the physical layer (pin states, interrupts, pull resistors)
 
 If the issue involves physical input hardware (trackball, keyboard, touch, buttons), remote test mode is not appropriate — it needs real hardware testing on the device.
+
+### Debug Levels
+
+The debug build system (`SLOPOS_DEBUG=1`) supports three verbosity levels, controlled at build time via `-D SLOPOS_DEBUG_LEVEL=N` or at runtime via the `debug <1|2|3>` serial command:
+
+| Level | Name | Output | Default Env |
+|-------|------|--------|-------------|
+| 1 | Quiet | Only `[test]` responses from the test controller. No `[flush]`, `[stat]`, or `[pins]` output. | `SlopOS_TDeck_remote_test` |
+| 2 | Normal | All debug output: `[flush]` per frame, `[stat]` + `[pins]` every 5s. | `SlopOS_TDeck_debug` |
+| 3 | Verbose | Level 2 output plus on-demand heavy dumps (`dump_system`, object tree, etc.). | — |
+
+When any `SLOPOS_DEBUG` build is running, the display auto-off timer is disabled — the screen stays on so you can observe behavior without needing to wake it. This only applies to debug builds; release builds retain the 30-second auto-off.
 
 ---
 

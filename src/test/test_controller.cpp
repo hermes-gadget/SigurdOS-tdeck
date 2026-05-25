@@ -24,6 +24,7 @@
 #include "hal/keyboard.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
+#include "diagnostics/debug.h"
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
@@ -98,6 +99,7 @@ static void print_help() {
     Serial.println(F("║  inject <from> [channel=<ch>] <msg>  ║"));
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
+    Serial.println(F("║  debug <1|2|3> Set debug level       ║"));
     Serial.println(F("╚══════════════════════════════════════╝"));
     Serial.println();
 }
@@ -252,6 +254,20 @@ static void cmd_status() {
                   (unsigned)ESP.getFreePsram());
 }
 
+static void cmd_debug(const char* arg) {
+    if (!arg) {
+        Serial.printf("[test] debug level: %u\n", (unsigned)slopos::debug::get_level());
+        return;
+    }
+    char* end;
+    long level = strtol(arg, &end, 10);
+    if (*end != '\0' || level < 1 || level > 3) {
+        Serial.println("[test] debug: usage: debug <1|2|3>  (1=quiet, 2=normal, 3=verbose)");
+        return;
+    }
+    slopos::debug::set_level((uint8_t)level);
+}
+
 // ── Command parsing ──────────────────────────────────────
 static bool dispatch(const char* line) {
     // Skip empty lines and comments
@@ -293,6 +309,8 @@ static bool dispatch(const char* line) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {
         cmd_status();
+    } else if (strcmp(cmd, "debug") == 0) {
+        cmd_debug(arg);
     } else {
         Serial.printf("[test] unknown command: %s (try 'help')\n", cmd);
     }
