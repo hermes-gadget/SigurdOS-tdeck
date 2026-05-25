@@ -520,10 +520,10 @@ static lv_obj_t* make_chat_list_screen()
 
     {
         int rssi = slopos::mesh::getLastRSSI();
-        const char* bars = rssi > -70  ? "▂▄▆█" :
-                           rssi > -85  ? "▂▄▆ " :
-                           rssi > -100 ? "▂▄  " :
-                           rssi > -115 ? "▂   " : "    ";
+        const char* bars = rssi > -70  ? "||||" :
+                           rssi > -85  ? "||| " :
+                           rssi > -100 ? "||  " :
+                           rssi > -115 ? "|   " : "    ";
         lv_obj_t* sig = lv_label_create(bot);
         lv_label_set_text(sig, bars);
         lv_obj_set_style_text_color(sig, lv_color_hex(ACCENT), 0);
@@ -880,6 +880,9 @@ static void emoji_ac_select(const char* emoji_text)
     emoji_ac_close();
 }
 
+// Forward declaration
+static int find_picker_img_idx(const char* utf8);
+
 // Check for ':' prefix and show autocomplete popup
 static void emoji_ac_check(lv_obj_t* ta)
 {
@@ -928,15 +931,15 @@ static void emoji_ac_check(lv_obj_t* ta)
     }
 
     emoji_ac_cursor_pos = cursor;
-
     // Popup dimensions
     int popup_w = 220;
-    int popup_h = (match_count > 5 ? 5 : match_count) * 24 + 4;
+    int popup_h = (match_count > 5 ? 5 : match_count) * 24 + (match_count > 5 ? 16 : 0) + 4;
     if (popup_h > 150) popup_h = 150;
 
     // Create or update popup
     if (emoji_ac_popup) {
         lv_obj_clean(emoji_ac_popup);
+        lv_obj_set_size(emoji_ac_popup, popup_w, popup_h);
     } else {
         // Need a parent screen - get the active screen
         lv_obj_t* parent = lv_obj_get_screen(ta);
@@ -953,6 +956,7 @@ static void emoji_ac_check(lv_obj_t* ta)
 
         // Position above the input bar (below top bar)
         lv_obj_align(emoji_ac_popup, LV_ALIGN_BOTTOM_MID, 0, -(35 + 4));
+        disable_scroll(emoji_ac_popup);
     }
 
     // Create the list inside the popup
@@ -963,10 +967,10 @@ static void emoji_ac_check(lv_obj_t* ta)
         lv_obj_set_style_border_width(emoji_ac_list, 0, 0);
         lv_obj_set_style_pad_all(emoji_ac_list, 0, 0);
         lv_obj_set_flex_flow(emoji_ac_list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_clear_flag(emoji_ac_list, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_pad_row(emoji_ac_list, 0, 0);
+        lv_obj_set_style_pad_column(emoji_ac_list, 0, 0);
         lv_obj_set_scrollbar_mode(emoji_ac_list, LV_SCROLLBAR_MODE_OFF);
-        lv_obj_remove_flag(emoji_ac_list, (lv_obj_flag_t)(
-            LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM |
-            LV_OBJ_FLAG_SCROLL_ON_FOCUS | LV_OBJ_FLAG_SCROLL_WITH_ARROW));
 
         int rows = (match_count > 5) ? 5 : match_count;
         for (int i = 0; i < rows && i < match_count; i++) {
@@ -979,11 +983,19 @@ static void emoji_ac_check(lv_obj_t* ta)
             lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
             lv_obj_set_style_radius(row, 2, 0);
 
-            // Emoji preview
-            lv_obj_t* emoji_lbl = lv_label_create(row);
-            lv_label_set_text(emoji_lbl, matches[i].utf8);
-            lv_obj_set_style_text_font(emoji_lbl, &emoji_font, 0);
-            lv_obj_align(emoji_lbl, LV_ALIGN_LEFT_MID, 4, 0);
+            // Emoji preview — use color image if available, fall back to font glyph
+            int img_idx = find_picker_img_idx(matches[i].utf8);
+            if (img_idx >= 0) {
+                lv_obj_t* eimg = lv_img_create(row);
+                lv_img_set_src(eimg, emoji_picker_images[img_idx]);
+                lv_obj_set_size(eimg, 20, 20);
+                lv_obj_align(eimg, LV_ALIGN_LEFT_MID, 2, 0);
+            } else {
+                lv_obj_t* emoji_lbl = lv_label_create(row);
+                lv_label_set_text(emoji_lbl, matches[i].utf8);
+                lv_obj_set_style_text_font(emoji_lbl, &emoji_font, 0);
+                lv_obj_align(emoji_lbl, LV_ALIGN_LEFT_MID, 4, 0);
+            }
 
             // Name
             lv_obj_t* name_lbl = lv_label_create(row);
@@ -1044,9 +1056,16 @@ static const char* emoji_picker_items[] = {
 static_assert(sizeof(emoji_picker_items)/sizeof(emoji_picker_items[0]) == EMOJI_PICKER_IMG_COUNT,
               "emoji_picker_items count must match EMOJI_PICKER_IMG_COUNT");
 
+static int find_picker_img_idx(const char* utf8) {
+    for (int i = 0; i < EMOJI_PICKER_IMG_COUNT; i++) {
+        if (strcmp(emoji_picker_items[i], utf8) == 0) return i;
+    }
+    return -1;
+}
+
 static void show_emoji_picker(lv_obj_t* parent)
 {
-    auto dlg_sz = dialog_size(296, 200);
+    auto dlg_sz = dialog_size(296, 214);
     lv_obj_t* dlg = lv_obj_create(parent);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -1082,7 +1101,7 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
-    // Scrollable image grid
+    // Image grid (52 items fit in 288x168, no scroll needed)
     lv_obj_t* grid = lv_obj_create(dlg);
     lv_obj_set_size(grid, dlg_sz.w - 8, dlg_sz.h - 32);
     lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 24);
@@ -1091,16 +1110,14 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_set_style_pad_all(grid, 4, 0);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_scroll_dir(grid, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(grid, (lv_obj_flag_t)(
-        LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN |
-        LV_OBJ_FLAG_SCROLL_ON_FOCUS | LV_OBJ_FLAG_SCROLL_WITH_ARROW));
+    lv_obj_set_style_pad_column(grid, 0, 0);
+    lv_obj_set_style_pad_row(grid, 0, 0);
+    lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
 
-    static constexpr int IMG_SZ = 24;
+    static constexpr int BTN_SZ = 24;
     for (int i = 0; i < EMOJI_PICKER_IMG_COUNT; i++) {
         lv_obj_t* btn = lv_btn_create(grid);
-        lv_obj_set_size(btn, 28, 28);
+        lv_obj_set_size(btn, BTN_SZ, BTN_SZ);
         lv_obj_set_style_bg_color(btn, lv_color_hex(BG_TERTIARY), 0);
         lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(btn, 2, 0);
@@ -1128,6 +1145,27 @@ static void show_emoji_picker(lv_obj_t* parent)
 // ════════════════════════════════════════════════════
 // Send helper
 // ════════════════════════════════════════════════════
+
+// Strip Unicode variation selectors (U+FE00-U+FE0F) from UTF-8 text.
+// These 3-byte sequences (EF B8 80 - EF B8 8F) are appended by mobile
+// clients to emoji but aren't in our fonts, causing blank placeholder boxes.
+static void strip_variation_selectors(const char* src, char* dst, size_t dst_len) {
+    size_t di = 0;
+    for (size_t i = 0; src[i] && di + 1 < dst_len; ) {
+        uint8_t b = (uint8_t)src[i];
+        int len = (b < 0x80) ? 1 : (b < 0xE0) ? 2 : (b < 0xF0) ? 3 : 4;
+        // U+FE00-U+FE0F: EF B8 80 - EF B8 8F (variation selectors)
+        if (len == 3 && b == 0xEF && (uint8_t)src[i+1] == 0xB8
+                && (uint8_t)src[i+2] >= 0x80 && (uint8_t)src[i+2] <= 0x8F) {
+            i += 3; // skip
+            continue;
+        }
+        if (di + len < dst_len) { memcpy(dst + di, src + i, len); di += len; }
+        i += len;
+    }
+    dst[di] = '\0';
+}
+
 static void do_send()
 {
     const char* raw = lv_textarea_get_text(input_field);
@@ -1141,16 +1179,20 @@ static void do_send()
     memcpy(text, raw, len);
     text[len] = '\0';
 
+    // Strip variation selectors that would show as blank boxes
+    char stripped[150];
+    strip_variation_selectors(text, stripped, sizeof(stripped));
+
     const char* chan = dyn_channels[active_channel];
     bool is_dm = (strncmp(chan, "DM: ", 4) == 0);
     const char* dest = is_dm ? (chan + 4) : chan;
 
-    if (is_dm) slopos::mesh::sendMessage(dest, text);
-    else       slopos::mesh::sendChannelMessage(dest, text);
+    if (is_dm) slopos::mesh::sendMessage(dest, stripped);
+    else       slopos::mesh::sendChannelMessage(dest, stripped);
 
     uint32_t now = slopos::mesh::getCurrentTime();
     int sent_channel = active_channel;
-    append_channel_message(sent_channel, slopos::mesh::getOwnName(), text, now, true);
+    append_channel_message(sent_channel, slopos::mesh::getOwnName(), stripped, now, true);
     mark_channel_used(sent_channel);
     render_active_messages();
     lv_textarea_set_text(input_field, "");
@@ -1467,6 +1509,11 @@ void chat_screen_open_dm(const char* contact_name)
 void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self)
 {
     uint32_t now = slopos::mesh::getCurrentTime();
+
+    // Strip variation selectors (U+FE00-FE0F) that show as blank boxes in labels
+    char stripped[150];
+    strip_variation_selectors(text, stripped, sizeof(stripped));
+    text = stripped;
 
     // Map DM messages (empty channel) to "DM: <sender>" conversation
     char dm_buf[32];

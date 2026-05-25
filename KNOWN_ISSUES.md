@@ -229,6 +229,17 @@ The send path truncates message text by byte count (`chat_screen.cpp:933`), not 
 
 **What's needed:** Replace byte-level truncation with codepoint-aware truncation — walk backward from the limit to ensure the last character boundary is valid, or reduce the max byte count to account for multi-byte trailing characters.
 
+### Emoji rendering — picker has full color, but inline emoji are 4bpp grayscale
+The emoji picker dialog uses 52 pre-rendered color images extracted from NotoColorEmoji.ttf (CBDT table), showing Android-style filled color emoji. However, emoji in chat message bubbles, channel names, and the autocomplete popup all render through the LVGL font fallback system:
+
+- **Inline emoji**: Uses `emoji_font`, a 4bpp grayscale font generated from Noto Emoji (B&W outline font) via `lv_font_conv`. These render as low-resolution grayscale outlines on the 16-bit display. LVGL labels cannot embed `lv_image_dsc_t` objects — fonts and images are separate rendering paths.
+- **363 codepoints**: Only 363 emoji codepoints are included in `emoji_font`. Any emoji outside this set displays as a blank placeholder box.
+- **Variation selectors**: Mobile clients append U+FE0F (VARIATION SELECTOR-16) to emoji, e.g. `❤️` = U+2764 + U+FE0F. The font doesn't include U+FE0F, so LVGL renders a placeholder box after every variation-selector emoji. A `strip_variation_selectors()` helper is in `chat_screen.cpp` to remove these before display.
+- **Autocomplete**: Shows color images for the 52 picker emoji via `lv_img`, falls back to font glyphs for the remaining ~290. The color images are the same CBDT-extracted ones used in the picker.
+- **Emoji size mismatch**: `emoji_font` uses 16px glyphs but chat message labels use 12px primary fonts. Emoji render 33% larger than neighboring text.
+
+**How to fix this properly:** Either (a) regenerate `emoji_font` at matching sizes (12px, 10px), or (b) refactor chat bubbles to use `lv_spangroup` with mixed image+text spans, or (c) port the LVGL FreeType engine integration to render the CBDT color font directly.
+
 ---
 
 ## Mesh Networking

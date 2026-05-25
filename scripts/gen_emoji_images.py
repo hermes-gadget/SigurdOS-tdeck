@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 Generate color emoji images for the LVGL emoji picker.
-Renders each emoji from Noto Color Emoji as a small RGBA image,
-converts to LVGL raw C array format (ARGB8888).
+Extracts embedded PNG bitmaps from NotoColorEmoji.ttf (CBDT table),
+decodes with PIL, resizes to 20x20, and outputs LVGL RGBA8888 C arrays
+with correct BGRA byte order (matching lv_color32_t memory layout).
 """
-
 import struct
 import sys
-import subprocess
-import tempfile
-import os
 from pathlib import Path
+from io import BytesIO
+from fontTools.ttLib import TTFont
+from PIL import Image
 
 # The 52 emoji from the picker, in order
 PICKER_EMOJI = [
@@ -34,152 +34,62 @@ PICKER_EMOJI = [
     "\U0001F50B", "\u2699", "\U0001F4E1", "\U0001F30D",
 ]
 
-def codepoint_from_emoji(emoji_char):
-    """Get Unicode codepoint from emoji character."""
-    return ord(emoji_char)
 
-def render_emoji_png(emoji_char, font_path, size=24):
-    """Render an emoji character as RGBA PNG using PIL via subprocess."""
-    cp = codepoint_from_emoji(emoji_char)
-    hex_cp = f"U+{cp:04X}" if cp <= 0xFFFF else f"U+{cp:06X}"
+def load_font():
+    """Load NotoColorEmoji and return (font, cmap, strike_data)."""
+    font_paths = [
+        '/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf',
+        '/tmp/NotoColorEmoji.ttf',
+    ]
+    fp = None
+    for p in font_paths:
+        if Path(p).exists():
+            fp = p
+            break
+    if not fp:
+        print("ERROR: NotoColorEmoji.ttf not found", file=sys.stderr)
+        sys.exit(1)
 
-    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-        tmp_path = tmp.name
+    font = TTFont(fp)
+    cmap = font.getBestCmap()
+    strike = font['CBDT'].strikeData[0]
+    return font, cmap, strike
 
-    try:
-        # Use Python with PIL to render
-        code = f'''
-from PIL import Image, ImageDraw, ImageFont
-import struct
 
-cp = {cp}
-font_path = "{font_path}"
-out_path = "{tmp_path}"
+def extract_bitmap(cmap, strike, cp, target_size=20):
+    """Extract embedded PNG bitmap for a codepoint, decode, resize to target_size.
 
-try:
-    font = ImageFont.truetype(font_path, 24)
-except Exception:
-    # Fallback - try different approach
-    font = ImageFont.truetype(font_path, 24, encoding='unic')
-
-img = Image.new('RGBA', (24, 24), (0, 0, 0, 0))
-draw = ImageDraw.Draw(img)
-draw.text((2, 2), chr(cp), font=font, fill=(255, 255, 255, 255))
-img.save(out_path, 'PNG')
-print(f"Rendered U+{cp:04X}")
-'''
-        result = subprocess.run(
-            [sys.executable, '-c', code],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            print(f"PIL error for U+{cp:04X}: {result.stderr}", file=sys.stderr)
-            return None
-
-        with open(tmp_path, 'rb') as f:
-            png_data = f.read()
-
-        return png_data
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except: pass
-
-def render_emoji_cairo(emoji_char, font_path, size=24):
-    """Render emoji using cairo/pycairo for proper color emoji."""
-    cp = codepoint_from_emoji(emoji_char)
-
-    code = f'''
-import cairo
-import struct
-
-cp = {cp}
-font_path = "{font_path}"
-size = {size}
-
-surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
-cr = cairo.Context(surface)
-cr.set_source_rgba(0, 0, 0, 0)
-cr.paint()
-cr.set_source_rgba(1, 1, 1, 1)
-cr.select_font_face("Noto Color Emoji", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-cr.set_font_size(size - 4)
-cr.text_extents(chr(cp))
-cr.move_to(2, size - 4)
-cr.show_text(chr(cp))
-
-# Convert ARGB32 to RGBA raw bytes
-buf = surface.get_data()
-out_path = "/tmp/emoji_raw_U{cp:04X}.bin"
-with open(out_path, 'wb') as f:
-    f.write(bytes(buf))
-print(f"Rendered U+{cp:04X} to {{out_path}}")
-'''
-    try:
-        result = subprocess.run(
-            [sys.executable, '-c', code],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            return None
-        # Read the raw data back
-        out_path = f"/tmp/emoji_raw_U{cp:04X}.bin"
-        if os.path.exists(out_path):
-            with open(out_path, 'rb') as f:
-                data = f.read()
-            os.unlink(out_path)
-            return data
-        return None
-    except:
+    Returns raw bytes in BGRA order (matches lv_color32_t memory layout).
+    """
+    glyph = cmap.get(cp)
+    if not glyph or glyph not in strike:
         return None
 
-def png_to_lvgl_rgba8888(png_data, width=24, height=24):
-    """Convert PNG bytes to LVGL RGBA8888 raw image C array.
-    Uses png.py or pypng to decode."""
-    import struct
-
-    # We'll use PIL if available
-    code = f'''
-import sys
-import struct
-from PIL import Image
-from io import BytesIO
-
-png_data = {repr(png_data)}
-img = Image.open(BytesIO(png_data))
-img = img.convert('RGBA')
-img = img.resize(({width}, {height}))
-pixels = list(img.getdata())
-# LVGL RGBA8888 = R,G,B,A bytes
-out = b''
-for r, g, b, a in pixels:
-    out += struct.pack('BBBB', r, g, b, a)
-sys.stdout.buffer.write(out)
-'''
-    try:
-        result = subprocess.run(
-            [sys.executable, '-c', code],
-            capture_output=True, timeout=30
-        )
-        if result.returncode == 0:
-            return result.stdout
-        return None
-    except:
+    png = strike[glyph].imageData
+    if not png.startswith(b'\x89PNG'):
         return None
 
+    img = Image.open(BytesIO(png)).convert('RGBA')
+    img = img.resize((target_size, target_size), Image.Resampling.LANCZOS)
 
-def generate_lvgl_image_c(name, rgba_data, width, height):
+    # LVGL lv_color32_t stores bytes as: blue, green, red, alpha
+    # PIL tobytes('raw', 'RGBA') produces: red, green, blue, alpha
+    # So we use 'BGRA' to swap red/blue
+    return img.tobytes('raw', 'BGRA')
+
+
+def generate_lvgl_image_c(name, bgra_data, width, height):
     """Generate C source for an LVGL image resource."""
-    assert len(rgba_data) == width * height * 4
+    assert len(bgra_data) == width * height * 4
 
     lines = [
-        f'// LVGL image: {name} ({width}x{height} RGBA8888)',
+        f'// LVGL image: {name} ({width}x{height} ARGB8888, BGRA byte order)',
         f'static const uint8_t {name}_data[] = {{',
     ]
 
     # Format as hex bytes, 16 per line
-    bytes_list = [rgba_data[i:i+16] for i in range(0, len(rgba_data), 16)]
-    for chunk in bytes_list:
+    for i in range(0, len(bgra_data), 16):
+        chunk = bgra_data[i:i+16]
         hex_str = ', '.join(f'0x{b:02x}' for b in chunk)
         lines.append(f'    {hex_str},')
 
@@ -208,86 +118,42 @@ def generate_lvgl_image_c(name, rgba_data, width, height):
 
 
 def main():
-    # Check available rendering methods
-    font_paths = [
-        '/tmp/NotoEmoji.ttf',  # Variable weight font with TrueType outlines
-        '/usr/share/fonts/truetype/noto/NotoEmoji.ttf',
-        '/usr/share/fonts/truetype/noto/NotoEmoji-VariableFont.ttf',
-    ]
+    SIZE = 20  # 20x20 fits 52 items in grid
 
-    font_path = None
-    for fp in font_paths:
-        if os.path.exists(fp):
-            font_path = fp
-            break
+    font, cmap, strike = load_font()
+    print(f"Loaded NotoColorEmoji.ttf ({len(strike)} glyph bitmaps)", file=sys.stderr)
 
-    if not font_path:
-        print("Noto Emoji font not found, using /tmp/NotoEmoji.ttf")
-        if not os.path.exists('/tmp/NotoEmoji.ttf'):
-            print("ERROR: /tmp/NotoEmoji.ttf not found. Run generate_emoji_font.sh first or download it.")
-            sys.exit(1)
-        font_path = '/tmp/NotoEmoji.ttf'
-
-    # Check for rendering libraries
-    has_pil = False
-    has_cairo = False
-
-    try:
-        import PIL
-        has_pil = True
-        print("Using PIL for rendering", file=sys.stderr)
-    except ImportError:
-        pass
-
-    if not has_pil:
-        try:
-            import cairo
-            has_cairo = True
-            print("Using cairo for rendering", file=sys.stderr)
-        except ImportError:
-            pass
-
-    if not has_pil and not has_cairo:
-        print("ERROR: Need PIL (Pillow) or pycairo installed")
-        print("pip install Pillow")
-        sys.exit(1)
-
-    SIZE = 24  # render at 24x24
     out_dir = Path(__file__).parent.parent / 'src' / 'fonts' / 'emoji_images'
     out_dir.mkdir(parents=True, exist_ok=True)
 
     output_lines = [
         '// Auto-generated emoji images for LVGL picker',
-        '// Generated by scripts/gen_emoji_images.py',
+        '// Generated by scripts/gen_emoji_images.py from NotoColorEmoji.ttf (CBDT table)',
         '#include <lvgl.h>',
         '',
     ]
 
     for i, emoji in enumerate(PICKER_EMOJI):
         name = f"emoji_img_{i}"
-        cp = codepoint_from_emoji(emoji)
+        cp = ord(emoji)
 
-        if has_pil:
-            rgba = render_with_pil(emoji, font_path, SIZE)
+        bgra = extract_bitmap(cmap, strike, cp, SIZE)
+        if bgra is None:
+            print(f"  [{i+1}/{len(PICKER_EMOJI)}] {emoji} U+{cp:04X} — MISSING, using placeholder", file=sys.stderr)
+            bgra = b'\x00' * (SIZE * SIZE * 4)
         else:
-            rgba = render_with_cairo(emoji, font_path, SIZE)
+            print(f"  [{i+1}/{len(PICKER_EMOJI)}] {emoji} U+{cp:04X} ({len(bgra)} bytes)", file=sys.stderr)
 
-        if rgba is None:
-            print(f"Failed to render {emoji} (U+{cp:04X})", file=sys.stderr)
-            # Create a placeholder
-            rgba = b'\x00' * (SIZE * SIZE * 4)
-
-        c_code = generate_lvgl_image_c(name, rgba, SIZE, SIZE)
+        c_code = generate_lvgl_image_c(name, bgra, SIZE, SIZE)
         output_lines.append(c_code)
-        print(f"  [{i+1}/{len(PICKER_EMOJI)}] {emoji} U+{cp:04X}", file=sys.stderr)
 
-    # Write output file
+    # Write images header
     out_file = out_dir / 'emoji_picker_images.h'
     with open(out_file, 'w') as f:
         f.write('\n'.join(output_lines))
     print(f"\nWrote {out_file}", file=sys.stderr)
 
-    # Generate index header
+    # Write index header
     idx_lines = [
         '#ifndef EMOJI_PICKER_INDEX_H',
         '#define EMOJI_PICKER_INDEX_H',
@@ -318,62 +184,6 @@ def main():
     with open(idx_file, 'w') as f:
         f.write('\n'.join(idx_lines))
     print(f"Wrote {idx_file}", file=sys.stderr)
-
-
-def render_with_pil(emoji_char, font_path, size=24):
-    """Render emoji with PIL."""
-    from PIL import Image, ImageDraw, ImageFont
-    import io
-
-    cp = ord(emoji_char)
-
-    try:
-        font = ImageFont.truetype(font_path, size - 2)
-        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.text((2, 1), chr(cp), font=font, fill=(255, 255, 255, 255))
-        pixels = list(img.getdata())
-
-        # Convert to RGBA8888 bytes
-        rgba = b''
-        for r, g, b, a in pixels:
-            rgba += struct.pack('BBBB', r, g, b, a)
-        return rgba
-    except Exception as e:
-        print(f"PIL error: {e}", file=sys.stderr)
-        return None
-
-
-def render_with_cairo(emoji_char, font_path, size=24):
-    """Render emoji with cairo."""
-    import cairo
-    import struct
-
-    cp = ord(emoji_char)
-
-    try:
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
-        cr = cairo.Context(surface)
-        cr.set_source_rgba(0, 0, 0, 0)
-        cr.paint()
-        cr.set_source_rgba(1, 1, 1, 1)
-        cr.select_font_face("Noto Color Emoji",
-                            cairo.FONT_SLANT_NORMAL,
-                            cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(size - 4)
-        cr.move_to(2, size - 4)
-        cr.show_text(chr(cp))
-
-        buf = surface.get_data()
-        # Cairo ARGB32 is native-endian ARGB, need to convert to RGBA
-        rgba = b''
-        for i in range(0, len(buf), 4):
-            b, g, r, a = buf[i:i+4]  # Cairo is BGRA on little-endian
-            rgba += struct.pack('BBBB', r, g, b, a)
-        return rgba
-    except Exception as e:
-        print(f"Cairo error: {e}", file=sys.stderr)
-        return None
 
 
 if __name__ == '__main__':
