@@ -162,8 +162,8 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
 #if SLOPOS_DEBUG_DISPLAY
     dbg_last_flush_area = *area;
     dbg_flush_count++;
-    // Only print flush details at debug level >= 2
-    if (slopos::debug::get_level() >= 2) {
+    // Only print flush details at debug level >= 2 AND display feature enabled
+    if (slopos::debug::get_level() >= 2 && slopos::debug::feat_get_display()) {
         Serial.printf("[flush] #%lu  area=(%ld,%ld,%ld,%ld) w=%ld h=%ld pixels=%ld\n",
                       (unsigned long)dbg_flush_count,
                       (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
@@ -285,7 +285,7 @@ static void lvgl_trackball_cb(lv_indev_t* indev, lv_indev_data_t* data)
 static void lvgl_invalidate_cb(lv_event_t* e)
 {
     lv_area_t* area = (lv_area_t*)lv_event_get_param(e);
-    if (area && slopos::debug::get_level() >= 2) {
+    if (area && slopos::debug::get_level() >= 2 && slopos::debug::feat_get_display()) {
         Serial.printf("[inv] area=(%ld,%ld,%ld,%ld) w=%ld h=%ld\n",
                       (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
                       (long)(area->x2 - area->x1 + 1), (long)(area->y2 - area->y1 + 1));
@@ -371,6 +371,8 @@ bool slopos_display_init()
 void slopos_display_loop()
 {
     // Serial screenshot trigger: send "SCREENSHOT" over USB serial
+    // Disabled in remote test mode — the test controller handles capture
+#if !defined(SLOPOS_REMOTE_TEST) || !SLOPOS_REMOTE_TEST
     if (Serial.available()) {
         static char cmd_buf[32];
         static uint8_t cmd_pos = 0;
@@ -385,6 +387,7 @@ void slopos_display_loop()
             cmd_buf[cmd_pos++] = c;
         }
     }
+#endif
 
     slopos_touch_loop();
     slopos_keyboard_scan();
