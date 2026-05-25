@@ -524,14 +524,7 @@ static lv_obj_t* make_chat_list_screen()
 
     {
         int rssi = slopos::mesh::getLastRSSI();
-        const char* bars = rssi > -70  ? "▂▄▆█" :
-                           rssi > -85  ? "▂▄▆ " :
-                           rssi > -100 ? "▂▄  " :
-                           rssi > -115 ? "▂   " : "    ";
-        lv_obj_t* sig = lv_label_create(bot);
-        lv_label_set_text(sig, bars);
-        lv_obj_set_style_text_color(sig, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_text_font(sig, emoji_wrapped_montserrat_10, 0);
+        lv_obj_t* sig = create_signal_bars(bot, rssi);
         lv_obj_align(sig, LV_ALIGN_CENTER, -20, 0);
     }
 
@@ -1060,14 +1053,7 @@ static void create_bottom_bar()
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
 
     int rssi = slopos::mesh::getLastRSSI();
-    const char* bars = rssi > -70  ? "▂▄▆█" :
-                       rssi > -85  ? "▂▄▆ " :
-                       rssi > -100 ? "▂▄  " :
-                       rssi > -115 ? "▂   " : "    ";
-    lv_obj_t* sig = lv_label_create(bot);
-    lv_label_set_text(sig, bars);
-    lv_obj_set_style_text_color(sig, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_text_font(sig, emoji_wrapped_montserrat_10, 0);
+    lv_obj_t* sig = create_signal_bars(bot, rssi);
     lv_obj_align(sig, LV_ALIGN_CENTER, -20, 0);
 
     char batt_buf[8];
@@ -1110,6 +1096,22 @@ static void open_channel_messaging(int idx)
     }, LV_EVENT_DELETE, nullptr);
 
     create_top_bar();
+
+    // For DM channels, show the contact's per-node signal bars in the top bar
+    if (idx >= 0 && idx < dyn_count && dyn_channels[idx] &&
+        strncmp(dyn_channels[idx], "DM: ", 4) == 0) {
+        const char* contact_name = dyn_channels[idx] + 4;
+        slopos::mesh::ContactInfo cbuf[32];
+        int cn = slopos::mesh::exportContactsFull(cbuf, 32);
+        for (int ci = 0; ci < cn; ci++) {
+            if (strcmp(cbuf[ci].name, contact_name) == 0) {
+                lv_obj_t* sig = create_signal_bars(top_bar, cbuf[ci].rssi);
+                lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -30, 0);
+                break;
+            }
+        }
+    }
+
     create_message_list();
     render_active_messages();
     create_input_bar();

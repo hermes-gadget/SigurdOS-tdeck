@@ -239,16 +239,7 @@ static lv_obj_t* make_screen_full(const char* title)
     // Signal bars (center, snapshot)
     {
         int rssi = slopos::mesh::getLastRSSI();
-        const char* bars;
-        if (rssi > -70)       bars = "▂▄▆█";
-        else if (rssi > -85)  bars = "▂▄▆ ";
-        else if (rssi > -100) bars = "▂▄  ";
-        else if (rssi > -115) bars = "▂   ";
-        else                  bars = "    ";
-        lv_obj_t* sig = lv_label_create(bot);
-        lv_label_set_text(sig, bars);
-        lv_obj_set_style_text_color(sig, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_text_font(sig, &lv_font_montserrat_10, 0);
+        lv_obj_t* sig = create_signal_bars(bot, rssi);
         lv_obj_align(sig, LV_ALIGN_CENTER, -20, 0);
     }
 
@@ -533,14 +524,9 @@ void contacts_screen_show()
         lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
         lv_obj_align(name_l, LV_ALIGN_LEFT_MID, 28, 0);
 
-        // RSSI
-        char rssi_buf[12];
-        snprintf(rssi_buf, sizeof(rssi_buf), "%ddBm", c.rssi);
-        lv_obj_t* rssi_l = lv_label_create(row);
-        lv_label_set_text(rssi_l, rssi_buf);
-        lv_obj_set_style_text_color(rssi_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(rssi_l, &lv_font_montserrat_10, 0);
-        lv_obj_align(rssi_l, LV_ALIGN_RIGHT_MID, -6, 0);
+        // Signal bars
+        lv_obj_t* sig = create_signal_bars(row, c.rssi);
+        lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -6, 0);
 
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);

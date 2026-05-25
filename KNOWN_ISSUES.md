@@ -13,23 +13,6 @@ PR #25 added emoji support with LVGL font fallback and an emoji picker, but only
 
 ---
 
-## Signal Bars
-
-### RSSI-based signal strength indicator
-There's no visual signal strength indicator anywhere in the UI. Users have to navigate to the Heard screen and read raw RSSI numbers to gauge link quality.
-
-**What's needed:** A small signal bar widget (1-5 bars) based on the last received message's RSSI from each contact. Bars should be rendered with the pixel aesthetic — blocky, no curves. Reference threshold levels:
-
-| Bars | RSSI Range |
-|------|-----------|
-| 5    | > -70 dBm |
-| 4    | -70 to -85 dBm |
-| 3    | -85 to -95 dBm |
-| 2    | -95 to -105 dBm |
-| 1    | < -105 dBm |
-
-Could be shown next to each contact in the Contacts screen, in the chat header, and on the home screen mesh status.
-
 ---
 
 ## Finder

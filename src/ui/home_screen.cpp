@@ -256,10 +256,7 @@ static void create_bottom_bar()
     lv_obj_set_style_text_font(dev, &lv_font_montserrat_10, 0);
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
 
-    signal_label = lv_label_create(bottom_bar);
-    lv_label_set_text(signal_label, "▂▄▆█");
-    lv_obj_set_style_text_color(signal_label, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_text_font(signal_label, &lv_font_montserrat_10, 0);
+    signal_label = create_signal_bars(bottom_bar, slopos::mesh::getLastRSSI());
     lv_obj_align(signal_label, LV_ALIGN_CENTER, -20, 0);
 
     batt_label = lv_label_create(bottom_bar);
@@ -480,13 +477,13 @@ void home_screen_update_time(const char* time_str)
 void home_screen_update_signal(int rssi)
 {
     if (!signal_label) return;
-    const char* bars;
-    if (rssi > -70)       bars = "▂▄▆█";
-    else if (rssi > -85)  bars = "▂▄▆ ";
-    else if (rssi > -100) bars = "▂▄  ";
-    else if (rssi > -115) bars = "▂   ";
-    else                  bars = "    ";
-    lv_label_set_text(signal_label, bars);
+    int active = rssi_to_bars(rssi);
+    uint32_t n = lv_obj_get_child_cnt(signal_label);
+    for (uint32_t i = 0; i < n && i < (uint32_t)SIGNAL_BAR_COUNT; i++) {
+        lv_obj_t* bar = lv_obj_get_child(signal_label, i);
+        lv_obj_set_style_bg_color(bar,
+            lv_color_hex((int)i < active ? ACCENT : BG_INPUT), 0);
+    }
 }
 
 void home_screen_update_channels()
