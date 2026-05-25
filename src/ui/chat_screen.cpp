@@ -352,6 +352,7 @@ static void populate_channel_rows(lv_obj_t* list) {
         int preview_w = CONTENT_W - 70;
         if (ch_meta[i].timestamp > 0) preview_w -= 60;
         if (ch_meta[i].unread > 0)    preview_w -= 24;
+        if (preview_w < 10) preview_w = 10;  // safe floor for narrow displays
         lv_obj_set_width(prev, preview_w);
         lv_obj_align(prev, LV_ALIGN_TOP_LEFT, 46, 26);
 
