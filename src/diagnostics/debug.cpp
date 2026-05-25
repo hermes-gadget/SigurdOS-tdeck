@@ -193,7 +193,7 @@ void dump_system()
     // Feature-conditional dumps
     if (feat_display) dump_display_config();
     if (feat_ui)      dump_lvgl_rendering();
-    if (feat_display) dump_trackball_state();
+    if (feat_diag)    dump_trackball_state();
     if (feat_ui)      dump_home_screen_layout();
     if (feat_diag)    dump_memory();
     if (feat_mesh)    dump_mesh_state();
