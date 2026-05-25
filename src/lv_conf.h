@@ -51,6 +51,7 @@
 #define LV_USE_FLEX               1
 #define LV_USE_GRID               1
 #define LV_USE_ANIMATION          1
+#define LV_USE_SNAPSHOT           1
 
 // Memory — use PSRAM for all LVGL allocations (ESP32-S3 with 8MB PSRAM)
 #define LV_MEM_CUSTOM             1

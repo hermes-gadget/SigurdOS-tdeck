@@ -32,6 +32,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <lvgl.h>
+#include <others/snapshot/lv_snapshot.h>
 #include <esp_heap_caps.h>
 
 // ── Constants ────────────────────────────────────────────
@@ -372,43 +373,39 @@ static void cmd_capture() {
     uint32_t w = (uint32_t)lv_display_get_horizontal_resolution(disp);
     uint32_t h = (uint32_t)lv_display_get_vertical_resolution(disp);
     uint32_t stride = w * 2;  // RGB565: 2 bytes per pixel
+    uint32_t total_bytes = w * h * 2;
 
-    // Allocate a temporary buffer in PSRAM to capture the framebuffer atomically
-    uint32_t buf_size = w * h * 2;
-    uint8_t* capture_buf = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!capture_buf) {
-        Serial.println("[test] capture: malloc failed");
+    // Pre-allocate a PSRAM buffer for the snapshot
+    // lv_snapshot_take_to_draw_buf needs a buffer that can hold
+    // stride * h bytes. With alignment=4, stride = ((320*2+3)/4)*4 = 640.
+    // So total = 640 * 240 = 153,600.
+    uint8_t* snap_buf = (uint8_t*)heap_caps_malloc(total_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!snap_buf) {
+        Serial.println("[test] capture: pre-alloc failed");
         return;
     }
 
-    // Force a full render and flush first for a clean frame
-    lv_refr_now(disp);
+    // Create a draw buffer wrapping our PSRAM buffer
+    lv_draw_buf_t snap_db;
+    lv_draw_buf_init(&snap_db, w, h, LV_COLOR_FORMAT_RGB565, stride, snap_buf, total_bytes);
 
-    // Read the buffer after refresh
-    lv_draw_buf_t* draw_buf = lv_display_get_buf_active(disp);
-    if (!draw_buf || !draw_buf->data) {
-        heap_caps_free(capture_buf);
-        Serial.println("[test] capture: no draw buffer after refresh");
+    // Take snapshot into our pre-allocated buffer
+    lv_result_t res = lv_snapshot_take_to_draw_buf(lv_scr_act(), LV_COLOR_FORMAT_RGB565, &snap_db);
+    if (res != LV_RES_OK) {
+        heap_caps_free(snap_buf);
+        Serial.println("[test] capture: snapshot failed");
         return;
-    }
-
-    // memcpy entire framebuffer into our temp buffer (fast — ~1ms on ESP32-S3)
-    uint8_t* src = (uint8_t*)draw_buf->data;
-    uint32_t src_stride = (uint32_t)draw_buf->header.stride;
-    if (src_stride < stride) src_stride = stride;
-    for (uint32_t y = 0; y < h; y++) {
-        memcpy(capture_buf + y * stride, src + y * src_stride, stride);
     }
 
     Serial.printf("[capture] W=%lu H=%lu S=%lu\n",
                   (unsigned long)w, (unsigned long)h, (unsigned long)stride);
 
-    // Send hex-encoded rows from our temp buffer (safe — LVGL won't touch it)
+    // Send hex-encoded rows from our snapshot buffer
     char hex_line[128];
     const int HEX_PER_LINE = 64;
 
     for (uint32_t y = 0; y < h; y++) {
-        uint8_t* row = capture_buf + y * stride;
+        uint8_t* row = snap_buf + y * stride;
         uint32_t offset = 0;
         while (offset < stride) {
             uint32_t remaining = stride - offset;
@@ -429,7 +426,7 @@ static void cmd_capture() {
         }
     }
 
-    heap_caps_free(capture_buf);
+    heap_caps_free(snap_buf);
 
     Serial.println("[capture] END");
 }
