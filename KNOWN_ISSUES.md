@@ -11,21 +11,6 @@ When scrolling through channels in the channel selector, message previews (the l
 
 **What's needed:** Proper string truncation in the channel list — clamp preview text to fit the available width, appending "..." when truncated. The `build_channel_string` function in `home_screen.cpp` was recently hardened (PR #29) — a similar approach should be applied to the preview text in the channel selector.
 
----
-
-## Emoji Support
-
-### Incomplete emoji character coverage
-PR #25 added emoji support with LVGL font fallback and an emoji picker, but only a subset of Unicode emoji codepoints have actual glyphs in the font. A large number of emoji render as empty boxes (missing glyph rectangles) both in chat messages and in the picker itself.
-
-**What's needed:** A full emoji font implementation. Options:
-- **LVGL built-in emoji font** — LVGL v9 includes an optional emoji font (`LV_FONT_EMOJI`) that can be enabled in `lv_conf.h`. This covers a much wider range of codepoints but adds ~100-200KB to the firmware binary.
-- **Custom subset font** — build a custom LVGL font that includes the most commonly used emoji (smileys, gestures, symbols) while keeping the binary size down. Tools like `lv_font_conv` can generate a subset font from any TTF.
-- **Two-stage fallback** — use the current custom font as the primary and add `LV_FONT_EMOJI` as a secondary fallback layer so common emoji render well and obscure ones at least don't show as boxes.
-
-Any approach should be tested against a reference emoji set to verify coverage before merging.
-
----
 
 ## Trackball Navigation
 

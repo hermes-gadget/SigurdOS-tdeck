@@ -24,9 +24,11 @@
 #include "hal/keyboard.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
+#include "fonts/emoji_font.h"
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
+#include <lvgl.h>
 
 // ── Constants ────────────────────────────────────────────
 static constexpr uint32_t CMD_POLL_MS = 50;   // check Serial every 50ms
@@ -97,6 +99,7 @@ static void print_help() {
     Serial.println(F("║  press <key> Press Enter/Bksp/Esc    ║"));
     Serial.println(F("║  inject <from> [channel=<ch>] <msg>  ║"));
     Serial.println(F("║  screen      Show current screen     ║"));
+    Serial.println(F("║  emoji       Show emoji test grid     ║"));
     Serial.println(F("║  status      Show device state       ║"));
     Serial.println(F("╚══════════════════════════════════════╝"));
     Serial.println();
@@ -241,8 +244,7 @@ static void cmd_inject(const char* args) {
     }
 }
 
-static void cmd_screen() {
-    Serial.printf("[test] current screen: %s\n",
+static void cmd_screen() {    Serial.printf("[test] current screen: %s\n",
                   screen_name(slopos::ui::current_screen()));
 }
 
@@ -250,6 +252,84 @@ static void cmd_status() {
     Serial.printf("[test] heap=%u psram=%u\n",
                   (unsigned)ESP.getFreeHeap(),
                   (unsigned)ESP.getFreePsram());
+}
+
+// Show full emoji grid for visual verification
+static void cmd_emoji() {
+    // Get the current active screen
+    lv_obj_t* parent = lv_scr_act();
+    if (!parent) {
+        Serial.println("[test] emoji: no active screen");
+        return;
+    }
+
+    // Create an overlay dialog similar to the emoji picker
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(0x0F0F0F), 0);
+    lv_obj_set_style_bg_opa(dlg, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 0, 0);
+    lv_obj_set_style_pad_all(dlg, 4, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "Emoji Test Grid (362)");
+    lv_obj_set_style_text_color(title, lv_color_hex(0x00BFFF), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+    // Close button
+    lv_obj_t* close_btn = lv_btn_create(dlg);
+    lv_obj_set_size(close_btn, 24, 20);
+    lv_obj_align(close_btn, LV_ALIGN_TOP_RIGHT, -4, 4);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0xCC3333), 0);
+    lv_obj_set_style_bg_opa(close_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(close_btn, 0, 0);
+    lv_obj_set_style_border_width(close_btn, 0, 0);
+    lv_obj_t* close_lbl = lv_label_create(close_btn);
+    lv_label_set_text(close_lbl, "X");
+    lv_obj_set_style_text_font(close_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(close_lbl, lv_color_hex(0xffffff), 0);
+    lv_obj_center(close_lbl);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
+        lv_obj_t* d = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
+        if (d) lv_obj_del_async(d);
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Scrollable grid
+    lv_obj_t* grid = lv_obj_create(dlg);
+    lv_obj_set_size(grid, LV_PCT(96), LV_PCT(85));
+    lv_obj_align(grid, LV_ALIGN_TOP_MID, 0, 28);
+    lv_obj_set_style_bg_opa(grid, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(grid, 0, 0);
+    lv_obj_set_style_pad_all(grid, 4, 0);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_scroll_dir(grid, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(grid, (lv_obj_flag_t)(
+        LV_OBJ_FLAG_SCROLL_ELASTIC | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_CHAIN));
+
+    int count = emoji_font_get_count();
+    for (int i = 0; i < count; i++) {
+        if (const char* emoji_str = emoji_font_get_by_index(i)) {
+            lv_obj_t* btn = lv_btn_create(grid);
+            lv_obj_set_size(btn, 28, 26);
+            lv_obj_set_style_bg_color(btn, lv_color_hex(0x1A1A2E), 0);
+            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(btn, 0, 0);
+            lv_obj_set_style_border_width(btn, 0, 0);
+            lv_obj_set_style_pad_all(btn, 0, 0);
+
+            lv_obj_t* lbl = lv_label_create(btn);
+            lv_label_set_text(lbl, emoji_str);
+            lv_obj_set_style_text_font(lbl, &emoji_font, 0);
+            lv_obj_center(lbl);
+        }
+    }
+
+    Serial.printf("[test] emoji grid: %d emoji displayed\n", count);
 }
 
 // ── Command parsing ──────────────────────────────────────
@@ -293,6 +373,8 @@ static bool dispatch(const char* line) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {
         cmd_status();
+    } else if (strcmp(cmd, "emoji") == 0) {
+        cmd_emoji();
     } else {
         Serial.printf("[test] unknown command: %s (try 'help')\n", cmd);
     }

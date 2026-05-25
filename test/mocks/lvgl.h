@@ -21,8 +21,13 @@
 // Mock lvgl.h for native PlatformIO testing
 // Provides stubs for all LVGL v9 API functions used by SlopOS UI code
 
+#ifdef __cplusplus
 #include <cstdint>
 #include <cstddef>
+#else
+#include <stdint.h>
+#include <stddef.h>
+#endif
 
 // ── LVGL version ────────────────────────────────────────
 #define LVGL_VERSION_MAJOR 9
@@ -279,7 +284,13 @@ inline void lv_indev_set_read_cb(lv_indev_t*, void(*)(lv_indev_t*, lv_indev_data
 inline uint32_t lv_timer_handler() { return 5; }
 
 // ── Fonts (forward-declared as extern) ───────────────────
-struct lv_font_t;
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct lv_font_t {
+    const void* fallback;
+};
+extern const lv_font_t lv_font_montserrat_10;
 extern const lv_font_t lv_font_montserrat_12;
 extern const lv_font_t lv_font_montserrat_14;
 extern const lv_font_t lv_font_montserrat_16;
@@ -287,3 +298,7 @@ extern const lv_font_t lv_font_montserrat_18;
 extern const lv_font_t lv_font_montserrat_20;
 extern const lv_font_t lv_font_montserrat_24;
 extern const lv_font_t lv_font_montserrat_28;
+extern const lv_font_t emoji_font;
+#ifdef __cplusplus
+}
+#endif

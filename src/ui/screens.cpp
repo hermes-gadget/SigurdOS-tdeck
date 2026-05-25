@@ -31,6 +31,7 @@
 #include "../hal/keyboard.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../app/map_renderer.h"
+#include "../fonts/emoji_font.h"
 #include <Arduino.h>
 #include <lvgl.h>
 #include <cstdio>
@@ -1223,7 +1224,7 @@ static void term_add_line(lv_obj_t* log, const char* text)
     lv_obj_t* lbl = lv_label_create(log);
     lv_label_set_text(lbl, text);
     lv_obj_set_style_text_color(lbl, lv_color_hex(term_classify_line(text)), 0);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_width(lbl, LV_PCT(100));
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_scroll_to_view(lbl, LV_ANIM_OFF);
@@ -1303,7 +1304,7 @@ void terminal_screen_show()
 
         char result[256] = "";
         if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping");
+            snprintf(result, sizeof(result), "Commands: help status advert ping emoji-list");
         } else if (strcmp(cmd, "status") == 0) {
             int rssi  = slopos::mesh::getLastRSSI();
             float snr = slopos::mesh::getLastSNR();
@@ -1318,6 +1319,21 @@ void terminal_screen_show()
             snprintf(result, sizeof(result), ok ? "Advert sent" : "Send failed");
         } else if (strcmp(cmd, "ping") == 0) {
             snprintf(result, sizeof(result), "Pong! Uptime: %lums", millis());
+        } else if (strcmp(cmd, "emoji-list") == 0) {
+            term_add_line(log_cont, "--- Emoji list (362 available) ---");
+            char line_buf[128];
+            for (int i = 0; i < emoji_font_get_count(); i += 8) {
+                int pos = 0;
+                for (int j = 0; j < 8 && i + j < emoji_font_get_count(); j++) {
+                    if (const char* e = emoji_font_get_by_index(i + j)) {
+                        pos += snprintf(line_buf + pos, sizeof(line_buf) - pos, "%s ", e);
+                    }
+                }
+                if (pos > 0) term_add_line(log_cont, line_buf);
+            }
+            term_add_line(log_cont, "--- End emoji list ---");
+            lv_textarea_set_text(ta, "");
+            return;
         } else {
             snprintf(result, sizeof(result), "Unknown: %s  (type 'help')", cmd);
         }

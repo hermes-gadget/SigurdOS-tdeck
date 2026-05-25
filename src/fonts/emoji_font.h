@@ -9,6 +9,7 @@ extern "C" {
 
 // Emoji font with commonly used emoji subset (Noto Emoji, SIL OFL)
 // Automatically generated — see scripts/generate_emoji_font.sh
+// Size: 16px, Bpp: 4 (grayscale anti-aliasing)
 extern const lv_font_t emoji_font;
 
 // Writable wrappers around Montserrat fonts with emoji fallback set.
@@ -25,6 +26,13 @@ extern const lv_font_t* emoji_wrapped_montserrat_28;
 // Register emoji font as fallback for all Montserrat sizes used in the UI.
 // Call once during UI initialization.
 void emoji_font_register_fallback();
+
+// Get the total number of emoji codepoints in the font.
+// Useful for the emoji-list terminal command and test verification.
+int emoji_font_get_count();
+
+// Get emoji UTF-8 string by index. Returns nullptr if index is out of range.
+const char* emoji_font_get_by_index(int index);
 
 #ifdef __cplusplus
 }
