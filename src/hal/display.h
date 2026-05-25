@@ -31,3 +31,8 @@ uint32_t slopos_display_millis();
 // Call slopos_display_wake() from input handlers to reset timer.
 void slopos_display_wake();
 bool slopos_display_is_on();
+void slopos_display_set_brightness(uint8_t brightness);
+
+#if defined(SLOPOS_REMOTE_TEST)
+void slopos_test_set_touch(int x, int y);
+#endif

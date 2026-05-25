@@ -15,3 +15,7 @@ void slopos_test_controller_loop();
 // Handle a single command string (for programmatic use or parsing).
 // Returns true if the command was recognised.
 bool slopos_test_controller_exec(const char* cmd);
+
+// ── New test controller API functions ──────────────────────
+void slopos_test_controller_tap(int x, int y);
+void slopos_test_controller_scroll(int x, int y, int dx, int dy);

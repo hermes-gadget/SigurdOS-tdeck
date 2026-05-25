@@ -189,8 +189,24 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
 }
 
 // ── Touch read callback ──────────────────────────────────
+
+#if defined(SLOPOS_REMOTE_TEST)
+// Test touch injection for remote test controller
+static lv_point_t test_touch_point = {0, 0};
+static bool test_touch_pressed = false;
+#endif
+
 static void lvgl_touch_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {
+#if defined(SLOPOS_REMOTE_TEST)
+    if (test_touch_pressed) {
+        data->point = test_touch_point;
+        data->state = LV_INDEV_STATE_PRESSED;
+        test_touch_pressed = false;
+        slopos_display_wake();
+        return;
+    }
+#endif
     int x, y;
     bool pressed = false;
     if (slopos_touch_get(&x, &y, &pressed) && pressed) {
@@ -360,11 +376,14 @@ void slopos_display_loop()
     }
 
     // Auto-off: turn off backlight after inactivity
+    // Disabled in SLOPOS_DEBUG builds — the screen must stay on for observation
+#if !defined(SLOPOS_DEBUG) || !SLOPOS_DEBUG
     if (display_on && millis() > auto_off_at) {
         tft.setBrightness(0);
         slopos_keyboard_set_brightness(0);
         display_on = false;
     }
+#endif
 
     uint32_t next = lv_timer_handler();
     delay(next > 5 ? 5 : next);
@@ -390,3 +409,17 @@ bool slopos_display_is_on()
 {
     return display_on;
 }
+
+void slopos_display_set_brightness(uint8_t brightness)
+{
+    tft.setBrightness(brightness);
+}
+
+#if defined(SLOPOS_REMOTE_TEST)
+void slopos_test_set_touch(int x, int y)
+{
+    test_touch_point.x = x;
+    test_touch_point.y = y;
+    test_touch_pressed = true;
+}
+#endif

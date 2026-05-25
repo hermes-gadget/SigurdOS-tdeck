@@ -20,8 +20,10 @@
 //   status                        Show device info (heap, psram, batt)
 
 #include "test_controller.h"
+#include "hal/display.h"
 #include "hal/trackball.h"
 #include "hal/keyboard.h"
+#include "hal/prefs.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
 #include "fonts/emoji_font.h"
@@ -29,6 +31,7 @@
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 #include <lvgl.h>
 
 // ── Constants ────────────────────────────────────────────
@@ -103,6 +106,11 @@ static void print_help() {
     Serial.println(F("║  emoji       Show emoji test grid     ║"));
     Serial.println(F("║  emoji-ac <p> Emoji autocomplete test ║"));
     Serial.println(F("║  status      Show device state       ║"));
+    Serial.println(F("║  capture     Capture framebuffer(hex)║"));
+    Serial.println(F("║  tree        Dump LVGL widget tree   ║"));
+    Serial.println(F("║  widgets     List visible widgets    ║"));
+    Serial.println(F("║  tap <x> <y> Sim touch at coords    ║"));
+    Serial.println(F("║  backlight   Get/set backlight bri  ║"));
     Serial.println(F("╚══════════════════════════════════════╝"));
     Serial.println();
 }
@@ -352,6 +360,204 @@ static void cmd_emoji_ac(const char* arg) {
     }
 }
 
+// ── New remote test commands ──────────────────────────────
+
+static void cmd_capture() {
+    lv_display_t* disp = lv_display_get_default();
+    if (!disp) {
+        Serial.println("[test] capture: no display");
+        return;
+    }
+
+    // Force a full refresh so the buffer has the latest frame
+    lv_refr_now(disp);
+
+    lv_draw_buf_t* buf = lv_display_get_buf_active(disp);
+    if (!buf || !buf->data) {
+        Serial.println("[test] capture: no active draw buffer");
+        return;
+    }
+
+    uint32_t w = buf->header.w;
+    uint32_t h = buf->header.h;
+    uint32_t stride = buf->header.stride;
+    // RGB565: 2 bytes per pixel
+    uint32_t row_bytes = w * 2;
+
+    Serial.printf("[capture] W=%lu H=%lu S=%lu\n",
+                  (unsigned long)w, (unsigned long)h, (unsigned long)stride);
+
+    // Each serial line carries up to 64 hex chars = 32 bytes = 16 pixels
+    char hex_line[128];
+    const int HEX_PER_LINE = 64;  // hex chars per line
+
+    for (uint32_t y = 0; y < h; y++) {
+        uint8_t* row = buf->data + y * stride;
+        uint32_t offset = 0;
+        while (offset < row_bytes) {
+            uint32_t remaining = row_bytes - offset;
+            uint32_t chunk = (remaining > (HEX_PER_LINE / 2))
+                                 ? (HEX_PER_LINE / 2)
+                                 : remaining;
+            int n = 0;
+            for (uint32_t i = 0; i < chunk; i++) {
+                n += snprintf(hex_line + n, sizeof(hex_line) - n, "%02X",
+                              row[offset + i]);
+            }
+            hex_line[n] = '\0';
+            Serial.printf("[cdata] %s\n", hex_line);
+            offset += chunk;
+        }
+    }
+
+    Serial.println("[capture] END");
+}
+
+static void dump_widget_tree(lv_obj_t* obj, int depth) {
+    if (!obj) return;
+
+    // Indent
+    for (int i = 0; i < depth; i++) Serial.print("  ");
+
+    // Determine widget type
+    const char* type = "?";
+    if (lv_obj_check_type(obj, &lv_button_class))      type = "btn";
+    else if (lv_obj_check_type(obj, &lv_label_class))   type = "label";
+    else if (lv_obj_check_type(obj, &lv_obj_class))     type = "obj";
+    else if (lv_obj_check_type(obj, &lv_image_class))   type = "img";
+    else if (lv_obj_check_type(obj, &lv_textarea_class)) type = "textarea";
+    else if (lv_obj_check_type(obj, &lv_list_class))    type = "list";
+    else if (lv_obj_check_type(obj, &lv_roller_class))  type = "roller";
+    else if (lv_obj_check_type(obj, &lv_dropdown_class)) type = "dropdown";
+
+    lv_area_t coords;
+    lv_obj_get_coords(obj, &coords);
+
+    Serial.printf("%s x=%d y=%d w=%d h=%d visible=%d",
+                  type,
+                  lv_obj_get_x(obj), lv_obj_get_y(obj),
+                  coords.x2 - coords.x1 + 1,
+                  coords.y2 - coords.y1 + 1,
+                  lv_obj_is_valid(obj) &&
+                      !lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN));
+
+    // For labels, show text (truncated to 40 chars)
+    if (lv_obj_check_type(obj, &lv_label_class)) {
+        const char* text = lv_label_get_text(obj);
+        if (text) {
+            char buf[48];
+            strncpy(buf, text, 44);
+            buf[44] = '\0';
+            // Remove newlines for serial display
+            for (char* p = buf; *p; p++)
+                if (*p == '\n') *p = ' ';
+            Serial.printf(" \"%s\"", buf);
+        }
+    }
+
+    Serial.println();
+
+    // Recurse children
+    uint32_t child_cnt = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(obj, i);
+        if (child) dump_widget_tree(child, depth + 1);
+    }
+}
+
+static void cmd_tree() {
+    lv_obj_t* scr = lv_scr_act();
+    if (!scr) {
+        Serial.println("[test] tree: no active screen");
+        return;
+    }
+    dump_widget_tree(scr, 0);
+    Serial.println("[test] tree: see above");
+}
+
+static void cmd_widgets() {
+    lv_obj_t* scr = lv_scr_act();
+    if (!scr) {
+        Serial.println("[test] widgets: no active screen");
+        return;
+    }
+
+    Serial.println("[widgets] visible text widgets:");
+    int count = 0;
+
+    // Stack-based traversal (avoid recursion on ESP32 with large trees)
+    lv_obj_t* stack[64];
+    int sp = 0;
+    stack[sp++] = scr;
+
+    while (sp > 0) {
+        lv_obj_t* obj = stack[--sp];
+        if (!obj) continue;
+
+        if (lv_obj_check_type(obj, &lv_label_class)) {
+            const char* text = lv_label_get_text(obj);
+            if (text && text[0] != '\0' &&
+                lv_obj_is_valid(obj) &&
+                !lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
+                lv_area_t coords;
+                lv_obj_get_coords(obj, &coords);
+                int w = coords.x2 - coords.x1 + 1;
+                int h = coords.y2 - coords.y1 + 1;
+
+                char buf[64];
+                strncpy(buf, text, 60);
+                buf[60] = '\0';
+                for (char* p = buf; *p; p++)
+                    if (*p == '\n') *p = ' ';
+
+                Serial.printf("  [%d] x=%d y=%d w=%d h=%d \"%s\"\n",
+                              count, lv_obj_get_x(obj), lv_obj_get_y(obj),
+                              w, h, buf);
+                count++;
+            }
+        }
+
+        // Push children (reverse order so they process left-to-right)
+        uint32_t child_cnt = lv_obj_get_child_count(obj);
+        for (int32_t i = (int32_t)child_cnt - 1; i >= 0; i--) {
+            lv_obj_t* child = lv_obj_get_child(obj, i);
+            if (child && sp < 64) stack[sp++] = child;
+        }
+    }
+
+    Serial.printf("[widgets] total visible: %d\n", count);
+}
+
+static void cmd_tap(const char* arg) {
+    int x, y;
+    if (sscanf(arg, "%d %d", &x, &y) != 2) {
+        Serial.println("[test] tap: usage: tap <x> <y>");
+        return;
+    }
+    slopos_test_set_touch(x, y);
+    Serial.printf("[test] tap %d %d\n", x, y);
+}
+
+static void cmd_backlight(const char* arg) {
+    if (!arg || !arg[0]) {
+        Serial.printf("[test] backlight: %s\n",
+                      slopos_display_is_on() ? "on" : "off");
+        return;
+    }
+    int val = atoi(arg);
+    if (val < 0 || val > 255) {
+        Serial.println("[test] backlight: brightness must be 0-255");
+        return;
+    }
+    slopos_display_set_brightness((uint8_t)val);
+    if (val > 0) {
+        slopos_keyboard_set_brightness(slopos::prefs_get().kbd_backlight);
+    } else {
+        slopos_keyboard_set_brightness(0);
+    }
+    Serial.printf("[test] backlight %d\n", val);
+}
+
 // ── Command parsing ──────────────────────────────────────
 static bool dispatch(const char* line) {
     // Skip empty lines and comments
@@ -397,6 +603,17 @@ static bool dispatch(const char* line) {
         cmd_emoji();
     } else if (strcmp(cmd, "emoji-ac") == 0) {
         cmd_emoji_ac(arg);
+    } else if (strcmp(cmd, "capture") == 0) {
+        cmd_capture();
+    } else if (strcmp(cmd, "tree") == 0) {
+        cmd_tree();
+    } else if (strcmp(cmd, "widgets") == 0) {
+        cmd_widgets();
+    } else if (strcmp(cmd, "tap") == 0) {
+        if (!arg) { Serial.println("[test] tap: missing args"); return true; }
+        cmd_tap(arg);
+    } else if (strcmp(cmd, "backlight") == 0) {
+        cmd_backlight(arg);
     } else {
         Serial.printf("[test] unknown command: %s (try 'help')\n", cmd);
     }
@@ -407,6 +624,15 @@ static bool dispatch(const char* line) {
 
 bool slopos_test_controller_exec(const char* cmd) {
     return dispatch(cmd);
+}
+
+void slopos_test_controller_tap(int x, int y) {
+    slopos_test_set_touch(x, y);
+}
+
+void slopos_test_controller_scroll(int x, int y, int dx, int dy) {
+    // Future: implement scroll via LVGL indev API
+    (void)x; (void)y; (void)dx; (void)dy;
 }
 
 void slopos_test_controller_init() {
