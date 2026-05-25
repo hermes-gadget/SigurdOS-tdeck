@@ -1,11 +1,27 @@
 #!/usr/bin/env python3
 """Decode T-Deck framebuffer capture from serial hex dump to image."""
-import os, re, sys, time, struct, subprocess
+import os, re, sys, time, struct, subprocess, tempfile
 from PIL import Image
 
 PI_HOST = "hermes-pi"
 T_DECK_PORT = "/dev/ttyACM0"
 BAUD = 115200
+
+PI_CAPTURE_SCRIPT = r"""import serial, time
+s=serial.Serial("/dev/ttyACM0",115200,timeout=3)
+time.sleep(0.5)
+s.write(b"capture\n")
+time.sleep(0.3)
+s.reset_input_buffer()
+t0=time.time()
+while time.time()-t0<15:
+  try:
+    l=s.readline().decode("utf-8",errors="replace").strip()
+    if l: print(l,flush=True)
+    if "[capture] END" in l: break
+  except: break
+s.close()
+"""
 
 def decode_capture(lines):
     width = height = stride = None
@@ -18,7 +34,9 @@ def decode_capture(lines):
             continue
         m = re.match(r'\[cdata\]\s+([\da-fA-F\s]+)', line)
         if m:
-            pixel_data.extend(bytes.fromhex(m.group(1).strip()))
+            hex_str = m.group(1).strip()
+            if hex_str:
+                pixel_data.extend(bytes.fromhex(hex_str))
             continue
         if '[capture] END' in line:
             break
@@ -44,34 +62,25 @@ def decode_capture(lines):
     return img
 
 def capture_via_pi(output_path=None):
-    print(f"Connecting to {PI_HOST}...", file=sys.stderr)
-    reader_py = f"""
-import serial, time
-s = serial.Serial('{T_DECK_PORT}', {BAUD}, timeout=3)
-time.sleep(0.5)
-s.write(b'capture\\n')
-time.sleep(0.2)
-s.reset_input_buffer()
-t0 = time.time()
-while time.time() - t0 < 10:
-    try:
-        line = s.readline().decode('utf-8', errors='replace').strip()
-        if line:
-            print(line, flush=True)
-            if '[capture] END' in line:
-                break
-    except:
-        break
-s.close()
-"""
-    ssh_cmd = [
-        "ssh", PI_HOST,
-        "source ~/hermes-venv/bin/activate 2>/dev/null; python3 -c " + repr(reader_py.strip())
-    ]
-    result = subprocess.run(' '.join(ssh_cmd), shell=True, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        print(f"SSH error: {result.stderr}", file=sys.stderr)
+    """SSH to Pi, send capture cmd, pipe output back, decode."""
+    print(f"Capturing from {PI_HOST}...", file=sys.stderr)
+    # Write capture script to pi temp file to avoid shell quoting issues
+    pi_remote_path = "/tmp/tdeck_capture.py"
+    ssh_write = subprocess.run(
+        ["ssh", PI_HOST, f"cat > {pi_remote_path} << 'ENDOFSCRIPT'\n{PI_CAPTURE_SCRIPT}ENDOFSCRIPT"],
+        capture_output=True, text=True, timeout=10
+    )
+    if ssh_write.returncode != 0:
+        print(f"Script write error: {ssh_write.stderr}", file=sys.stderr)
         return None
+    # Run the capture script on the Pi
+    result = subprocess.run(
+        ["ssh", PI_HOST, f"python3 {pi_remote_path}"],
+        capture_output=True, text=True, timeout=25
+    )
+    if result.returncode != 0:
+        print(f"Capture error: {result.stderr}", file=sys.stderr)
+        # Still try to decode partial output
     img = decode_capture(result.stdout.strip().split('\n'))
     if img:
         path = output_path or f"tdeck_capture_{time.strftime('%Y%m%d_%H%M%S')}.png"
@@ -89,7 +98,7 @@ def decode_from_file(filepath, output_path=None):
     if img:
         out = output_path or filepath.replace('.txt', '.png')
         img.save(out)
-        print(f"Saved {out} ({img.size[0]}x{img.size[1]})", file=sys.stderr)
+        print(f"Saved {out} ({img.size[0]}x{img.size[1]})")
     return img
 
 if __name__ == '__main__':

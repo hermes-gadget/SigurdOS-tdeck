@@ -31,8 +31,8 @@
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
-#include <cstdio>
 #include <lvgl.h>
+#include <esp_heap_caps.h>
 
 // ── Constants ────────────────────────────────────────────
 static constexpr uint32_t CMD_POLL_MS = 50;   // check Serial every 50ms
@@ -369,36 +369,51 @@ static void cmd_capture() {
         return;
     }
 
-    // Force a full refresh so the buffer has the latest frame
-    lv_refr_now(disp);
+    uint32_t w = (uint32_t)lv_display_get_horizontal_resolution(disp);
+    uint32_t h = (uint32_t)lv_display_get_vertical_resolution(disp);
+    uint32_t stride = w * 2;  // RGB565: 2 bytes per pixel
 
-    lv_draw_buf_t* buf = lv_display_get_buf_active(disp);
-    if (!buf || !buf->data) {
-        Serial.println("[test] capture: no active draw buffer");
+    // Allocate a temporary buffer in PSRAM to capture the framebuffer atomically
+    uint32_t buf_size = w * h * 2;
+    uint8_t* capture_buf = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!capture_buf) {
+        Serial.println("[test] capture: malloc failed");
         return;
     }
 
-    uint32_t w = buf->header.w;
-    uint32_t h = buf->header.h;
-    uint32_t stride = buf->header.stride;
-    // RGB565: 2 bytes per pixel
-    uint32_t row_bytes = w * 2;
+    // Force a full render and flush first for a clean frame
+    lv_refr_now(disp);
+
+    // Read the buffer after refresh
+    lv_draw_buf_t* draw_buf = lv_display_get_buf_active(disp);
+    if (!draw_buf || !draw_buf->data) {
+        heap_caps_free(capture_buf);
+        Serial.println("[test] capture: no draw buffer after refresh");
+        return;
+    }
+
+    // memcpy entire framebuffer into our temp buffer (fast — ~1ms on ESP32-S3)
+    uint8_t* src = (uint8_t*)draw_buf->data;
+    uint32_t src_stride = (uint32_t)draw_buf->header.stride;
+    if (src_stride < stride) src_stride = stride;
+    for (uint32_t y = 0; y < h; y++) {
+        memcpy(capture_buf + y * stride, src + y * src_stride, stride);
+    }
 
     Serial.printf("[capture] W=%lu H=%lu S=%lu\n",
                   (unsigned long)w, (unsigned long)h, (unsigned long)stride);
 
-    // Each serial line carries up to 64 hex chars = 32 bytes = 16 pixels
+    // Send hex-encoded rows from our temp buffer (safe — LVGL won't touch it)
     char hex_line[128];
-    const int HEX_PER_LINE = 64;  // hex chars per line
+    const int HEX_PER_LINE = 64;
 
     for (uint32_t y = 0; y < h; y++) {
-        uint8_t* row = buf->data + y * stride;
+        uint8_t* row = capture_buf + y * stride;
         uint32_t offset = 0;
-        while (offset < row_bytes) {
-            uint32_t remaining = row_bytes - offset;
+        while (offset < stride) {
+            uint32_t remaining = stride - offset;
             uint32_t chunk = (remaining > (HEX_PER_LINE / 2))
-                                 ? (HEX_PER_LINE / 2)
-                                 : remaining;
+                             ? (HEX_PER_LINE / 2) : remaining;
             int n = 0;
             for (uint32_t i = 0; i < chunk; i++) {
                 n += snprintf(hex_line + n, sizeof(hex_line) - n, "%02X",
@@ -408,7 +423,13 @@ static void cmd_capture() {
             Serial.printf("[cdata] %s\n", hex_line);
             offset += chunk;
         }
+        // Yield every 16 rows to prevent watchdog timeout on ESP32
+        if (y % 16 == 0) {
+            yield();
+        }
     }
+
+    heap_caps_free(capture_buf);
 
     Serial.println("[capture] END");
 }
