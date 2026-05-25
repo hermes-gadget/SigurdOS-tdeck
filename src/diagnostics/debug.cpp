@@ -38,7 +38,10 @@ using namespace theme;
 
 static constexpr uint32_t DUMP_INTERVAL_MS = 5000;
 static uint32_t last_dump_ms = 0;
-static uint8_t  current_level = SLOPOS_DEBUG_LEVEL;
+static uint8_t  current_level = 
+    (SLOPOS_DEBUG_LEVEL < 1) ? 1 :
+    (SLOPOS_DEBUG_LEVEL > 3) ? 3 :
+    (uint8_t)SLOPOS_DEBUG_LEVEL;
 
 void set_level(uint8_t level) {
     if (level < 1) level = 1;

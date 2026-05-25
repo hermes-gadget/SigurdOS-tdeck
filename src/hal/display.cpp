@@ -267,6 +267,7 @@ static void lvgl_trackball_cb(lv_indev_t* indev, lv_indev_data_t* data)
 #if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
 static void lvgl_invalidate_cb(lv_event_t* e)
 {
+    if (slopos::debug::get_level() < 2) return;
     lv_area_t* area = (lv_area_t*)lv_event_get_param(e);
     if (area) {
         Serial.printf("[inv] area=(%ld,%ld,%ld,%ld) w=%ld h=%ld\n",
@@ -364,7 +365,7 @@ void slopos_display_loop()
     }
 
     // Auto-off: turn off backlight after inactivity (disabled in debug builds)
-#if !defined(SLOPOS_DEBUG)
+#if !defined(SLOPOS_DEBUG) || !SLOPOS_DEBUG
     if (display_on && millis() > auto_off_at) {
         tft.setBrightness(0);
         slopos_keyboard_set_brightness(0);

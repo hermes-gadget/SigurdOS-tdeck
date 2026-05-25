@@ -259,8 +259,12 @@ static void cmd_debug(const char* arg) {
         Serial.printf("[test] debug level: %u\n", (unsigned)slopos::debug::get_level());
         return;
     }
+    // Skip leading whitespace
+    while (*arg == ' ') arg++;
     char* end;
     long level = strtol(arg, &end, 10);
+    // Allow trailing whitespace
+    while (*end == ' ') end++;
     if (*end != '\0' || level < 1 || level > 3) {
         Serial.println("[test] debug: usage: debug <1|2|3>  (1=quiet, 2=normal, 3=verbose)");
         return;
