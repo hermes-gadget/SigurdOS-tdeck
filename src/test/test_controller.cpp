@@ -32,6 +32,7 @@
 #include "diagnostics/debug.h"
 #include "ui/screens.h"
 #include "fonts/emoji_font.h"
+#include "fonts/emoji_data.h"
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
