@@ -37,4 +37,8 @@ void finder_screen_show();
 void advertise_screen_show();
 void radio_setup_screen_show();
 void custom_rf_screen_show();
+
+// Highlight the current screen's back button border for back-swipe visual feedback.
+// Passing true sets a 2px accent border; false reverts to the default divider border.
+void highlight_back_button(bool show);
 } // namespace slopos::ui

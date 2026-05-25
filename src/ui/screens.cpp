@@ -52,6 +52,9 @@ static lv_obj_t* g_advert_button = nullptr;
 static lv_timer_t* g_advert_status_timer = nullptr;
 static constexpr uint32_t ADVERT_COOLDOWN_SECONDS = 10;
 
+// Back button reference for back-swipe visual feedback
+static lv_obj_t* s_back_btn = nullptr;
+
 // ── Packets screen live-update state ──────────────────────
 static lv_obj_t*  g_packets_list       = nullptr;
 static lv_timer_t* g_packets_timer     = nullptr;
@@ -154,6 +157,7 @@ static lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_size(back, 24, TOP_BAR_H - 4);
     lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
     apply_topbar_icon_btn(back);
+    s_back_btn = back; // store for back-swipe highlight
     if (can_go_back()) {
         lv_obj_add_event_cb(back, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
     }
@@ -2018,6 +2022,22 @@ void radio_setup_screen_show()
     }, LV_EVENT_CLICKED, nullptr);
 
     show_screen(scr);
+}
+
+// ════════════════════════════════════════════════════════
+// Back-button highlight for back-swipe visual feedback
+// ════════════════════════════════════════════════════════
+void highlight_back_button(bool show)
+{
+    if (!s_back_btn) return;
+
+    if (show) {
+        lv_obj_set_style_border_width(s_back_btn, 2, 0);
+        lv_obj_set_style_border_color(s_back_btn, lv_color_hex(theme::ACCENT), 0);
+    } else {
+        lv_obj_set_style_border_width(s_back_btn, 1, 0);
+        lv_obj_set_style_border_color(s_back_btn, lv_color_hex(theme::DIVIDER), 0);
+    }
 }
 
 } // namespace slopos::ui
