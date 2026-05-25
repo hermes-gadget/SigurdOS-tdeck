@@ -2,10 +2,12 @@
 // Copyright (C) 2025 Ben
 //
 // Native tests for emoji font: verify font data loads correctly,
-// emoji list matches glyph coverage, and fallback registration works.
+// emoji list matches glyph coverage, fallback registration works,
+// and emoji data lookup/discord-style autocomplete works.
 
 #include <gtest/gtest.h>
 #include "fonts/emoji_font.h"
+#include "fonts/emoji_data.h"
 #include <cstring>
 
 // ═══════════════════════════════════════════════════════════════
@@ -13,17 +15,12 @@
 // ═══════════════════════════════════════════════════════════════
 
 TEST(EmojiFontTest, BitmapDataNotNull) {
-    // The emoji font should have valid bitmap data
-    // The emoji_font symbol is the generated font struct from lv_font_conv
-    // If it compiled, the font data exists. But we can verify it has glyphs.
     int count = emoji_font_get_count();
     EXPECT_GT(count, 0) << "Emoji font should contain glyph data";
     EXPECT_GE(count, 200) << "Should have at least 200 common emoji";
 }
 
 TEST(EmojiFontTest, HasSmileyFace) {
-    // Verify that common emoji smiley face (U+1F600, 😀 = F0 9F 98 80 in UTF-8)
-    // exists in the font's codepoint list
     const char* expected = "\xF0\x9F\x98\x80";  // 😀
     bool found = false;
     int count = emoji_font_get_count();
@@ -38,7 +35,6 @@ TEST(EmojiFontTest, HasSmileyFace) {
 }
 
 TEST(EmojiFontTest, HasHeart) {
-    // Verify heart (U+2764, ❤ = E2 9D A4 in UTF-8)
     const char* expected = "\xE2\x9D\xA4";  // ❤
     bool found = false;
     int count = emoji_font_get_count();
@@ -53,7 +49,6 @@ TEST(EmojiFontTest, HasHeart) {
 }
 
 TEST(EmojiFontTest, HasThumbsUp) {
-    // Verify thumbs up (U+1F44D, 👍 = F0 9F 91 8D in UTF-8)
     const char* expected = "\xF0\x9F\x91\x8D";  // 👍
     bool found = false;
     int count = emoji_font_get_count();
@@ -68,29 +63,21 @@ TEST(EmojiFontTest, HasThumbsUp) {
 }
 
 TEST(EmojiFontTest, IndexBoundsCheck) {
-    // Verify out-of-bounds access returns nullptr
     EXPECT_EQ(emoji_font_get_by_index(-1), nullptr) << "Negative index should return nullptr";
     EXPECT_EQ(emoji_font_get_by_index(-999), nullptr) << "Large negative index should return nullptr";
-
     int count = emoji_font_get_count();
     EXPECT_GT(count, 0) << "Count must be positive for this test";
-
-    // One past the end
     EXPECT_EQ(emoji_font_get_by_index(count), nullptr) << "One past end should return nullptr";
     EXPECT_EQ(emoji_font_get_by_index(count + 100), nullptr) << "Far past end should return nullptr";
 }
 
 TEST(EmojiFontTest, AllIndicesValid) {
-    // Every index from 0..count-1 should return non-null valid UTF-8 string
     int count = emoji_font_get_count();
     EXPECT_GT(count, 0);
-
     for (int i = 0; i < count; i++) {
         const char* e = emoji_font_get_by_index(i);
         ASSERT_NE(e, nullptr) << "Index " << i << " should not be nullptr";
         ASSERT_GT(strlen(e), 0u) << "Index " << i << " should have length > 0";
-        // Every emoji is at least 3 bytes in UTF-8 (U+0800+) or 2 bytes (U+0080+)
-        // Actually, some symbols are 2-byte UTF-8, so min length is 2
         EXPECT_GE(strlen(e), 2u) << "Index " << i << " should be valid UTF-8 (min 2 bytes)";
     }
 }
@@ -100,27 +87,8 @@ TEST(EmojiFontTest, CountMatches) {
     EXPECT_EQ(count, 362) << "Expected 362 emoji in the list";
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Fallback registration tests
-// ═══════════════════════════════════════════════════════════════
-
-TEST(EmojiFontTest, FallbackRegistrationNoCrash) {
-    // Just verify the fallback registration function can be called
-    // without crashing. In the native test environment, the Montserrat
-    // fonts are declared as extern (no actual data behind them),
-    // but the memcpy + fallback set should not crash since we have
-    // a valid lv_font_t struct pointer.
-    emoji_font_register_fallback();
-    SUCCEED() << "emoji_font_register_fallback() completed without crash";
-}
-
 TEST(EmojiFontTest, EmojiCategoryCoverage) {
-    // Verify coverage across different emoji categories
     int count = emoji_font_get_count();
-
-    // Count unique first bytes of UTF-8 sequences to estimate category diversity
-    // 3-byte UTF-8 (E0-EF) = BMP symbols like hearts, check marks
-    // 4-byte UTF-8 (F0) = SMP emoji like faces, gestures
     int bmp_count = 0;
     int smp_count = 0;
     for (int i = 0; i < count; i++) {
@@ -131,11 +99,144 @@ TEST(EmojiFontTest, EmojiCategoryCoverage) {
             else if (first >= 0xE0) bmp_count++;
         }
     }
-
-    // Should have a good mix of BMP symbols (hearts, stars) and SMP emoji (faces, gestures)
     EXPECT_GE(smp_count, 150) << "Should have at least 150 SMP emoji (faces, gestures, objects)";
     EXPECT_GE(bmp_count, 30) << "Should have at least 30 BMP emoji (hearts, symbols)";
     EXPECT_LE(bmp_count, 200) << "BMP count should be reasonable (< 200)";
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Emoji data lookup tests (Discord-style :emoji: autocomplete)
+// ═══════════════════════════════════════════════════════════════
+
+TEST(EmojiDataTest, HasSmileLookup) {
+    EmojiEntry out[4];
+    int n = emoji_search("smile", out, 4);
+    EXPECT_GE(n, 1) << "Should find at least :smile:";
+    bool found_smile = false;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(out[i].short_name, "smile") == 0) {
+            found_smile = true;
+            EXPECT_STREQ(out[i].utf8, "\xF0\x9F\x98\x84")
+                << ":smile: should map to 😄";
+            break;
+        }
+    }
+    EXPECT_TRUE(found_smile) << ":smile: should be in the emoji database";
+}
+
+TEST(EmojiDataTest, HasHeartLookup) {
+    EmojiEntry out[2];
+    int n = emoji_search("heart", out, 2);
+    EXPECT_GE(n, 1) << "Should find :heart:";
+    bool found_heart = false;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(out[i].short_name, "heart") == 0) {
+            found_heart = true;
+            EXPECT_STREQ(out[i].utf8, "\xE2\x9D\xA4")
+                << ":heart: should map to ❤";
+            break;
+        }
+    }
+    EXPECT_TRUE(found_heart) << ":heart: should be in the emoji database";
+}
+
+TEST(EmojiDataTest, HasThumbsUpLookup) {
+    EmojiEntry out[2];
+    int n = emoji_search("+1", out, 2);
+    EXPECT_GE(n, 1) << "Should find :+1:";
+    EXPECT_STREQ(out[0].short_name, "+1") << "First match should be :+1:";
+    EXPECT_STREQ(out[0].utf8, "\xF0\x9F\x91\x8D") << ":+1: should map to 👍";
+}
+
+TEST(EmojiDataTest, PrefixSearchReturnsSorted) {
+    EmojiEntry out[16];
+    int n = emoji_search("sm", out, 16);
+    EXPECT_GE(n, 5) << "Should find multiple 'sm*' emoji";
+    for (int i = 1; i < n; i++) {
+        EXPECT_LE(strcmp(out[i-1].short_name, out[i].short_name), 0)
+            << "Results should be alphabetically sorted";
+    }
+}
+
+TEST(EmojiDataTest, NoMatchReturnsZero) {
+    EmojiEntry out[4];
+    int n = emoji_search("zzzznonexistent", out, 4);
+    EXPECT_EQ(n, 0) << "Non-existent prefix should return 0";
+}
+
+TEST(EmojiDataTest, EmptyPrefixReturnsZero) {
+    EmojiEntry out[4];
+    int n = emoji_search("", out, 4);
+    EXPECT_EQ(n, 0) << "Empty prefix should return 0";
+}
+
+TEST(EmojiDataTest, NullPrefixReturnsZero) {
+    EmojiEntry out[4];
+    int n = emoji_search(nullptr, out, 4);
+    EXPECT_EQ(n, 0) << "Null prefix should return 0";
+}
+
+TEST(EmojiDataTest, MaxResultsBound) {
+    EmojiEntry out[3];
+    int n = emoji_search("a", out, 3);
+    EXPECT_EQ(n, 3) << "Should be capped at max_results=3";
+}
+
+TEST(EmojiDataTest, RocketLookup) {
+    EmojiEntry out[2];
+    int n = emoji_search("rocket", out, 2);
+    EXPECT_EQ(n, 1) << "Should find exactly :rocket:";
+    EXPECT_STREQ(out[0].short_name, "rocket");
+    EXPECT_STREQ(out[0].utf8, "\xF0\x9F\x9A\x80");
+}
+
+TEST(EmojiDataTest, FireLookup) {
+    EmojiEntry out[4];
+    int n = emoji_search("fire", out, 4);
+    EXPECT_EQ(n, 2) << "Should find :fire: and :fire_engine:";
+    EXPECT_STREQ(out[0].short_name, "fire");
+    // 🔥 = F0 9F 94 A5
+    EXPECT_STREQ(out[0].utf8, "\xF0\x9F\x94\xA5");
+}
+
+TEST(EmojiDataTest, ZapLookup) {
+    EmojiEntry out[4];
+    int n = emoji_search("zap", out, 4);
+    EXPECT_GE(n, 1) << "Should find :zap:";
+    EXPECT_STREQ(out[0].short_name, "zap");
+}
+
+TEST(EmojiDataTest, NameDataNotNull) {
+    EXPECT_GT(EMOJI_DATA_COUNT, 200) << "Should have at least 200 named emoji";
+    EXPECT_LE(EMOJI_DATA_COUNT, 400) << "Should have at most 400 named emoji";
+
+    // Verify all entry names are non-empty and utf8 pointers are valid
+    for (int i = 0; i < EMOJI_DATA_COUNT; i++) {
+        EXPECT_NE(emoji_data[i].short_name, nullptr)
+            << "Entry " << i << " short_name should not be null";
+        EXPECT_GT(strlen(emoji_data[i].short_name), 0u)
+            << "Entry " << i << " short_name should not be empty";
+        EXPECT_NE(emoji_data[i].utf8, nullptr)
+            << "Entry " << i << " utf8 should not be null";
+        EXPECT_GT(strlen(emoji_data[i].utf8), 0u)
+            << "Entry " << i << " utf8 should not be empty";
+    }
+}
+
+TEST(EmojiDataTest, DataIsSorted) {
+    for (int i = 1; i < EMOJI_DATA_COUNT; i++) {
+        EXPECT_LE(strcmp(emoji_data[i-1].short_name, emoji_data[i].short_name), 0)
+            << "emoji_data should be sorted alphabetically at index " << i;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Fallback registration tests
+// ═══════════════════════════════════════════════════════════════
+
+TEST(EmojiFontTest, FallbackRegistrationNoCrash) {
+    emoji_font_register_fallback();
+    SUCCEED() << "emoji_font_register_fallback() completed without crash";
 }
 
 // ═══════════════════════════════════════════════════════════════

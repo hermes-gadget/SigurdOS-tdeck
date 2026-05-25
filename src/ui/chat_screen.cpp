@@ -26,6 +26,7 @@
 #include "../mesh/mesh_wrapper.h"
 #include "../hal/prefs.h"
 #include "../fonts/emoji_font.h"
+#include "../fonts/emoji_data.h"
 #include <lvgl.h>
 #include <cstring>
 #include <cstdio>
@@ -817,6 +818,200 @@ static void render_active_messages()
 }
 
 // ════════════════════════════════════════════════════
+// Emoji autocomplete
+// ════════════════════════════════════════════════════
+
+static lv_obj_t* emoji_ac_popup = nullptr;   // popup container
+static lv_obj_t* emoji_ac_list  = nullptr;   // scrollable list inside popup
+static int        emoji_ac_cursor_pos = 0;    // last cursor pos for replace
+
+// Close the autocomplete popup if open
+static void emoji_ac_close()
+{
+    if (emoji_ac_popup) {
+        lv_obj_del_async(emoji_ac_popup);
+        emoji_ac_popup = nullptr;
+        emoji_ac_list = nullptr;
+    }
+}
+
+// Handle autocomplete selection
+static void emoji_ac_select(const char* emoji_text)
+{
+    if (!input_field || !emoji_text) { emoji_ac_close(); return; }
+
+    // Get current text
+    const char* txt = lv_textarea_get_text(input_field);
+    if (!txt) { emoji_ac_close(); return; }
+
+    // Find the last ':' before cursor position
+    int cursor = lv_textarea_get_cursor_pos(input_field);
+    if (cursor < 0) cursor = (int)strlen(txt);
+
+    int colon_pos = -1;
+    for (int i = cursor - 1; i >= 0; i--) {
+        if (txt[i] == ':') { colon_pos = i; break; }
+    }
+
+    // Build new text: prefix (before ':') + emoji + suffix (after cursor)
+    char new_text[150];
+    int pos = 0;
+
+    // Copy everything before the ':'
+    for (int i = 0; i < colon_pos; i++) {
+        if (pos < 148) new_text[pos++] = txt[i];
+    }
+
+    // Append the emoji string
+    const char* e = emoji_text;
+    while (*e && pos < 148) new_text[pos++] = *e++;
+
+    // Copy everything after cursor (rest of text)
+    if (cursor < (int)strlen(txt)) {
+        for (int i = cursor; i < (int)strlen(txt) && pos < 148; i++) {
+            new_text[pos++] = txt[i];
+        }
+    }
+    new_text[pos] = '\0';
+
+    lv_textarea_set_text(input_field, new_text);
+    lv_textarea_set_cursor_pos(input_field, colon_pos + (int)strlen(emoji_text));
+    emoji_ac_close();
+}
+
+// Check for ':' prefix and show autocomplete popup
+static void emoji_ac_check(lv_obj_t* ta)
+{
+    const char* txt = lv_textarea_get_text(ta);
+    if (!txt || !txt[0]) { emoji_ac_close(); return; }
+
+    int cursor = lv_textarea_get_cursor_pos(ta);
+    if (cursor < 0) cursor = (int)strlen(txt);
+
+    // Scan backwards from cursor for ':'
+    int colon_pos = -1;
+    for (int i = cursor - 1; i >= 0; i--) {
+        char c = txt[i];
+        if (c == ':') { colon_pos = i; break; }
+        // Stop at non-alphanumeric (but allow underscores and hyphens)
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '+')) {
+            break;
+        }
+    }
+
+    if (colon_pos < 0) {
+        emoji_ac_close();
+        return;
+    }
+
+    // Extract the partial name
+    int name_len = cursor - colon_pos - 1;
+    if (name_len <= 0) {
+        emoji_ac_close();
+        return;
+    }
+
+    char prefix[32];
+    int n = (name_len < 31) ? name_len : 31;
+    for (int i = 0; i < n; i++) prefix[i] = txt[colon_pos + 1 + i];
+    prefix[n] = '\0';
+
+    // Search emoji data
+    EmojiEntry matches[12];
+    int match_count = emoji_search(prefix, matches, 12);
+
+    if (match_count == 0) {
+        emoji_ac_close();
+        return;
+    }
+
+    emoji_ac_cursor_pos = cursor;
+
+    // Popup dimensions
+    int popup_w = 220;
+    int popup_h = (match_count > 5 ? 5 : match_count) * 24 + 4;
+    if (popup_h > 150) popup_h = 150;
+
+    // Create or update popup
+    if (emoji_ac_popup) {
+        lv_obj_clean(emoji_ac_popup);
+    } else {
+        // Need a parent screen - get the active screen
+        lv_obj_t* parent = lv_obj_get_screen(ta);
+        if (!parent) return;
+
+        emoji_ac_popup = lv_obj_create(parent);
+        lv_obj_set_style_bg_color(emoji_ac_popup, lv_color_hex(BG_SECONDARY), 0);
+        lv_obj_set_style_bg_opa(emoji_ac_popup, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(emoji_ac_popup, 1, 0);
+        lv_obj_set_style_border_color(emoji_ac_popup, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_radius(emoji_ac_popup, 0, 0);
+        lv_obj_set_style_pad_all(emoji_ac_popup, 2, 0);
+        lv_obj_set_size(emoji_ac_popup, popup_w, popup_h);
+
+        // Position above the input bar (below top bar)
+        lv_obj_align(emoji_ac_popup, LV_ALIGN_BOTTOM_MID, 0, -(35 + 4));
+    }
+
+    // Create the list inside the popup
+    if (emoji_ac_popup) {
+        emoji_ac_list = lv_obj_create(emoji_ac_popup);
+        lv_obj_set_size(emoji_ac_list, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_bg_opa(emoji_ac_list, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(emoji_ac_list, 0, 0);
+        lv_obj_set_style_pad_all(emoji_ac_list, 0, 0);
+        lv_obj_set_flex_flow(emoji_ac_list, LV_FLEX_FLOW_COLUMN);
+
+        int rows = (match_count > 5) ? 5 : match_count;
+        for (int i = 0; i < rows && i < match_count; i++) {
+            lv_obj_t* row = lv_obj_create(emoji_ac_list);
+            lv_obj_set_size(row, LV_PCT(100), 24);
+            lv_obj_set_style_bg_color(row, lv_color_hex(BG_TERTIARY), 0);
+            lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(row, 0, 0);
+            lv_obj_set_style_pad_all(row, 2, 0);
+            lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_style_radius(row, 2, 0);
+
+            // Emoji preview
+            lv_obj_t* emoji_lbl = lv_label_create(row);
+            lv_label_set_text(emoji_lbl, matches[i].utf8);
+            lv_obj_set_style_text_font(emoji_lbl, &emoji_font, 0);
+            lv_obj_align(emoji_lbl, LV_ALIGN_LEFT_MID, 4, 0);
+
+            // Name
+            lv_obj_t* name_lbl = lv_label_create(row);
+            lv_label_set_text(name_lbl, matches[i].short_name);
+            lv_obj_set_style_text_color(name_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_set_style_text_font(name_lbl, emoji_wrapped_montserrat_10, 0);
+            lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 28, 0);
+            lv_label_set_long_mode(name_lbl, LV_LABEL_LONG_DOT);
+            lv_obj_set_width(name_lbl, popup_w - 36);
+
+            // Save emoji text in user data
+            // We need a stable reference since matches[] is local
+            // Copy to a static array or use the original emoji_data pointer
+            const char* emoji_utf8 = matches[i].utf8;
+            lv_obj_add_event_cb(row, [](lv_event_t* e) {
+                const char* em = (const char*)lv_event_get_user_data(e);
+                emoji_ac_select(em);
+            }, LV_EVENT_CLICKED, (void*)emoji_utf8);
+        }
+
+        // If more results, show indicator
+        if (match_count > 5) {
+            lv_obj_t* more_lbl = lv_label_create(emoji_ac_list);
+            char more_buf[32];
+            snprintf(more_buf, sizeof(more_buf), "+%d more (type more)", match_count - 5);
+            lv_label_set_text(more_lbl, more_buf);
+            lv_obj_set_style_text_color(more_lbl, lv_color_hex(TEXT_MUTED), 0);
+            lv_obj_set_style_text_font(more_lbl, emoji_wrapped_montserrat_10, 0);
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════
 // Emoji picker
 // ════════════════════════════════════════════════════
 static const char* emoji_picker_items[] = {
@@ -1031,6 +1226,9 @@ static void create_input_bar()
                         LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(input_field, [](lv_event_t* e) {
         if (lv_event_get_code(e) == LV_EVENT_READY) do_send();
+        else if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+            emoji_ac_check(input_field);
+        }
     }, LV_EVENT_ALL, nullptr);
 }
 
@@ -1101,6 +1299,7 @@ static void open_channel_messaging(int idx)
     // already set it to a new list before this delete callback fires.
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
+        emoji_ac_close();
     }, LV_EVENT_DELETE, nullptr);
 
     create_top_bar();

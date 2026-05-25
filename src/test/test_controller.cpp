@@ -25,6 +25,7 @@
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
 #include "fonts/emoji_font.h"
+#include "fonts/emoji_data.h"
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
@@ -100,6 +101,7 @@ static void print_help() {
     Serial.println(F("║  inject <from> [channel=<ch>] <msg>  ║"));
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  emoji       Show emoji test grid     ║"));
+    Serial.println(F("║  emoji-ac <p> Emoji autocomplete test ║"));
     Serial.println(F("║  status      Show device state       ║"));
     Serial.println(F("╚══════════════════════════════════════╝"));
     Serial.println();
@@ -331,6 +333,25 @@ static void cmd_emoji() {
     Serial.printf("[test] emoji grid: %d emoji displayed in label (limited from %d for safety)\n", count, total);
 }
 
+// Test emoji autocomplete for a given prefix
+static void cmd_emoji_ac(const char* arg) {
+    if (!arg || !arg[0]) {
+        Serial.println("[test] emoji-ac <prefix>  — test autocomplete search");
+        return;
+    }
+
+    EmojiEntry matches[12];
+    int count = emoji_search(arg, matches, 12);
+
+    Serial.printf("[test] emoji-ac '%s': %d matches\n", arg, count);
+    for (int i = 0; i < count && i < 8; i++) {
+        Serial.printf("  [%d] :%s: → %s\n", i + 1, matches[i].short_name, matches[i].utf8);
+    }
+    if (count > 8) {
+        Serial.printf("  ... and %d more\n", count - 8);
+    }
+}
+
 // ── Command parsing ──────────────────────────────────────
 static bool dispatch(const char* line) {
     // Skip empty lines and comments
@@ -374,6 +395,8 @@ static bool dispatch(const char* line) {
         cmd_status();
     } else if (strcmp(cmd, "emoji") == 0) {
         cmd_emoji();
+    } else if (strcmp(cmd, "emoji-ac") == 0) {
+        cmd_emoji_ac(arg);
     } else {
         Serial.printf("[test] unknown command: %s (try 'help')\n", cmd);
     }
