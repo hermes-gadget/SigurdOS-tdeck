@@ -2,24 +2,13 @@
 // Copyright (C) 2025 Ben
 
 #include <gtest/gtest.h>
-#include <cstring>
-#include <cstdio>
-
-// Test the utf8_truncate_bytes algorithm (same logic as in chat_screen.cpp)
-static size_t utf8_truncate_bytes(const char* str, size_t max_bytes)
-{
-    size_t len = strnlen(str, max_bytes);
-    if (len < max_bytes) return len;
-    while (len > 0 && ((unsigned char)str[len] & 0xC0) == 0x80) {
-        len--;
-    }
-    return len;
-}
+#include "utils/utf8_util.h"
+using namespace slopos;
 
 TEST(Utf8Truncation, AsciiOnly) {
     const char* s = "Hello World";
-    EXPECT_EQ(utf8_truncate_bytes(s, 100), strlen(s));  // fits
-    EXPECT_EQ(utf8_truncate_bytes(s, 5), 5);            // "Hello" — clean cut at ASCII boundary
+    EXPECT_EQ(slopos::utf8_truncate_bytes(s, 100), strlen(s));  // fits
+    EXPECT_EQ(slopos::utf8_truncate_bytes(s, 5), 5);            // "Hello" — clean cut at ASCII boundary
 }
 
 TEST(Utf8Truncation, AsciiExactlyAtLimit) {

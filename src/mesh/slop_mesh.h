@@ -10,6 +10,7 @@
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <hal/prefs.h>
+#include "utils/utf8_util.h"
 
 namespace slopos {
 namespace mesh {
@@ -358,7 +359,7 @@ public:
             uint32_t ts = getRTCClock()->getCurrentTime();
             memcpy(buf, &ts, 4);
             buf[4] = 0;   // TXT_TYPE_PLAIN, attempt 0
-            size_t text_len = strnlen(text, MAX_PAYLOAD - 1);
+            size_t text_len = slopos::utf8_truncate_bytes(text, MAX_PAYLOAD - 1);
             memcpy(buf + 5, text, text_len);
             buf[5 + text_len] = '\0';
             size_t len = 5 + text_len + 1;
@@ -517,7 +518,7 @@ public:
             if (prefix_len < 0) prefix_len = 0;
             if ((size_t)prefix_len >= remaining) prefix_len = remaining - 1;
         }
-        size_t text_len = strnlen(text, remaining - (size_t)prefix_len);
+        size_t text_len = slopos::utf8_truncate_bytes(text, remaining - (size_t)prefix_len);
         if (text_len > remaining - (size_t)prefix_len)
             text_len = remaining - (size_t)prefix_len - 1;
         memcpy(text_start + prefix_len, text, text_len);

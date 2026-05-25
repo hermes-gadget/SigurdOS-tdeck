@@ -31,23 +31,11 @@
 #include <cstdio>
 #include <SPIFFS.h>
 #include <esp_heap_caps.h>
+#include "utils/utf8_util.h"
 
 namespace slopos::ui {
 
 using namespace theme;
-
-// Safely truncate a UTF-8 string to at most max_bytes without splitting a
-// multi-byte character. Returns the number of bytes to keep.
-static size_t utf8_truncate_bytes(const char* str, size_t max_bytes)
-{
-    size_t len = strnlen(str, max_bytes);
-    if (len < max_bytes) return len;  // string fits within limit
-    // If we hit the limit mid-sequence, walk backward past continuation bytes
-    while (len > 0 && ((unsigned char)str[len] & 0xC0) == 0x80) {
-        len--;
-    }
-    return len;
-}
 
 static constexpr lv_obj_flag_t no_scroll_flags()
 {
@@ -943,7 +931,7 @@ static void do_send()
     // so multi-byte UTF-8 text needs explicit truncation before sending.
     // Use utf8_truncate_bytes to avoid splitting a multi-byte codepoint.
     char text[150];
-    size_t len = utf8_truncate_bytes(raw, MAX_MSG_BYTES);
+    size_t len = slopos::utf8_truncate_bytes(raw, MAX_MSG_BYTES);
     memcpy(text, raw, len);
     text[len] = '\0';
 
