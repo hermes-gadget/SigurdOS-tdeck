@@ -90,9 +90,11 @@ static bool queue_pop(MeshMessage* out) {
 static void onMeshMessage(const char* sender, const char* channel, const char* text) {
     queue_push(sender, channel, text);
 #if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
-    Serial.printf("[mesh] MSG from %s%s%s: %s\n",
+    int rssi = (int)radio_driver.getLastRSSI();
+    float snr = radio_driver.getLastSNR();
+    Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
                   sender, channel && channel[0] ? " in " : "",
-                  channel && channel[0] ? channel : "", text);
+                  channel && channel[0] ? channel : "", text, rssi, snr);
 #endif
 }
 

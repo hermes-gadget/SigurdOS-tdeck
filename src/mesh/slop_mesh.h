@@ -309,7 +309,13 @@ public:
             case PAYLOAD_TYPE_TRACE:    tname = "TRACE";      break;
             default:                    tname = "PKT_RX";     break;
         }
-        pushPacketLog("RADIO", (int)_radio->getLastRSSI(), pkt->getSNR(), tname);
+        int rssi = (int)_radio->getLastRSSI();
+        float snr = pkt->getSNR();
+        pushPacketLog("RADIO", rssi, snr, tname);
+#if defined(SLOPOS_DEBUG) && SLOPOS_DEBUG
+        Serial.printf("[rx] %s  RSSI:%ddBm SNR:%.1fdB\n",
+                      tname, rssi, snr);
+#endif
     }
 
     SlopMesh(::mesh::Radio& r, ::mesh::MillisecondClock& ms, ::mesh::RNG& rng,
