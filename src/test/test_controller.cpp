@@ -35,11 +35,14 @@
 #include <others/snapshot/lv_snapshot.h>
 #include <esp_heap_caps.h>
 
+// ── Forward declarations ─────────────────────────────────
+static void dump_focused_widget();
+
 // ── Constants ────────────────────────────────────────────
 static constexpr uint32_t CMD_POLL_MS = 50;   // check Serial every 50ms
 static constexpr size_t   CMD_BUF_SIZE = 256;
 static constexpr size_t   TYPE_BUF_SIZE = 256;   // max chars in type queue
-static constexpr size_t   TYPE_CHUNK_DELAY = 50; // ms between injected chars, must give LVGL time to consume
+static constexpr size_t   TYPE_CHUNK_DELAY = 120; // ms between injected chars, must give LVGL time to consume
 
 // ── State ────────────────────────────────────────────────
 static bool     initialized = false;
@@ -112,6 +115,9 @@ static void print_help() {
     Serial.println(F("║  widgets     List visible widgets    ║"));
     Serial.println(F("║  tap <x> <y> Sim touch at coords    ║"));
     Serial.println(F("║  backlight   Get/set backlight bri  ║"));
+    Serial.println(F("║  term-submit <txt> Direct cmd input║"));
+    Serial.println(F("║  term-log     Dump terminal log    ║"));
+    Serial.println(F("║  term-clear   Clear terminal log   ║"));
     Serial.println(F("╚══════════════════════════════════════╝"));
     Serial.println();
 }
@@ -196,6 +202,9 @@ static void cmd_press(const char* key) {
     }
     slopos_keyboard_inject(code);
     Serial.printf("[test] press %s (0x%02X)\n", key, code);
+    // Small delay to let LVGL process the keypress before reading focus
+    delay(50);
+    dump_focused_widget();
 }
 
 static void cmd_inject(const char* args) {
@@ -362,6 +371,96 @@ static void cmd_emoji_ac(const char* arg) {
 }
 
 // ── New remote test commands ──────────────────────────────
+
+// Terminal screen widget lookup — find the textarea and log container on
+// the terminal screen by scanning children of the active screen.
+// The terminal screen has:
+//   log   (lv_obj), scrollable, y=CONTENT_Y (~22), h=TERM_LOG_H (~167)
+//   input (lv_textarea), y=CONTENT_Y + TERM_LOG_H + DIVIDER_H (~190)
+static lv_obj_t* find_terminal_textarea() {
+    lv_obj_t* scr = lv_scr_act();
+    if (!scr) return nullptr;
+    uint32_t n = lv_obj_get_child_count(scr);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t* child = lv_obj_get_child(scr, i);
+        if (child && lv_obj_check_type(child, &lv_textarea_class)) {
+            return child;
+        }
+    }
+    return nullptr;
+}
+
+static lv_obj_t* find_terminal_log_container() {
+    lv_obj_t* scr = lv_scr_act();
+    if (!scr) return nullptr;
+    // The log container is the tall lv_obj (h >= 100) near CONTENT_Y (~22),
+    // distinct from the 1px dividers nearby.
+    uint32_t n = lv_obj_get_child_count(scr);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t* child = lv_obj_get_child(scr, i);
+        if (child && lv_obj_check_type(child, &lv_obj_class)) {
+            int y = lv_obj_get_y(child);
+            int h = lv_obj_get_height(child);
+            if (y >= 15 && y <= 40 && h >= 100) {
+                return child;
+            }
+        }
+    }
+    return nullptr;
+}
+
+static void cmd_term_submit(const char* text) {
+    lv_obj_t* ta = find_terminal_textarea();
+    if (!ta) {
+        Serial.println("[test] term-submit: no textarea found (not on terminal screen?)");
+        return;
+    }
+    lv_textarea_set_text(ta, text ? text : "");
+    lv_obj_send_event(ta, LV_EVENT_READY, NULL);
+    Serial.printf("[test] term-submit: \"%s\"\n", text ? text : "");
+    delay(50);
+    dump_focused_widget();
+}
+
+static void cmd_term_log() {
+    lv_obj_t* log = find_terminal_log_container();
+    if (!log) {
+        Serial.println("[test] term-log: no terminal log found");
+        return;
+    }
+    int count = 0;
+    uint32_t n = lv_obj_get_child_count(log);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t* lbl = lv_obj_get_child(log, i);
+        if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+            const char* text = lv_label_get_text(lbl);
+            if (text) {
+                char buf[96];
+                strncpy(buf, text, 92);
+                buf[92] = '\0';
+                for (char* p = buf; *p; p++)
+                    if (*p == '\n') *p = ' ';
+                Serial.printf("[termlog] %s\n", buf);
+                count++;
+            }
+        }
+    }
+    Serial.printf("[test] term-log: %d lines\n", count);
+}
+
+static void cmd_term_clear() {
+    lv_obj_t* log = find_terminal_log_container();
+    if (!log) {
+        Serial.println("[test] term-clear: no terminal log found");
+        return;
+    }
+    uint32_t n = lv_obj_get_child_count(log);
+    while (lv_obj_get_child_count(log) > 0) {
+        lv_obj_t* child = lv_obj_get_child(log, 0);
+        if (child) lv_obj_delete(child);
+    }
+    Serial.printf("[test] term-clear: removed %lu log lines\n", (unsigned long)n);
+}
 
 static void cmd_capture() {
     lv_display_t* disp = lv_display_get_default();
@@ -576,6 +675,46 @@ static void cmd_backlight(const char* arg) {
     Serial.printf("[test] backlight %d\n", val);
 }
 
+static void dump_focused_widget() {
+    lv_group_t* g = lv_group_get_default();
+    if (!g) {
+        Serial.println("[test] focus: no default group");
+        return;
+    }
+    lv_obj_t* focused = lv_group_get_focused(g);
+    if (!focused) {
+        Serial.println("[test] focus: no focused widget");
+        return;
+    }
+    const char* type = "?";
+    if (lv_obj_check_type(focused, &lv_textarea_class)) type = "textarea";
+    else if (lv_obj_check_type(focused, &lv_label_class))   type = "label";
+    else if (lv_obj_check_type(focused, &lv_button_class))  type = "btn";
+    else if (lv_obj_check_type(focused, &lv_list_class))    type = "list";
+
+    lv_area_t coords;
+    lv_obj_get_coords(focused, &coords);
+
+    Serial.printf("[test] focus: %s x=%d y=%d w=%d h=%d",
+                  type, lv_obj_get_x(focused), lv_obj_get_y(focused),
+                  coords.x2 - coords.x1 + 1,
+                  coords.y2 - coords.y1 + 1);
+
+    if (lv_obj_check_type(focused, &lv_textarea_class)) {
+        const char* text = lv_textarea_get_text(focused);
+        if (text) {
+            char buf[48];
+            strncpy(buf, text, 44);
+            buf[44] = '\0';
+            for (char* p = buf; *p; p++)
+                if (*p == '\n') *p = ' ';
+            Serial.printf(" text=\"%s\"", buf);
+        }
+    }
+
+    Serial.println();
+}
+
 // ── Command parsing ──────────────────────────────────────
 static bool dispatch(const char* line) {
     // Skip empty lines and comments
@@ -632,6 +771,12 @@ static bool dispatch(const char* line) {
         cmd_tap(arg);
     } else if (strcmp(cmd, "backlight") == 0) {
         cmd_backlight(arg);
+    } else if (strcmp(cmd, "term-submit") == 0) {
+        cmd_term_submit(arg);
+    } else if (strcmp(cmd, "term-log") == 0) {
+        cmd_term_log();
+    } else if (strcmp(cmd, "term-clear") == 0) {
+        cmd_term_clear();
     } else {
         Serial.printf("[test] unknown command: %s (try 'help')\n", cmd);
     }
@@ -679,7 +824,10 @@ void slopos_test_controller_loop() {
         type_count--;
         type_last_inject_ms = now;
         if (type_count == 0) {
-            Serial.printf("[test] type done: %d chars\n", (int)type_pos);
+            Serial.printf("[test] type done: %d chars injected, verifying...\n", (int)type_pos);
+            // Small delay to let LVGL process the last keypress before reading focus
+            delay(50);
+            dump_focused_widget();
         }
     }
 
