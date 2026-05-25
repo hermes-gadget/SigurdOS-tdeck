@@ -1228,6 +1228,13 @@ static void term_add_line(lv_obj_t* log, const char* text)
     // Echo to Serial so the remote test controller can read terminal output
     Serial.println(text);
 
+    // Prune oldest lines when log exceeds 64 entries to prevent heap exhaustion
+    static constexpr uint32_t MAX_LOG_LINES = 64;
+    while (lv_obj_get_child_count(log) >= MAX_LOG_LINES) {
+        lv_obj_t* oldest = lv_obj_get_child(log, 0);
+        if (oldest) lv_obj_delete(oldest);
+    }
+
     lv_obj_t* lbl = lv_label_create(log);
     lv_label_set_text(lbl, text);
     lv_obj_set_style_text_color(lbl, lv_color_hex(term_classify_line(text)), 0);
@@ -1272,6 +1279,10 @@ static const char* HELP_DETAILS[] = {
     "gps — latitude, longitude, altitude, speed, heading, satellites, fix quality",
     "reset — software reboot the device",
 };
+
+// Assert that both arrays have the same length so detail lookups stay safe
+static_assert(NUM_HELP == (int)(sizeof(HELP_DETAILS) / sizeof(HELP_DETAILS[0])),
+              "HELP_ENTRIES and HELP_DETAILS must have the same number of entries");
 
 // Emit help listing line by line into the terminal log
 static void term_print_help(lv_obj_t* log_cont)
@@ -1441,7 +1452,7 @@ void terminal_screen_show()
                 if (detail) {
                     snprintf(result, sizeof(result), "%s", detail);
                 } else {
-                    snprintf(result, sizeof(result), "Unknown command: %s", arg);
+                    snprintf(result, sizeof(result), "Unknown command: %s", arg_buf);
                 }
             } else {
                 // Bare help — output line by line (too large for single result buffer)
