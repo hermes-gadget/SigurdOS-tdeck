@@ -148,9 +148,12 @@ bool handle_trackball_event(SlopOSTrackballEvent event)
         return true;
     }
     if (current_screen() == Screen::Chat) {
-        return chat_screen_handle_trackball(event);
+        // Chat handles its own Left (channel list toggle); fall through
+        // for non-messaging states where chat returns false
+        if (chat_screen_handle_trackball(event)) return true;
     }
-    return false;
+    // Universal back-swipe: two-swipe commit for all other screens
+    return handle_back_swipe(event);
 }
 
 } // namespace ui

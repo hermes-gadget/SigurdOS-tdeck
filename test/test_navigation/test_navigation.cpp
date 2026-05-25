@@ -37,6 +37,10 @@ enum class Screen {
     Map, Advertise, Settings, Trace, Terminal, Noise, Signal, RadioSetup, COUNT
 };
 
+enum class SlopOSEvent {
+    Left, Right, Up, Down, Click
+};
+
 static Screen current = Screen::Home;
 
 // Stack-based history (matches navigation.cpp)
@@ -44,6 +48,9 @@ static constexpr int MAX_HISTORY = 8;
 static Screen history[MAX_HISTORY];
 static int   history_top = -1;
 static std::vector<std::string> nav_log;
+
+// Two-swipe back state
+static int back_swipe_commit = 0;
 
 static void push_history(Screen s) {
     history_top = (history_top + 1) % MAX_HISTORY;
@@ -67,6 +74,7 @@ static bool can_go_back() {
 
 void navigate_to(Screen screen) {
     if (screen == current) return;
+    back_swipe_commit = 0;
     push_history(current);
     current = screen;
     nav_log.push_back("nav:" + std::to_string((int)screen));
@@ -74,14 +82,32 @@ void navigate_to(Screen screen) {
 
 void go_back() {
     if (history_empty()) return;
+    back_swipe_commit = 0;
     Screen target = pop_history();
     current = target;
     nav_log.push_back("back:" + std::to_string((int)target));
 }
 
+bool handle_back_swipe(SlopOSEvent event) {
+    if (event != SlopOSEvent::Left) {
+        back_swipe_commit = 0;
+        return false;
+    }
+
+    back_swipe_commit++;
+    if (back_swipe_commit >= 2) {
+        back_swipe_commit = 0;
+        go_back();
+        return true;
+    }
+
+    return true; // first swipe consumed
+}
+
 void reset_nav() {
     current = Screen::Home;
     history_top = -1;
+    back_swipe_commit = 0;
     nav_log.clear();
 }
 
@@ -216,6 +242,106 @@ TEST_F(NavigationTest, ScreenEnumValuesAreContiguous) {
     EXPECT_EQ((int)Screen::Chat, 1);
     EXPECT_EQ((int)Screen::Signal, 12);
     EXPECT_EQ((int)Screen::COUNT, 14);
+}
+
+// ── Back-swipe (two-swipe commit) ─────────────────────────
+TEST_F(NavigationTest, SingleLeftSwipeIsConsumedNoBack) {
+    navigate_to(Screen::Chat);
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));
+    // First swipe consumed but no navigation
+    EXPECT_EQ(current, Screen::Chat);
+    EXPECT_TRUE(can_go_back());
+    EXPECT_EQ(nav_log.size(), 1u); // only the forward nav
+}
+
+TEST_F(NavigationTest, TwoLeftSwipesTriggersGoBack) {
+    navigate_to(Screen::Chat);
+    handle_back_swipe(SlopOSEvent::Left);  // first: neutralise
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));  // second: navigate back
+    EXPECT_EQ(current, Screen::Home);
+    EXPECT_EQ(nav_log.size(), 2u); // nav + back
+}
+
+TEST_F(NavigationTest, NonLeftEventResetsBackSwipeCounter) {
+    navigate_to(Screen::Chat);
+    handle_back_swipe(SlopOSEvent::Left);  // first: neutralise
+    handle_back_swipe(SlopOSEvent::Up);    // resets counter
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));  // first again after reset
+    EXPECT_EQ(current, Screen::Chat); // still on Chat
+    // Second swipe now should work
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));
+    EXPECT_EQ(current, Screen::Home);
+}
+
+TEST_F(NavigationTest, NavigateToResetsBackSwipeCounter) {
+    navigate_to(Screen::Chat);
+    handle_back_swipe(SlopOSEvent::Left);  // first swipe
+    navigate_to(Screen::Settings);         // should reset counter
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));  // first swipe on Settings
+    EXPECT_EQ(current, Screen::Settings);
+}
+
+TEST_F(NavigationTest, GoBackResetsBackSwipeCounter) {
+    navigate_to(Screen::Chat);
+    navigate_to(Screen::Settings);
+    handle_back_swipe(SlopOSEvent::Left);  // first swipe
+    // Second swipe triggers go_back AND resets counter
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));
+    EXPECT_EQ(current, Screen::Chat); // went back from Settings
+    // Counter is 0 after go_back, so next Left is a fresh first swipe
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));
+    EXPECT_EQ(current, Screen::Chat); // first swipe on Chat, still here
+}
+
+TEST_F(NavigationTest, BackSwipeFromHomeDoesNothing) {
+    // On Home: can_go_back() is false, handle_back_swipe should not crash
+    // First swipe consumed, no-op
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));
+    EXPECT_EQ(current, Screen::Home);
+    // Second swipe: go_back() check history_empty, returns early
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));
+    EXPECT_EQ(current, Screen::Home);
+}
+
+TEST_F(NavigationTest, UpDownRightEventsDontTriggerBack) {
+    navigate_to(Screen::Chat);
+    EXPECT_FALSE(handle_back_swipe(SlopOSEvent::Up));
+    EXPECT_FALSE(handle_back_swipe(SlopOSEvent::Down));
+    EXPECT_FALSE(handle_back_swipe(SlopOSEvent::Right));
+    EXPECT_FALSE(handle_back_swipe(SlopOSEvent::Click));
+    EXPECT_EQ(current, Screen::Chat);
+    EXPECT_EQ(nav_log.size(), 1u);
+}
+
+TEST_F(NavigationTest, BackSwipeFromAnyNonHomeScreen) {
+    std::vector<Screen> screens = {
+        Screen::Chat, Screen::Contacts, Screen::Channels, Screen::Network,
+        Screen::Heard, Screen::Map, Screen::Advertise, Screen::Settings,
+        Screen::Trace, Screen::Terminal, Screen::Noise, Screen::Signal
+    };
+
+    for (auto s : screens) {
+        reset_nav();
+        navigate_to(s);
+        handle_back_swipe(SlopOSEvent::Left);  // first: neutralise
+        ASSERT_TRUE(handle_back_swipe(SlopOSEvent::Left));  // second: back
+        EXPECT_EQ(current, Screen::Home)
+            << "Failed for screen " << (int)s;
+    }
+}
+
+TEST_F(NavigationTest, BackSwipeRapidTripleLeftDoesNotDoubleBack) {
+    navigate_to(Screen::Chat);
+    navigate_to(Screen::Settings);
+    // Three rapid lefts: swipe1 consumed, swipe2 → back to Chat, swipe3 → first on Chat
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));   // 1: consumed
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));   // 2: back to Chat
+    EXPECT_EQ(current, Screen::Chat);
+    // Counter was reset by go_back, so swipe3 starts fresh
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));   // 3: first on Chat
+    EXPECT_EQ(current, Screen::Chat); // still on Chat
+    EXPECT_TRUE(handle_back_swipe(SlopOSEvent::Left));   // 4: second → back to Home
+    EXPECT_EQ(current, Screen::Home);
 }
 
 } // anonymous namespace

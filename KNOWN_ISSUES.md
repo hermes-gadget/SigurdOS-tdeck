@@ -12,22 +12,6 @@ When scrolling through channels in the channel selector, message previews (the l
 **What's needed:** Proper string truncation in the channel list — clamp preview text to fit the available width, appending "..." when truncated. The `build_channel_string` function in `home_screen.cpp` was recently hardened (PR #29) — a similar approach should be applied to the preview text in the channel selector.
 
 
-## Trackball Navigation
-
-### Universal back-swipe not implemented
-The trackball left-swipe (back/navigate to previous screen) currently only works on the Chat screen (PR #21). Every other screen requires reaching for the back button in the top-left corner, which is awkward during one-handed use.
-
-**What's needed:** Make the trackball left-swipe a universal back gesture on every screen. Implementation pattern from `chat_screen.cpp` should be extracted into `navigation.cpp/h` so all screens can register a back-swipe handler.
-
-However, this needs to handle screens that have their own left/right navigation (e.g. scrolling through contacts alphabetically, paging through channel lists, or horizontal content). On those screens, a single left-swipe would conflict with the screen's own navigation. Two approaches:
-- **Two-swipe commit:** The first left-swipe deselects/neutralises the current screen's navigation state (e.g. exits the scroll context). The second left-swipe then triggers the back gesture. This gives the user a deliberate two-step flow — "navigate past content, then go back."
-- **Timing-based:** A quick left swipe scrolls the content; a longer hold-and-swipe-left triggers the back gesture. Differentiable by swipe speed/duration.
-- **Edge zone:** Only trigger back-swipe when the trackball is swiped left from a neutral/resting state (no active list selection). If the user is actively scrolling a channel list, the left swipe scrolls the list instead.
-
-The two-swipe commit approach is the most intuitive and least prone to accidental backs. It also gives clear visual feedback — the first swipe can clear any selection highlights or scroll to the top of the list, making it obvious that the next left swipe will go back.
-
----
-
 ## Signal Bars
 
 ### RSSI-based signal strength indicator

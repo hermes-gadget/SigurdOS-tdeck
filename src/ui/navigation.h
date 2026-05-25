@@ -18,6 +18,7 @@
 // You should have received a copy of the GNU General Public License
 // along with SlopOS-TDeck.  If not, see <https://www.gnu.org/licenses/>.
 
+#include "../hal/trackball.h"
 
 namespace slopos::ui {
 
@@ -51,5 +52,12 @@ bool can_go_back();
 
 // Return the screen currently owned by the navigation stack.
 Screen current_screen();
+
+// Universal back-swipe gesture (two-swipe commit).
+// Call this from the trackball dispatch loop for screens that don't have
+// their own Left handler. The first Left event is consumed (neutralise),
+// the second Left triggers go_back(). Non-Left events reset the counter.
+// Returns true if the event was consumed.
+bool handle_back_swipe(SlopOSTrackballEvent event);
 
 } // namespace slopos::ui
