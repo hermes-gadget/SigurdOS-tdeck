@@ -52,68 +52,81 @@ static float nmea_to_decimal(const char* coord, char dir) {
     return decimal;
 }
 
+static bool nmea_field(const char* sentence, int index, char* out, size_t out_size) {
+    if (!sentence || !out || out_size == 0 || index < 0) return false;
+
+    int field = 0;
+    const char* start = sentence;
+    for (const char* p = sentence;; p++) {
+        if (*p == ',' || *p == '*' || *p == '\0') {
+            if (field == index) {
+                size_t len = (size_t)(p - start);
+                if (len >= out_size) len = out_size - 1;
+                memcpy(out, start, len);
+                out[len] = '\0';
+                return true;
+            }
+            if (*p == '*' || *p == '\0') break;
+            field++;
+            start = p + 1;
+        }
+    }
+
+    out[0] = '\0';
+    return false;
+}
+
 static void parse_gga(const char* sentence) {
     // $GPGGA,time,lat,N,lon,E,q,sat,hdop,alt,M,...
-    char buf[128];
-    strncpy(buf, sentence, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';  // guarantee null termination
-    char* token = strtok(buf, ",");
+    char field[20];
 
-    // Time (field 1) — skip header (field 0) and get time
-    token = strtok(nullptr, ",");
-    if (token && strlen(token) >= 6) {
-        char h[3] = {token[0], token[1], 0};
-        char m[3] = {token[2], token[3], 0};
-        char s[3] = {token[4], token[5], 0};
+    // Time (field 1)
+    if (nmea_field(sentence, 1, field, sizeof(field)) && strlen(field) >= 6) {
+        char h[3] = {field[0], field[1], 0};
+        char m[3] = {field[2], field[3], 0};
+        char s[3] = {field[4], field[5], 0};
         gps.hour   = atoi(h);
         gps.minute = atoi(m);
         gps.second = atoi(s);
     }
 
     // Latitude + N/S (fields 2-3)
-    char* lat_str = strtok(nullptr, ",");
-    char* ns = strtok(nullptr, ",");
-    if (lat_str && ns) gps.latitude = nmea_to_decimal(lat_str, ns[0]);
+    char lat_str[20];
+    char ns[4];
+    if (nmea_field(sentence, 2, lat_str, sizeof(lat_str)) &&
+        nmea_field(sentence, 3, ns, sizeof(ns))) {
+        gps.latitude = nmea_to_decimal(lat_str, ns[0]);
+    }
 
     // Longitude + E/W (fields 4-5)
-    char* lon_str = strtok(nullptr, ",");
-    char* ew = strtok(nullptr, ",");
-    if (lon_str && ew) gps.longitude = nmea_to_decimal(lon_str, ew[0]);
+    char lon_str[20];
+    char ew[4];
+    if (nmea_field(sentence, 4, lon_str, sizeof(lon_str)) &&
+        nmea_field(sentence, 5, ew, sizeof(ew))) {
+        gps.longitude = nmea_to_decimal(lon_str, ew[0]);
+    }
 
     // Fix quality (field 6)
-    token = strtok(nullptr, ",");
-    if (token) gps.fix_quality = atoi(token);
+    if (nmea_field(sentence, 6, field, sizeof(field))) gps.fix_quality = atoi(field);
 
     // Satellites (field 7)
-    token = strtok(nullptr, ",");
-    if (token) gps.satellites = atoi(token);
-
-    // Skip HDOP (field 8)
-    token = strtok(nullptr, ",");
+    if (nmea_field(sentence, 7, field, sizeof(field))) gps.satellites = atoi(field);
 
     // Altitude (field 9)
-    token = strtok(nullptr, ",");
-    if (token) gps.altitude_m = strtof(token, nullptr);
+    if (nmea_field(sentence, 9, field, sizeof(field))) gps.altitude_m = strtof(field, nullptr);
 
     gps.has_fix = (gps.fix_quality > 0);
 }
 
 static void parse_rmc(const char* sentence) {
     // $GPRMC,time,status,lat,NS,lon,EW,speed,heading,...
-    char buf[128];
-    strncpy(buf, sentence, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';  // guarantee null termination
-    char* token = strtok(buf, ",");
+    char field[20];
 
-    // Fields 1-6: skip (time, status, lat, NS, lon, EW)
     // Field 7: speed (knots) — 7 skips from header (field 0)
-    for (int i = 0; i < 7; i++) token = strtok(nullptr, ",");
-
-    if (token) gps.speed_kn = strtof(token, nullptr);
+    if (nmea_field(sentence, 7, field, sizeof(field))) gps.speed_kn = strtof(field, nullptr);
 
     // Field 8: heading (degrees)
-    token = strtok(nullptr, ",");
-    if (token) gps.heading = strtof(token, nullptr);
+    if (nmea_field(sentence, 8, field, sizeof(field))) gps.heading = strtof(field, nullptr);
 }
 
 // ── NMEA checksum validation ───────────────────────────────

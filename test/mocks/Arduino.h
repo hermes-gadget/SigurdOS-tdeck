@@ -44,6 +44,8 @@ typedef bool boolean;
 
 #define LED_BUILTIN 2
 
+#define SERIAL_8N1 0x800001c
+
 // ── Mock state (manipulated by tests) ────────────────────
 namespace arduino_mock {
     extern unsigned long current_millis;
@@ -94,10 +96,33 @@ public:
 class HardwareSerial : public Stream {
 public:
     void begin(unsigned long) {}
+    void begin(unsigned long, uint32_t, int8_t, int8_t) {}
+    int available() override { return (int)(_rx_len - _rx_pos); }
+    int read() override {
+        if (_rx_pos < _rx_len) return _rx_buf[_rx_pos++];
+        return -1;
+    }
     void print(const char*) {}
     void println(const char*) {}
     void printf(const char*, ...) {}
     operator bool() const { return true; }
+
+    void mock_clear_rx() {
+        _rx_pos = 0;
+        _rx_len = 0;
+        memset(_rx_buf, 0, sizeof(_rx_buf));
+    }
+    void mock_queue_rx(const char* data) {
+        if (!data) return;
+        while (*data && _rx_len < sizeof(_rx_buf)) {
+            _rx_buf[_rx_len++] = *data++;
+        }
+    }
+
+private:
+    char _rx_buf[512] = {};
+    size_t _rx_pos = 0;
+    size_t _rx_len = 0;
 };
 extern HardwareSerial Serial;
 extern HardwareSerial Serial1;

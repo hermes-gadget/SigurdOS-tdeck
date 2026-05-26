@@ -23,6 +23,8 @@
  *        invalid sentence handling, coordinate conversion, satellite count
  */
 #include <gtest/gtest.h>
+#include "Arduino.h"
+#include "hal/gps.h"
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -342,6 +344,41 @@ TEST(NMEAChecksumTest, ChecksumHexCaseInsensitive) {
     const char* rmc_lower = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6a";
     EXPECT_TRUE(nmea_checksum_valid(rmc_upper));
     EXPECT_TRUE(nmea_checksum_valid(rmc_lower));
+}
+
+// ── Actual GPS parser integration ───────────────────────
+class GPSIntegrationTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        arduino_mock::reset();
+        Serial1.mock_clear_rx();
+        slopos_gps_init();
+    }
+
+    void feed(const char* sentence) {
+        Serial1.mock_queue_rx(sentence);
+        slopos_gps_loop();
+    }
+};
+
+TEST_F(GPSIntegrationTest, GGAWithEmptyCoordinateFieldsDoesNotShiftLaterFields) {
+    feed("$GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,\n");
+
+    EXPECT_EQ(slopos_gps_hour(), 12);
+    EXPECT_EQ(slopos_gps_minute(), 35);
+    EXPECT_EQ(slopos_gps_second(), 19);
+    EXPECT_FLOAT_EQ(slopos_gps_latitude(), 0.0f);
+    EXPECT_FLOAT_EQ(slopos_gps_longitude(), 0.0f);
+    EXPECT_EQ(slopos_gps_fix_quality(), 1);
+    EXPECT_EQ(slopos_gps_satellites(), 8);
+    EXPECT_NEAR(slopos_gps_altitude_m(), 545.4f, 0.1f);
+}
+
+TEST_F(GPSIntegrationTest, RMCWithEmptySpeedKeepsHeadingInFieldEight) {
+    feed("$GPRMC,123519,A,4807.038,N,01131.000,E,,084.4,230394,003.1,W\n");
+
+    EXPECT_FLOAT_EQ(slopos_gps_speed_kn(), 0.0f);
+    EXPECT_NEAR(slopos_gps_heading(), 84.4f, 0.1f);
 }
 
 } // anonymous namespace
