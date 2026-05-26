@@ -392,6 +392,15 @@ int getLastRSSI()     { return g_mesh ? (int)radio_driver.getLastRSSI() : 0; }
 float getLastSNR()    { return g_mesh ? radio_driver.getLastSNR() : 0.0f; }
 
 bool sendAdvert() {
+    // Rate limit: reject calls within 10 seconds of the last successful advert.
+    // The UI also enforces this via button cooldown, but programmatic
+    // callers (e.g. Terminal's `advert` command) bypass that layer.
+    static uint32_t last_advert_ms = 0;
+    uint32_t now_ms = millis();
+    if (last_advert_ms != 0 && now_ms - last_advert_ms < 10000) {
+        return false;
+    }
+
     bool has_fix = slopos_gps_has_fix();
     last_advert_time = getCurrentTime();
     last_advert_used_gps = has_fix;
@@ -410,6 +419,7 @@ bool sendAdvert() {
 
     last_advert_success = true;
     pushPacketLog(own_name, 0, 0.0f, "TX_ADV");
+    last_advert_ms = now_ms;
     return true;
 }
 
