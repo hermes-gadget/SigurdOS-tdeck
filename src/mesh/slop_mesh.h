@@ -294,13 +294,13 @@ public:
         SlopContact& c = _contacts[contact_idx];
         if (c.out_path_len == OUT_PATH_UNKNOWN) return false;
 
-    ::mesh::Packet* pkt = createTrace(tag, 0, 0);
-    if (!pkt) return false;
-    uint8_t hash_count = c.out_path_len & 63;
-    uint8_t hash_size = (c.out_path_len >> 6) + 1;
-    uint8_t raw_len = hash_count * hash_size;
-    if (raw_len > MAX_PATH_SIZE) raw_len = MAX_PATH_SIZE;
-    sendDirect(pkt, c.out_path, raw_len);
+        ::mesh::Packet* pkt = createTrace(tag, 0, 0);
+        if (!pkt) return false;
+        uint8_t hash_count = c.out_path_len & 63;
+        uint8_t hash_size = (c.out_path_len >> 6) + 1;
+        uint8_t raw_len = hash_count * hash_size;
+        if (raw_len > MAX_PATH_SIZE) raw_len = MAX_PATH_SIZE;
+        sendDirect(pkt, c.out_path, raw_len);
         return true;
     }
 
