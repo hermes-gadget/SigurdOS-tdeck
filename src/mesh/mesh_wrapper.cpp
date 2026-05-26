@@ -32,10 +32,9 @@ using slopos::mesh::MeshMessage;
 
 static slopos::TDeckBoard        board;
 static SPIClass                  lora_spi;
-static Module*                   lora_mod = new Module(P_LORA_NSS, P_LORA_DIO_1,
-                                                       P_LORA_RESET, P_LORA_BUSY, lora_spi);
-static CustomSX1262              radio_module(lora_mod);
-static CustomSX1262Wrapper       radio_driver(radio_module, board);
+static Module*                   lora_mod = nullptr;
+static CustomSX1262*             radio_module = nullptr;
+static CustomSX1262Wrapper*      radio_driver = nullptr;
 static ESP32RTCClock             fallback_clock;
 static AutoDiscoverRTCClock      rtc_clock(fallback_clock);
 static StdRNG                    fast_rng;
@@ -73,8 +72,8 @@ static void queue_push(const char* sender, const char* channel, const char* text
     msg_count++;
     // Log as packet entry (accessible via Packets screen)
     if (sender && sender[0] && g_mesh) {
-        int rssi = (int)radio_driver.getLastRSSI();
-        float snr = radio_driver.getLastSNR();
+        int rssi = (int)radio_driver->getLastRSSI();
+        float snr = radio_driver->getLastSNR();
         const char* ptype = (channel && channel[0]) ? "CHANNEL" : "DM";
         slopos::mesh::pushPacketLog(sender, rssi, snr, ptype);
     }
@@ -92,8 +91,8 @@ static void onMeshMessage(const char* sender, const char* channel, const char* t
     queue_push(sender, channel, text);
 #if SLOPOS_DEBUG_MESH
     SLOPOS_RUNTIME_FEAT(mesh) {
-    int rssi = (int)radio_driver.getLastRSSI();
-    float snr = radio_driver.getLastSNR();
+    int rssi = (int)radio_driver->getLastRSSI();
+    float snr = radio_driver->getLastSNR();
     Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
                   sender, channel && channel[0] ? " in " : "",
                   channel && channel[0] ? channel : "", text, rssi, snr);
@@ -193,6 +192,28 @@ bool init(bool spiffs_ok)
     // during deep sleep to be silently dropped.
     board.begin();
 
+    // Delayed allocation of RadioLib Module and radio driver objects.
+    // These were previously allocated at file scope (static init time),
+    // before PSRAM was available. On ESP32 Arduino builds, a failed
+    // `new` returns nullptr (no exceptions). Delaying to init() time
+    // and checking null avoids a silent crash when the radio starts.
+    lora_mod = new Module(P_LORA_NSS, P_LORA_DIO_1,
+                          P_LORA_RESET, P_LORA_BUSY, lora_spi);
+    if (!lora_mod) {
+        Serial.println("[mesh] FATAL: Radio Module allocation failed (OOM)");
+        return false;
+    }
+    radio_module = new CustomSX1262(lora_mod);
+    if (!radio_module) {
+        Serial.println("[mesh] FATAL: CustomSX1262 allocation failed (OOM)");
+        return false;
+    }
+    radio_driver = new CustomSX1262Wrapper(*radio_module, board);
+    if (!radio_driver) {
+        Serial.println("[mesh] FATAL: Radio driver allocation failed (OOM)");
+        return false;
+    }
+
     fallback_clock.begin();
     rtc_clock.begin(Wire);
 
@@ -228,26 +249,26 @@ bool init(bool spiffs_ok)
 #endif
     lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
 #if SLOPOS_DEBUG_MESH
-    Serial.println("[mesh] calling radio_module.std_init()...");
+    Serial.println("[mesh] calling radio_module->std_init()...");
 #endif
-    if (!radio_module.std_init(&lora_spi)) {
+    if (!radio_module->std_init(&lora_spi)) {
         Serial.println("[mesh] ERROR: Radio init failed");
         return false;
     }
 
-    radio_module.setFrequency(freq);
-    radio_module.setBandwidth(bw);
-    radio_module.setSpreadingFactor(sf);
-    radio_module.setCodingRate(cr);   // denominator (5–8); RadioLib rejects the SX126X enum constants
-    radio_module.setOutputPower(tx_power);
+    radio_module->setFrequency(freq);
+    radio_module->setBandwidth(bw);
+    radio_module->setSpreadingFactor(sf);
+    radio_module->setCodingRate(cr);   // denominator (5–8); RadioLib rejects the SX126X enum constants
+    radio_module->setOutputPower(tx_power);
 #if SLOPOS_DEBUG_MESH
     Serial.printf("[mesh] Radio: %.3f MHz / %.1f kHz / SF%d / CR4/%d / %d dBm\n",
                   freq, bw, sf, cr, tx_power);
 #endif
 
-    fast_rng.begin(radio_module.random(0x7FFFFFFF));
+    fast_rng.begin(radio_module->random(0x7FFFFFFF));
 
-    g_mesh = new SlopMesh(radio_driver, millis_clock, fast_rng, rtc_clock, pkt_mgr, tables);
+    g_mesh = new SlopMesh(*radio_driver, millis_clock, fast_rng, rtc_clock, pkt_mgr, tables);
     if (!g_mesh) {
         Serial.println("[mesh] ERROR: SlopMesh allocation failed");
         return false;
@@ -411,9 +432,9 @@ const char* getOwnName() { return own_name; }
 
 // ── Radio stats ─────────────────────────────────
 
-int getNoiseFloor()   { return g_mesh ? (int)radio_driver.getNoiseFloor() : -120; }
-int getLastRSSI()     { return g_mesh ? (int)radio_driver.getLastRSSI() : 0; }
-float getLastSNR()    { return g_mesh ? radio_driver.getLastSNR() : 0.0f; }
+int getNoiseFloor()   { return g_mesh ? (int)radio_driver->getNoiseFloor() : -120; }
+int getLastRSSI()     { return g_mesh ? (int)radio_driver->getLastRSSI() : 0; }
+float getLastSNR()    { return g_mesh ? radio_driver->getLastSNR() : 0.0f; }
 
 bool sendAdvert() {
     // Rate limit: reject calls within 10 seconds of the last successful advert.
