@@ -386,6 +386,9 @@ int exportContactsFull(ContactInfo* out, int max) {
             strncpy(out[n].name, c->name, 31);
             out[n].name[31] = '\0';
             out[n].type = c->type;
+            out[n].has_location = c->has_location;
+            out[n].latitude = c->latitude;
+            out[n].longitude = c->longitude;
             out[n].rssi = c->last_rssi;
             out[n].last_seen = c->last_seen;
             n++;

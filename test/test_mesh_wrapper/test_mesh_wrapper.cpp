@@ -140,6 +140,17 @@ TEST_F(MeshWrapperTest, ContactInfoHasTypeField) {
     EXPECT_EQ(sizeof(ci.type), sizeof(uint8_t));
 }
 
+TEST_F(MeshWrapperTest, ContactInfoHasLocationFields) {
+    slopos::mesh::ContactInfo ci{};
+    ci.has_location = true;
+    ci.latitude = 43.6532f;
+    ci.longitude = -79.3832f;
+
+    EXPECT_TRUE(ci.has_location);
+    EXPECT_NEAR(ci.latitude, 43.6532f, 0.0001f);
+    EXPECT_NEAR(ci.longitude, -79.3832f, 0.0001f);
+}
+
 // ── ADV_TYPE constants have expected values ────────────
 TEST_F(MeshWrapperTest, AdvTypeConstants) {
     EXPECT_EQ(ADV_TYPE_NONE, 0);

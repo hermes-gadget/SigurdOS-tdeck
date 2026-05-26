@@ -28,6 +28,9 @@ struct SlopContact {
     uint8_t  secret[PUB_KEY_SIZE];
     char     name[32];
     uint8_t  type;          // ADV_TYPE_* from the advert (CHAT, REPEATER, ROOM, etc.)
+    bool     has_location;  // true when the advert included GPS coordinates
+    float    latitude;
+    float    longitude;
     uint32_t last_seen;    // RTC timestamp of last advert
     int      last_rssi;    // RSSI of last received packet (dBm)
     uint8_t  out_path_len; // OUT_PATH_UNKNOWN if no known direct path
@@ -137,12 +140,24 @@ protected:
             name = fallback;
         }
 
+        auto update_location = [](SlopContact& c, const AdvertDataParser& p) {
+            c.has_location = p.hasLatLon();
+            if (c.has_location) {
+                c.latitude = (float)p.getLat();
+                c.longitude = (float)p.getLon();
+            } else {
+                c.latitude = 0.0f;
+                c.longitude = 0.0f;
+            }
+        };
+
         // Deduplicate
         for (int i = 0; i < _nContacts; i++)
             if (_contacts[i].id.matches(id)) {
                 _contacts[i].last_seen = timestamp;
                 _contacts[i].last_rssi = (int)_radio->getLastRSSI();
                 _contacts[i].type = parser.getType();
+                update_location(_contacts[i], parser);
                 strncpy(_contacts[i].name, name, sizeof(_contacts[i].name) - 1);
                 _contacts[i].name[sizeof(_contacts[i].name) - 1] = '\0';
                 pushPacketLog(name, _contacts[i].last_rssi, pkt->getSNR(), "ADVERT");
@@ -161,6 +176,7 @@ protected:
             c.last_seen = timestamp;
             c.last_rssi = (int)_radio->getLastRSSI();
             c.type = parser.getType();
+            update_location(c, parser);
             c.out_path_len = OUT_PATH_UNKNOWN;
             self_id.calcSharedSecret(c.secret, id);
             strncpy(c.name, name, sizeof(c.name) - 1);
@@ -174,6 +190,7 @@ protected:
         c.last_seen = timestamp;
         c.last_rssi = (int)_radio->getLastRSSI();
         c.type = parser.getType();
+        update_location(c, parser);
         self_id.calcSharedSecret(c.secret, id);
 
         strncpy(c.name, name, sizeof(c.name) - 1);

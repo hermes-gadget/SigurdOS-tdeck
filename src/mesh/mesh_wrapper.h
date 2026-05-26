@@ -28,6 +28,9 @@ struct MeshMessage {
 struct ContactInfo {
     char name[32];
     uint8_t type;  // ADV_TYPE_* (ADV_TYPE_CHAT=companion, ADV_TYPE_REPEATER, ADV_TYPE_ROOM, etc.)
+    bool has_location;
+    float latitude;
+    float longitude;
     int  rssi;
     uint32_t last_seen;
 };

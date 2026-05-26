@@ -38,6 +38,9 @@ struct TestContact {
     char name[32];
     uint32_t last_seen;
     int last_rssi;
+    bool has_location;
+    float latitude;
+    float longitude;
     bool valid;
 };
 
@@ -51,16 +54,27 @@ struct ContactList {
             contacts[i].valid = false;
             contacts[i].last_seen = 0;
             contacts[i].name[0] = '\0';
+            contacts[i].has_location = false;
+            contacts[i].latitude = 0.0f;
+            contacts[i].longitude = 0.0f;
         }
     }
 
     // Returns true if contact was added/updated, false if dropped
     bool on_advert(const char* name, uint32_t timestamp, int rssi) {
+        return on_advert(name, timestamp, rssi, false, 0.0f, 0.0f);
+    }
+
+    bool on_advert(const char* name, uint32_t timestamp, int rssi,
+                   bool has_location, float lat, float lon) {
         // Deduplicate
         for (int i = 0; i < n_contacts; i++) {
             if (strcmp(contacts[i].name, name) == 0) {
                 contacts[i].last_seen = timestamp;
                 contacts[i].last_rssi = rssi;
+                contacts[i].has_location = has_location;
+                contacts[i].latitude = has_location ? lat : 0.0f;
+                contacts[i].longitude = has_location ? lon : 0.0f;
                 return true;
             }
         }
@@ -76,6 +90,9 @@ struct ContactList {
             c.valid = true;
             c.last_seen = timestamp;
             c.last_rssi = rssi;
+            c.has_location = has_location;
+            c.latitude = has_location ? lat : 0.0f;
+            c.longitude = has_location ? lon : 0.0f;
             strncpy(c.name, name, sizeof(c.name) - 1);
             c.name[sizeof(c.name) - 1] = '\0';
             return true;
@@ -85,6 +102,9 @@ struct ContactList {
         c.valid = true;
         c.last_seen = timestamp;
         c.last_rssi = rssi;
+        c.has_location = has_location;
+        c.latitude = has_location ? lat : 0.0f;
+        c.longitude = has_location ? lon : 0.0f;
         strncpy(c.name, name, sizeof(c.name) - 1);
         c.name[sizeof(c.name) - 1] = '\0';
         return true;
@@ -464,6 +484,31 @@ TEST_F(ContactEvictionTest, DedupUpdatesLastSeen) {
     ASSERT_GE(idx, 0);
     EXPECT_EQ(cl.get(idx)->last_seen, 2000u);
     EXPECT_EQ(cl.get(idx)->last_rssi, -80);
+}
+
+TEST_F(ContactEvictionTest, StoresAdvertLocationWhenPresent) {
+    EXPECT_TRUE(cl.on_advert("Toronto", 1000, -82, true, 43.6532f, -79.3832f));
+
+    int idx = cl.find("Toronto");
+    ASSERT_GE(idx, 0);
+    const TestContact* c = cl.get(idx);
+    ASSERT_NE(c, nullptr);
+    EXPECT_TRUE(c->has_location);
+    EXPECT_NEAR(c->latitude, 43.6532f, 0.0001f);
+    EXPECT_NEAR(c->longitude, -79.3832f, 0.0001f);
+}
+
+TEST_F(ContactEvictionTest, ClearsAdvertLocationWhenMissingOnUpdate) {
+    cl.on_advert("Mobile", 1000, -82, true, 43.6532f, -79.3832f);
+    cl.on_advert("Mobile", 2000, -78);
+
+    int idx = cl.find("Mobile");
+    ASSERT_GE(idx, 0);
+    const TestContact* c = cl.get(idx);
+    ASSERT_NE(c, nullptr);
+    EXPECT_FALSE(c->has_location);
+    EXPECT_FLOAT_EQ(c->latitude, 0.0f);
+    EXPECT_FLOAT_EQ(c->longitude, 0.0f);
 }
 
 TEST_F(ContactEvictionTest, FillsToMax) {
