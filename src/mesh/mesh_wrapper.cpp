@@ -185,6 +185,14 @@ void injectMessage(const char* sender, const char* channel, const char* text)
 
 bool init(bool spiffs_ok)
 {
+    // Initialize the mesh-layer board instance. The main.cpp board runs
+    // begin() earlier in boot for peripheral power/I2C, but this instance
+    // is the one used by the radio driver (via radio_driver → RadioLibWrapper
+    // → _board->getStartupReason()). Without begin(), the deep-sleep-wake
+    // from DIO1 path is never triggered, causing LoRa packets received
+    // during deep sleep to be silently dropped.
+    board.begin();
+
     fallback_clock.begin();
     rtc_clock.begin(Wire);
 
