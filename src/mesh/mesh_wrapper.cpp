@@ -482,29 +482,18 @@ void getCurrentLocalDateTime(int* year, int* month, int* day, int* hour, int* mi
 }
 
 uint32_t makeEpoch(int year, int month, int day, int hour, int minute) {
-    struct tm tm = {};
-    tm.tm_year = year - 1900;
-    tm.tm_mon  = month - 1;
-    tm.tm_mday = day;
-    tm.tm_hour = hour;
-    tm.tm_min  = minute;
-    tm.tm_sec  = 0;
-    tm.tm_isdst = 0;
-
-    // Force UTC so that the wall-clock values the user typed become the correct epoch
-    // (getCurrentLocalDateTime uses gmtime, so we must match on the write side)
-    // Copy to stack buffer first — setenv() can invalidate the getenv() pointer on ESP32/newlib
-    char old_tz_buf[64] = {};
-    const char* old_tz_raw = getenv("TZ");
-    if (old_tz_raw) strncpy(old_tz_buf, old_tz_raw, sizeof(old_tz_buf) - 1);
-    const char* old_tz = old_tz_buf[0] ? old_tz_buf : nullptr;
-    setenv("TZ", "UTC0", 1);
-    tzset();
-    time_t t = mktime(&tm);
-    if (old_tz) setenv("TZ", old_tz, 1); else unsetenv("TZ");
-    tzset();
-
-    return (uint32_t)t;
+    // Compute UTC epoch directly — no dependency on TZ environment or
+    // platform-specific timegm(). Uses Howard Hinnant's date algorithm,
+    // correct for all dates in the 32-bit epoch range (1970–2106).
+    int y = year;
+    unsigned m = (unsigned)(month);
+    if (m < 3) { m += 12; y -= 1; }
+    int era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153u * (m - 3u) + 2u) / 5u + (unsigned)(day - 1);
+    unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    int days = (int)(era * 146097) + (int)doe - 719468;
+    return (uint32_t)days * 86400u + (uint32_t)hour * 3600u + (uint32_t)minute * 60u;
 }
 
 static uint32_t trace_tag_counter = 0;
