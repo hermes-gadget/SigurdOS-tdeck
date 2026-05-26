@@ -149,7 +149,7 @@ protected:
     int searchChannelsByHash(const uint8_t* hash, ::mesh::GroupChannel out[], int max) override {
         int n = 0;
         for (int i = 0; i < _nChannels && n < max; i++) {
-            if (_channels[i].channel.hash[0] == hash[0]) {   // first byte match
+            if (memcmp(_channels[i].channel.hash, hash, 32) == 0) {
                 out[n++] = _channels[i].channel;
             }
         }
