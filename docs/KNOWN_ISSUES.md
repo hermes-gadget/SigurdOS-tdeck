@@ -20,19 +20,6 @@ The RadioLib `Module` object is heap-allocated with `new` at file scope (static 
 
 ---
 
-## Finder
-
-### Zero-hop ping for nearby discovery
-The finder feature needs a proper implementation that sends a zero-hop (TTL=1) ping to discover nearby repeaters. Currently there's no way to probe what's in immediate radio range without relying on periodic adverts.
-
-**What's needed:**
-- A "Ping Nearby" action that sends a broadcast with hop limit = 1
-- A response handler that collects replies over a short window (2-3 seconds)
-- Display results grouped by RSSI (strongest first)
-- Cooldown of 30 seconds between pings to avoid flooding
-
----
-
 ## Launcher Compatibility
 
 ### SlopOS doesn't work under bmorcelli/Launcher
@@ -60,9 +47,9 @@ Pick any item from the list above and open a PR against the `dev` branch. See [`
 ## UI Performance
 
 ### LVGL tick starvation during LoRa TX
-**FIXED in PR #110:** Two-part fix: (1) reordered main loop so `slopos_display_loop()` (which calls `lv_timer_handler()`) runs before `slopos::mesh::loop()`. (2) Added periodic `lv_timer_handler()` calls inside `mesh_wrapper.cpp::loop()` with a 20ms guard (~50 Hz), ensuring UI stays responsive even during sustained mesh activity. Uses an `extern "C"` declaration to avoid pulling LVGL headers into the mesh layer.
+**FIXED in PR #110:** Two-part fix: (1) reordered main loop so `slopos_display_loop()` (which calls `lv_timer_handler()`) runs before `slopos::mesh::loop()`. (2) Added periodic `lv_timer_handler()` calls inside `mesh_wrapper.cpp::loop()` with a 20ms guard (~50 Hz), ensuring UI stays responsive even during sustained mesh activity.
 
-### `lv_obj_del()` called synchronously inside LV_EVENT_CLICKED handler (`screens.cpp:1452`)
+### `lv_obj_del()` called synchronously inside LV_EVENT_CLICKED handler (`screens.cpp:1527`)
 The Trace result screen deletes `trace_result_label` with `lv_obj_del()` directly inside an event callback. LVGL's event dispatch loop may still hold references to the object after the callback returns. Other handlers in the same file correctly use `lv_obj_del_async()`, making this an isolated omission. This can cause use-after-free crashes in the LVGL event system.
 
 **What's needed:** Replace with `lv_obj_del_async(trace_result_label)` and immediately set `trace_result_label = nullptr` after scheduling the async delete.
@@ -77,55 +64,45 @@ The map screen touch handler uses `static int drag_start_x/y` and `static uint32
 ## Mesh Networking
 
 ### Channel hash lookup only checks first byte
-The `searchChannelsByHash` function in `slop_mesh.h` compares only the first byte of the 32-byte channel hash to find a matching channel. With 8 channels and uniformly random hashes, there is an ~11% collision probability. When a collision occurs, an encrypted group message is decrypted with the wrong channel key, producing garbage text and displaying the wrong channel name.
-
-**What's needed:** Replace the single-byte `hash[0] == _channels[i].channel.hash[0]` comparison with a full `memcmp` of the entire hash array.
+**FIXED:** Replaced single-byte comparison with full `memcmp` of the entire 32-byte channel hash. No collision window remaining.
 
 ### No contact expiry / eviction
-**FIXED in PR #109:** Replaced the silent `return` in `onAdvertRecv` with LRU eviction. When the contact list is full (`SLOP_MAX_CONTACTS=64`) and a new contact arrives, the contact with the oldest `last_seen` timestamp is evicted and the new contact takes its slot. Also resets `out_path_len` on evicted slots. Added 9 unit tests: fill-to-max, LRU eviction, dedup after eviction, re-add after eviction, bulk eviction preservation, and multi-continent integrity.
+**FIXED in PR #109:** Replaced the silent `return` in `onAdvertRecv` with LRU eviction. When the contact list is full (`SLOP_MAX_CONTACTS=64`) and a new contact arrives, the contact with the oldest `last_seen` timestamp is evicted and the new contact takes its slot. Added 9 unit tests.
 
 ### Advert rate limiting at mesh layer only
-The 10-second advert cooldown is only enforced in the UI (button disabled state). The `sendAdvert()` function in `mesh_wrapper.cpp` has no rate-limiting of its own — it can be called programmatically (e.g. from the Terminal's `advert` command) without protection, potentially flooding the mesh.
-
-**What's needed:** Add a timestamp check in `sendAdvert()` that rejects calls within `ADVERT_COOLDOWN_SECONDS`.
+**FIXED:** `sendAdvert()` now has an internal static timestamp guard that rejects calls within the cooldown window, regardless of caller.
 
 ### Missing null-termination on short payloads
-In `slop_mesh.h`, the payload text null-termination is conditional: `if (len > 1) data[len - 1] = '\0'`. For `len == 1`, no null byte is written, so the C string read from `data` may run past the buffer, causing undefined behavior or leaking stack data.
-
-**What's needed:** Always null-terminate: `data[len - 1] = '\0';` unconditionally.
+**FIXED in PR #97:** The `onPeerDataRecv` handler now unconditionally null-terminates payloads. The `else if (len > 0)` guard ensures `data[len - 1]` is always in-bounds.
 
 ### `sendTrace()` indentation anomaly suggesting merge artifact (`slop_mesh.h:265-271`)
-Lines 265–271 inside `sendTrace()` are at column 0 (8-space indent would match the rest of the function) — a pattern that indicates a botched merge or rebase conflict resolution. The code compiles and appears logically correct, but the anomalous indentation suggests a developer may have accidentally removed or misplaced braces during conflict resolution. A future edit that relies on alignment for structure comprehension risks introducing a logic error.
+Lines 265–271 inside `sendTrace()` are at column 0 (8-space indent would match the rest of the function). The code compiles and is logically correct, but the anomalous indentation suggests a botched merge conflict resolution. A future edit that relies on alignment for structure comprehension risks introducing a logic error.
 
-**What's needed:** Fix the indentation of lines 265–271 to match the method body (use 8-space indent). Verify the function compiles and passes trace tests.
+**What's needed:** Fix the indentation of lines 265–271 to match the method body (use 8-space indent).
 
 ---
 
 ## Map Screen
 
 ### LRU cache clock uint32_t wrap
-The tile LRU cache uses a `uint32_t cache_clock` that increments monotonically. After ~4 billion increments (or ~50 days of continuous use at 1kHz), it wraps to 0, breaking cache eviction comparisons — newly cached tiles have lower `last_used` values than old ones, causing premature eviction of recently used tiles.
-
-**What's needed:** Use `uint64_t` for `cache_clock`, or implement a wrapping-aware comparison.
+**FIXED:** Changed `cache_clock` from `uint32_t` to `uint64_t`, eliminating the ~50-day wrap-around that broke cache eviction ordering.
 
 ---
 
 ## Touch / Input
 
 ### I2C bus speed race — touch runs at 100kHz instead of 400kHz
-The I2C bus is shared between the GT911 touch controller (400kHz capable) and the keyboard MCU (100kHz). The init sequence sets 400kHz for touch, then overwrites it to 100kHz during keyboard init. After that, ALL subsequent I2C operations (including touch reads) run at 100kHz. Touch is functional but reads at 1/4 speed, increasing touch latency by ~3-4x.
-
-**What's needed:** Restore `Wire.setClock(400000)` after keyboard init completes, or use 100kHz for both (GT911 works at any speed up to 400kHz).
+**FIXED:** `Wire.setClock(400000)` is now restored at the top of each touch poll cycle, ensuring touch reads always run at full speed regardless of the keyboard scan having previously set 100kHz.
 
 ### Trackball LEFT fires on both edges
-**FIXED in PR #111:** Removed the LEFT-specific exception in `scan_direction` — LEFT now fires on falling edge only, matching UP/DOWN/RIGHT. Aligned `LEFT_DEADTIME_MS` (80 → 150) with `DIRECTION_DEADTIME_MS` since the shorter deadtime was only needed to partially mitigate the double-fire. Updated the `DirectionIdleLevelIsCalibratedAtInit` test to verify falling-edge-only behavior.
+**FIXED in PR #111:** Removed the LEFT-specific exception in `scan_direction` — LEFT now fires on falling edge only, matching UP/DOWN/RIGHT.
 
 ### `slopos_keyboard_has_new_event()` clears its event flag as a side effect (`keyboard.cpp:191`)
 `slopos_keyboard_has_new_event()` returns true and simultaneously clears the internal `has_new_event` flag. A second call before `slopos_keyboard_consume_key()` returns false even though the key value has not been read. The `has_*` naming convention universally implies a non-mutating predicate, so this violates caller expectations without documentation.
 
 **What's needed:** Either rename to `slopos_keyboard_consume_event()` to make the side effect explicit, or split into `slopos_keyboard_has_event()` (non-destructive) + `slopos_keyboard_clear_event()` (explicit clear).
 
-### GT911 INT-pin-HIGH release check may drop buffered touch events on rapid taps (`touch.cpp:158`)
+### GT911 INT-pin-HIGH release check may drop buffered touch events on rapid taps (`touch.cpp`)
 The touch polling loop treats an INT pin HIGH as an immediate release and stops reading. The GT911 controller buffers multiple touch scan intervals internally; if the user taps twice rapidly and the INT pin de-asserts between scans, the second tap is never read from the FIFO. This manifests as intermittent missed taps on fast-response buttons (Send in chat, number keys in settings).
 
 **What's needed:** After reading a touch point, re-read the GT911 point count register before reporting release. Only report `LV_INDEV_STATE_RELEASED` when the point count confirms zero active touches, rather than relying solely on the INT pin level.
@@ -135,18 +112,14 @@ The touch polling loop treats an INT pin HIGH as an immediate release and stops 
 ## Screen Navigation
 
 ### Navigation history stack is broken
-The navigation system uses a circular buffer with MAX_HISTORY=8. `push_history` wraps around and overwrites the oldest entry when full. `pop_history` decrements `history_top` without wrapping — after wrapping occurs, the stack has no way to distinguish new entries from overwritten ones. The stack can only hold 8 items but there are 14+ screen types.
-
-**What's needed:** Replace the circular buffer with a simple linear stack: drop the oldest entry when full instead of wrapping. Fix `pop_history` to handle wrap-around correctly.
+**FIXED:** Replaced the circular buffer with a simple linear stack. When full, the oldest entry is dropped instead of wrapping. `pop_history` no longer wraps — pure linear push/pop semantics.
 
 ---
 
 ## Chat Screen
 
 ### REPEATERS tile navigates to Packets screen instead of a nodes/repeaters view
-**FIXED:** REPEATERS now navigates to `Screen::Network` (the Finder screen) instead of `Screen::Heard`. Both REPEATERS and FINDER open the same network view, which surfaces known contacts sorted by RSSI.
-
-**Remaining:** A dedicated repeaters/nodes screen with RSSI-sorted list would be better than borrowing FINDER's screen, but the duplicate-icon bug is fixed.
+**FIXED:** REPEATERS now navigates to `Screen::Network` (the Finder screen). Both REPEATERS and FINDER open the same network view.
 
 ### Contact name retrieved by hardcoded child index instead of user data (`screens.cpp:551`)
 When the user taps a contact row to open a DM, the contact name label is extracted via `lv_obj_get_child(target, 1)` — a hardcoded positional index. If any future change adds or reorders children in the contact row (e.g. an online indicator icon, signal strength badge), this silently retrieves the wrong widget, resulting in a DM opened with a garbage name or a crash.
@@ -158,9 +131,7 @@ When the user taps a contact row to open a DM, the contact name label is extract
 ## Onboarding
 
 ### ESP.restart() without flash write completion
-The onboarding screen's Done button calls `ESP.restart()` immediately after `chat_save_messages()`. If the SPIFFS write hasn't completed (due to write caching), the save data is lost after reboot.
-
-**What's needed:** Add a small delay (`delay(100)`) between the save and the restart, or set a flag for the main loop to handle the restart.
+**FIXED:** A `delay(100)` was added between the SPIFFS write and the `ESP.restart()` call, ensuring writes complete before reboot.
 
 ---
 
@@ -176,30 +147,26 @@ Raw GPS NMEA sentences from the L76K module include a `*XX` checksum suffix that
 ## Terminal
 
 ### Unbounded label accumulation
-Each command in the Terminal screen creates a new LVGL label widget (`screens.cpp:1221-1227`). There is no upper bound or pruning — after hundreds of commands, thousands of label widgets accumulate in the LVGL object tree, consuming heap. Labels are only freed when the user navigates away.
-
-**What's needed:** Cap the number of visible terminal lines (e.g. 64), deleting the oldest label when the cap is reached. A `lv_obj_clean()` on the log container before adding the new line would also work but is more disruptive to the scroll state.
+**FIXED:** Terminal output is now capped at `MAX_TERM_LINES = 64`. The oldest label is deleted when the cap is reached, preventing unbounded heap consumption.
 
 ---
 
 ## SPI / Display
 
 ### Display and SD card share the same SPI host
-**FIXED in PR #108 + follow-up:** The original fix (PR #108) moved the SD card from SPI3_HOST to SPI2_HOST, but this created a GPIO matrix conflict — the LoRa mesh init called `lora_spi.begin()` on SPI2_HOST, which remapped pins 40/41/38 away from SPI3_HOST, silently disconnecting the display.
-
-**Real fix:** Moved the display from SPI3_HOST to SPI2_HOST in `display.cpp`, so all three bus-sharing devices (display, LoRa, SD) use the same SPI2_HOST with different CS lines. No cross-host pin contention.
+**FIXED in PR #108 + follow-up:** Moved the display from SPI3_HOST to SPI2_HOST, so all three bus-sharing devices (display, LoRa, SD) use the same SPI2_HOST with different CS lines. No cross-host pin contention.
 
 ---
 
 ## Code Quality / Maintenance
 
 ### Screen dispatch switch duplicated in `navigate_to()` and `go_back()` (`navigation.cpp`)
-The 14+-case switch that maps `Screen` enum values to their `*_show()` functions appears identically in both `navigate_to()` and `go_back()`. Any new screen type requires updating both copies. Currently REPEATERS and PACKETS both dispatch to `Screen::Heard` in one block — a fix must be applied in two places.
+The 14+-case switch that maps `Screen` enum values to their `*_show()` functions appears identically in both `navigate_to()` and `go_back()`. Any new screen type requires updating both copies.
 
 **What's needed:** Extract the switch into a `static void dispatch_screen(Screen s)` helper function and call it from both `navigate_to()` and `go_back()`.
 
 ### `debug.h` declares symbols only implemented under `#if defined(SLOPOS_DEBUG)` (`debug.h`)
-`debug.h` declares the `slopos::debug` namespace and all its functions unconditionally, while `debug.cpp` wraps all implementations in `#if defined(SLOPOS_DEBUG)`. In a non-debug build, any call to a debug function compiles but produces an unresolved-symbol linker error. The current build works because debug calls are also guarded at call sites, but this is a fragile implicit assumption.
+`debug.h` declares the `slopos::debug` namespace and all its functions unconditionally, while `debug.cpp` wraps all implementations in `#if defined(SLOPOS_DEBUG)`. In a non-debug build, any call to a debug function compiles but produces an unresolved-symbol linker error.
 
 **What's needed:** Either (a) wrap the declarations in `debug.h` in `#if defined(SLOPOS_DEBUG)` to match the implementation, or (b) provide stub no-op inline implementations in the header for non-debug builds.
 
