@@ -157,16 +157,25 @@ void slopos_touch_loop()
     // (keyboard scan may have set it to 100kHz)
     Wire.setClock(400000);
 
-    // Check INT pin — GT911 pulls it LOW when data is ready
-    // If it's HIGH (with pullup), no new data
+    // Check INT pin — GT911 pulls it LOW when new data is ready.
+    // When HIGH, there may be no new data, but the GT911 can buffer
+    // multiple touch samples. Read the status register to confirm
+    // before deciding to release — otherwise rapid taps that arrive
+    // between poll cycles are silently dropped.
     if (digitalRead(PIN_TOUCH_INT) == HIGH) {
-        // No new data — maintain existing state
-        // If we were pressing and INT went HIGH, release
-        if (pressed) {
-            pressed = false;
-            was_pressed = true;
+        // Read status register to confirm no buffered data
+        uint8_t status = 0;
+        if (i2c_read_bytes(GT911_REG_STATUS, &status, 1) && (status & 0x80)) {
+            // Buffered data waiting — fall through to process it
+            // (INT de-asserted between taps but GT911 still has data)
+        } else {
+            // Genuinely no new data — maintain existing state
+            if (pressed) {
+                pressed = false;
+                was_pressed = true;
+            }
+            return;
         }
-        return;
     }
 
     // Read status register
