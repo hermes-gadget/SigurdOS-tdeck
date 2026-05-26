@@ -538,6 +538,13 @@ void contacts_screen_show()
         lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
         lv_obj_align(name_l, LV_ALIGN_LEFT_MID, 28, 0);
 
+        // Store a heap copy of the contact name as user_data so the event
+        // handler can find it without depending on widget child index order.
+        // Freed on LV_EVENT_DELETE to avoid leaking when the screen is
+        // discarded or the row is recycled.
+        char* name_dup = strdup(c.name);
+        lv_obj_set_user_data(row, name_dup);
+
         // RSSI
         char rssi_buf[12];
         snprintf(rssi_buf, sizeof(rssi_buf), "%ddBm", c.rssi);
@@ -549,12 +556,16 @@ void contacts_screen_show()
 
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
-            lv_obj_t* name_l = lv_obj_get_child(target, 1);
-            if (name_l) {
-                const char* name = lv_label_get_text(name_l);
+            const char* name = (const char*)lv_obj_get_user_data(target);
+            if (name) {
                 chat_screen_open_dm(name);
             }
         }, LV_EVENT_CLICKED, nullptr);
+
+        // Free the heap-allocated name copy when the row is deleted
+        lv_obj_add_event_cb(row, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
     }
 
     show_screen(scr);
