@@ -74,6 +74,7 @@ static const ScreenEntry screen_table[] = {
     {"contacts",    slopos::ui::Screen::Contacts},
     {"channels",    slopos::ui::Screen::Channels},
     {"network",     slopos::ui::Screen::Network},
+    {"repeaters",   slopos::ui::Screen::Repeaters},
     {"heard",       slopos::ui::Screen::Heard},
     {"map",         slopos::ui::Screen::Map},
     {"advertise",   slopos::ui::Screen::Advertise},
