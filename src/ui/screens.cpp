@@ -754,6 +754,15 @@ void map_screen_show()
 
     static int drag_start_x = 0, drag_start_y = 0;
     static uint32_t map_last_render_ms = 0;
+
+    // Reset drag state on every entry so stale values from a previous visit
+    // don't cause a map jump or skip the first re-render.
+    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+        drag_start_x = 0;
+        drag_start_y = 0;
+        map_last_render_ms = 0;
+    }, LV_EVENT_SCREEN_LOADED, nullptr);
+
     lv_obj_add_event_cb(map, [](lv_event_t* e) {
         int code = lv_event_get_code(e);
         if (code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING && code != LV_EVENT_RELEASED) return;
