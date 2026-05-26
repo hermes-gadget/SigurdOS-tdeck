@@ -1223,8 +1223,18 @@ static uint32_t term_classify_line(const char* text)
     return 0x00ff00u;
 }
 
+// ── Terminal line cap — prevent unbounded label accumulation ──
+static constexpr unsigned MAX_TERM_LINES = 64;
+
 static void term_add_line(lv_obj_t* log, const char* text)
 {
+    // Prune oldest line if at cap
+    while (lv_obj_get_child_cnt(log) >= MAX_TERM_LINES) {
+        lv_obj_t* first = lv_obj_get_child(log, 0);
+        if (first) lv_obj_del(first);
+        else break;
+    }
+
     lv_obj_t* lbl = lv_label_create(log);
     lv_label_set_text(lbl, text);
     lv_obj_set_style_text_color(lbl, lv_color_hex(term_classify_line(text)), 0);
