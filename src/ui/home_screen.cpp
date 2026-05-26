@@ -60,7 +60,7 @@ struct IconDef {
 static const IconDef icons[] = {
     {"CHATS",     LV_SYMBOL_ENVELOPE,   true,  Screen::Chat},
     {"CONTACTS",  LV_SYMBOL_CALL,       false, Screen::Contacts},
-    {"REPEATERS", LV_SYMBOL_WIFI,       false, Screen::Heard},
+    {"REPEATERS", LV_SYMBOL_WIFI,       false, Screen::Network},
     {"FINDER",    LV_SYMBOL_EYE_OPEN,   false, Screen::Network},
     {"PACKETS",   LV_SYMBOL_LIST,       false, Screen::Heard},
     {"MAP",       LV_SYMBOL_GPS,        false, Screen::Map},
