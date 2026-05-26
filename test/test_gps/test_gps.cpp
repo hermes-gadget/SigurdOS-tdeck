@@ -247,4 +247,101 @@ TEST_F(GPSTest, NonRMCSentenceIgnoredByRMC) {
     EXPECT_FALSE(ok);
 }
 
+// ── NMEA checksum validation ────────────────────────────
+// NMEA checksum: XOR of all bytes between '$' and '*' (exclusive),
+// then '*' followed by 2 hex digits representing the XOR result.
+
+static uint8_t compute_nmea_checksum(const char* sentence) {
+    if (!sentence || sentence[0] != '$') return 0;
+
+    uint8_t cs = 0;
+    for (const char* p = sentence + 1; *p && *p != '*' && *p != '\0'; p++) {
+        cs ^= (uint8_t)(*p);
+    }
+    return cs;
+}
+
+// Returns the expected checksum value parsed from *XX suffix, or -1 if absent.
+static int parse_expected_checksum(const char* sentence) {
+    if (!sentence) return -1;
+    const char* star = strchr(sentence, '*');
+    if (!star || strlen(star) < 3) return -1;
+    if (!isxdigit((unsigned char)star[1]) || !isxdigit((unsigned char)star[2])) return -1;
+    char hex[3] = {star[1], star[2], 0};
+    return (int)strtol(hex, nullptr, 16);
+}
+
+static bool nmea_checksum_valid(const char* sentence) {
+    int expected = parse_expected_checksum(sentence);
+    if (expected < 0) return true;  // no checksum → backward compatible
+    return (int)compute_nmea_checksum(sentence) == expected;
+}
+
+// ── NMEA checksum tests ──────────────────────────────────
+TEST(NMEAChecksumTest, ValidChecksumPasses) {
+    // Standard GGA sentence with correct *47
+    EXPECT_TRUE(nmea_checksum_valid("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"));
+}
+
+TEST(NMEAChecksumTest, ValidRMCChecksumPasses) {
+    // Standard RMC sentence with correct *6A
+    EXPECT_TRUE(nmea_checksum_valid("$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A"));
+}
+
+TEST(NMEAChecksumTest, CorruptedChecksumFails) {
+    // Same sentence but torched checksum: *47 -> *FF
+    EXPECT_FALSE(nmea_checksum_valid("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*FF"));
+}
+
+TEST(NMEAChecksumTest, CorruptedDataFailsValidation) {
+    // Same sentence with corrupted lat (4807.038 -> 9999.999) but original *47 checksum
+    EXPECT_FALSE(nmea_checksum_valid("$GPGGA,123519,9999.999,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"));
+}
+
+TEST(NMEAChecksumTest, NoChecksumAccepted) {
+    // GGA sentence without trailing checksum
+    EXPECT_TRUE(nmea_checksum_valid("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,"));
+}
+
+TEST(NMEAChecksumTest, EmptyAsteriskAccepted) {
+    // Sentence ending with bare *
+    EXPECT_TRUE(nmea_checksum_valid("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,*"));
+}
+
+TEST(NMEAChecksumTest, NullInput) {
+    EXPECT_TRUE(nmea_checksum_valid(nullptr));
+}
+
+TEST(NMEAChecksumTest, EmptyInput) {
+    EXPECT_TRUE(nmea_checksum_valid(""));
+}
+
+TEST(NMEAChecksumTest, NonNMEAInput) {
+    // Not a $ sentence — treated as no checksum
+    EXPECT_TRUE(nmea_checksum_valid("garbage data"));
+}
+
+TEST(NMEAChecksumTest, BoldCharacterCorruption) {
+    // GSA sentence: $GPGSA,A,3,04,05,,09,12,,,24,,,,,2.5,1.3,2.1*39
+    const char* gsa_ok = "$GPGSA,A,3,04,05,,09,12,,,24,,,,,2.5,1.3,2.1*39";
+    EXPECT_TRUE(nmea_checksum_valid(gsa_ok));
+    // Corrupted: torched checksum *39 -> *AA
+    EXPECT_FALSE(nmea_checksum_valid("$GPGSA,A,3,04,05,,09,12,,,24,,,,,2.5,1.3,2.1*AA"));
+}
+
+TEST(NMEAChecksumTest, GNSSVariants) {
+    // GNGGA (multi-constellation) with valid checksum
+    EXPECT_TRUE(nmea_checksum_valid("$GNGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*59"));
+    // GNRMC with GN prefix
+    EXPECT_TRUE(nmea_checksum_valid("$GNRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*74"));
+}
+
+TEST(NMEAChecksumTest, ChecksumHexCaseInsensitive) {
+    // Lowercase checksum hex should also work
+    const char* rmc_upper = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A";
+    const char* rmc_lower = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6a";
+    EXPECT_TRUE(nmea_checksum_valid(rmc_upper));
+    EXPECT_TRUE(nmea_checksum_valid(rmc_lower));
+}
+
 } // anonymous namespace

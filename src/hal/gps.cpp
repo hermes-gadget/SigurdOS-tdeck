@@ -22,6 +22,7 @@
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 
 // ── GPS state ────────────────────────────────────────────
 static struct GPSData {
@@ -115,7 +116,34 @@ static void parse_rmc(const char* sentence) {
     if (token) gps.heading = strtof(token, nullptr);
 }
 
+// ── NMEA checksum validation ───────────────────────────────
+// Returns true if the sentence has no checksum (backward compatible)
+// or the checksum after '*' matches the XOR of bytes between '$' and '*'.
+static bool nmea_checksum_valid(const char* sentence) {
+    if (!sentence || sentence[0] != '$') return true;
+
+    // Find the '*'
+    const char* star = strchr(sentence, '*');
+    if (!star || strlen(star) < 3) return true; // no checksum, backward compatible
+
+    // Extract expected checksum (2 hex digits after *)
+    char hex[3] = {star[1], star[2], 0};
+    if (!isxdigit((unsigned char)hex[0]) || !isxdigit((unsigned char)hex[1]))
+        return true; // malformed checksum, backward compatible
+    uint8_t expected = (uint8_t)strtol(hex, nullptr, 16);
+
+    // Compute XOR of all bytes between '$' and '*'
+    uint8_t computed = 0;
+    for (const char* p = sentence + 1; p < star; p++) {
+        computed ^= (uint8_t)(*p);
+    }
+
+    return computed == expected;
+}
+
 static void process_nmea(const char* sentence) {
+    // Validate checksum — reject corrupted sentences
+    if (!nmea_checksum_valid(sentence)) return;
     // Support both $GP (GPS-only) and $GN (multi-constellation) prefixes
     // L76K GNSS module on T-Deck outputs $GN by default
     if (strncmp(sentence, "$GPGGA,", 7) == 0 || strncmp(sentence, "$GNGGA,", 7) == 0) {
