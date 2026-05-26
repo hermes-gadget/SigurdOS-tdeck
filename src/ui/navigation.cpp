@@ -60,17 +60,7 @@ static bool history_empty() {
 
 static int back_swipe_commit = 0; // counter for two-swipe commit
 
-void navigate_to(Screen screen)
-{
-    if (screen == current) return;
-
-    back_swipe_commit = 0; // reset back-swipe state on new navigation
-    highlight_back_button(false);
-
-    // Push current screen onto history before navigating away
-    push_history(current);
-    current = screen;
-
+static void dispatch_screen(Screen screen) {
     switch (screen) {
     case Screen::Home:       home_screen_show();       break;
     case Screen::Chat:       chat_screen_show();       break;
@@ -90,6 +80,20 @@ void navigate_to(Screen screen)
     }
 }
 
+void navigate_to(Screen screen)
+{
+    if (screen == current) return;
+
+    back_swipe_commit = 0; // reset back-swipe state on new navigation
+    highlight_back_button(false);
+
+    // Push current screen onto history before navigating away
+    push_history(current);
+    current = screen;
+
+    dispatch_screen(screen);
+}
+
 void go_back()
 {
     if (history_empty()) return; // nowhere to go back to
@@ -101,23 +105,7 @@ void go_back()
     // Navigate directly without pushing current (we're going back, not forward)
     current = target;
 
-    switch (target) {
-    case Screen::Home:       home_screen_show();       break;
-    case Screen::Chat:       chat_screen_show();       break;
-    case Screen::Contacts:   contacts_screen_show();   break;
-    case Screen::Channels:   channels_screen_show();  break;
-    case Screen::Network:    finder_screen_show();    break;
-    case Screen::Heard:      heard_screen_show();      break;
-    case Screen::Map:        map_screen_show();        break;
-    case Screen::Advertise:  advertise_screen_show();  break;
-    case Screen::Settings:   settings_screen_show();   break;
-    case Screen::Trace:      trace_screen_show();      break;
-    case Screen::Terminal:   terminal_screen_show();   break;
-    case Screen::Signal:     signal_screen_show();     break;
-    case Screen::RadioSetup: radio_setup_screen_show(); break;
-    case Screen::Onboarding: onboarding_screen_show(); break;
-    default: break;
-    }
+    dispatch_screen(target);
 }
 
 bool can_go_back()
