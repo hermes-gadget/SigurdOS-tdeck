@@ -362,6 +362,10 @@ bool slopos_display_init()
         // Keyboard init failed — device works with touch only
     }
 
+    // Restore I2C clock to 400kHz for touch controller — keyboard init
+    // sets it to 100kHz (keyboard.cpp:83) and doesn't restore it
+    Wire.setClock(400000);
+
     // Initialize trackball GPIO input
     slopos_trackball_init();
 
