@@ -34,8 +34,17 @@ static Screen history[MAX_HISTORY];
 static int   history_top = -1;  // index of top (empty stack before any nav)
 
 static void push_history(Screen s) {
-    history_top = (history_top + 1) % MAX_HISTORY;
-    history[history_top] = s;
+    if (history_top < MAX_HISTORY - 1) {
+        // Normal case: room on the stack
+        history_top++;
+        history[history_top] = s;
+    } else {
+        // Stack full: drop the oldest entry by shifting everything left
+        for (int i = 0; i < MAX_HISTORY - 1; i++) {
+            history[i] = history[i + 1];
+        }
+        history[MAX_HISTORY - 1] = s;
+    }
 }
 
 static Screen pop_history() {

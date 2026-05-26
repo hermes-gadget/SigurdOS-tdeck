@@ -53,8 +53,17 @@ static std::vector<std::string> nav_log;
 static int back_swipe_commit = 0;
 
 static void push_history(Screen s) {
-    history_top = (history_top + 1) % MAX_HISTORY;
-    history[history_top] = s;
+    if (history_top < MAX_HISTORY - 1) {
+        // Normal case: room on the stack
+        history_top++;
+        history[history_top] = s;
+    } else {
+        // Stack full: drop the oldest entry by shifting everything left
+        for (int i = 0; i < MAX_HISTORY - 1; i++) {
+            history[i] = history[i + 1];
+        }
+        history[MAX_HISTORY - 1] = s;
+    }
 }
 
 static Screen pop_history() {
@@ -202,15 +211,58 @@ TEST_F(NavigationTest, RapidNavigationDoesNotLoseState) {
     EXPECT_NE(current, Screen::COUNT);
 }
 
-// ── Stack overflow (circular buffer) ─────────────────────
-TEST_F(NavigationTest, HistoryStackWrapsOnOverflow) {
+// ── Stack overflow — linear stack drops oldest ───────────
+TEST_F(NavigationTest, HistoryStackDropsOldestOnOverflow) {
     // Fill the stack with 10 entries (more than MAX_HISTORY=8)
-    for (int i = 0; i < 10; i++) {
-        navigate_to((Screen)((i % 12) + 1));
+    // Linear stack should drop the oldest (Home) and keep the newest 8
+    navigate_to(Screen::Chat);      // push Home (1)
+    navigate_to(Screen::Contacts);  // push Chat (2)
+    navigate_to(Screen::Channels);  // push Contacts (3)
+    navigate_to(Screen::Network);   // push Channels (4)
+    navigate_to(Screen::Heard);     // push Network (5)
+    navigate_to(Screen::Map);       // push Heard (6)
+    navigate_to(Screen::Advertise); // push Map (7)
+    navigate_to(Screen::Settings);  // push Advertise (8) — stack full
+    navigate_to(Screen::Trace);     // push Settings → shift oldest (Home) out (9)
+    navigate_to(Screen::Terminal);  // push Trace → shift oldest (Chat) out (10)
+    EXPECT_EQ(current, Screen::Terminal);
+
+    // Go back should trace through the last 8 screens in order
+    go_back(); EXPECT_EQ(current, Screen::Trace);
+    go_back(); EXPECT_EQ(current, Screen::Settings);
+    go_back(); EXPECT_EQ(current, Screen::Advertise);
+    go_back(); EXPECT_EQ(current, Screen::Map);
+    go_back(); EXPECT_EQ(current, Screen::Heard);
+    go_back(); EXPECT_EQ(current, Screen::Network);
+    go_back(); EXPECT_EQ(current, Screen::Channels);
+    go_back(); EXPECT_EQ(current, Screen::Contacts);
+    // Should be exhausted now (home was dropped)
+    EXPECT_FALSE(can_go_back());
+}
+
+// ── Stack overflow preserves back navigation count ───────
+TEST_F(NavigationTest, OverflowBackSequenceFullCount) {
+    // Navigate through 12 screens (well over 8-slot buffer)
+    navigate_to(Screen::Chat);      // push Home (1)
+    navigate_to(Screen::Contacts);  // push Chat (2)
+    navigate_to(Screen::Channels);  // push Contacts (3)
+    navigate_to(Screen::Network);   // push Channels (4)
+    navigate_to(Screen::Heard);     // push Network (5)
+    navigate_to(Screen::Map);       // push Heard (6)
+    navigate_to(Screen::Advertise); // push Map (7)
+    navigate_to(Screen::Settings);  // push Advertise (8) — stack full
+    navigate_to(Screen::Trace);     // push Settings → shift oldest out (9)
+    navigate_to(Screen::Terminal);  // push Trace (10)
+    navigate_to(Screen::Signal);    // push Terminal (11)
+    navigate_to(Screen::RadioSetup);// push Signal (12)
+
+    // Should always have exactly MAX_HISTORY back steps available
+    int back_count = 0;
+    while (can_go_back()) {
+        go_back();
+        back_count++;
     }
-    // After 10 forward navigations, current is valid
-    EXPECT_NE(current, Screen::COUNT);
-    EXPECT_GE(history_top, 0);
+    EXPECT_EQ(back_count, MAX_HISTORY);
 }
 
 // ── Navigation to every screen from every screen ────────
