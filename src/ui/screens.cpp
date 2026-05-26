@@ -1524,7 +1524,10 @@ void trace_screen_show()
                                  -(BOT_BAR_H + DIVIDER_H + 24));
                     lv_label_set_text(result_lbl, "Trace sent, waiting...");
                     // Delete previous label if it exists
-                    if (trace_result_label) lv_obj_del(trace_result_label);
+                    if (trace_result_label) {
+                        lv_obj_del_async(trace_result_label);
+                        trace_result_label = nullptr;
+                    }
                     trace_result_label = result_lbl;
 
                     lv_timer_create([](lv_timer_t* t) {
