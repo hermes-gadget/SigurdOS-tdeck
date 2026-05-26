@@ -166,9 +166,7 @@ The 14+-case switch that maps `Screen` enum values to their `*_show()` functions
 **What's needed:** Extract the switch into a `static void dispatch_screen(Screen s)` helper function and call it from both `navigate_to()` and `go_back()`.
 
 ### `debug.h` declares symbols only implemented under `#if defined(SLOPOS_DEBUG)` (`debug.h`)
-`debug.h` declares the `slopos::debug` namespace and all its functions unconditionally, while `debug.cpp` wraps all implementations in `#if defined(SLOPOS_DEBUG)`. In a non-debug build, any call to a debug function compiles but produces an unresolved-symbol linker error.
-
-**What's needed:** Either (a) wrap the declarations in `debug.h` in `#if defined(SLOPOS_DEBUG)` to match the implementation, or (b) provide stub no-op inline implementations in the header for non-debug builds.
+**FIXED:** `debug.h` already has `#else` inline stubs for non-debug builds (added in commit `afdedd3`). The `slopos::debug` namespace provides empty inline implementations that compile to zero instructions when `SLOPOS_DEBUG` is not defined.
 
 ### `makeEpoch()` uses non-thread-safe `setenv`/`tzset` for UTC conversion (`mesh_wrapper.cpp`)
 `makeEpoch()` temporarily sets the process TZ to `"UTC0"` via `setenv()` + `tzset()`, calls `mktime()`, then restores the original TZ. `setenv` and `tzset` modify global state and are not thread-safe. Any concurrent code path reading localtime (GPS NMEA timestamp parsing, UI clock display, NTP sync) during this window silently receives UTC instead of the device's configured timezone.
