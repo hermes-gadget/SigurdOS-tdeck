@@ -138,11 +138,7 @@ When the user taps a contact row to open a DM, the contact name label is extract
 ## GPS
 
 ### No NMEA checksum validation
-Raw GPS NMEA sentences from the L76K module include a `*XX` checksum suffix that is never validated (`gps.cpp`). Corrupted sentences from noisy GPS reception are parsed as valid data, potentially giving incorrect coordinates, altitude, or fix status.
-
-**What's needed:** Implement NMEA checksum validation — extract the checksum from after the `*` in the sentence, compute XOR of all bytes between `$` and `*`, and compare. Discard sentences that don't match.
-
----
+**FIXED in PR #101:** NMEA checksum validation is implemented in `gps.cpp` with full XOR checksum verification. Corrupted sentences are discarded before parsing.
 
 ## Terminal
 
