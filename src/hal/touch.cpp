@@ -153,6 +153,10 @@ void slopos_touch_loop()
     if (now - last_poll < GT911_POLL_INTERVAL) return;
     last_poll = now;
 
+    // Ensure I2C clock is 400kHz for GT911 touch controller
+    // (keyboard scan may have set it to 100kHz)
+    Wire.setClock(400000);
+
     // Check INT pin — GT911 pulls it LOW when data is ready
     // If it's HIGH (with pullup), no new data
     if (digitalRead(PIN_TOUCH_INT) == HIGH) {

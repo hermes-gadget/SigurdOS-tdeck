@@ -129,6 +129,9 @@ void slopos_keyboard_scan()
     if (now - last_poll_ms < KB_POLL_INTERVAL_MS) return;
     last_poll_ms = now;
 
+    // Ensure I2C clock is 100kHz for keyboard MCU (touch may have set it to 400kHz)
+    Wire.setClock(100000);
+
     // Read 1 byte from keyboard MCU
     Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
     int keyValue = 0;
@@ -199,6 +202,7 @@ bool slopos_keyboard_has_new_event()
 
 void slopos_keyboard_set_brightness(uint8_t duty)
 {
+    Wire.setClock(100000);
     Wire.beginTransmission(KB_I2C_ADDR);
     Wire.write(CMD_BRIGHTNESS);
     Wire.write(duty);
@@ -210,6 +214,7 @@ void slopos_keyboard_set_brightness(uint8_t duty)
 void slopos_keyboard_set_default_brightness(uint8_t duty)
 {
     if (duty < 30) duty = 30;  // minimum for Alt+B toggle
+    Wire.setClock(100000);
     Wire.beginTransmission(KB_I2C_ADDR);
     Wire.write(CMD_DEFAULT_BRIGHTNESS);
     Wire.write(duty);
