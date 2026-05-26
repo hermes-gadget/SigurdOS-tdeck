@@ -232,7 +232,7 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
 {
     slopos_keyboard_scan();   // force a fresh poll (catches first key after focus)
     int key = slopos_keyboard_get_key();
-    if (key > 0 && slopos_keyboard_has_new_event()) {
+    if (key > 0 && slopos_keyboard_consume_event()) {
         // Always route keyboard input to the chat textarea when the chat
         // messaging view is active, so the text box stays ready to type in.
         lv_obj_t* chat_input = slopos::ui::chat_screen_get_input_field();

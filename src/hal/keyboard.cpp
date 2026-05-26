@@ -191,7 +191,12 @@ bool slopos_keyboard_is_alt()
     return alt_held;
 }
 
-bool slopos_keyboard_has_new_event()
+bool slopos_keyboard_has_event()
+{
+    return has_new_event;
+}
+
+bool slopos_keyboard_consume_event()
 {
     if (has_new_event) {
         has_new_event = false;  // consume the event

@@ -101,7 +101,7 @@ TEST_F(KeyboardTest, NoKeyReturnsZero) {
     Wire.mock_queue_rx_byte(0x00);
     slopos_keyboard_scan();
     EXPECT_EQ(slopos_keyboard_get_key(), 0u);
-    EXPECT_FALSE(slopos_keyboard_has_new_event());
+    EXPECT_FALSE(slopos_keyboard_consume_event());
 }
 
 TEST_F(KeyboardTest, KeyPressReturnsAsciiValue) {
@@ -109,7 +109,7 @@ TEST_F(KeyboardTest, KeyPressReturnsAsciiValue) {
     Wire.mock_queue_rx_byte('a');
     slopos_keyboard_scan();
     EXPECT_EQ(slopos_keyboard_get_key(), 0x61u);
-    EXPECT_TRUE(slopos_keyboard_has_new_event());
+    EXPECT_TRUE(slopos_keyboard_consume_event());
 }
 
 TEST_F(KeyboardTest, ReadReturnsEnter) {
@@ -138,7 +138,7 @@ TEST_F(KeyboardTest, Ignores0xFFInvalidRead) {
     Wire.mock_queue_rx_byte(0xFF);
     slopos_keyboard_scan();
     EXPECT_EQ(slopos_keyboard_get_key(), 0u);
-    EXPECT_FALSE(slopos_keyboard_has_new_event());
+    EXPECT_FALSE(slopos_keyboard_consume_event());
 }
 
 // ════════════════════════════════════════════════════════
@@ -149,16 +149,16 @@ TEST_F(KeyboardTest, HasNewEventIsOneShot) {
     init_with_ack();
     Wire.mock_queue_rx_byte('z');
     slopos_keyboard_scan();
-    EXPECT_TRUE(slopos_keyboard_has_new_event());
-    EXPECT_FALSE(slopos_keyboard_has_new_event());
-    EXPECT_FALSE(slopos_keyboard_has_new_event());
+    EXPECT_TRUE(slopos_keyboard_consume_event());
+    EXPECT_FALSE(slopos_keyboard_consume_event());
+    EXPECT_FALSE(slopos_keyboard_consume_event());
 }
 
 TEST_F(KeyboardTest, KeyValuePersistsAfterEventConsumed) {
     init_with_ack();
     Wire.mock_queue_rx_byte('x');
     slopos_keyboard_scan();
-    EXPECT_TRUE(slopos_keyboard_has_new_event());
+    EXPECT_TRUE(slopos_keyboard_consume_event());
     EXPECT_EQ(slopos_keyboard_get_key(), 0x78u);
 }
 
@@ -174,18 +174,18 @@ TEST_F(KeyboardTest, SubsequentScansWithoutKeyKeepLastValue) {
     EXPECT_EQ(slopos_keyboard_get_key(), 'k');
     // New latching behavior: event persists until consume_key() is called.
     // MCU returning 0 does NOT clear has_new_event (was clearing it before PR #7).
-    EXPECT_TRUE(slopos_keyboard_has_new_event());
+    EXPECT_TRUE(slopos_keyboard_consume_event());
 }
 
 TEST_F(KeyboardTest, ConsumeKeyClearsAfterProcessing) {
     init_with_ack();
     Wire.mock_queue_rx_byte('k');
     slopos_keyboard_scan();
-    EXPECT_TRUE(slopos_keyboard_has_new_event());
+    EXPECT_TRUE(slopos_keyboard_consume_event());
     EXPECT_EQ(slopos_keyboard_get_key(), 'k');
 
     slopos_keyboard_consume_key();
-    EXPECT_FALSE(slopos_keyboard_has_new_event());
+    EXPECT_FALSE(slopos_keyboard_consume_event());
     EXPECT_EQ(slopos_keyboard_get_key(), 0);
 }
 
@@ -236,10 +236,10 @@ TEST_F(KeyboardTest, ScanThrottledByPollInterval) {
     init_with_ack();
     Wire.mock_queue_rx_byte('a');
     slopos_keyboard_scan();
-    EXPECT_TRUE(slopos_keyboard_has_new_event());
+    EXPECT_TRUE(slopos_keyboard_consume_event());
     Wire.mock_queue_rx_byte('b');
     slopos_keyboard_scan();
-    EXPECT_FALSE(slopos_keyboard_has_new_event());
+    EXPECT_FALSE(slopos_keyboard_consume_event());
 }
 
 } // anonymous namespace

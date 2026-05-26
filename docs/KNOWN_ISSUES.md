@@ -97,8 +97,8 @@ Lines 265–271 inside `sendTrace()` are at column 0 (8-space indent would match
 ### Trackball LEFT fires on both edges
 **FIXED in PR #111:** Removed the LEFT-specific exception in `scan_direction` — LEFT now fires on falling edge only, matching UP/DOWN/RIGHT.
 
-### `slopos_keyboard_has_new_event()` clears its event flag as a side effect (`keyboard.cpp:191`)
-`slopos_keyboard_has_new_event()` returns true and simultaneously clears the internal `has_new_event` flag. A second call before `slopos_keyboard_consume_key()` returns false even though the key value has not been read. The `has_*` naming convention universally implies a non-mutating predicate, so this violates caller expectations without documentation.
+### `slopos_keyboard_consume_event()` clears its event flag as a side effect (`keyboard.cpp:191`)
+`slopos_keyboard_consume_event()` returns true and simultaneously clears the internal `has_new_event` flag. A second call before `slopos_keyboard_consume_key()` returns false even though the key value has not been read. The `has_*` naming convention universally implies a non-mutating predicate, so this violates caller expectations without documentation.
 
 **What's needed:** Either rename to `slopos_keyboard_consume_event()` to make the side effect explicit, or split into `slopos_keyboard_has_event()` (non-destructive) + `slopos_keyboard_clear_event()` (explicit clear).
 

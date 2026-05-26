@@ -38,7 +38,15 @@ void slopos_keyboard_scan();
 int slopos_keyboard_get_key();
 
 // Returns true if a new key event is available (one-shot, consumed on read)
-bool slopos_keyboard_has_new_event();
+/// @brief Check if a new keyboard event is available (non-destructive predicate).
+/// @return true if an event is pending (does NOT consume it).
+bool slopos_keyboard_has_event();
+
+/// @brief Consume a pending event — returns true if one was available and clears the flag.
+/// Use this instead of slopos_keyboard_has_event() when you intend to immediately
+/// call slopos_keyboard_consume_key() afterward.
+/// @return true if an event was consumed
+bool slopos_keyboard_consume_event();
 
 // ── Backlight control ──────────────────────────────────
 // Set keyboard backlight brightness (0-255, 0=off)
