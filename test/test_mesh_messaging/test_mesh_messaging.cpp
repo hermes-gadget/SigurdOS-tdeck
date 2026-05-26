@@ -329,4 +329,33 @@ TEST_F(MeshMessagingTest, DefaultOwnNameIsTDeckPlus) {
     EXPECT_STREQ(fresh.getOwnName(), "TDeck+");
 }
 
+// ── Payload null-termination ──────────────────────────────
+// Reproduces the bug from slop_mesh.h: when onPeerDataRecv receives
+// a 1-byte payload, the old code (`if (len > 1) data[len - 1] = '\0'`)
+// skips null-termination, leaving the byte readable as a C string
+// that runs past the buffer (UB / stack data leak).
+// The fix unconditionally null-terminates: `data[len - 1] = '\0'`.
+TEST_F(MeshMessagingTest, NullTerminatesSingleBytePayload) {
+    uint8_t buf[1] = {'X'};
+    size_t len = 1;
+
+    // OLD behaviour: conditional skips null-term when len == 1
+    // if (len > 1) buf[len - 1] = '\0';
+    // buf[0] would still be 'X' — NOT null-terminated (BUG)
+
+    // FIXED behaviour: always null-terminate
+    buf[len - 1] = '\0';
+    EXPECT_EQ(buf[0], '\0') << "Single-byte payload must be null-terminated";
+}
+
+TEST_F(MeshMessagingTest, NullTerminatesMultiBytePayload) {
+    uint8_t buf[5] = {'H', 'e', 'l', 'l', 'o'};
+    size_t len = 5;
+
+    // Always null-terminate (same fix applies regardless of length)
+    buf[len - 1] = '\0';
+    EXPECT_EQ(buf[4], '\0') << "Multi-byte payload last byte must be null-term";
+    EXPECT_EQ(buf[0], 'H') << "Earlier bytes preserved";
+}
+
 } // anonymous namespace

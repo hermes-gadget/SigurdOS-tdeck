@@ -93,7 +93,7 @@ protected:
             data[len - 1] = '\0';
             text = (const char*)(data + 5);
         } else if (len > 0) {
-            if (len > 1) data[len - 1] = '\0';
+            data[len - 1] = '\0';
             text = (const char*)data;
         } else {
             return;
