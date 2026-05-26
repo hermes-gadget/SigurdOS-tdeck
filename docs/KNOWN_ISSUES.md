@@ -7,16 +7,10 @@ This document tracks known issues, bugs, and missing features in SlopOS. Contrib
 ## Boot / Board Support
 
 ### Duplicate TDeckBoard instances — radio driver board never initialised (`mesh_wrapper.cpp:33`)
-Two `static slopos::TDeckBoard board;` instances exist: one in `main.cpp:24` and one in `mesh_wrapper.cpp:33`. Only the `main.cpp` instance has `begin()` called on it. The mesh/radio driver (`CustomSX1262Wrapper`) uses the `mesh_wrapper.cpp` instance (passed at construction via `radio_module, board`). When `Dispatcher::begin()` calls `_radio->begin()`, the radio wrapper calls `_board->getStartupReason()` — which reads the `mesh_wrapper` board, not the `main.cpp` one.
-
-The `startup_reason` defaults to `BD_STARTUP_NORMAL` in the constructor, so this doesn't crash, but the DIO1 wake-from-deep-sleep detection is never triggered on the radio driver's board. A LoRa packet received during deep sleep that wakes the device is silently dropped — `setFlag()` is never called because `getStartupReason()` never returns `BD_STARTUP_RX_PACKET`.
-
-**What's needed:** Either remove the `mesh_wrapper.cpp` board instance and pass the `main.cpp` board reference into `slopos::mesh::init()`, or call `board.begin()` on the wrapper instance too before the mesh init path.
+**FIXED in PR #133:** Added `board.begin()` call at the start of `mesh::init()`. The mesh-layer board instance now has `begin()` called before the radio driver uses it, so `getStartupReason()` correctly detects DIO1 wake-from-deep-sleep and the buffered LoRa packet is received instead of dropped.
 
 ### `new Module(...)` at static init time with no null-check (`mesh_wrapper.cpp:35`)
-The RadioLib `Module` object is heap-allocated with `new` at file scope (static init order), before `main()` runs and before PSRAM is available. ESP32 Arduino builds don't use exceptions — a failed `new` returns `nullptr`. The returned pointer is used unconditionally by all downstream RadioLib calls. DRAM fragmentation at static-init time is possible on ESP32-S3.
-
-**What's needed:** Move the `Module` allocation into `mesh::init()` after PSRAM init. Add a null-check and halt with serial diagnostic on failure.
+**FIXED in PR #134:** Deferred RadioLib Module, CustomSX1262, and radio driver allocation from static init time (before PSRAM available) into `mesh::init()`. All three allocations now have null-checks with serial diagnostics on OOM failure.
 
 ---
 
