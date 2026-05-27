@@ -687,6 +687,20 @@ void saveState() {
     if (g_mesh) saveIdentity(g_mesh->self_id);
 }
 
+void shutdown()
+{
+    if (!initialized) return;
+    // Save all persistent state to NVS/SPIFFS before shutting down
+    saveChannels();
+    saveState();
+    // Give flash writes time to complete before power cut
+    delay(150);
+    // Enter deep sleep indefinitely. User must press power button
+    // (long press) or reset to wake. This is functionally equivalent
+    // to power-off for the T-Deck.
+    board.sleep(0);
+}
+
 int getPacketLogCount() { return pkt_log_count; }
 
 bool getPacketLogEntry(int index, PacketLogEntry* out) {

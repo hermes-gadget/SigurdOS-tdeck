@@ -77,6 +77,7 @@ bool     getLastAdvertUsedGps();
 void saveState();
 void saveChannels();
 void loadChannels();
+void shutdown();
 
 // RTC time for UI comparisons
 uint32_t getCurrentTime();

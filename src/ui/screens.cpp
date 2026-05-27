@@ -1408,6 +1408,60 @@ void settings_screen_show()
         navigate_to(Screen::Onboarding);
     }, LV_EVENT_CLICKED, nullptr);
 
+    // Shut down — graceful power-off
+    lv_obj_t* btn_shutdown = add_row(LV_SYMBOL_POWER, "  Shut down");
+    lv_obj_set_style_bg_color(btn_shutdown, lv_color_hex(0x4a2020), 0);
+    lv_obj_set_style_bg_color(btn_shutdown, lv_color_hex(0x4a2020), LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(btn_shutdown, [](lv_event_t* e) {
+        lv_obj_t* scr = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
+        auto dlg_sz = dialog_size(240, 100);
+        lv_obj_t* dlg = lv_obj_create(scr);
+        lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+        lv_obj_center(dlg);
+        lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+        lv_obj_set_style_radius(dlg, 0, 0);
+        lv_obj_set_style_border_width(dlg, 0, 0);
+        lv_obj_set_style_pad_all(dlg, 8, 0);
+
+        lv_obj_t* title = lv_label_create(dlg);
+        lv_label_set_text(title, "Shut down?");
+        lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+        lv_obj_t* msg = lv_label_create(dlg);
+        lv_label_set_text(msg, "Save state and power off?");
+        lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+        lv_obj_align(msg, LV_ALIGN_CENTER, 0, -4);
+
+        // Cancel button
+        lv_obj_t* cancel_btn = lv_btn_create(dlg);
+        lv_obj_set_size(cancel_btn, 64, 24);
+        lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 12, -4);
+        lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_INPUT), 0);
+        lv_obj_set_style_radius(cancel_btn, 0, 0);
+        lv_obj_t* cl = lv_label_create(cancel_btn);
+        lv_label_set_text(cl, "Cancel");
+        lv_obj_center(cl);
+        lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
+            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_CLICKED, nullptr);
+
+        // Confirm button
+        lv_obj_t* confirm_btn = lv_btn_create(dlg);
+        lv_obj_set_size(confirm_btn, 64, 24);
+        lv_obj_align(confirm_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
+        lv_obj_set_style_bg_color(confirm_btn, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_radius(confirm_btn, 0, 0);
+        lv_obj_t* cfl = lv_label_create(confirm_btn);
+        lv_label_set_text(cfl, "Shut down");
+        lv_obj_center(cfl);
+        lv_obj_add_event_cb(confirm_btn, [](lv_event_t*) {
+            slopos::mesh::shutdown();
+        }, LV_EVENT_CLICKED, nullptr);
+    }, LV_EVENT_CLICKED, nullptr);
+
     // Version
     snprintf(buf, sizeof(buf), "  SlopOS " SLOPOS_VERSION);
     add_row(LV_SYMBOL_HOME, buf);
