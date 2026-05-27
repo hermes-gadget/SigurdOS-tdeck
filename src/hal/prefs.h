@@ -26,6 +26,9 @@ struct NodePrefs {
     uint16_t chat_msg_cap;      // Per-channel in-memory message history cap
     uint8_t  flood_max_hops;    // 0=no limit, otherwise max flood hops for contact auto-add
     bool     share_location;    // include GPS coordinates in adverts
+    float    rx_delay_base;        // 0-20.0, RX delay base factor for collision avoidance
+    float    tx_delay_factor;      // 0-2.0, TX flood retransmit delay multiplier
+    float    direct_tx_delay_factor; // 0-2.0, TX direct retransmit delay multiplier
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -43,6 +46,9 @@ struct NodePrefs {
         chat_msg_cap = 200;
         flood_max_hops = 0;  // 0 = no limit
         share_location = true;
+        rx_delay_base = 10.0f;      // default RX delay base (matching MeshCore companion default)
+        tx_delay_factor = 1.0f;     // default TX flood delay factor
+        direct_tx_delay_factor = 1.0f; // default TX direct delay factor
     }
 };
 

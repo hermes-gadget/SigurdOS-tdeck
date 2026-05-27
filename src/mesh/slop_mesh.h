@@ -6,6 +6,7 @@
 // MeshCore is MIT licensed (meshcore-dev/MeshCore).
 
 #pragma once
+#include <math.h>
 #include <Mesh.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/AdvertDataHelpers.h>
@@ -322,6 +323,26 @@ protected:
                 return;
             }
         }
+    }
+
+    // ── TX/RX delay tuning ──────────────────────────
+    int calcRxDelay(float score, uint32_t air_time) const override {
+        slopos::NodePrefs p = slopos::prefs_get();
+        if (p.rx_delay_base <= 0.0f) return 0;
+        return (int)((pow(p.rx_delay_base, 0.85f - score) - 1.0) * air_time);
+    }
+
+    uint32_t getRetransmitDelay(const ::mesh::Packet* packet) override {
+        slopos::NodePrefs p = slopos::prefs_get();
+        uint32_t t = (_radio->getEstAirtimeFor(packet->getRawLength()) * 52 / 50) / 2;
+        return (uint32_t)(p.tx_delay_factor * getRNG()->nextInt(0, 5) * t);
+    }
+
+    uint32_t getDirectRetransmitDelay(const ::mesh::Packet* packet) override {
+        slopos::NodePrefs p = slopos::prefs_get();
+        if (p.direct_tx_delay_factor <= 0.0f) return 0;
+        uint32_t t = (_radio->getEstAirtimeFor(packet->getRawLength()) * 52 / 50) / 2;
+        return (uint32_t)(p.direct_tx_delay_factor * getRNG()->nextInt(0, 5) * t);
     }
 
 public:

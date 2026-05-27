@@ -38,6 +38,7 @@
 #include <lvgl.h>
 #include <cstdio>
 #include <cstring>
+#include <math.h>
 
 namespace slopos::ui {
 
@@ -1695,6 +1696,97 @@ void settings_screen_show()
             lv_label_set_text(lbl, row_buf);
         }
     }, LV_EVENT_CLICKED, nullptr);
+
+    // TX/RX delay tuning
+    // RX delay base (tappable — cycles through values)
+    static constexpr float RX_DELAY_VALUES[] = {0.0f, 5.0f, 10.0f, 15.0f, 20.0f};
+    static constexpr const char* RX_DELAY_LABELS[] = {"0 (off)", "5", "10", "15", "20"};
+    static constexpr int NUM_RX_DELAY = 5;
+    {
+        int cur_rx = 0;
+        for (int i = 0; i < NUM_RX_DELAY; i++) {
+            if (fabsf(p.rx_delay_base - RX_DELAY_VALUES[i]) < 0.1f) { cur_rx = i; break; }
+        }
+        snprintf(buf, sizeof(buf), "  RX delay base: %s", RX_DELAY_LABELS[cur_rx]);
+        lv_obj_t* btn_rx = add_row(LV_SYMBOL_SETTINGS, buf);
+        lv_obj_add_event_cb(btn_rx, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            slopos::NodePrefs np = slopos::prefs_get();
+            int idx = 0;
+            for (int i = 0; i < NUM_RX_DELAY; i++) {
+                if (fabsf(np.rx_delay_base - RX_DELAY_VALUES[i]) < 0.1f) { idx = i; break; }
+            }
+            idx = (idx + 1) % NUM_RX_DELAY;
+            np.rx_delay_base = RX_DELAY_VALUES[idx];
+            slopos::prefs_set(np);
+            char row_buf[64];
+            snprintf(row_buf, sizeof(row_buf), "  RX delay base: %s", RX_DELAY_LABELS[idx]);
+            lv_obj_t* lbl = lv_obj_get_child(target, 1);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+                lv_label_set_text(lbl, row_buf);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // TX delay factor (tappable — cycles through values)
+    static constexpr float TX_DELAY_VALUES[] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
+    static constexpr const char* TX_DELAY_LABELS[] = {"0 (off)", "0.5", "1.0", "1.5", "2.0"};
+    static constexpr int NUM_TX_DELAY = 5;
+    {
+        int cur_tx = 0;
+        for (int i = 0; i < NUM_TX_DELAY; i++) {
+            if (fabsf(p.tx_delay_factor - TX_DELAY_VALUES[i]) < 0.1f) { cur_tx = i; break; }
+        }
+        snprintf(buf, sizeof(buf), "  TX delay factor: %s", TX_DELAY_LABELS[cur_tx]);
+        lv_obj_t* btn_tx = add_row(LV_SYMBOL_SETTINGS, buf);
+        lv_obj_add_event_cb(btn_tx, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            slopos::NodePrefs np = slopos::prefs_get();
+            int idx = 0;
+            for (int i = 0; i < NUM_TX_DELAY; i++) {
+                if (fabsf(np.tx_delay_factor - TX_DELAY_VALUES[i]) < 0.1f) { idx = i; break; }
+            }
+            idx = (idx + 1) % NUM_TX_DELAY;
+            np.tx_delay_factor = TX_DELAY_VALUES[idx];
+            slopos::prefs_set(np);
+            char row_buf[64];
+            snprintf(row_buf, sizeof(row_buf), "  TX delay factor: %s", TX_DELAY_LABELS[idx]);
+            lv_obj_t* lbl = lv_obj_get_child(target, 1);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+                lv_label_set_text(lbl, row_buf);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // Direct TX delay factor (tappable — cycles through values)
+    static constexpr float DIR_TX_DELAY_VALUES[] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
+    static constexpr const char* DIR_TX_DELAY_LABELS[] = {"0 (off)", "0.5", "1.0", "1.5", "2.0"};
+    static constexpr int NUM_DIR_TX_DELAY = 5;
+    {
+        int cur_dir = 0;
+        for (int i = 0; i < NUM_DIR_TX_DELAY; i++) {
+            if (fabsf(p.direct_tx_delay_factor - DIR_TX_DELAY_VALUES[i]) < 0.1f) { cur_dir = i; break; }
+        }
+        snprintf(buf, sizeof(buf), "  Direct TX delay: %s", DIR_TX_DELAY_LABELS[cur_dir]);
+        lv_obj_t* btn_dir = add_row(LV_SYMBOL_SETTINGS, buf);
+        lv_obj_add_event_cb(btn_dir, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            slopos::NodePrefs np = slopos::prefs_get();
+            int idx = 0;
+            for (int i = 0; i < NUM_DIR_TX_DELAY; i++) {
+                if (fabsf(np.direct_tx_delay_factor - DIR_TX_DELAY_VALUES[i]) < 0.1f) { idx = i; break; }
+            }
+            idx = (idx + 1) % NUM_DIR_TX_DELAY;
+            np.direct_tx_delay_factor = DIR_TX_DELAY_VALUES[idx];
+            slopos::prefs_set(np);
+            char row_buf[64];
+            snprintf(row_buf, sizeof(row_buf), "  Direct TX delay: %s", DIR_TX_DELAY_LABELS[idx]);
+            lv_obj_t* lbl = lv_obj_get_child(target, 1);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+                lv_label_set_text(lbl, row_buf);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+    }
 
     // Date
     int y, mo, d, h, mi;
