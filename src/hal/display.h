@@ -33,6 +33,10 @@ void slopos_display_wake();
 bool slopos_display_is_on();
 void slopos_display_set_brightness(uint8_t brightness);
 
+// Re-reads auto_off_timeout from prefs and resets the auto-off timer.
+// Call after changing the timeout in Settings.
+void slopos_display_reset_auto_off();
+
 // Return the current screen buffer for screenshot capture.
 // Only available when full-screen buffer mode is active (PSRAM present).
 void* slopos_display_get_buffer();

@@ -28,6 +28,7 @@
 #include "../hal/sdcard.h"
 #include "../hal/gps.h"
 #include "../hal/prefs.h"
+#include "../hal/display.h"
 #include "../hal/keyboard.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../app/map_renderer.h"
@@ -1105,7 +1106,8 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
     }, LV_EVENT_CLICKED, (void*)ctx);
 }
 
-static lv_obj_t* g_backlight_row = nullptr;
+static lv_obj_t* g_backlight_row   = nullptr;
+static lv_obj_t* g_auto_off_row    = nullptr;
 static lv_obj_t* g_chat_history_row = nullptr;
 
 struct BacklightCtx {
@@ -1309,6 +1311,124 @@ static void backlight_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 }
 
 // ════════════════════════════════════════════════════════
+// Auto-off timeout selector dialog
+// ════════════════════════════════════════════════════════
+static void auto_off_dialog(lv_obj_t* parent, lv_obj_t* row_label)
+{
+    auto dlg_sz = dialog_size(220, 160);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 0, 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "Auto-off Timeout");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+    struct Opt { const char* label; uint16_t value; };
+    static constexpr Opt OPTIONS[] = {
+        {"Off",   0},
+        {"15s",  15},
+        {"30s",  30},
+        {"1m",   60},
+        {"2m",  120},
+    };
+
+    int btn_w = 68;
+    int btn_h = 28;
+    int gap_x = 10;
+    int gap_y = 8;
+    int start_y = 32;
+    int total_w = 3 * btn_w + 2 * gap_x;
+    int start_x = (dlg_sz.w - total_w) / 2;
+
+    uint16_t current = slopos::prefs_get().auto_off_timeout;
+    static lv_obj_t* selected = nullptr;
+
+    for (int i = 0; i < 5; i++) {
+        int col = i % 3;
+        int row = i / 3;
+        int x = start_x + col * (btn_w + gap_x);
+        int y = start_y + row * (btn_h + gap_y);
+
+        lv_obj_t* btn = lv_btn_create(dlg);
+        lv_obj_set_size(btn, btn_w, btn_h);
+        lv_obj_set_pos(btn, x, y);
+        lv_obj_set_style_radius(btn, 0, 0);
+        lv_obj_set_style_bg_color(btn,
+            (OPTIONS[i].value == current) ? lv_color_hex(ACCENT) : lv_color_hex(BG_TERTIARY), 0);
+
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, OPTIONS[i].label);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_center(lbl);
+
+        lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+            lv_obj_t* clicked = (lv_obj_t*)lv_event_get_target(e);
+            if (selected) {
+                lv_obj_set_style_bg_color(selected, lv_color_hex(BG_TERTIARY), 0);
+            }
+            lv_obj_set_style_bg_color(clicked, lv_color_hex(ACCENT), 0);
+            selected = clicked;
+        }, LV_EVENT_CLICKED, nullptr);
+
+        if (OPTIONS[i].value == current) {
+            selected = btn;
+        }
+    }
+
+    lv_obj_t* set_btn = lv_btn_create(dlg);
+    lv_obj_set_size(set_btn, 72, 24);
+    lv_obj_align(set_btn, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_style_bg_color(set_btn, lv_color_hex(ACCENT_GREEN), 0);
+    lv_obj_set_style_radius(set_btn, 0, 0);
+    lv_obj_t* sl = lv_label_create(set_btn);
+    lv_label_set_text(sl, "Set");
+    lv_obj_center(sl);
+
+    lv_obj_add_event_cb(set_btn, [](lv_event_t* e) {
+        lv_obj_t* row_lbl = (lv_obj_t*)lv_event_get_user_data(e);
+        if (!selected) return;
+        lv_obj_t* lbl = lv_obj_get_child(selected, 0);
+        if (!lbl) return;
+        const char* label = lv_label_get_text(lbl);
+
+        uint16_t value = 30;
+        for (auto& opt : OPTIONS) {
+            if (strcmp(label, opt.label) == 0) {
+                value = opt.value;
+                break;
+            }
+        }
+
+        slopos::NodePrefs np = slopos::prefs_get();
+        np.auto_off_timeout = value;
+        slopos::prefs_set(np);
+        slopos_display_reset_auto_off();
+
+        char row_buf[64];
+        if (value == 0) {
+            snprintf(row_buf, sizeof(row_buf), "  Auto-off: Off");
+        } else {
+            snprintf(row_buf, sizeof(row_buf), "  Auto-off: %ds", value);
+        }
+        update_row_label(row_lbl, row_buf);
+
+        selected = nullptr;
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, (void*)row_label);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t*) {
+        selected = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
+}
+
+// ════════════════════════════════════════════════════════
 // Settings — status rows with alternating backgrounds
 // ════════════════════════════════════════════════════════
 void settings_screen_show()
@@ -1373,6 +1493,19 @@ void settings_screen_show()
     lv_obj_add_event_cb(btn_bl, [](lv_event_t* e) {
         backlight_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
                          (lv_obj_t*)lv_event_get_target(e));
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Auto-off timeout (tappable — opens timeout selector)
+    if (p.auto_off_timeout == 0) {
+        snprintf(buf, sizeof(buf), "  Auto-off: Off");
+    } else {
+        snprintf(buf, sizeof(buf), "  Auto-off: %ds", p.auto_off_timeout);
+    }
+    lv_obj_t* btn_auto_off = add_row(LV_SYMBOL_IMAGE, buf);
+    g_auto_off_row = btn_auto_off;
+    lv_obj_add_event_cb(btn_auto_off, [](lv_event_t* e) {
+        auto_off_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
+                       (lv_obj_t*)lv_event_get_target(e));
     }, LV_EVENT_CLICKED, nullptr);
 
     snprintf(buf, sizeof(buf), "  Chat history: %d messages",
@@ -1979,7 +2112,9 @@ static int   s_rf_pwr  = 22;
 void custom_rf_screen_show()
 {
     using namespace slopos::theme;
-    using responsive::CONTENT_Y, responsive::CONTENT_W, responsive::CONTENT_H;
+    using responsive::CONTENT_Y;
+    using responsive::CONTENT_W;
+    using responsive::CONTENT_H;
 
     lv_obj_t* scr = make_screen_full("Custom RF");
 

@@ -104,7 +104,6 @@ uint32_t slopos_debug_flush_count() { return dbg_flush_count; }
 
 // ── Auto-off timer ──────────────────────────────────
 // Based on MeshCore's AUTO_OFF_MILLIS pattern (MIT license)
-static constexpr uint32_t AUTO_OFF_MS  = 30000;  // 30 seconds
 static uint32_t            auto_off_at = 0;
 static bool                display_on  = true;
 static bool                wake_refresh_pending = false;
@@ -115,7 +114,8 @@ static uint8_t trackball_fallback_tail = 0;
 static uint8_t trackball_fallback_count = 0;
 
 static void reset_auto_off() {
-    auto_off_at = millis() + AUTO_OFF_MS;
+    uint16_t sec = slopos::prefs_get().auto_off_timeout;
+    auto_off_at = (sec > 0) ? (millis() + (uint32_t)sec * 1000) : UINT32_MAX;
 }
 
 static void restore_display_after_sleep()
@@ -465,6 +465,11 @@ bool slopos_display_is_on()
 void slopos_display_set_brightness(uint8_t brightness)
 {
     tft.setBrightness(brightness);
+}
+
+void slopos_display_reset_auto_off()
+{
+    reset_auto_off();
 }
 
 #if defined(SLOPOS_REMOTE_TEST)
