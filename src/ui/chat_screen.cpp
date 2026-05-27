@@ -1243,6 +1243,8 @@ void chat_screen_show()
 {
     screens_clear_back_btn();
     show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    // Reset unread badge counter when the user opens chat
+    slopos::mesh::resetUnreadMessageCount();
 }
 
 void chat_screen_open_dm(const char* contact_name)

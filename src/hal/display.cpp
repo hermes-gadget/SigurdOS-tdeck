@@ -306,7 +306,7 @@ bool slopos_display_init()
 {
     tft.init();
     tft.setRotation(1);  // 90° CW: native portrait (240×320) → landscape (320×240)
-    tft.setBrightness(255);
+    tft.setBrightness(slopos::prefs_get().display_brightness);
     tft.fillScreen(TFT_BLACK);
 
     lv_init();
@@ -449,7 +449,7 @@ uint32_t slopos_display_millis()
 void slopos_display_wake()
 {
     if (!display_on) {
-        tft.setBrightness(255);
+        tft.setBrightness(slopos::prefs_get().display_brightness);
         slopos_keyboard_set_brightness(slopos::prefs_get().kbd_backlight);
         display_on = true;
         wake_refresh_pending = true;

@@ -105,6 +105,7 @@ void loop()
         last_update = millis();
         home_screen_update_battery(slopos_battery_pct());
         home_screen_update_signal(slopos::mesh::getLastRSSI());
+        home_screen_update_badges();
         {
             uint32_t epoch = slopos::mesh::getCurrentTime();
             char tbuf[8];

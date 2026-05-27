@@ -52,6 +52,8 @@ bool sendChannelMessage(const char* channel_name, const char* text);
 int  pollMessages(MeshMessage* out, int max);
 int  pendingMessageCount();
 uint32_t getQueueDropCount();
+int  getUnreadMessageCount();
+void resetUnreadMessageCount();
 
 int  getContactCount();
 int  exportContacts(char names[][32], int max);

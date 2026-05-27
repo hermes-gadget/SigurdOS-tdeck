@@ -60,6 +60,9 @@ static int           msg_head = 0, msg_tail = 0, msg_count = 0;
 // Drop counter — incremented when the queue is full and a message is lost.
 // Check this to detect silent packet loss (the worst kind of regression).
 static uint32_t      msg_drop_count = 0;
+// Unread message count — incremented on every incoming (non-self) message,
+// reset to 0 when the chat screen is opened. Used by the home screen badge.
+static int           unread_count = 0;
 
 static void queue_push(const char* sender, const char* channel, const char* text) {
     if (msg_count >= MAX_QUEUED) {
@@ -81,6 +84,8 @@ static void queue_push(const char* sender, const char* channel, const char* text
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = rtc_clock.getCurrentTime();
     m.is_self = false;
+    // Increment unread count for incoming messages (reset when chat is opened)
+    if (!sender || strcmp(sender, own_name) != 0) unread_count++;
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     // Log as packet entry (accessible via Packets screen)
@@ -438,6 +443,9 @@ int pollMessages(MeshMessage* out, int max) {
 
 int pendingMessageCount() { return msg_count; }
 uint32_t getQueueDropCount() { return msg_drop_count; }
+
+int getUnreadMessageCount() { return unread_count; }
+void resetUnreadMessageCount() { unread_count = 0; }
 
 // ── Contacts ────────────────────────────────────
 
