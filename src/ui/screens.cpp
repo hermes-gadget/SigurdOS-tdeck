@@ -884,11 +884,19 @@ void signal_screen_show()
             "CR:      4/%d\n"
             "TX Pwr:  %d dBm\n\n"
             "TX Air:  %lu ms\n"
-            "RX Air:  %lu ms",
+            "RX Air:  %lu ms\n\n"
+            "TX Fld:  %u\n"
+            "TX Dir:  %u\n"
+            "RX Fld:  %u\n"
+            "RX Dir:  %u",
             rssi, snr, noise,
             p.freq, p.bw, p.sf, p.cr, p.tx_power_dbm,
             slopos::mesh::getTotalTxAirtimeMs(),
-            slopos::mesh::getTotalRxAirtimeMs());
+            slopos::mesh::getTotalRxAirtimeMs(),
+            slopos::mesh::getNumSentFlood(),
+            slopos::mesh::getNumSentDirect(),
+            slopos::mesh::getNumRecvFlood(),
+            slopos::mesh::getNumRecvDirect());
     } else {
         snprintf(buf, sizeof(buf),
             "RSSI:    %d dBm\n"

@@ -528,6 +528,11 @@ int getLastRSSI()     { return g_mesh ? (int)radio_driver->getLastRSSI() : 0; }
 float getLastSNR()    { return g_mesh ? radio_driver->getLastSNR() : 0.0f; }
 unsigned long getTotalTxAirtimeMs() { return g_mesh ? g_mesh->getTotalAirTime() : 0; }
 unsigned long getTotalRxAirtimeMs() { return g_mesh ? g_mesh->getReceiveAirTime() : 0; }
+uint32_t getNumSentFlood()   { return g_mesh ? g_mesh->getNumSentFlood() : 0; }
+uint32_t getNumSentDirect()  { return g_mesh ? g_mesh->getNumSentDirect() : 0; }
+uint32_t getNumRecvFlood()   { return g_mesh ? g_mesh->getNumRecvFlood() : 0; }
+uint32_t getNumRecvDirect()  { return g_mesh ? g_mesh->getNumRecvDirect() : 0; }
+void resetPacketStats()      { if (g_mesh) g_mesh->resetStats(); }
 
 bool sendAdvert() {
     // Rate limit: reject calls within 10 seconds of the last successful advert.

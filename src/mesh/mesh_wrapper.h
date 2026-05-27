@@ -74,6 +74,11 @@ int   getLastRSSI();
 float getLastSNR();
 unsigned long getTotalTxAirtimeMs();
 unsigned long getTotalRxAirtimeMs();
+uint32_t getNumSentFlood();
+uint32_t getNumSentDirect();
+uint32_t getNumRecvFlood();
+uint32_t getNumRecvDirect();
+void resetPacketStats();
 
 bool sendAdvert();
 uint32_t getLastAdvertTime();
