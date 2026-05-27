@@ -45,6 +45,7 @@ static lv_obj_t* time_label    = nullptr;
 static lv_obj_t* batt_label    = nullptr;
 static lv_obj_t* signal_label  = nullptr;
 static lv_obj_t* hashtag_label = nullptr;
+static lv_obj_t* badge_obj     = nullptr;  // CHATS unread badge container
 
 using namespace responsive;
 static constexpr int GRID_PAD   = 3;
@@ -311,13 +312,23 @@ static lv_obj_t* create_icon_tile(lv_obj_t* parent, const IconDef& icon, int idx
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 12);
 
     if (icon.badge) {
-        lv_obj_t* badge = lv_obj_create(tile);
-        lv_obj_set_size(badge, 10, 10);
-        lv_obj_set_style_bg_color(badge, lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(badge, 0, 0);
-        lv_obj_set_style_border_width(badge, 0, 0);
-        lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, -4, 4);
+        // Badge: container with count label, hidden by default, shown when
+        // slopos::mesh::pendingMessageCount() > 0 via home_screen_update_badges()
+        badge_obj = lv_obj_create(tile);
+        lv_obj_set_size(badge_obj, 18, 12);
+        lv_obj_set_style_bg_color(badge_obj, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_bg_opa(badge_obj, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(badge_obj, 0, 0);
+        lv_obj_set_style_border_width(badge_obj, 0, 0);
+        lv_obj_align(badge_obj, LV_ALIGN_TOP_RIGHT, -2, 4);
+        lv_obj_clear_flag(badge_obj, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+        lv_obj_add_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);
+
+        lv_obj_t* cnt_lbl = lv_label_create(badge_obj);
+        lv_label_set_text(cnt_lbl, "0");
+        lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_font(cnt_lbl, &lv_font_montserrat_10, 0);
+        lv_obj_center(cnt_lbl);
     }
 
     return tile;
@@ -371,6 +382,7 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
 {
     // Reset dangling pointers before rebuilding
     hashtag_label = nullptr;
+    badge_obj     = nullptr;
     screens_clear_back_btn();
     time_label    = nullptr;
     batt_label    = nullptr;
@@ -386,7 +398,7 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
     // in ui::loop() don't dereference freed objects.
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         scr = top_bar = bottom_bar = grid = nullptr;
-        time_label = batt_label = signal_label = hashtag_label = nullptr;
+        time_label = batt_label = signal_label = hashtag_label = badge_obj = nullptr;
         for (int i = 0; i < ICON_COUNT; i++) icon_tiles[i] = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 
@@ -400,11 +412,13 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
 void home_screen_create()
 {
     build_home_screen(LV_SCR_LOAD_ANIM_FADE_ON, 300);
+    home_screen_update_badges();
 }
 
 void home_screen_show()
 {
     build_home_screen(LV_SCR_LOAD_ANIM_MOVE_RIGHT, 200);
+    home_screen_update_badges();
 }
 
 void home_screen_handle_trackball(SlopOSTrackballEvent event)
@@ -497,6 +511,23 @@ void home_screen_update_channels()
     char buf[120];
     build_channel_string(buf, sizeof(buf));
     lv_label_set_text(hashtag_label, buf);
+}
+
+void home_screen_update_badges()
+{
+    if (!badge_obj) return;
+    int n = slopos::mesh::getUnreadMessageCount();
+    if (n > 0) {
+        lv_obj_clear_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_t* lbl = lv_obj_get_child(badge_obj, 0);
+        if (lbl) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%d", n > 99 ? 99 : n);
+            lv_label_set_text(lbl, buf);
+        }
+    } else {
+        lv_obj_add_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 } // namespace slopos::ui
