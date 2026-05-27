@@ -1146,7 +1146,9 @@ static void refresh_chat_list_view(lv_obj_t* scr) {
 }
 
 static void show_add_channel_options(lv_obj_t* parent) {
-    auto dlg_sz = dialog_size(260, 140);
+    // 180px height: title (4) + gap + label(12) + input(28) + gap + label(12) + input(28)
+    // + gap + feedback(10) + gap + button(28) + margin
+    auto dlg_sz = dialog_size(260, 180);
     lv_obj_t* dlg = lv_obj_create(parent);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -1156,19 +1158,19 @@ static void show_add_channel_options(lv_obj_t* parent) {
     lv_obj_set_style_pad_all(dlg, 8, 0);
 
     lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Add # Channel");
+    lv_label_set_text(title, "Add Channel");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     lv_obj_t* nl = lv_label_create(dlg);
-    lv_label_set_text(nl, "Hashtag:");
+    lv_label_set_text(nl, "Name:");
     lv_obj_set_style_text_color(nl, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_align(nl, LV_ALIGN_TOP_LEFT, 4, 28);
+    lv_obj_align(nl, LV_ALIGN_TOP_LEFT, 4, 22);
 
     lv_obj_t* ni = lv_textarea_create(dlg);
-    lv_obj_set_size(ni, dlg_sz.w - 16, 28);
-    lv_obj_align(ni, LV_ALIGN_TOP_MID, 0, 46);
+    lv_obj_set_size(ni, dlg_sz.w - 16, 26);
+    lv_obj_align(ni, LV_ALIGN_TOP_MID, 0, 36);
     lv_obj_set_style_bg_color(ni, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ni, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(ni, emoji_wrapped_montserrat_10, 0);
@@ -1177,9 +1179,26 @@ static void show_add_channel_options(lv_obj_t* parent) {
     lv_textarea_set_max_length(ni, MAX_NAME_LEN);
     lv_textarea_set_placeholder_text(ni, "e.g. #general");
 
+    lv_obj_t* pl = lv_label_create(dlg);
+    lv_label_set_text(pl, "PSK (optional):");
+    lv_obj_set_style_text_color(pl, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_align(pl, LV_ALIGN_TOP_LEFT, 4, 68);
+
+    lv_obj_t* pi = lv_textarea_create(dlg);
+    lv_obj_set_size(pi, dlg_sz.w - 16, 26);
+    lv_obj_align(pi, LV_ALIGN_TOP_MID, 0, 82);
+    lv_obj_set_style_bg_color(pi, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_text_color(pi, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(pi, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_style_border_width(pi, 0, 0);
+    lv_textarea_set_one_line(pi, true);
+    lv_textarea_set_max_length(pi, 44); // base64 PSK keys are 24 bytes -> 32 base64 chars
+    lv_textarea_set_placeholder_text(pi, "base64 key (blank = public)");
+
     lv_group_t* g = lv_group_get_default();
     if (g) {
         lv_group_add_obj(g, ni);
+        lv_group_add_obj(g, pi);
         lv_group_focus_obj(ni);
     }
 
@@ -1202,18 +1221,30 @@ static void show_add_channel_options(lv_obj_t* parent) {
         lv_obj_t* sc = lv_obj_get_screen(d);
         lv_obj_t* feedback = (lv_obj_t*)lv_event_get_user_data(e);
 
-        lv_obj_t* namei = nullptr;
-        for (uint32_t j = 0; j < lv_obj_get_child_cnt(d); j++) {
+        lv_obj_t* inputs[2] = {nullptr, nullptr};
+        int idx = 0;
+        for (uint32_t j = 0; j < lv_obj_get_child_cnt(d) && idx < 2; j++) {
             lv_obj_t* child = lv_obj_get_child(d, j);
             if (lv_obj_check_type(child, &lv_textarea_class)) {
-                namei = child;
-                break;
+                inputs[idx++] = child;
             }
         }
 
-        const char* nm = namei ? lv_textarea_get_text(namei) : "";
-        if (!nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter hashtag"); return; }
-        if (slopos::mesh::addHashtagChannel(nm)) {
+        const char* nm  = inputs[0] ? lv_textarea_get_text(inputs[0]) : "";
+        const char* psk = inputs[1] ? lv_textarea_get_text(inputs[1]) : "";
+
+        if (!nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter channel name"); return; }
+
+        bool ok;
+        if (psk[0]) {
+            // PSK provided — add as encrypted channel
+            ok = slopos::mesh::addChannel(nm, psk);
+        } else {
+            // No PSK — add as public hashtag channel
+            ok = slopos::mesh::addHashtagChannel(nm);
+        }
+
+        if (ok) {
             lv_obj_del_async(d);
             refresh_chat_list_view(sc);
         } else {
@@ -1222,15 +1253,70 @@ static void show_add_channel_options(lv_obj_t* parent) {
     };
 
     lv_obj_add_event_cb(add, submit, LV_EVENT_CLICKED, (void*)fb);
+    // ENTER key on name input: if PSK empty, submit; otherwise focus PSK
     lv_obj_add_event_cb(ni, [](lv_event_t* e) {
+        if (lv_event_get_code(e) != LV_EVENT_READY) return;
+        lv_obj_t* input = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_t* d = lv_obj_get_parent(input);
+        lv_obj_t* feedback = (lv_obj_t*)lv_event_get_user_data(e);
+
+        // Find PSK input
+        lv_obj_t* psk_input = nullptr;
+        for (uint32_t j = 0; j < lv_obj_get_child_cnt(d); j++) {
+            lv_obj_t* child = lv_obj_get_child(d, j);
+            if (lv_obj_check_type(child, &lv_textarea_class) && child != input) {
+                psk_input = child;
+                break;
+            }
+        }
+
+        const char* psk = psk_input ? lv_textarea_get_text(psk_input) : "";
+        if (psk && psk[0]) {
+            // PSK field has content — focus it for editing
+            if (psk_input && lv_group_get_default())
+                lv_group_focus_obj(psk_input);
+        } else {
+            // No PSK — submit directly
+            lv_obj_t* sc = lv_obj_get_screen(d);
+            const char* nm = lv_textarea_get_text(input);
+            if (!nm || !nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter channel name"); return; }
+            bool ok = slopos::mesh::addHashtagChannel(nm);
+            if (ok) {
+                lv_obj_del_async(d);
+                refresh_chat_list_view(sc);
+            } else {
+                if (feedback) lv_label_set_text(feedback, "Invalid or full");
+            }
+        }
+    }, LV_EVENT_ALL, (void*)fb);
+    // ENTER key on PSK input: submit
+    lv_obj_add_event_cb(pi, [](lv_event_t* e) {
         if (lv_event_get_code(e) != LV_EVENT_READY) return;
         lv_obj_t* input = (lv_obj_t*)lv_event_get_target(e);
         lv_obj_t* d = lv_obj_get_parent(input);
         lv_obj_t* sc = lv_obj_get_screen(d);
         lv_obj_t* feedback = (lv_obj_t*)lv_event_get_user_data(e);
-        const char* nm = lv_textarea_get_text(input);
-        if (!nm || !nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter hashtag"); return; }
-        if (slopos::mesh::addHashtagChannel(nm)) {
+
+        lv_obj_t* inputs[2] = {nullptr, nullptr};
+        int idx = 0;
+        for (uint32_t j = 0; j < lv_obj_get_child_cnt(d) && idx < 2; j++) {
+            lv_obj_t* child = lv_obj_get_child(d, j);
+            if (lv_obj_check_type(child, &lv_textarea_class)) {
+                inputs[idx++] = child;
+            }
+        }
+
+        const char* nm  = inputs[0] ? lv_textarea_get_text(inputs[0]) : "";
+        const char* psk = inputs[1] ? lv_textarea_get_text(inputs[1]) : "";
+        if (!nm || !nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter channel name"); return; }
+
+        bool ok;
+        if (psk && psk[0]) {
+            ok = slopos::mesh::addChannel(nm, psk);
+        } else {
+            ok = slopos::mesh::addHashtagChannel(nm);
+        }
+        if (ok) {
             lv_obj_del_async(d);
             refresh_chat_list_view(sc);
         } else {
