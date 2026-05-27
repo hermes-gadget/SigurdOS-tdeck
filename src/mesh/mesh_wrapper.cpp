@@ -526,6 +526,8 @@ const char* getOwnName() { return own_name; }
 int getNoiseFloor()   { return g_mesh ? (int)radio_driver->getNoiseFloor() : -120; }
 int getLastRSSI()     { return g_mesh ? (int)radio_driver->getLastRSSI() : 0; }
 float getLastSNR()    { return g_mesh ? radio_driver->getLastSNR() : 0.0f; }
+unsigned long getTotalTxAirtimeMs() { return g_mesh ? g_mesh->getTotalAirTime() : 0; }
+unsigned long getTotalRxAirtimeMs() { return g_mesh ? g_mesh->getReceiveAirTime() : 0; }
 
 bool sendAdvert() {
     // Rate limit: reject calls within 10 seconds of the last successful advert.

@@ -882,9 +882,13 @@ void signal_screen_show()
             "BW:      %.1f kHz\n"
             "SF:      %d\n"
             "CR:      4/%d\n"
-            "TX Pwr:  %d dBm",
+            "TX Pwr:  %d dBm\n\n"
+            "TX Air:  %lu ms\n"
+            "RX Air:  %lu ms",
             rssi, snr, noise,
-            p.freq, p.bw, p.sf, p.cr, p.tx_power_dbm);
+            p.freq, p.bw, p.sf, p.cr, p.tx_power_dbm,
+            slopos::mesh::getTotalTxAirtimeMs(),
+            slopos::mesh::getTotalRxAirtimeMs());
     } else {
         snprintf(buf, sizeof(buf),
             "RSSI:    %d dBm\n"

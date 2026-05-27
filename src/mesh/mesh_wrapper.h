@@ -72,6 +72,8 @@ const char* getOwnName();
 int   getNoiseFloor();
 int   getLastRSSI();
 float getLastSNR();
+unsigned long getTotalTxAirtimeMs();
+unsigned long getTotalRxAirtimeMs();
 
 bool sendAdvert();
 uint32_t getLastAdvertTime();
