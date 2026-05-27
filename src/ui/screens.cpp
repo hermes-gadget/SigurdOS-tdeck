@@ -172,27 +172,14 @@ static lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_style_text_font(back_icon, &lv_font_montserrat_12, 0);
     lv_obj_center(back_icon);
 
-    // Dynamic channel hashtags (snapshot at screen creation)
-    char ch_buf[100] = "";
-    {
-        char names[8][32];
-        int n = slopos::mesh::exportChannels(names, 8);
-        int pos = 0;
-        for (int i = 0; i < n && pos < 90; i++) {
-            const char* nm = names[i];
-            pos += snprintf(ch_buf + pos, sizeof(ch_buf) - pos,
-                            "%s%s*  ", nm[0] == '#' ? "" : "#", nm);
-        }
-        while (pos > 0 && ch_buf[pos-1] == ' ') ch_buf[--pos] = '\0';
-        if (ch_buf[0] == '\0') snprintf(ch_buf, sizeof(ch_buf), "no channels");
+    // Screen title (centered, visible now that channels are gone)
+    if (title && title[0]) {
+        lv_obj_t* ttl = lv_label_create(top);
+        lv_label_set_text(ttl, title);
+        lv_obj_set_style_text_color(ttl, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(ttl, &lv_font_montserrat_10, 0);
+        lv_obj_align(ttl, LV_ALIGN_CENTER, 0, 0);
     }
-    lv_obj_t* ch_lbl = lv_label_create(top);
-    lv_label_set_text(ch_lbl, ch_buf);
-    lv_label_set_long_mode(ch_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(ch_lbl, DISPLAY_W - 78);
-    lv_obj_set_style_text_color(ch_lbl, lv_color_hex(CHANNEL_HASH), 0);
-    lv_obj_set_style_text_font(ch_lbl, &lv_font_montserrat_10, 0);
-    lv_obj_align(ch_lbl, LV_ALIGN_LEFT_MID, 32, 0);
 
     // Time (24h snapshot)
     {
@@ -209,15 +196,6 @@ static lv_obj_t* make_screen_full(const char* title)
         lv_obj_set_style_text_color(tl, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(tl, &lv_font_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
-    }
-
-    // Screen title (small, centered — sits behind channel text but visible when no channels)
-    if (title && title[0]) {
-        lv_obj_t* ttl = lv_label_create(top);
-        lv_label_set_text(ttl, title);
-        lv_obj_set_style_text_color(ttl, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(ttl, &lv_font_montserrat_10, 0);
-        lv_obj_align(ttl, LV_ALIGN_CENTER, 0, 0);
     }
 
     // Top divider

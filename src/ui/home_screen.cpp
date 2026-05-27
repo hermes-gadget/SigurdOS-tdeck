@@ -24,6 +24,7 @@
 #include "responsive.h"
 #include "../hal/tdeck_pins.h"
 #include "../mesh/mesh_wrapper.h"
+#include "../hal/prefs.h"
 #include "../diagnostics/debug_cfg.h"
 #if SLOPOS_DEBUG_UI
 #include "../diagnostics/debug.h"
@@ -169,37 +170,6 @@ static void on_icon_click(lv_event_t* e)
         navigate_to(icons[idx].target);
 }
 
-// ── Build dynamic channel hashtag string ────────────────
-static void build_channel_string(char* buf, size_t sz)
-{
-    char names[8][32];
-    int n = slopos::mesh::exportChannels(names, 8);
-    if (sz == 0) return;
-    if (n == 0) {
-        snprintf(buf, sz, "no channels");
-        return;
-    }
-
-    int pos = 0;
-    for (int i = 0; i < n && pos < (int)sz - 20; i++) {
-        const char* nm = names[i];
-        int written = snprintf(
-            buf + pos,
-            sz - pos,
-            "%s%s*  ",
-            (nm && nm[0] == '#') ? "" : "#",
-            nm ? nm : "");
-
-        if (written < 0) break;
-        if ((size_t)written >= sz - (size_t)pos) {
-            pos = (int)sz - 1;
-            break;
-        }
-        pos += written;
-    }
-    while (pos > 0 && buf[pos-1] == ' ') buf[--pos] = '\0';
-}
-
 // ── Top bar ─────────────────────────────────────────────
 static void create_top_bar()
 {
@@ -217,14 +187,14 @@ static void create_top_bar()
     lv_obj_set_style_text_color(menu_icon, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_align(menu_icon, LV_ALIGN_LEFT_MID, 4, 0);
 
-    // Dynamic channel hashtags
-    char ch_buf[120];
-    build_channel_string(ch_buf, sizeof(ch_buf));
+    // Radio status / setup warning (replaces old channel hashtags)
+    const bool configured = slopos::prefs_get().configured;
     hashtag_label = lv_label_create(top_bar);
-    lv_label_set_text(hashtag_label, ch_buf);
+    lv_label_set_text(hashtag_label, configured ? "" : "Do setup for radio");
     lv_label_set_long_mode(hashtag_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(hashtag_label, HASHTAG_LABEL_W());
-    lv_obj_set_style_text_color(hashtag_label, lv_color_hex(CHANNEL_HASH), 0);
+    lv_obj_set_style_text_color(hashtag_label,
+        lv_color_hex(configured ? CHANNEL_HASH : ACCENT_RED), 0);
     lv_obj_set_style_text_font(hashtag_label, &lv_font_montserrat_10, 0);
     lv_obj_align(hashtag_label, LV_ALIGN_LEFT_MID, 26, 0);
 
@@ -508,9 +478,10 @@ void home_screen_update_signal(int rssi)
 void home_screen_update_channels()
 {
     if (!hashtag_label) return;
-    char buf[120];
-    build_channel_string(buf, sizeof(buf));
-    lv_label_set_text(hashtag_label, buf);
+    const bool configured = slopos::prefs_get().configured;
+    lv_label_set_text(hashtag_label, configured ? "" : "Do setup for radio");
+    lv_obj_set_style_text_color(hashtag_label,
+        lv_color_hex(configured ? CHANNEL_HASH : ACCENT_RED), 0);
 }
 
 void home_screen_update_badges()
