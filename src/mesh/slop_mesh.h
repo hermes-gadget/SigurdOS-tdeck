@@ -33,6 +33,7 @@ struct SlopContact {
     float    longitude;
     uint32_t last_seen;    // RTC timestamp of last advert
     int      last_rssi;    // RSSI of last received packet (dBm)
+    float    last_snr;     // SNR of last received packet (dB)
     uint8_t  out_path_len; // OUT_PATH_UNKNOWN if no known direct path
     uint8_t  out_path[MAX_PATH_SIZE];
 };
@@ -156,6 +157,7 @@ protected:
             if (_contacts[i].id.matches(id)) {
                 _contacts[i].last_seen = timestamp;
                 _contacts[i].last_rssi = (int)_radio->getLastRSSI();
+                _contacts[i].last_snr = pkt->getSNR();
                 _contacts[i].type = parser.getType();
                 update_location(_contacts[i], parser);
                 strncpy(_contacts[i].name, name, sizeof(_contacts[i].name) - 1);
@@ -184,6 +186,7 @@ protected:
             c.id = id;
             c.last_seen = timestamp;
             c.last_rssi = (int)_radio->getLastRSSI();
+            c.last_snr = pkt->getSNR();
             c.type = parser.getType();
             update_location(c, parser);
             c.out_path_len = OUT_PATH_UNKNOWN;
@@ -198,6 +201,7 @@ protected:
         c.id = id;
         c.last_seen = timestamp;
         c.last_rssi = (int)_radio->getLastRSSI();
+        c.last_snr = pkt->getSNR();
         c.type = parser.getType();
         update_location(c, parser);
         self_id.calcSharedSecret(c.secret, id);

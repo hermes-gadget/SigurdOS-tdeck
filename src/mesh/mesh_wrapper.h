@@ -32,6 +32,7 @@ struct ContactInfo {
     float latitude;
     float longitude;
     int  rssi;
+    float snr;
     uint32_t last_seen;
 };
 

@@ -569,6 +569,15 @@ void contacts_screen_show()
         lv_obj_set_style_text_font(rssi_l, &lv_font_montserrat_10, 0);
         lv_obj_align(rssi_l, LV_ALIGN_RIGHT_MID, -6, 0);
 
+        // SNR
+        char snr_buf[12];
+        snprintf(snr_buf, sizeof(snr_buf), "%.1fdB", c.snr);
+        lv_obj_t* snr_l = lv_label_create(row);
+        lv_label_set_text(snr_l, snr_buf);
+        lv_obj_set_style_text_color(snr_l, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(snr_l, &lv_font_montserrat_10, 0);
+        lv_obj_align(snr_l, LV_ALIGN_RIGHT_MID, -56, 0);
+
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(target);
@@ -585,7 +594,6 @@ void contacts_screen_show()
 
     show_screen(scr);
 }
-
 // ════════════════════════════════════════════════════════
 // Finder — nearby nodes with Ping Nearby
 // ════════════════════════════════════════════════════════
@@ -828,6 +836,15 @@ void repeaters_screen_show()
         lv_obj_set_style_text_color(rssi_l, lv_color_hex(TEXT_SECONDARY), 0);
         lv_obj_set_style_text_font(rssi_l, &lv_font_montserrat_10, 0);
         lv_obj_align(rssi_l, LV_ALIGN_RIGHT_MID, -6, 0);
+
+        // SNR
+        char snr_buf[12];
+        snprintf(snr_buf, sizeof(snr_buf), "%.1fdB", c.snr);
+        lv_obj_t* snr_l = lv_label_create(row);
+        lv_label_set_text(snr_l, snr_buf);
+        lv_obj_set_style_text_color(snr_l, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(snr_l, &lv_font_montserrat_10, 0);
+        lv_obj_align(snr_l, LV_ALIGN_RIGHT_MID, -56, 0);
     }
 
     show_screen(scr);

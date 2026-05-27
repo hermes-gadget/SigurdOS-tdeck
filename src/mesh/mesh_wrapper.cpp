@@ -476,6 +476,7 @@ int exportContactsFull(ContactInfo* out, int max) {
             out[n].latitude = c->latitude;
             out[n].longitude = c->longitude;
             out[n].rssi = c->last_rssi;
+            out[n].snr = c->last_snr;
             out[n].last_seen = c->last_seen;
             n++;
         }
