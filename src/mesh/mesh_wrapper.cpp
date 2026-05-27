@@ -87,8 +87,19 @@ static bool queue_pop(MeshMessage* out) {
     return true;
 }
 
+// Forward declarations
+namespace slopos { namespace mesh { bool sendChannelMessage(const char* channel_name, const char* text); }}
+
 static void onMeshMessage(const char* sender, const char* channel, const char* text) {
     queue_push(sender, channel, text);
+#if SLOPOS_DEBUG
+    // Auto-reply in debug mode to test full duplex
+    if (channel && channel[0]) {
+        char reply[160];
+        snprintf(reply, sizeof(reply), "%s: Roger that (%s)", own_name, text);
+        slopos::mesh::sendChannelMessage(channel, reply);
+    }
+#endif
 #if SLOPOS_DEBUG_MESH
     SLOPOS_RUNTIME_FEAT(mesh) {
     int rssi = (int)radio_driver->getLastRSSI();
@@ -224,6 +235,18 @@ bool init(bool spiffs_ok)
     int     sf       = p.configured ? p.sf    : LORA_SF;
     int     cr       = p.configured ? p.cr    : LORA_CR;
     int     tx_power = p.configured ? p.tx_power_dbm : LORA_TX_PWR;
+
+#if SLOPOS_DEBUG
+    // Debug builds: override NVS with compile-time radio defaults.
+    // This ensures consistent behavior regardless of stale NVS values
+    // from previous firmware versions or manual configuration.
+    freq = LORA_FREQ;
+    bw   = LORA_BW;
+    sf   = LORA_SF;
+    cr   = LORA_CR;
+    tx_power = LORA_TX_PWR;
+    Serial.println("[mesh] DEBUG — forcing compile-time radio params");
+#endif
 
     if (!p.configured) {
 #if SLOPOS_DEBUG_MESH

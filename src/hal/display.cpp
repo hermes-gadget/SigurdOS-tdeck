@@ -25,6 +25,7 @@
 #include "tdeck_pins.h"
 #include "../ui/ui.h"
 #include "../ui/chat_screen.h"
+#include "../mesh/mesh_wrapper.h"
 #include "../diagnostics/debug_cfg.h"
 #include "../diagnostics/debug.h"
 #include <lvgl.h>
@@ -382,13 +383,32 @@ void slopos_display_loop()
     // Disabled in remote test mode — the test controller handles capture
 #if !defined(SLOPOS_REMOTE_TEST) || !SLOPOS_REMOTE_TEST
     if (Serial.available()) {
-        static char cmd_buf[32];
+        static char cmd_buf[64];
         static uint8_t cmd_pos = 0;
         char c = (char)Serial.read();
         if (c == '\n' || c == '\r') {
             cmd_buf[cmd_pos] = '\0';
             if (strcmp(cmd_buf, "SCREENSHOT") == 0) {
                 slopos_display_capture_framebuffer();
+            } else if (strncmp(cmd_buf, "SEND ", 5) == 0) {
+                // SEND <channel_name> <text>
+                // Serial-accessible channel message send for debugging.
+                // Useful when the test controller isn't available (non-remote-test builds).
+                const char* rest = cmd_buf + 5;
+                const char* space = strchr(rest, ' ');
+                if (space && space[1]) {
+                    char ch_name[32];
+                    size_t ch_len = (size_t)(space - rest);
+                    if (ch_len > 31) ch_len = 31;
+                    memcpy(ch_name, rest, ch_len);
+                    ch_name[ch_len] = '\0';
+                    const char* text = space + 1;
+                    bool ok = slopos::mesh::sendChannelMessage(ch_name, text);
+                    Serial.printf("[serial] SEND ch=%s text=%s -> %s\n",
+                                  ch_name, text, ok ? "OK" : "FAILED");
+                } else {
+                    Serial.println("[serial] SEND syntax: SEND <channel> <text>");
+                }
             }
             cmd_pos = 0;
         } else if (cmd_pos < sizeof(cmd_buf) - 1) {

@@ -112,6 +112,7 @@ static void print_help() {
     Serial.println(F("║  type <txt>  Type text               ║"));
     Serial.println(F("║  press <key> Press Enter/Bksp/Esc    ║"));
     Serial.println(F("║  inject <from> [channel=<ch>] <msg>  ║"));
+    Serial.println(F("║  sendchannel <ch> <text>          Send on a channel        ║"));
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
     Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
@@ -722,6 +723,18 @@ static bool dispatch(const char* line) {
     } else if (strcmp(cmd, "inject") == 0 || strcmp(cmd, "msg") == 0) {
         if (!arg) { Serial.println("[test] inject: missing args"); return true; }
         cmd_inject(arg);
+    } else if (strcmp(cmd, "sendchannel") == 0) {
+        if (!arg) { Serial.println("[test] sendchannel: missing args — use: sendchannel <channel_name> <text>"); return true; }
+        const char* space = strchr(arg, ' ');
+        if (!space || !space[1]) { Serial.println("[test] sendchannel: missing text — use: sendchannel <channel_name> <text>"); return true; }
+        char ch_name[32];
+        size_t ch_len = (size_t)(space - arg);
+        if (ch_len > 31) ch_len = 31;
+        memcpy(ch_name, arg, ch_len);
+        ch_name[ch_len] = '\0';
+        const char* text = space + 1;
+        bool ok = slopos::mesh::sendChannelMessage(ch_name, text);
+        Serial.printf("[test] sendchannel ch=%s -> %s\n", ch_name, ok ? "OK" : "FAILED");
     } else if (strcmp(cmd, "screen") == 0) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {

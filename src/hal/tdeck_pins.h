@@ -109,11 +109,21 @@
 // ════════════════════════════════════════════════════════
 // LoRa Radio Defaults
 // ════════════════════════════════════════════════════════
+#ifndef LORA_FREQ
 #define LORA_FREQ    869.618f
+#endif
+#ifndef LORA_BW
 #define LORA_BW        62.5f
+#endif
+#ifndef LORA_SF
 #define LORA_SF           8
+#endif
+#ifndef LORA_CR
 #define LORA_CR           5
+#endif
+#ifndef LORA_TX_PWR
 #define LORA_TX_PWR      22
+#endif
 
 // ════════════════════════════════════════════════════════
 // MeshCore expects P_ prefix for radio pins

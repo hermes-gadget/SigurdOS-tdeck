@@ -124,6 +124,7 @@ void loop()
     slopos_display_loop();
     slopos_gps_loop();
 #if defined(SLOPOS_REMOTE_TEST) && SLOPOS_REMOTE_TEST
+    slopos::mesh::loop();
     slopos_test_controller_loop();
 #else
     slopos::mesh::loop();
