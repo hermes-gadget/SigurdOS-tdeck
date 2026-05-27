@@ -115,7 +115,8 @@ inline void apply_dark_bg(lv_obj_t* obj) {
 
 // ── Shared keyboard/trackball focus treatment ───────────
 inline void apply_focus_style(lv_obj_t* obj) {
-    lv_obj_set_style_border_color(obj, lv_color_hex(ACCENT_YELLOW), LV_STATE_FOCUSED);
+    lv_obj_set_style_border_color(obj, lv_color_hex(ACCENT), LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_border_width(obj, PIXEL_BORDER, LV_STATE_FOCUS_KEY);
 }
 
 // ── Pixel card style (0-radius, dark bg, 2px border) ────

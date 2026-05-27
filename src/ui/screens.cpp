@@ -1049,6 +1049,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
     lv_obj_set_style_border_width(input, 0, 0);
     lv_textarea_set_one_line(input, true);
     lv_textarea_set_text(input, cur);
+    apply_focus_style(input);
 
     // Focus immediately so the physical keyboard works without tapping the field
     lv_group_t* grp = lv_group_get_default();
@@ -1987,6 +1988,7 @@ void terminal_screen_show()
     lv_obj_set_style_pad_all(input, 4, 0);
     lv_textarea_set_one_line(input, true);
     lv_textarea_set_placeholder_text(input, "> enter command...");
+    apply_focus_style(input);
 
     lv_group_t* g = lv_group_get_default();
     if (g) {
@@ -2222,6 +2224,7 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
     lv_textarea_set_one_line(name_input, true);
     lv_textarea_set_max_length(name_input, 31);
     lv_textarea_set_placeholder_text(name_input, "e.g. #general");
+    apply_focus_style(name_input);
 
     lv_group_t* g = lv_group_get_default();
     if (g) {
@@ -2439,6 +2442,7 @@ void custom_rf_screen_show()
         lv_obj_set_style_border_width(ta, 0, 0);
         lv_textarea_set_one_line(ta, true);
         lv_textarea_set_text(ta, fields[i].val);
+        apply_focus_style(ta);
         fields[i].ta = ta;
         if (grp) lv_group_add_obj(grp, ta);
         y += row_h;

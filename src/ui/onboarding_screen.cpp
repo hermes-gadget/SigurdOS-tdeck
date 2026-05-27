@@ -85,6 +85,7 @@ static void build_step1()
     lv_textarea_set_one_line(s_name_input, true);
     lv_textarea_set_max_length(s_name_input, 31);
     lv_textarea_set_text(s_name_input, s_name);
+    apply_focus_style(s_name_input);
 
     lv_group_t* g = lv_group_get_default();
     if (g) {
@@ -155,6 +156,7 @@ static void build_step2()
     lv_obj_set_style_border_width(s_date_input, 0, 0);
     lv_textarea_set_one_line(s_date_input, true);
     lv_textarea_set_text(s_date_input, date_buf);
+    apply_focus_style(s_date_input);
 
     lv_obj_t* tl = lv_label_create(s_content);
     lv_label_set_text(tl, "Time (HH:MM 24h):");
@@ -173,6 +175,7 @@ static void build_step2()
     lv_obj_set_style_border_width(s_time_input, 0, 0);
     lv_textarea_set_one_line(s_time_input, true);
     lv_textarea_set_text(s_time_input, time_buf);
+    apply_focus_style(s_time_input);
 
     lv_group_t* g = lv_group_get_default();
     if (g) {

@@ -105,9 +105,10 @@ typedef void (*lv_event_cb_t)(lv_event_t* e);
 #define LV_OBJ_FLAG_SCROLL_WITH_ARROW (1 << 14)
 
 // ── Object states ───────────────────────────────────────
-#define LV_STATE_DEFAULT 0
-#define LV_STATE_PRESSED (1 << 0)
+#define LV_STATE_DEFAULT  (0)
 #define LV_STATE_FOCUSED (1 << 1)
+#define LV_STATE_FOCUS_KEY (1 << 2)
+#define LV_STATE_PRESSED  (1 << 3)
 
 // ── Events ───────────────────────────────────────────────
 #define LV_EVENT_CLICKED    0x07

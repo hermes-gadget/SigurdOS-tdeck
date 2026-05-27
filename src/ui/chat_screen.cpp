@@ -998,6 +998,7 @@ static void create_input_bar()
     lv_obj_remove_flag(input_field, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_set_style_outline_width(input_field, 0, LV_STATE_FOCUSED);
     lv_obj_set_style_outline_width(input_field, 0, (lv_state_t)(LV_STATE_FOCUSED | LV_STATE_EDITED));
+    apply_focus_style(input_field);
 
     // Emoji button — opens emoji picker dialog
     lv_obj_t* emoji_btn = lv_btn_create(input_bar);
@@ -1178,6 +1179,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
     lv_textarea_set_one_line(ni, true);
     lv_textarea_set_max_length(ni, MAX_NAME_LEN);
     lv_textarea_set_placeholder_text(ni, "e.g. #general");
+    apply_focus_style(ni);
 
     lv_obj_t* pl = lv_label_create(dlg);
     lv_label_set_text(pl, "PSK (optional):");
@@ -1194,6 +1196,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
     lv_textarea_set_one_line(pi, true);
     lv_textarea_set_max_length(pi, 44); // base64 PSK keys are 24 bytes -> 32 base64 chars
     lv_textarea_set_placeholder_text(pi, "base64 key (blank = public)");
+    apply_focus_style(pi);
 
     lv_group_t* g = lv_group_get_default();
     if (g) {
