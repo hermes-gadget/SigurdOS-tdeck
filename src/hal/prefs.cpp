@@ -23,6 +23,7 @@ bool prefs_load(NodePrefs& p) {
     if (p.tx_power_dbm > 22) p.tx_power_dbm = 22;
     p.configured    = nvs.getBool("cfg", false);
     p.kbd_backlight = nvs.getUChar("kbd_bl", 127);
+    p.display_brightness = nvs.getUChar("disp_bl", 200);
     p.chat_msg_cap  = nvs.getUShort("chat_cap", 200);
 
     nvs.end();
@@ -41,6 +42,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putChar("txpwr", p.tx_power_dbm < 2 ? (int8_t)2 : (p.tx_power_dbm > 22 ? (int8_t)22 : p.tx_power_dbm));
     nvs.putBool("cfg", p.configured);
     nvs.putUChar("kbd_bl", p.kbd_backlight);
+    nvs.putUChar("disp_bl", p.display_brightness);
     nvs.putUShort("chat_cap", p.chat_msg_cap);
 
     nvs.end();

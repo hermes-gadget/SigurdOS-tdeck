@@ -29,6 +29,7 @@
 #include "../hal/gps.h"
 #include "../hal/prefs.h"
 #include "../hal/keyboard.h"
+#include "../hal/display.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../app/map_renderer.h"
 #include "../fonts/emoji_font.h"
@@ -1114,6 +1115,12 @@ struct BacklightCtx {
     int       brightness;
 };
 
+struct DisplayBrightnessCtx {
+    lv_obj_t* value_label;
+    lv_obj_t* row_label;
+    int       brightness;
+};
+
 struct ChatHistoryCapCtx {
     lv_obj_t* value_label;
     lv_obj_t* row_label;
@@ -1309,6 +1316,106 @@ static void backlight_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 }
 
 // ════════════════════════════════════════════════════════
+// Display brightness dialog
+// ════════════════════════════════════════════════════════
+static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
+{
+    auto dlg_sz = dialog_size(220, 120);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 0, 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "Display Brightness");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+    const slopos::NodePrefs& p = slopos::prefs_get();
+    int brightness = p.display_brightness;
+
+    lv_obj_t* val_lbl = lv_label_create(dlg);
+    char val_buf[24];
+    snprintf(val_buf, sizeof(val_buf), "%d (%d%%)", brightness, brightness * 100 / 255);
+    lv_label_set_text(val_lbl, val_buf);
+    lv_obj_set_style_text_color(val_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(val_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_align(val_lbl, LV_ALIGN_CENTER, 0, -2);
+
+    auto* minus_btn = lv_btn_create(dlg);
+    lv_obj_set_size(minus_btn, 40, 28);
+    lv_obj_align(minus_btn, LV_ALIGN_LEFT_MID, 20, 0);
+    lv_obj_set_style_bg_color(minus_btn, lv_color_hex(ACCENT_RED), 0);
+    lv_obj_set_style_radius(minus_btn, 0, 0);
+    lv_obj_t* ml = lv_label_create(minus_btn);
+    lv_label_set_text(ml, "-");
+    lv_obj_center(ml);
+
+    auto* plus_btn = lv_btn_create(dlg);
+    lv_obj_set_size(plus_btn, 40, 28);
+    lv_obj_align(plus_btn, LV_ALIGN_RIGHT_MID, -20, 0);
+    lv_obj_set_style_bg_color(plus_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(plus_btn, 0, 0);
+    lv_obj_t* pl = lv_label_create(plus_btn);
+    lv_label_set_text(pl, "+");
+    lv_obj_center(pl);
+
+    auto* set_btn = lv_btn_create(dlg);
+    lv_obj_set_size(set_btn, 72, 24);
+    lv_obj_align(set_btn, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_style_bg_color(set_btn, lv_color_hex(ACCENT_GREEN), 0);
+    lv_obj_set_style_radius(set_btn, 0, 0);
+    lv_obj_t* sl = lv_label_create(set_btn);
+    lv_label_set_text(sl, "Set");
+    lv_obj_center(sl);
+
+    auto* ctx = new DisplayBrightnessCtx{ val_lbl, row_label, brightness };
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        delete (DisplayBrightnessCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, (void*)ctx);
+
+    lv_obj_add_event_cb(minus_btn, [](lv_event_t* e) {
+        auto* c = (DisplayBrightnessCtx*)lv_event_get_user_data(e);
+        if (c->brightness >= 25) c->brightness -= 25;
+        else c->brightness = 0;
+        slopos_display_set_brightness(c->brightness);
+        char b[24];
+        snprintf(b, sizeof(b), "%d (%d%%)", c->brightness, c->brightness * 100 / 255);
+        lv_label_set_text(c->value_label, b);
+    }, LV_EVENT_CLICKED, (void*)ctx);
+
+    lv_obj_add_event_cb(plus_btn, [](lv_event_t* e) {
+        auto* c = (DisplayBrightnessCtx*)lv_event_get_user_data(e);
+        if (c->brightness <= 230) c->brightness += 25;
+        else c->brightness = 255;
+        slopos_display_set_brightness(c->brightness);
+        char b[24];
+        snprintf(b, sizeof(b), "%d (%d%%)", c->brightness, c->brightness * 100 / 255);
+        lv_label_set_text(c->value_label, b);
+    }, LV_EVENT_CLICKED, (void*)ctx);
+
+    lv_obj_add_event_cb(set_btn, [](lv_event_t* e) {
+        auto* c = (DisplayBrightnessCtx*)lv_event_get_user_data(e);
+        slopos::NodePrefs np = slopos::prefs_get();
+        np.display_brightness = (uint8_t)c->brightness;
+        slopos::prefs_set(np);
+        slopos_display_set_brightness(c->brightness);
+
+        char row_buf[64];
+        snprintf(row_buf, sizeof(row_buf), "  Display: %d (%d%%)",
+                 c->brightness, c->brightness * 100 / 255);
+        update_row_label(c->row_label, row_buf);
+
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, (void*)ctx);
+}
+
+// ════════════════════════════════════════════════════════
 // Settings — status rows with alternating backgrounds
 // ════════════════════════════════════════════════════════
 void settings_screen_show()
@@ -1373,6 +1480,15 @@ void settings_screen_show()
     lv_obj_add_event_cb(btn_bl, [](lv_event_t* e) {
         backlight_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
                          (lv_obj_t*)lv_event_get_target(e));
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Display brightness (tappable — opens brightness dialog)
+    snprintf(buf, sizeof(buf), "  Display: %d (%d%%)",
+             p.display_brightness, p.display_brightness * 100 / 255);
+    lv_obj_t* btn_disp = add_row(LV_SYMBOL_IMAGE, buf);
+    lv_obj_add_event_cb(btn_disp, [](lv_event_t* e) {
+        display_brightness_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
+                                 (lv_obj_t*)lv_event_get_target(e));
     }, LV_EVENT_CLICKED, nullptr);
 
     snprintf(buf, sizeof(buf), "  Chat history: %d messages",
