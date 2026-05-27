@@ -272,6 +272,17 @@ bool init(bool spiffs_ok)
 #endif
     }
 
+    // If still not configured (non-debug builds), keep SX1262 off.
+    {
+        const auto& cp = slopos::prefs_get();
+        if (!cp.configured) {
+            Serial.println("[mesh] Radio not configured — holding SX1262 in reset");
+            pinMode(P_LORA_RESET, OUTPUT);
+            digitalWrite(P_LORA_RESET, LOW);
+            return true;
+        }
+    }
+
     // ── SX1262 hard reset: radio may retain state across ESP32 reboots.
     //     If BUSY pin is stuck HIGH from a previous crash, std_init() hangs
     //     in waitForBusyPin() → watchdog reset → infinite bootloop.
