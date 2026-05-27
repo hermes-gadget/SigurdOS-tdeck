@@ -40,3 +40,4 @@ bool     slopos_gps_has_fix();
 uint8_t slopos_gps_hour();
 uint8_t slopos_gps_minute();
 uint8_t slopos_gps_second();
+bool    slopos_gps_time_synced();

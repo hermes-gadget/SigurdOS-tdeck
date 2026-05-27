@@ -20,6 +20,7 @@
 #include "gps.h"
 #include "tdeck_pins.h"
 #include <Arduino.h>
+#include <sys/time.h>
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
@@ -34,8 +35,11 @@ static struct GPSData {
     uint8_t  satellites;
     uint8_t  fix_quality;
     uint8_t  hour, minute, second;
+    uint16_t year;
+    uint8_t  month, day;
     bool     has_fix;
     bool     initialized;
+    bool     time_synced;
 } gps;
 
 static char nmea_buf[128];
@@ -119,14 +123,24 @@ static void parse_gga(const char* sentence) {
 }
 
 static void parse_rmc(const char* sentence) {
-    // $GPRMC,time,status,lat,NS,lon,EW,speed,heading,...
+    // $GPRMC,time,status,lat,NS,lon,EW,speed,heading,date,... 
     char field[20];
 
-    // Field 7: speed (knots) — 7 skips from header (field 0)
+    // Field 7: speed (knots)
     if (nmea_field(sentence, 7, field, sizeof(field))) gps.speed_kn = strtof(field, nullptr);
 
     // Field 8: heading (degrees)
     if (nmea_field(sentence, 8, field, sizeof(field))) gps.heading = strtof(field, nullptr);
+
+    // Field 9: date (DDMMYY)
+    if (nmea_field(sentence, 9, field, sizeof(field)) && strlen(field) >= 6) {
+        char d[3] = {field[0], field[1], 0};
+        char m[3] = {field[2], field[3], 0};
+        char y[3] = {field[4], field[5], 0};
+        gps.day   = atoi(d);
+        gps.month = atoi(m);
+        gps.year  = 2000 + atoi(y);
+    }
 }
 
 // ── NMEA checksum validation ───────────────────────────────
@@ -189,6 +203,25 @@ void slopos_gps_loop() {
                 nmea_buf[nmea_pos] = '\0';
                 process_nmea(nmea_buf);
                 nmea_pos = 0;
+
+                // Auto-sync RTC from GPS on first valid fix with date
+                if (!gps.time_synced && gps.has_fix && gps.year >= 2020) {
+                    gps.time_synced = true;
+                    // Compute Unix epoch from GPS date/time
+                    int y = gps.year;
+                    int m = gps.month;
+                    int d = gps.day;
+                    if (m <= 2) { y--; m += 12; }
+                    // Days since 1970-01-01 (Gregorian calendar)
+                    uint32_t days = (uint32_t)(365LL * y + y / 4 - y / 100 + y / 400
+                                             - (365LL * 1970 + 1970 / 4 - 1970 / 100 + 1970 / 400)
+                                             + (uint32_t)(30.6 * (m + 1)) + d - 719469);
+                    uint32_t epoch = days * 86400UL + gps.hour * 3600UL
+                                   + gps.minute * 60UL + gps.second;
+                    // Set system RTC (available on both ESP32 and native builds)
+                    struct timeval tv = { (time_t)epoch, 0 };
+                    settimeofday(&tv, nullptr);
+                }
             }
         } else if (c == '\r') {
             // Ignore carriage return
@@ -213,3 +246,4 @@ bool     slopos_gps_has_fix()      { return gps.has_fix; }
 uint8_t  slopos_gps_hour()         { return gps.hour; }
 uint8_t  slopos_gps_minute()       { return gps.minute; }
 uint8_t  slopos_gps_second()       { return gps.second; }
+bool     slopos_gps_time_synced()  { return gps.time_synced; }
