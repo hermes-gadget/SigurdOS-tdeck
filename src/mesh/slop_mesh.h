@@ -164,6 +164,15 @@ protected:
                 return;
             }
 
+        // Flood max hops check: skip auto-adding contacts beyond the configured limit
+        {
+            uint8_t max_hops = slopos::prefs_get().flood_max_hops;
+            if (max_hops > 0 && pkt->getPathHashCount() >= max_hops) {
+                pushPacketLog(name, (int)_radio->getLastRSSI(), pkt->getSNR(), "ADVERT(SKIPPED)");
+                return;
+            }
+        }
+
         if (_nContacts >= SLOP_MAX_CONTACTS) {
             // List full — evict the contact with the oldest last_seen (LRU)
             int oldest = 0;

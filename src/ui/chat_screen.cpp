@@ -371,7 +371,7 @@ static void populate_channel_rows(lv_obj_t* list) {
             lv_obj_set_style_border_width(badge, 0, 0);
             lv_obj_clear_flag(badge, LV_OBJ_FLAG_CLICKABLE);
 
-            char cnt_buf[4];
+            char cnt_buf[16];
             int cnt = ch_meta[i].unread;
             if (cnt > 9) snprintf(cnt_buf, sizeof(cnt_buf), "9+");
             else         snprintf(cnt_buf, sizeof(cnt_buf), "%d", cnt);

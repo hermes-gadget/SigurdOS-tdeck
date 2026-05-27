@@ -26,6 +26,7 @@ bool prefs_load(NodePrefs& p) {
     p.display_brightness = nvs.getUChar("disp_bl", 200);
     p.auto_off_timeout = nvs.getUShort("auto_off", 30);
     p.chat_msg_cap  = nvs.getUShort("chat_cap", 200);
+    p.flood_max_hops = nvs.getUChar("flood_mh", 0);
 
     nvs.end();
     return true;
@@ -46,6 +47,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("disp_bl", p.display_brightness);
     nvs.putUShort("auto_off", p.auto_off_timeout);
     nvs.putUShort("chat_cap", p.chat_msg_cap);
+    nvs.putUChar("flood_mh", p.flood_max_hops);
 
     nvs.end();
     return true;

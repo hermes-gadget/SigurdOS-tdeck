@@ -1633,6 +1633,34 @@ void settings_screen_show()
                                (lv_obj_t*)lv_event_get_target(e));
     }, LV_EVENT_CLICKED, nullptr);
 
+    // Flood max hops (tappable — cycles through values)
+    static constexpr uint8_t FLOOD_HOPS_VALUES[] = {0, 3, 5, 10, 20, 50};
+    static constexpr const char* FLOOD_HOPS_LABELS[] = {"No limit", "3", "5", "10", "20", "50"};
+    static constexpr int NUM_FLOOD_HOPS = 6;
+    int cur_idx = 0;
+    for (int i = 0; i < NUM_FLOOD_HOPS; i++) {
+        if (p.flood_max_hops == FLOOD_HOPS_VALUES[i]) { cur_idx = i; break; }
+    }
+    snprintf(buf, sizeof(buf), "  Flood max hops: %s", FLOOD_HOPS_LABELS[cur_idx]);
+    lv_obj_t* btn_flood = add_row(LV_SYMBOL_WIFI, buf);
+    lv_obj_add_event_cb(btn_flood, [](lv_event_t* e) {
+        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        slopos::NodePrefs np = slopos::prefs_get();
+        int idx = 0;
+        for (int i = 0; i < NUM_FLOOD_HOPS; i++) {
+            if (np.flood_max_hops == FLOOD_HOPS_VALUES[i]) { idx = i; break; }
+        }
+        idx = (idx + 1) % NUM_FLOOD_HOPS;
+        np.flood_max_hops = FLOOD_HOPS_VALUES[idx];
+        slopos::prefs_set(np);
+        char row_buf[64];
+        snprintf(row_buf, sizeof(row_buf), "  Flood max hops: %s", FLOOD_HOPS_LABELS[idx]);
+        lv_obj_t* lbl = lv_obj_get_child(target, 1);
+        if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+            lv_label_set_text(lbl, row_buf);
+        }
+    }, LV_EVENT_CLICKED, nullptr);
+
     // Date
     int y, mo, d, h, mi;
     slopos::mesh::getCurrentLocalDateTime(&y, &mo, &d, &h, &mi);
