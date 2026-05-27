@@ -1592,6 +1592,24 @@ void settings_screen_show()
              slopos_gps_has_fix() ? "Fix acquired" : "No fix");
     add_row(LV_SYMBOL_GPS, buf);
 
+    // Share location (tappable toggle)
+    snprintf(buf, sizeof(buf), "  Share location: %s",
+             p.share_location ? "ON" : "OFF");
+    lv_obj_t* btn_share = add_row(LV_SYMBOL_GPS, buf);
+    lv_obj_add_event_cb(btn_share, [](lv_event_t* e) {
+        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        slopos::NodePrefs np = slopos::prefs_get();
+        np.share_location = !np.share_location;
+        slopos::prefs_set(np);
+        char row_buf[64];
+        snprintf(row_buf, sizeof(row_buf), "  Share location: %s",
+                 np.share_location ? "ON" : "OFF");
+        lv_obj_t* lbl = lv_obj_get_child(target, 1);
+        if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+            lv_label_set_text(lbl, row_buf);
+        }
+    }, LV_EVENT_CLICKED, nullptr);
+
     // Keyboard backlight (tappable — opens backlight dialog)
     snprintf(buf, sizeof(buf), "  Keyboard BL: %d (%d%%)",
              p.kbd_backlight, p.kbd_backlight * 100 / 255);

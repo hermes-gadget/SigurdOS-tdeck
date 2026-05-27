@@ -545,7 +545,7 @@ bool sendAdvert() {
         return false;
     }
 
-    if (has_fix) {
+    if (has_fix && slopos::prefs_get().share_location) {
         g_mesh->broadcastAdvert(own_name,
             slopos_gps_latitude(), slopos_gps_longitude());
     } else {

@@ -25,6 +25,7 @@ struct NodePrefs {
     uint16_t auto_off_timeout;  // seconds, auto-off timeout (0=off, default 30)
     uint16_t chat_msg_cap;      // Per-channel in-memory message history cap
     uint8_t  flood_max_hops;    // 0=no limit, otherwise max flood hops for contact auto-add
+    bool     share_location;    // include GPS coordinates in adverts
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -41,6 +42,7 @@ struct NodePrefs {
         auto_off_timeout = 30;
         chat_msg_cap = 200;
         flood_max_hops = 0;  // 0 = no limit
+        share_location = true;
     }
 };
 
