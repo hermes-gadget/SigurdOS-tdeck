@@ -167,4 +167,11 @@ TEST_F(MeshWrapperTest, ExportContactsFullReturnsNonNegative) {
     EXPECT_GE(count, 0);
 }
 
+// ── resetPathTo signature exists ────────────────────────
+TEST_F(MeshWrapperTest, ResetPathToSignature) {
+    using fn = bool (*)(const char*);
+    (void)static_cast<fn>(slopos::mesh::resetPathTo);
+    SUCCEED();
+}
+
 } // anonymous namespace

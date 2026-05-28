@@ -61,6 +61,7 @@ int getChannelCount() { return 0; }
 int exportChannels(char names[][32], int max) { return 0; }
 bool addChannel(const char* name, const char* psk) { return false; }
 bool addHashtagChannel(const char* name) { (void)name; return false; }
+bool resetPathTo(const char* name) { (void)name; return false; }
 
 // ── Radio stats ──────────────────────────────────
 

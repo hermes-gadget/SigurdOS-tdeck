@@ -567,6 +567,15 @@ public:
         return (i >= 0 && i < _nContacts) ? &_contacts[i] : nullptr;
     }
 
+    // ── Reset path to a contact ────────────────────────────
+    // Clears the known direct path. Next message will flood until a new path is learned.
+    bool resetPathTo(int idx) {
+        if (idx < 0 || idx >= _nContacts) return false;
+        _contacts[idx].out_path_len = OUT_PATH_UNKNOWN;
+        memset(_contacts[idx].out_path, 0, sizeof(_contacts[idx].out_path));
+        return true;
+    }
+
     // ── Channel management ────────────────────────────
     static int decode_b64(const char* in, size_t in_len, uint8_t* out, size_t out_cap) {
         static const char T[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

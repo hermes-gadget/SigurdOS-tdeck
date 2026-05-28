@@ -860,5 +860,13 @@ void setDutyCycle(uint8_t percent) {
     g_mesh->setDutyCycle(percent);
 }
 
+// ── Contact management extensions ────────────
+bool resetPathTo(const char* name) {
+    if (!g_mesh || !name) return false;
+    int idx = findContactIndex(name);
+    if (idx < 0) return false;
+    return g_mesh->resetPathTo(idx);
+}
+
 } // namespace mesh
 } // namespace slopos

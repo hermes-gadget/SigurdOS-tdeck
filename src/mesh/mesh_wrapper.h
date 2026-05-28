@@ -136,5 +136,8 @@ bool revertRadioParams();
 unsigned long getRemainingTxBudget();
 void setDutyCycle(uint8_t percent);
 
+// ── Contact management extensions ────────────
+bool resetPathTo(const char* name);
+
 } // namespace mesh
 } // namespace slopos
