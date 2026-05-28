@@ -748,26 +748,20 @@ void contact_detail_screen_show(const char* contact_name)
         lv_label_set_text(trace_lbl, LV_SYMBOL_SHUFFLE " Trace");
         lv_obj_center(trace_lbl);
         lv_obj_set_style_text_color(trace_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-        // Store contact_idx in user_data
-        int* idx_ptr = (int*)malloc(sizeof(int));
-        if (idx_ptr) {
-            *idx_ptr = trace_idx;
-            lv_obj_set_user_data(trace_btn, idx_ptr);
-            lv_obj_add_event_cb(trace_btn, [](lv_event_t* e) {
+        // Store contact_idx in user_data (value fits in intptr_t, no heap alloc needed)
+        lv_obj_set_user_data(trace_btn, (void*)(intptr_t)trace_idx);
+        lv_obj_add_event_cb(trace_btn, [](lv_event_t* e) {
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-            int* idx = (int*)lv_obj_get_user_data(btn);
-            if (idx && *idx >= 0) {
+            int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
+            if (idx >= 0) {
                 uint32_t tag = 0;
-                slopos::mesh::sendTrace(*idx, &tag);
+                slopos::mesh::sendTrace(idx, &tag);
                 // Brief snackbar-style feedback — navigate to trace screen
                 // so the user can see the result
                 slopos::ui::navigate_to(slopos::ui::Screen::Trace);
             }
         }, LV_EVENT_CLICKED, nullptr);
-            lv_obj_add_event_cb(trace_btn, [](lv_event_t* e) {
-                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-            }, LV_EVENT_DELETE, nullptr);
-        }
+        // No LV_EVENT_DELETE handler needed — no heap allocation
     }
 
     show_screen(scr);
@@ -792,7 +786,7 @@ void finder_screen_show()
 
     if (slopos::mesh::pingIsActive()) {
         // Ping in progress — show countdown
-        uint32_t remain = slopos::mesh::pingCooldownRemaining();
+        uint32_t remain = slopos::mesh::activePingRemaining();
         uint32_t elapsed = 3000 - (remain > 0 ? remain : 0);
         char ping_buf[40];
         snprintf(ping_buf, sizeof(ping_buf), "%s Listening... (%lu/%lu)",
@@ -1084,14 +1078,18 @@ void signal_screen_show()
             "RSSI    %d dBm\n"
             "SNR     %.1f dB\n"
             "Noise   %d dBm\n\n"
-            "TX Air  %lu ms\n"
-            "RX Air  %lu ms",
+            "Freq    %.3f MHz\n"
+            "BW      %.1f kHz\n"
+            "SF      %d\n"
+            "CR      4/%d\n"
+            "TX Pwr  %d dBm\n"
+            "RX Gain %s",
             rssi, snr, noise,
-            slopos::mesh::getTotalTxAirtimeMs(),
-            slopos::mesh::getTotalRxAirtimeMs());
+            p.freq, p.bw, p.sf, p.cr, p.tx_power_dbm,
+            p.rx_boosted_gain ? "BOOST" : "NORMAL");
         lv_label_set_text(left, left_buf);
 
-        // Right column — radio config + packet counters
+        // Right column — packet counters + airtime + duty cycle
         lv_obj_t* right = lv_label_create(row);
         lv_obj_set_width(right, LV_PCT(48));
         lv_obj_set_style_text_color(right, lv_color_hex(TEXT_PRIMARY), 0);
@@ -1099,20 +1097,22 @@ void signal_screen_show()
 
         char right_buf[256];
         snprintf(right_buf, sizeof(right_buf),
-            "Freq    %.3f MHz\n"
-            "BW      %.1f kHz\n"
-            "SF      %d\n"
-            "CR      4/%d\n"
-            "TX Pwr  %d dBm\n\n"
             "TX Fld  %u\n"
             "TX Dir  %u\n"
             "RX Fld  %u\n"
-            "RX Dir  %u",
-            p.freq, p.bw, p.sf, p.cr, p.tx_power_dbm,
+            "RX Dir  %u\n"
+            "TX Air  %lu ms\n"
+            "RX Air  %lu ms\n\n"
+            "Duty    %u%%\n"
+            "Budget  %lu ms",
             slopos::mesh::getNumSentFlood(),
             slopos::mesh::getNumSentDirect(),
             slopos::mesh::getNumRecvFlood(),
-            slopos::mesh::getNumRecvDirect());
+            slopos::mesh::getNumRecvDirect(),
+            slopos::mesh::getTotalTxAirtimeMs(),
+            slopos::mesh::getTotalRxAirtimeMs(),
+            (unsigned)p.duty_cycle,
+            slopos::mesh::getRemainingTxBudget());
         lv_label_set_text(right, right_buf);
     }
 
@@ -1309,12 +1309,22 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
 
         if (ctx->is_date) {
             int ny, nm, nd;
+            // Days in month lookup: jan=31, feb=28, mar=31, ...
+            static const uint8_t DAYS_IN_MONTH[] = {31,28,31,30,31,30,31,31,30,31,30,31};
             if (sscanf(s, "%d-%d-%d", &ny, &nm, &nd) == 3 &&
-                ny > 2020 && nm >= 1 && nm <= 12 && nd >= 1 && nd <= 31) {
-                int cy, cmo, cd, ch, cmi;
-                slopos::mesh::getCurrentLocalDateTime(&cy, &cmo, &cd, &ch, &cmi);
-                epoch = slopos::mesh::makeEpoch(ny, nm, nd, ch, cmi);
-                valid = true;
+                ny > 2020 && nm >= 1 && nm <= 12 && nd >= 1) {
+                // Check days in month (with leap year for February)
+                uint8_t max_days = DAYS_IN_MONTH[nm - 1];
+                if (nm == 2 && (ny % 4 == 0 && (ny % 100 != 0 || ny % 400 == 0)))
+                    max_days = 29;
+                if (nd <= max_days) {
+                    int cy, cmo, cd, ch, cmi;
+                    slopos::mesh::getCurrentLocalDateTime(&cy, &cmo, &cd, &ch, &cmi);
+                    epoch = slopos::mesh::makeEpoch(ny, nm, nd, ch, cmi);
+                    valid = true;
+                } else {
+                    lv_label_set_text(ctx->feedback, "Invalid day for month");
+                }
             } else {
                 lv_label_set_text(ctx->feedback, "Invalid date (YYYY-MM-DD)");
             }
@@ -2008,6 +2018,67 @@ void settings_screen_show()
         }, LV_EVENT_CLICKED, nullptr);
     }
 
+    // Auto-advert interval (tappable — cycles through values)
+    static constexpr uint8_t ADV_INT_VALUES[] = {0, 10, 20, 40, 60, 120};
+    static constexpr const char* ADV_INT_LABELS[] = {"Disabled", "5 min", "10 min", "20 min", "30 min", "1 hour"};
+    static constexpr int NUM_ADV_INT = 6;
+    {
+        int cur_adv = 0;
+        for (int i = 0; i < NUM_ADV_INT; i++) {
+            if (p.advert_interval == ADV_INT_VALUES[i]) { cur_adv = i; break; }
+        }
+        snprintf(buf, sizeof(buf), "  Auto-advert: %s", ADV_INT_LABELS[cur_adv]);
+        lv_obj_t* btn_adv = add_row(LV_SYMBOL_WIFI, buf);
+        lv_obj_add_event_cb(btn_adv, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            slopos::NodePrefs np = slopos::prefs_get();
+            int idx = 0;
+            for (int i = 0; i < NUM_ADV_INT; i++) {
+                if (np.advert_interval == ADV_INT_VALUES[i]) { idx = i; break; }
+            }
+            idx = (idx + 1) % NUM_ADV_INT;
+            np.advert_interval = ADV_INT_VALUES[idx];
+            slopos::prefs_set(np);
+            char row_buf[64];
+            snprintf(row_buf, sizeof(row_buf), "  Auto-advert: %s", ADV_INT_LABELS[idx]);
+            lv_obj_t* lbl = lv_obj_get_child(target, 1);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+                lv_label_set_text(lbl, row_buf);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // Duty cycle budget (tappable — cycles through values)
+    static constexpr uint8_t DUTY_VALUES[] = {0, 1, 5, 10, 25, 50, 100};
+    static constexpr const char* DUTY_LABELS[] = {"Disabled", "1%", "5%", "10%", "25%", "50%", "100%"};
+    static constexpr int NUM_DUTY = 7;
+    {
+        int cur_dc = 0;
+        for (int i = 0; i < NUM_DUTY; i++) {
+            if (p.duty_cycle == DUTY_VALUES[i]) { cur_dc = i; break; }
+        }
+        snprintf(buf, sizeof(buf), "  Duty cycle: %s", DUTY_LABELS[cur_dc]);
+        lv_obj_t* btn_dc = add_row(LV_SYMBOL_SETTINGS, buf);
+        lv_obj_add_event_cb(btn_dc, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            slopos::NodePrefs np = slopos::prefs_get();
+            int idx = 0;
+            for (int i = 0; i < NUM_DUTY; i++) {
+                if (np.duty_cycle == DUTY_VALUES[i]) { idx = i; break; }
+            }
+            idx = (idx + 1) % NUM_DUTY;
+            np.duty_cycle = DUTY_VALUES[idx];
+            slopos::prefs_set(np);
+            slopos::mesh::setDutyCycle(DUTY_VALUES[idx]);  // apply immediately
+            char row_buf[64];
+            snprintf(row_buf, sizeof(row_buf), "  Duty cycle: %s", DUTY_LABELS[idx]);
+            lv_obj_t* lbl = lv_obj_get_child(target, 1);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+                lv_label_set_text(lbl, row_buf);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+    }
+
     // Date
     int y, mo, d, h, mi;
     slopos::mesh::getCurrentLocalDateTime(&y, &mo, &d, &h, &mi);
@@ -2129,7 +2200,7 @@ static void term_add_line(lv_obj_t* log, const char* text)
     // Prune oldest line if at cap
     while (lv_obj_get_child_cnt(log) >= MAX_TERM_LINES) {
         lv_obj_t* first = lv_obj_get_child(log, 0);
-        if (first) lv_obj_del(first);
+        if (first) lv_obj_del_async(first);
         else break;
     }
 
@@ -2601,6 +2672,8 @@ static int   s_rf_sf   = 8;
 static float s_rf_bw   = 62.5f;
 static int   s_rf_cr   = 5;
 static int   s_rf_pwr  = 22;
+static bool  s_rx_gain    = false;  // RX boosted gain toggle state
+static uint8_t s_duty_cycle = 0;    // duty cycle percentage (0 = disabled)
 
 void custom_rf_screen_show()
 {
@@ -2748,6 +2821,8 @@ void radio_setup_screen_show()
     s_rf_bw   = p.configured ? p.bw            : 62.5f;
     s_rf_cr   = p.configured ? p.cr            : 5;
     s_rf_pwr  = p.configured ? p.tx_power_dbm  : 22;
+    s_rx_gain    = p.rx_boosted_gain;
+    s_duty_cycle = p.duty_cycle;
 
     // Warning
     auto* warn = lv_label_create(scr);
@@ -2914,6 +2989,37 @@ void radio_setup_screen_show()
     }, LV_EVENT_CLICKED, (void*)pwr_lbl);
     ry += 28;
 
+    // ── RX boosted gain toggle ──────────────────────
+    snprintf(buf, sizeof(buf), "RX Gain: %s", s_rx_gain ? "BOOST" : "NORMAL");
+    auto* gain_lbl = lv_label_create(scr);
+    lv_label_set_text(gain_lbl, buf);
+    lv_obj_set_style_text_color(gain_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(gain_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_align(gain_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
+
+    auto* gain_toggle = lv_btn_create(scr);
+    lv_obj_set_size(gain_toggle, 48, 20);
+    lv_obj_align(gain_toggle, LV_ALIGN_TOP_LEFT, rx + rw - 52, ry - 2);
+    lv_obj_set_style_bg_color(gain_toggle, lv_color_hex(s_rx_gain ? ACCENT : ACCENT_RED), 0);
+    lv_obj_set_style_radius(gain_toggle, 0, 0);
+    auto* gtl = lv_label_create(gain_toggle);
+    lv_label_set_text(gtl, s_rx_gain ? "ON" : "OFF");
+    lv_obj_center(gtl);
+    lv_obj_add_event_cb(gain_toggle, [](lv_event_t* e) {
+        s_rx_gain = !s_rx_gain;
+        lv_obj_t* lbl = (lv_obj_t*)lv_event_get_user_data(e);
+        char b[32]; snprintf(b, sizeof(b), "RX Gain: %s", s_rx_gain ? "BOOST" : "NORMAL");
+        lv_label_set_text(lbl, b);
+        // Update toggle button appearance
+        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_set_style_bg_color(target, lv_color_hex(s_rx_gain ? ACCENT : ACCENT_RED), 0);
+        lv_obj_t* bl = lv_obj_get_child(target, 0);
+        if (bl && lv_obj_check_type(bl, &lv_label_class)) {
+            lv_label_set_text(bl, s_rx_gain ? "ON" : "OFF");
+        }
+    }, LV_EVENT_CLICKED, (void*)gain_lbl);
+    ry += 24;
+
     // Save & Reboot
     auto* save_btn = lv_btn_create(scr);
     lv_obj_set_size(save_btn, rw, 28);
@@ -2930,10 +3036,13 @@ void radio_setup_screen_show()
         np.sf           = (uint8_t)s_rf_sf;
         np.cr           = (uint8_t)s_rf_cr;
         np.tx_power_dbm = (int8_t)s_rf_pwr;
+        np.rx_boosted_gain = s_rx_gain;
+        np.duty_cycle   = s_duty_cycle;
         np.configured   = true;
         slopos::prefs_set(np);
         slopos::mesh::saveChannels();
         chat_save_messages();
+        delay(100); // allow flash writes to complete before restart
         ESP.restart();
     }, LV_EVENT_CLICKED, nullptr);
 

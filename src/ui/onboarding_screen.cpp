@@ -209,9 +209,16 @@ static void build_step2()
         const char* date_s = s_date_input ? lv_textarea_get_text(s_date_input) : "";
         const char* time_s = s_time_input ? lv_textarea_get_text(s_time_input) : "";
 
+        static const uint8_t DAYS_IN_MONTH[] = {31,28,31,30,31,30,31,31,30,31,30,31};
         int ny = 2025, nm = 1, nd = 1, nh = 0, nmi = 0;
         bool date_ok = (sscanf(date_s, "%d-%d-%d", &ny, &nm, &nd) == 3 &&
-                        ny >= 2020 && nm >= 1 && nm <= 12 && nd >= 1 && nd <= 31);
+                        ny >= 2020 && nm >= 1 && nm <= 12 && nd >= 1);
+        if (date_ok) {
+            uint8_t max_days = DAYS_IN_MONTH[nm - 1];
+            if (nm == 2 && (ny % 4 == 0 && (ny % 100 != 0 || ny % 400 == 0)))
+                max_days = 29;
+            date_ok = (nd <= max_days);
+        }
         bool time_ok = (sscanf(time_s, "%d:%d", &nh, &nmi) == 2 &&
                         nh >= 0 && nh <= 23 && nmi >= 0 && nmi <= 59);
 

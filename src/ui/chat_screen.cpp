@@ -248,6 +248,35 @@ static lv_obj_t* create_channel_pill(lv_obj_t* parent, int idx)
 // ════════════════════════════════════════════════════
 static void refresh_channels()
 {
+    // ── Snapshot old state for name-based remapping ──────
+    char old_names[MAX_CHANNELS][32];
+    ChannelMeta old_meta[MAX_CHANNELS];
+    uint16_t old_counts[MAX_CHANNELS];
+    ChannelMessage* old_msgs[MAX_CHANNELS] = {nullptr};
+    uint16_t old_caps[MAX_CHANNELS] = {0};
+    int old_count = dyn_count;
+    char active_name[32] = "";
+
+    // Remember the name of the currently active channel so we can
+    // find it again after remapping.
+    if (active_channel >= 0 && active_channel < old_count) {
+        strncpy(active_name, dyn_channels[active_channel], sizeof(active_name) - 1);
+        active_name[sizeof(active_name) - 1] = '\0';
+    }
+
+    memcpy(old_names, dyn_channels, sizeof(old_names));
+    memcpy(old_meta, ch_meta, sizeof(old_meta));
+    memcpy(old_counts, ch_msg_count, sizeof(old_counts));
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        old_msgs[i] = ch_msgs[i];
+        old_caps[i] = ch_msg_capacity[i];
+        ch_msgs[i] = nullptr;
+        ch_msg_capacity[i] = 0;
+        ch_msg_count[i] = 0;
+        memset(&ch_meta[i], 0, sizeof(ch_meta[i]));
+    }
+
+    // ── Get fresh channel list from mesh ─────────────────
     dyn_count = slopos::mesh::exportChannels(dyn_channels, MAX_CHANNELS);
     if (dyn_count == 0) {
         if (slopos::mesh::joinPublicChannel()) {
@@ -255,7 +284,73 @@ static void refresh_channels()
         }
         if (dyn_count == 0) {
             strncpy(dyn_channels[0], "#general", 31);
+            dyn_channels[0][31] = '\0';
             dyn_count = 1;
+        }
+    }
+
+    // ── Remap: transfer message buffers by matching names ─
+    // For each new channel from the mesh, look for a matching
+    // old channel by name and carry its buffer + metadata forward.
+    for (int new_idx = 0; new_idx < dyn_count; new_idx++) {
+        for (int old_idx = 0; old_idx < old_count; old_idx++) {
+            if (old_names[old_idx][0] != '\0' &&
+                strcmp(dyn_channels[new_idx], old_names[old_idx]) == 0) {
+                ch_msgs[new_idx] = old_msgs[old_idx];
+                ch_msg_capacity[new_idx] = old_caps[old_idx];
+                ch_msg_count[new_idx] = old_counts[old_idx];
+                ch_meta[new_idx] = old_meta[old_idx];
+                old_msgs[old_idx] = nullptr;  // claimed — don't free
+                old_names[old_idx][0] = '\0'; // mark consumed
+                break;
+            }
+        }
+    }
+
+    // ── Restore DM entries ───────────────────────────────
+    // DM conversations are synthetic entries (prefixed "DM: ")
+    // that aren't part of the mesh channel export. Re-append
+    // any that existed before the refresh so they persist.
+    for (int old_idx = 0; old_idx < old_count; old_idx++) {
+        if (old_names[old_idx][0] == '\0') continue;
+        if (strncmp(old_names[old_idx], "DM: ", 4) != 0) continue;
+        if (dyn_count >= MAX_CHANNELS) {
+            // No room — free the orphaned buffer
+            if (old_msgs[old_idx]) {
+                heap_caps_free(old_msgs[old_idx]);
+                old_msgs[old_idx] = nullptr;
+            }
+            continue;
+        }
+        int new_idx = dyn_count++;
+        strncpy(dyn_channels[new_idx], old_names[old_idx], 31);
+        dyn_channels[new_idx][31] = '\0';
+        ch_msgs[new_idx] = old_msgs[old_idx];
+        ch_msg_capacity[new_idx] = old_caps[old_idx];
+        ch_msg_count[new_idx] = old_counts[old_idx];
+        ch_meta[new_idx] = old_meta[old_idx];
+        old_msgs[old_idx] = nullptr; // claimed
+    }
+
+    // ── Free orphaned buffers ────────────────────────────
+    // Channels that were in the old list but are no longer
+    // present (gone from mesh, not a DM) have their memory
+    // released here.
+    for (int i = 0; i < old_count; i++) {
+        if (old_msgs[i]) {
+            heap_caps_free(old_msgs[i]);
+            old_msgs[i] = nullptr;
+        }
+    }
+
+    // ── Update active_channel by name, not by index ──────
+    active_channel = 0;
+    if (active_name[0]) {
+        for (int i = 0; i < dyn_count; i++) {
+            if (strcmp(dyn_channels[i], active_name) == 0) {
+                active_channel = i;
+                break;
+            }
         }
     }
     if (active_channel >= dyn_count) active_channel = 0;
@@ -944,12 +1039,20 @@ static void do_send()
     bool is_dm = (strncmp(chan, "DM: ", 4) == 0);
     const char* dest = is_dm ? (chan + 4) : chan;
 
-    if (is_dm) slopos::mesh::sendMessage(dest, text);
-    else       slopos::mesh::sendChannelMessage(dest, text);
+    bool sent = false;
+    if (is_dm) sent = slopos::mesh::sendMessage(dest, text);
+    else       sent = slopos::mesh::sendChannelMessage(dest, text);
 
     uint32_t now = slopos::mesh::getCurrentTime();
     int sent_channel = active_channel;
-    append_channel_message(sent_channel, slopos::mesh::getOwnName(), text, now, true);
+    // Always show the message locally, but mark it if send failed
+    char display_text[200];
+    if (sent) {
+        snprintf(display_text, sizeof(display_text), "%s", text);
+    } else {
+        snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
+    }
+    append_channel_message(sent_channel, slopos::mesh::getOwnName(), display_text, now, true);
     mark_channel_used(sent_channel);
     render_active_messages();
     lv_textarea_set_text(input_field, "");

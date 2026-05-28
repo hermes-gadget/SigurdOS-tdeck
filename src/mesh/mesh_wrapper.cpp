@@ -221,6 +221,11 @@ bool init(bool spiffs_ok)
     // during deep sleep to be silently dropped.
     board.begin();
 
+    // Always initialise clock even in remote-test mode
+    fallback_clock.begin();
+    rtc_clock.begin(Wire);
+
+#ifndef SLOPOS_REMOTE_TEST
     // Delayed allocation of RadioLib Module and radio driver objects.
     // These were previously allocated at file scope (static init time),
     // before PSRAM was available. On ESP32 Arduino builds, a failed
@@ -243,8 +248,9 @@ bool init(bool spiffs_ok)
         return false;
     }
 
-    fallback_clock.begin();
-    rtc_clock.begin(Wire);
+    // Mark clock as initialized so getCurrentTime() and other time APIs
+    // work even when the radio hasn't been configured yet.
+    initialized = true;
 
     // ── Radio configuration: use compile-time defaults if not configured ──
     const slopos::NodePrefs& p = slopos::prefs_get();
@@ -273,6 +279,10 @@ bool init(bool spiffs_ok)
     }
 
     // If still not configured (non-debug builds), keep SX1262 off.
+    // In debug builds, the SLOPOS_DEBUG block below saves configured=true
+    // to NVS — but it can only do that if we don't early-return here.
+    // Debug builds always init the radio with compile-time defaults.
+#if !SLOPOS_DEBUG
     {
         const auto& cp = slopos::prefs_get();
         if (!cp.configured) {
@@ -282,6 +292,7 @@ bool init(bool spiffs_ok)
             return true;
         }
     }
+#endif
 
     // ── SX1262 hard reset: radio may retain state across ESP32 reboots.
     //     If BUSY pin is stuck HIGH from a previous crash, std_init() hangs
@@ -313,6 +324,11 @@ bool init(bool spiffs_ok)
     radio_module->setSpreadingFactor(sf);
     radio_module->setCodingRate(cr);   // denominator (5–8); RadioLib rejects the SX126X enum constants
     radio_module->setOutputPower(tx_power);
+    
+    // Apply RX boosted gain mode if configured
+    if (p.rx_boosted_gain) {
+        radio_driver->setRxBoostedGainMode(true);
+    }
 #if SLOPOS_DEBUG_MESH
     Serial.printf("[mesh] Radio: %.3f MHz / %.1f kHz / SF%d / CR4/%d / %d dBm\n",
                   freq, bw, sf, cr, tx_power);
@@ -339,6 +355,9 @@ bool init(bool spiffs_ok)
     }
 
     g_mesh->begin();
+
+    // Apply duty cycle from prefs
+    g_mesh->setDutyCycle(p.duty_cycle);
 
     // Restore persisted channels from NVS
     loadChannels();
@@ -383,10 +402,10 @@ bool init(bool spiffs_ok)
     // Compile-time defaults may be illegal in some regions — transmit gating
     // prevents first-boot broadcasts until user opens Settings → Radio Setup.
 #if SLOPOS_DEBUG
-    g_mesh->broadcastAdvert(own_name);
+    g_mesh->broadcastAdvert(own_name, slopos::prefs_get().advert_type);
 #else
     if (p.configured) {
-        g_mesh->broadcastAdvert(own_name);
+        g_mesh->broadcastAdvert(own_name, slopos::prefs_get().advert_type);
     }
 #endif
 
@@ -397,6 +416,12 @@ bool init(bool spiffs_ok)
     // Test entry to verify packet log works
     pushPacketLog("SYSTEM", 0, 0.0f, "BOOT");
     return true;
+#else
+    // Remote test: initialise SPI bus for SD card, no LoRa radio
+    lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
+    initialized = true;
+    return true;
+#endif
 }
 
 // ── LVGL timer forward declaration ───────────────────────
@@ -406,9 +431,25 @@ extern "C" uint32_t lv_timer_handler(void);
 
 void loop()
 {
-    if (!initialized || !g_mesh) return;
-    g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
+    if (!initialized) return;
+    if (g_mesh) {
+        g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
+    }
     rtc_clock.tick();
+
+    // ── Periodic auto-advert ──────────────────────────────
+    {
+        static uint32_t last_auto_adv = 0;
+        uint8_t interval = slopos::prefs_get().advert_interval;
+        if (interval > 0) {
+            uint32_t now = millis();
+            uint32_t interval_ms = (uint32_t)interval * 30000u; // half-minutes
+            if (now - last_auto_adv >= interval_ms) {
+                last_auto_adv = now;
+                sendAdvert();
+            }
+        }
+    }
 
     // Service LVGL timers so UI remains responsive even during
     // sustained mesh activity (periodic adverts, packet bursts).
@@ -575,9 +616,10 @@ bool sendAdvert() {
 
     if (has_fix && slopos::prefs_get().share_location) {
         g_mesh->broadcastAdvert(own_name,
-            slopos_gps_latitude(), slopos_gps_longitude());
+            slopos_gps_latitude(), slopos_gps_longitude(),
+            slopos::prefs_get().advert_type);
     } else {
-        g_mesh->broadcastAdvert(own_name);
+        g_mesh->broadcastAdvert(own_name, slopos::prefs_get().advert_type);
     }
 
     last_advert_success = true;
@@ -691,6 +733,10 @@ uint32_t pingCooldownRemaining() {
     return g_mesh ? g_mesh->pingCooldownRemaining() : 0;
 }
 
+uint32_t activePingRemaining() {
+    return g_mesh ? g_mesh->activePingRemaining() : 0;
+}
+
 int getPingResultCount() {
     return g_mesh ? g_mesh->getPingResultCount() : 0;
 }
@@ -730,15 +776,15 @@ void loadChannels() {
     int n = nvs.getUChar("ch_cnt", 0);
     for (int i = 0; i < n; i++) {
         char key[16];
-        char name[32];
-        uint8_t secret[32];
-        uint8_t hash[32];
+        char name[32] = {0};
+        uint8_t secret[32] = {0};
+        uint8_t hash[32] = {0};
         snprintf(key, sizeof(key), "ch_%d_name", i);
-        nvs.getString(key, name, sizeof(name));
+        if (nvs.getString(key, name, sizeof(name)) <= 0) continue;
         snprintf(key, sizeof(key), "ch_%d_sec", i);
-        nvs.getBytes(key, secret, sizeof(secret));
+        if (nvs.getBytes(key, secret, sizeof(secret)) <= 0) continue;
         snprintf(key, sizeof(key), "ch_%d_hash", i);
-        nvs.getBytes(key, hash, sizeof(hash));
+        if (nvs.getBytes(key, hash, sizeof(hash)) <= 0) continue;
         if (name[0]) g_mesh->loadChannel(secret, sizeof(secret), hash, name);
     }
     nvs.end();
@@ -769,6 +815,49 @@ bool getPacketLogEntry(int index, PacketLogEntry* out) {
     int idx = (pkt_log_head - pkt_log_count + index + MAX_PACKET_LOG) % MAX_PACKET_LOG;
     *out = pkt_log[idx];
     return true;
+}
+
+// ── Live radio config (no NVS write) ──────────
+bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool rx_gain) {
+    if (!radio_module) return false;
+    radio_module->setFrequency(freq);
+    radio_module->setBandwidth(bw);
+    radio_module->setSpreadingFactor(sf);
+    radio_module->setCodingRate(cr);
+    radio_module->setOutputPower(tx_power);
+    if (radio_driver) {
+        radio_driver->setRxBoostedGainMode(rx_gain);
+    }
+    return true;
+}
+
+bool revertRadioParams() {
+    if (!radio_module) return false;
+    const slopos::NodePrefs& p = slopos::prefs_get();
+    float freq = p.configured ? p.freq : LORA_FREQ;
+    float bw   = p.configured ? p.bw   : LORA_BW;
+    int   sf   = p.configured ? p.sf   : LORA_SF;
+    int   cr   = p.configured ? p.cr   : LORA_CR;
+    int   pwr  = p.configured ? p.tx_power_dbm : LORA_TX_PWR;
+    radio_module->setFrequency(freq);
+    radio_module->setBandwidth(bw);
+    radio_module->setSpreadingFactor(sf);
+    radio_module->setCodingRate(cr);
+    radio_module->setOutputPower(pwr);
+    if (radio_driver) {
+        radio_driver->setRxBoostedGainMode(p.rx_boosted_gain);
+    }
+    return true;
+}
+
+// ── Duty cycle ────────────────────────────────
+unsigned long getRemainingTxBudget() {
+    return g_mesh ? g_mesh->getRemainingTxBudget() : 0;
+}
+
+void setDutyCycle(uint8_t percent) {
+    if (!g_mesh) return;
+    g_mesh->setDutyCycle(percent);
 }
 
 } // namespace mesh

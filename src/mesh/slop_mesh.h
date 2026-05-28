@@ -83,6 +83,9 @@ class SlopMesh : public ::mesh::Mesh {
     };
     PingResult _ping_results[PING_RESULTS_MAX];
 
+    // ── Duty cycle ──────────────────────────────────
+    uint8_t _duty_cycle = 0;  // 0 = disabled, 1-100 = percent of window
+
 protected:
     // ── Peer DB ──────────────────────────────────────
     int searchPeersByHash(const uint8_t* hash) override {
@@ -383,8 +386,15 @@ public:
         if (!pkt || pkt->payload_len < 5) return;
         if ((pkt->payload[0] & 0x80) == 0) return;
 
+        // Mask off the control-disco bit before comparing string payload
+        uint8_t clean[32];
+        size_t clen = pkt->payload_len;
+        if (clen > sizeof(clean)) clen = sizeof(clean);
+        memcpy(clean, pkt->payload, clen);
+        clean[0] &= 0x7F;
+
         // PING received — respond with PONG containing our name and RSSI
-        if (memcmp(pkt->payload, "PING:", 5) == 0) {
+        if (memcmp(clean, "PING:", 5) == 0) {
             int rssi = (int)_radio->getLastRSSI();
             // Tag is after "PING:" (hex string)
             size_t tag_start = 5;
@@ -407,7 +417,7 @@ public:
         }
 
         // PONG received — collect if it matches our active ping
-        if (memcmp(pkt->payload, "PONG:", 5) == 0 && _ping_sent_at != 0 && _ping_tag != 0) {
+        if (memcmp(clean, "PONG:", 5) == 0 && _ping_sent_at != 0 && _ping_tag != 0) {
             if (_ping_n_results >= PING_RESULTS_MAX) return;
             uint32_t now_ms = _ms->getMillis();
             if (now_ms > _ping_sent_at + PING_WINDOW_MS) return;
@@ -535,16 +545,16 @@ public:
         return false;
     }
 
-    void broadcastAdvert(const char* name) {
-        AdvertDataBuilder builder(ADV_TYPE_CHAT, name);
+    void broadcastAdvert(const char* name, uint8_t adv_type = ADV_TYPE_CHAT) {
+        AdvertDataBuilder builder(adv_type, name);
         uint8_t app[MAX_ADVERT_DATA_SIZE];
         uint8_t app_len = builder.encodeTo(app);
         ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
         if (pkt) sendFlood(pkt);
     }
 
-    void broadcastAdvert(const char* name, double lat, double lon) {
-        AdvertDataBuilder builder(ADV_TYPE_CHAT, name, lat, lon);
+    void broadcastAdvert(const char* name, double lat, double lon, uint8_t adv_type = ADV_TYPE_CHAT) {
+        AdvertDataBuilder builder(adv_type, name, lat, lon);
         uint8_t app[MAX_ADVERT_DATA_SIZE];
         uint8_t app_len = builder.encodeTo(app);
         ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
@@ -735,6 +745,16 @@ public:
         return (_ping_last_at + PING_COOLDOWN_MS) - now;
     }
 
+    // Returns ms remaining in the active 3-second ping listening window.
+    // Used by the Finder screen to show countdown during active ping.
+    // Returns 0 if no ping is active or the window has expired.
+    uint32_t activePingRemaining() const {
+        if (_ping_sent_at == 0) return 0;
+        uint32_t now = _ms->getMillis();
+        if (now >= _ping_sent_at + PING_WINDOW_MS) return 0;
+        return (_ping_sent_at + PING_WINDOW_MS) - now;
+    }
+
     int getPingResultCount() const { return _ping_n_results; }
     const PingResult* getPingResult(int i) const {
         return (i >= 0 && i < _ping_n_results) ? &_ping_results[i] : nullptr;
@@ -744,6 +764,17 @@ public:
         _ping_tag = 0;
         _ping_sent_at = 0;
         _ping_n_results = 0;
+    }
+
+    // ── Duty cycle override ──────────────────────────
+    float getAirtimeBudgetFactor() const override {
+        if (_duty_cycle == 0) return 1.0f;  // no limit
+        // Scale: 1% → 0.01, 100% → 1.0
+        return _duty_cycle / 100.0f;
+    }
+
+    void setDutyCycle(uint8_t percent) {
+        _duty_cycle = percent;
     }
 };
 

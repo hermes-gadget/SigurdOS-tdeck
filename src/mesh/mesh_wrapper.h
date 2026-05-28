@@ -124,8 +124,17 @@ bool     sendPingNearby();
 bool     pingIsActive();
 bool     pingOnCooldown();
 uint32_t pingCooldownRemaining();
+uint32_t activePingRemaining();
 int      getPingResultCount();
 const PingResult* getPingResult(int i);
+
+// ── Live radio config (no NVS write) ──────────
+bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool rx_gain);
+bool revertRadioParams();
+
+// ── Duty cycle ────────────────────────────────
+unsigned long getRemainingTxBudget();
+void setDutyCycle(uint8_t percent);
 
 } // namespace mesh
 } // namespace slopos
