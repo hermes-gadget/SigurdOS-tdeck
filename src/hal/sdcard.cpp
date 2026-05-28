@@ -109,6 +109,11 @@ bool slopos_sdcard_write(const char* path, const uint8_t* data, size_t len)
 {
     if (!mounted || !path || !data || len == 0) return false;
 
+    // SD.begin() with FILE_WRITE opens for append — remove first so we replace the file
+    if (SD.exists(path)) {
+        SD.remove(path);
+    }
+
     File f = SD.open(path, FILE_WRITE);
     if (!f) return false;
 

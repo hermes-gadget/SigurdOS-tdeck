@@ -123,8 +123,19 @@ static void parse_gga(const char* sentence) {
 }
 
 static void parse_rmc(const char* sentence) {
-    // $GPRMC,time,status,lat,NS,lon,EW,speed,heading,date,... 
+    // $GPRMC,time,status,lat,NS,lon,EW,speed,heading,date,...
     char field[20];
+
+    // Field 2: status — 'A' = active (valid), 'V' = void (invalid)
+    if (nmea_field(sentence, 2, field, sizeof(field))) {
+        if (field[0] != 'A') {
+            // Status is void ('V') or unknown — skip updating speed, heading, date
+            return;
+        }
+    } else {
+        // No status field — skip
+        return;
+    }
 
     // Field 7: speed (knots)
     if (nmea_field(sentence, 7, field, sizeof(field))) gps.speed_kn = strtof(field, nullptr);
@@ -144,19 +155,21 @@ static void parse_rmc(const char* sentence) {
 }
 
 // ── NMEA checksum validation ───────────────────────────────
-// Returns true if the sentence has no checksum (backward compatible)
-// or the checksum after '*' matches the XOR of bytes between '$' and '*'.
+// Returns false if the sentence has no '*' or too few hex chars after '*'.
+// Only returns true when the checksum is explicitly present AND valid.
 static bool nmea_checksum_valid(const char* sentence) {
-    if (!sentence || sentence[0] != '$') return true;
+    if (!sentence || sentence[0] != '$') return false;
 
     // Find the '*'
     const char* star = strchr(sentence, '*');
-    if (!star || strlen(star) < 3) return true; // no checksum, backward compatible
+    if (!star) return false; // no '*' → malformed
 
-    // Extract expected checksum (2 hex digits after *)
+    // Must have at least 2 hex chars after '*'
+    if (strlen(star) < 3) return false;
     char hex[3] = {star[1], star[2], 0};
     if (!isxdigit((unsigned char)hex[0]) || !isxdigit((unsigned char)hex[1]))
-        return true; // malformed checksum, backward compatible
+        return false; // malformed checksum
+
     uint8_t expected = (uint8_t)strtol(hex, nullptr, 16);
 
     // Compute XOR of all bytes between '$' and '*'

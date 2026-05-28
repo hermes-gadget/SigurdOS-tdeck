@@ -274,9 +274,14 @@ static int parse_expected_checksum(const char* sentence) {
 }
 
 static bool nmea_checksum_valid(const char* sentence) {
-    int expected = parse_expected_checksum(sentence);
-    if (expected < 0) return true;  // no checksum → backward compatible
-    return (int)compute_nmea_checksum(sentence) == expected;
+    if (!sentence || sentence[0] != '$') return false;
+    const char* star = strchr(sentence, '*');
+    if (!star) return false;
+    if (strlen(star) < 3) return false;
+    if (!isxdigit((unsigned char)star[1]) || !isxdigit((unsigned char)star[2])) return false;
+    char hex[3] = {star[1], star[2], 0};
+    uint8_t expected = (uint8_t)strtol(hex, nullptr, 16);
+    return (int)compute_nmea_checksum(sentence) == (int)expected;
 }
 
 // ── NMEA checksum tests ──────────────────────────────────
@@ -300,27 +305,27 @@ TEST(NMEAChecksumTest, CorruptedDataFailsValidation) {
     EXPECT_FALSE(nmea_checksum_valid("$GPGGA,123519,9999.999,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"));
 }
 
-TEST(NMEAChecksumTest, NoChecksumAccepted) {
-    // GGA sentence without trailing checksum
-    EXPECT_TRUE(nmea_checksum_valid("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,"));
+TEST(NMEAChecksumTest, NoChecksumRejected) {
+    // GGA sentence without trailing checksum — now rejected as malformed
+    EXPECT_FALSE(nmea_checksum_valid("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,"));
 }
 
-TEST(NMEAChecksumTest, EmptyAsteriskAccepted) {
-    // Sentence ending with bare *
-    EXPECT_TRUE(nmea_checksum_valid("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,*"));
+TEST(NMEAChecksumTest, EmptyAsteriskRejected) {
+    // Sentence ending with bare * — now rejected as malformed
+    EXPECT_FALSE(nmea_checksum_valid("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,*"));
 }
 
 TEST(NMEAChecksumTest, NullInput) {
-    EXPECT_TRUE(nmea_checksum_valid(nullptr));
+    EXPECT_FALSE(nmea_checksum_valid(nullptr));
 }
 
 TEST(NMEAChecksumTest, EmptyInput) {
-    EXPECT_TRUE(nmea_checksum_valid(""));
+    EXPECT_FALSE(nmea_checksum_valid(""));
 }
 
 TEST(NMEAChecksumTest, NonNMEAInput) {
-    // Not a $ sentence — treated as no checksum
-    EXPECT_TRUE(nmea_checksum_valid("garbage data"));
+    // Not a $ sentence — rejected as malformed
+    EXPECT_FALSE(nmea_checksum_valid("garbage data"));
 }
 
 TEST(NMEAChecksumTest, BoldCharacterCorruption) {
@@ -362,7 +367,7 @@ protected:
 };
 
 TEST_F(GPSIntegrationTest, GGAWithEmptyCoordinateFieldsDoesNotShiftLaterFields) {
-    feed("$GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,\n");
+    feed("$GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,*7E\n");
 
     EXPECT_EQ(slopos_gps_hour(), 12);
     EXPECT_EQ(slopos_gps_minute(), 35);
@@ -375,7 +380,7 @@ TEST_F(GPSIntegrationTest, GGAWithEmptyCoordinateFieldsDoesNotShiftLaterFields) 
 }
 
 TEST_F(GPSIntegrationTest, RMCWithEmptySpeedKeepsHeadingInFieldEight) {
-    feed("$GPRMC,123519,A,4807.038,N,01131.000,E,,084.4,230394,003.1,W\n");
+    feed("$GPRMC,123519,A,4807.038,N,01131.000,E,,084.4,230394,003.1,W*40\n");
 
     EXPECT_FLOAT_EQ(slopos_gps_speed_kn(), 0.0f);
     EXPECT_NEAR(slopos_gps_heading(), 84.4f, 0.1f);

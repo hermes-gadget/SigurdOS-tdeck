@@ -63,13 +63,21 @@ static constexpr uint32_t KB_POLL_INTERVAL_MS       = 5;    // faster polling fo
 static constexpr uint8_t  KB_BACKLIGHT_DEFAULT      = 127;  // mid brightness
 
 static bool     initialized     = false;
-static bool     has_new_event   = false;
-static int      current_key     = 0;     // int: Wire.read() returns int, -1 = error
-static int      latched_key     = 0;     // key currently considered "active" until MCU reports 0
 static uint32_t last_poll_ms    = 0;
 static bool     shift_held      = false;
 static bool     ctrl_held       = false;
 static bool     alt_held        = false;
+
+// ── Ring buffer for key events ─────────────────────────────
+// Fixes single-slot latch that dropped fast key presses:
+// slopos_keyboard_scan() now pushes every valid key into the buffer,
+// and the LVGL indev callback dequeues one key at a time.
+static constexpr int KEY_BUF_SIZE = 16;
+static uint8_t  key_buf[KEY_BUF_SIZE] = {0};
+static int      key_head  = 0;   // next write position
+static int      key_tail  = 0;   // next read position
+static int      key_count = 0;   // number of entries in buffer
+static int      last_consumed_key = 0; // key returned by most recent consume_event()
 
 // ════════════════════════════════════════════════════════
 // PUBLIC API
@@ -140,30 +148,33 @@ void slopos_keyboard_scan()
     }
 
     if (keyValue <= 0 || keyValue == 0xFF) {
-        // MCU returned 0 — this single-shot MCU only reports each key once, then returns 0.
-        // Do NOT clear latched_key or has_new_event here; they persist until
-        // slopos_keyboard_consume_key() is called by the LVGL indev callback.
-        // Clearing here was the race: display loop could wipe the key before LVGL ever saw it.
+        // MCU returned 0 or invalid — nothing to enqueue.
         return;
     }
 
-    // Store the key code (ASCII value) and latch it until we see a 0 from the MCU
-    latched_key = keyValue;
-    has_new_event = true;
-    current_key = keyValue;
+    // Push key into ring buffer (if full, overwrite oldest)
+    key_buf[key_head] = (uint8_t)keyValue;
+    key_head = (key_head + 1) % KEY_BUF_SIZE;
+    if (key_count < KEY_BUF_SIZE) {
+        key_count++;
+    } else {
+        // Buffer full — advance tail to discard oldest entry
+        key_tail = (key_tail + 1) % KEY_BUF_SIZE;
+    }
 
     // Track modifier state based on key codes where possible.
     // Note: The T-Deck keyboard MCU sends pre-processed ASCII key codes,
     // not raw modifier+scancode, so modifier tracking is limited.
     // Shift state is best-effort — uppercase ASCII implies shift.
-    if (current_key >= 'A' && current_key <= 'Z') {
+    int k = keyValue;
+    if (k >= 'A' && k <= 'Z') {
         shift_held = true;
-    } else if (current_key >= 'a' && current_key <= 'z') {
+    } else if (k >= 'a' && k <= 'z') {
         shift_held = false;
     }
     // Alt and Ctrl are harder to detect from ASCII output alone.
     // Track via special key codes the MCU may send.
-    switch (current_key) {
+    switch (k) {
     case 0x0C: alt_held = !alt_held; break;   // Alt+C toggle sent by MCU
     case 0x0D: break;  // Enter — no modifier change
     case 0x08: break;  // Backspace — no modifier change
@@ -173,7 +184,10 @@ void slopos_keyboard_scan()
 
 int slopos_keyboard_get_key()
 {
-    return latched_key ? latched_key : current_key;
+    if (key_count > 0) {
+        return key_buf[key_tail];
+    }
+    return last_consumed_key;
 }
 
 bool slopos_keyboard_is_shift()
@@ -193,13 +207,15 @@ bool slopos_keyboard_is_alt()
 
 bool slopos_keyboard_has_event()
 {
-    return has_new_event;
+    return key_count > 0;
 }
 
 bool slopos_keyboard_consume_event()
 {
-    if (has_new_event) {
-        has_new_event = false;  // consume the event
+    if (key_count > 0) {
+        last_consumed_key = key_buf[key_tail];
+        key_tail = (key_tail + 1) % KEY_BUF_SIZE;
+        key_count--;
         return true;
     }
     return false;
@@ -231,9 +247,10 @@ void slopos_keyboard_set_default_brightness(uint8_t duty)
 void slopos_keyboard_reset_scan_state()
 {
     last_poll_ms    = 0;
-    current_key     = 0;
-    latched_key     = 0;
-    has_new_event   = false;
+    key_head  = 0;
+    key_tail  = 0;
+    key_count = 0;
+    last_consumed_key = 0;
     shift_held      = false;
     ctrl_held       = false;
     alt_held        = false;
@@ -241,16 +258,22 @@ void slopos_keyboard_reset_scan_state()
 
 void slopos_keyboard_consume_key()
 {
-    current_key   = 0;
-    latched_key   = 0;
-    has_new_event = false;
+    key_head  = 0;
+    key_tail  = 0;
+    key_count = 0;
+    last_consumed_key = 0;
 }
 
 void slopos_keyboard_inject(uint8_t key_code)
 {
-    latched_key = key_code;
-    has_new_event = true;
-    current_key = key_code;
+    // Push into ring buffer (if full, overwrite oldest)
+    key_buf[key_head] = key_code;
+    key_head = (key_head + 1) % KEY_BUF_SIZE;
+    if (key_count < KEY_BUF_SIZE) {
+        key_count++;
+    } else {
+        key_tail = (key_tail + 1) % KEY_BUF_SIZE;
+    }
 
     // Track modifier state based on key code
     if (key_code >= 'A' && key_code <= 'Z') {

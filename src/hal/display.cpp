@@ -370,9 +370,12 @@ bool slopos_display_init()
     reset_auto_off();
 
     // Backlight pulse: brief off→on to confirm display is alive
+    uint8_t saved_brightness = slopos::prefs_get().display_brightness;
     tft.setBrightness(0);
     delay(50);
     tft.setBrightness(255);
+    // Restore saved brightness after the pulse
+    slopos_display_set_brightness(saved_brightness);
 
     return true;
 }

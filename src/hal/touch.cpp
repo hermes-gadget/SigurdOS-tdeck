@@ -125,12 +125,25 @@ bool slopos_touch_init()
         return false;
     }
 
-    // Read existing config from chip (186 bytes)
+    // Read existing config from chip (186 bytes).
+    // Chunk into 32-byte pieces to avoid Arduino Wire buffer overflow.
     static constexpr size_t CFG_SZ = 186;
+    static constexpr size_t CHUNK_SZ = 32;
     uint8_t config[CFG_SZ];
-    if (i2c_read_bytes(GT911_REG_CONFIG, config, CFG_SZ)) {
-        // Write it back (required by GT911 init sequence)
-        i2c_write_bytes(GT911_REG_CONFIG, config, CFG_SZ);
+    bool config_ok = true;
+    for (size_t offset = 0; offset < CFG_SZ; offset += CHUNK_SZ) {
+        size_t chunk = (offset + CHUNK_SZ <= CFG_SZ) ? CHUNK_SZ : (CFG_SZ - offset);
+        if (!i2c_read_bytes(GT911_REG_CONFIG + offset, config + offset, chunk)) {
+            config_ok = false;
+            break;
+        }
+    }
+    if (config_ok) {
+        // Write back in chunks
+        for (size_t offset = 0; offset < CFG_SZ; offset += CHUNK_SZ) {
+            size_t chunk = (offset + CHUNK_SZ <= CFG_SZ) ? CHUNK_SZ : (CFG_SZ - offset);
+            i2c_write_bytes(GT911_REG_CONFIG + offset, config + offset, chunk);
+        }
     }
 
     // Clear any stale touch data
