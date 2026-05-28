@@ -258,13 +258,9 @@ void slopos_keyboard_reset_scan_state()
 
 void slopos_keyboard_consume_key()
 {
-    if (key_count > 0) {
-        key_tail = (key_tail + 1) % KEY_BUF_SIZE;
-        key_count--;
-        if (key_count == 0) {
-            key_head = key_tail = 0;
-        }
-    }
+    // consume_event() already dequeued the key from the ring buffer.
+    // We just need to clear the latched value so subsequent get_key() calls
+    // without a new event return 0 (no key pending).
     last_consumed_key = 0;
 }
 
