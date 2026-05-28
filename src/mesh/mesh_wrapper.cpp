@@ -636,6 +636,15 @@ uint32_t makeEpoch(int year, int month, int day, int hour, int minute) {
 
 static uint32_t trace_tag_counter = 0;
 
+int findContactIndex(const char* name) {
+    if (!g_mesh || !name || !name[0]) return -1;
+    for (int i = 0; i < g_mesh->getContactCount(); i++) {
+        auto* c = g_mesh->getContact(i);
+        if (c && strcmp(c->name, name) == 0) return i;
+    }
+    return -1;
+}
+
 bool sendTrace(int contact_idx, uint32_t* out_tag) {
     if (!g_mesh) return false;
     uint32_t tag = ++trace_tag_counter;

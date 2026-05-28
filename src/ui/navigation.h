@@ -39,6 +39,7 @@ enum class Screen {
     RadioSetup,
     Repeaters,
     Onboarding,
+    ContactDetail,
     COUNT
 };
 

@@ -557,6 +557,23 @@ void contacts_screen_show()
         lv_obj_set_style_text_font(snr_l, &lv_font_montserrat_10, 0);
         lv_obj_align(snr_l, LV_ALIGN_RIGHT_MID, -56, 0);
 
+        // Detail icon — navigates to Contact Detail screen
+        lv_obj_t* detail_btn = lv_label_create(row);
+        lv_label_set_text(detail_btn, LV_SYMBOL_EYE_OPEN);
+        lv_obj_set_style_text_color(detail_btn, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(detail_btn, &lv_font_montserrat_12, 0);
+        lv_obj_align(detail_btn, LV_ALIGN_RIGHT_MID, -82, 0);
+        lv_obj_add_flag(detail_btn, LV_OBJ_FLAG_CLICKABLE);
+        char* detail_name = strdup(c.name);
+        lv_obj_set_user_data(detail_btn, detail_name);
+        lv_obj_add_event_cb(detail_btn, [](lv_event_t* e) {
+            const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+            if (name) contact_detail_screen_show(name);
+        }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(detail_btn, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
+
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(target);
@@ -567,6 +584,195 @@ void contacts_screen_show()
 
         // Free the heap-allocated name copy when the row is deleted
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
+    }
+
+    show_screen(scr);
+}
+// ════════════════════════════════════════════════════════
+// Contact Detail — full info about a single contact
+// ════════════════════════════════════════════════════════
+void contact_detail_screen_show(const char* contact_name)
+{
+    if (!contact_name || !contact_name[0]) {
+        Serial.println("[ui] contact_detail: empty name");
+        return;
+    }
+
+    lv_obj_t* scr = make_screen_full("Contact");
+
+    // Look up the contact via exportContactsFull
+    slopos::mesh::ContactInfo contacts[64];
+    int total = slopos::mesh::exportContactsFull(contacts, 64);
+    const slopos::mesh::ContactInfo* target = nullptr;
+    for (int i = 0; i < total; i++) {
+        if (strcmp(contacts[i].name, contact_name) == 0) {
+            target = &contacts[i];
+            break;
+        }
+    }
+    if (!target) {
+        lv_obj_t* err = lv_label_create(scr);
+        lv_label_set_text(err, "Contact not found");
+        lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_text_font(err, &lv_font_montserrat_12, 0);
+        lv_obj_align(err, LV_ALIGN_CENTER, 0, 0);
+        show_screen(scr);
+        return;
+    }
+
+    // Content area — scrollable vertical column for all fields
+    lv_obj_t* list = lv_obj_create(scr);
+    lv_obj_set_size(list, LV_PCT(100), CONTENT_H - 34); // leave room for action buttons
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
+    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_style_pad_all(list, 4, 0);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+
+    // Helper: add a labeled info row
+    auto add_row = [&](const char* label, const char* value, uint32_t color) {
+        lv_obj_t* row = lv_obj_create(list);
+        lv_obj_set_size(row, LV_PCT(100), 22);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_pad_left(row, 8, 0);
+        lv_obj_set_style_pad_right(row, 8, 0);
+
+        lv_obj_t* lbl = lv_label_create(row);
+        lv_label_set_text(lbl, label);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t* val = lv_label_create(row);
+        lv_label_set_text(val, value);
+        lv_obj_set_style_text_color(val, lv_color_hex(color), 0);
+        lv_obj_set_style_text_font(val, &lv_font_montserrat_12, 0);
+        lv_obj_align(val, LV_ALIGN_RIGHT_MID, -8, 0);
+    };
+
+    // Name (large, top)
+    lv_obj_t* name_l = lv_label_create(list);
+    lv_label_set_text(name_l, target->name);
+    lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(name_l, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_pad_left(name_l, 8, 0);
+    lv_obj_set_style_pad_bottom(name_l, 4, 0);
+
+    // Node type
+    const char* type_str = "Unknown";
+    switch (target->type) {
+        case ADV_TYPE_CHAT:     type_str = "Chat Node"; break;
+        case ADV_TYPE_REPEATER: type_str = "Repeater"; break;
+        case ADV_TYPE_ROOM:     type_str = "Room Server"; break;
+        case ADV_TYPE_SENSOR:   type_str = "Sensor"; break;
+    }
+    add_row("Type", type_str, ACCENT);
+
+    // RSSI
+    char rssi_buf[16];
+    snprintf(rssi_buf, sizeof(rssi_buf), "%d dBm", target->rssi);
+    add_row("RSSI", rssi_buf, TEXT_PRIMARY);
+
+    // SNR
+    char snr_buf[16];
+    snprintf(snr_buf, sizeof(snr_buf), "%.1f dB", target->snr);
+    add_row("SNR", snr_buf, TEXT_PRIMARY);
+
+    // Last seen
+    if (target->last_seen > 0) {
+        // Get contract index to look up path info later
+        int cidx = slopos::mesh::findContactIndex(contact_name);
+        char time_buf[24];
+        time_t t = (time_t)target->last_seen;
+        struct tm* tm_info = localtime(&t);
+        if (tm_info) {
+            strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M", tm_info);
+            add_row("Last Seen", time_buf, TEXT_PRIMARY);
+        } else {
+            add_row("Last Seen", "?", TEXT_SECONDARY);
+        }
+
+        // Show path status
+        if (cidx >= 0 && slopos::mesh::contactHasPath(cidx)) {
+            add_row("Path", "Direct", ACCENT_GREEN);
+        } else if (cidx >= 0) {
+            add_row("Path", "Flood", TEXT_SECONDARY);
+        }
+    } else {
+        add_row("Last Seen", "N/A", TEXT_SECONDARY);
+    }
+
+    // GPS location
+    if (target->has_location) {
+        char loc_buf[48];
+        snprintf(loc_buf, sizeof(loc_buf), "%.4f, %.4f",
+                 target->latitude, target->longitude);
+        add_row("Location", loc_buf, ACCENT_GREEN);
+    } else {
+        add_row("Location", "Not shared", TEXT_SECONDARY);
+    }
+
+    // ── Action button row ───────────────────────────
+    lv_obj_t* btn_row = lv_obj_create(scr);
+    lv_obj_set_size(btn_row, CONTENT_W, 30);
+    lv_obj_align(btn_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H));
+    lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btn_row, 0, 0);
+    lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    // Send DM button
+    lv_obj_t* dm_btn = lv_btn_create(btn_row);
+    lv_obj_set_size(dm_btn, 110, 24);
+    lv_obj_set_style_bg_color(dm_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(dm_btn, 0, 0);
+    lv_obj_t* dm_lbl = lv_label_create(dm_btn);
+    lv_label_set_text(dm_lbl, LV_SYMBOL_ENVELOPE " DM");
+    lv_obj_center(dm_lbl);
+    lv_obj_set_style_text_color(dm_lbl, lv_color_hex(BG_PRIMARY), 0);
+    char* dm_name = strdup(contact_name);
+    lv_obj_set_user_data(dm_btn, dm_name);
+    lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+        const char* name = (const char*)lv_obj_get_user_data(btn);
+        if (name) {
+            slopos::ui::chat_screen_open_dm(name);
+        }
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
+        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_DELETE, nullptr);
+
+    // Send Trace button
+    int trace_idx = slopos::mesh::findContactIndex(contact_name);
+    if (trace_idx >= 0) {
+        lv_obj_t* trace_btn = lv_btn_create(btn_row);
+        lv_obj_set_size(trace_btn, 110, 24);
+        lv_obj_set_style_bg_color(trace_btn, lv_color_hex(BG_TERTIARY), 0);
+        lv_obj_set_style_radius(trace_btn, 0, 0);
+        lv_obj_t* trace_lbl = lv_label_create(trace_btn);
+        lv_label_set_text(trace_lbl, LV_SYMBOL_SHUFFLE " Trace");
+        lv_obj_center(trace_lbl);
+        lv_obj_set_style_text_color(trace_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+        // Store contact_idx in user_data
+        int* idx_ptr = (int*)malloc(sizeof(int));
+        *idx_ptr = trace_idx;
+        lv_obj_set_user_data(trace_btn, idx_ptr);
+        lv_obj_add_event_cb(trace_btn, [](lv_event_t* e) {
+            lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+            int* idx = (int*)lv_obj_get_user_data(btn);
+            if (idx && *idx >= 0) {
+                uint32_t tag = 0;
+                slopos::mesh::sendTrace(*idx, &tag);
+                // Brief snackbar-style feedback — navigate to trace screen
+                // so the user can see the result
+                slopos::ui::navigate_to(slopos::ui::Screen::Trace);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(trace_btn, [](lv_event_t* e) {
             free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
         }, LV_EVENT_DELETE, nullptr);
     }

@@ -34,7 +34,8 @@ namespace {
 // ── Replicate the navigation state machine for pure testing ──
 enum class Screen {
     Home, Chat, Contacts, Channels, Network, Heard,
-    Map, Advertise, Settings, Trace, Terminal, Noise, Signal, RadioSetup, COUNT
+    Map, Advertise, Settings, Trace, Terminal,
+    Signal, RadioSetup, Repeaters, Onboarding, ContactDetail, COUNT
 };
 
 enum class SlopOSEvent {
@@ -154,7 +155,7 @@ TEST_F(NavigationTest, NavigateToAllScreens) {
     std::vector<Screen> screens = {
         Screen::Chat, Screen::Contacts, Screen::Channels, Screen::Network,
         Screen::Heard, Screen::Map, Screen::Advertise, Screen::Settings,
-        Screen::Trace, Screen::Terminal, Screen::Noise, Screen::Signal
+        Screen::Trace, Screen::Terminal, Screen::Signal
     };
 
     for (auto s : screens) {
@@ -284,16 +285,16 @@ TEST_F(NavigationTest, AllScreenPairsWork) {
 }
 
 // ── Screen count matches expected ───────────────────────
-TEST_F(NavigationTest, ScreenCountIs13) {
-    EXPECT_EQ((int)Screen::COUNT, 14);
+TEST_F(NavigationTest, ScreenCountIs16) {
+    EXPECT_EQ((int)Screen::COUNT, 16);
 }
 
 // ── Screen enum values are contiguous ───────────────────
 TEST_F(NavigationTest, ScreenEnumValuesAreContiguous) {
     EXPECT_EQ((int)Screen::Home, 0);
     EXPECT_EQ((int)Screen::Chat, 1);
-    EXPECT_EQ((int)Screen::Signal, 12);
-    EXPECT_EQ((int)Screen::COUNT, 14);
+    EXPECT_EQ((int)Screen::Signal, 11);
+    EXPECT_EQ((int)Screen::COUNT, 16);
 }
 
 // ── Back-swipe (two-swipe commit) ─────────────────────────
@@ -369,7 +370,7 @@ TEST_F(NavigationTest, BackSwipeFromAnyNonHomeScreen) {
     std::vector<Screen> screens = {
         Screen::Chat, Screen::Contacts, Screen::Channels, Screen::Network,
         Screen::Heard, Screen::Map, Screen::Advertise, Screen::Settings,
-        Screen::Trace, Screen::Terminal, Screen::Noise, Screen::Signal
+        Screen::Trace, Screen::Terminal, Screen::Signal
     };
 
     for (auto s : screens) {

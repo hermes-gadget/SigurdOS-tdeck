@@ -107,6 +107,7 @@ void injectMessage(const char* sender, const char* channel, const char* text);
 
 // Trace route
 bool sendTrace(int contact_idx, uint32_t* out_tag);
+int  findContactIndex(const char* name);
 bool hasTraceResult();
 uint8_t getTracePathLen();
 void   getTracePath(uint8_t* snrs_out, uint8_t* hashes_out);

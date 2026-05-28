@@ -23,6 +23,7 @@
 namespace slopos::ui {
 void heard_screen_show();
 void contacts_screen_show();
+void contact_detail_screen_show(const char* contact_name);
 void signal_screen_show();
 void map_screen_show();
 void settings_screen_show();
