@@ -29,6 +29,10 @@ struct NodePrefs {
     float    rx_delay_base;        // 0-20.0, RX delay base factor for collision avoidance
     float    tx_delay_factor;      // 0-2.0, TX flood retransmit delay multiplier
     float    direct_tx_delay_factor; // 0-2.0, TX direct retransmit delay multiplier
+    bool     rx_boosted_gain;        // enable SX1262 boosted RX sensitivity mode
+    uint8_t  duty_cycle;             // 0-100, duty cycle budget percent (0 = disabled)
+    uint8_t  advert_interval;        // 0=disabled, 1-255=interval in half-minutes (e.g. 10=5min)
+    uint8_t  advert_type;            // ADV_TYPE_CHAT(1)/REPEATER(2)/ROOM(3)/SENSOR(4)
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -49,6 +53,10 @@ struct NodePrefs {
         rx_delay_base = 10.0f;      // default RX delay base (matching MeshCore companion default)
         tx_delay_factor = 1.0f;     // default TX flood delay factor
         direct_tx_delay_factor = 1.0f; // default TX direct delay factor
+        rx_boosted_gain = false;      // default: normal sensitivity mode
+        duty_cycle = 0;               // 0 = disabled
+        advert_interval = 0;          // 0 = disabled
+        advert_type = 1;              // 1 = ADV_TYPE_CHAT (default: chat companion)
     }
 };
 

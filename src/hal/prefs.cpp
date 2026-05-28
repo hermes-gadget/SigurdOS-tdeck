@@ -31,6 +31,10 @@ bool prefs_load(NodePrefs& p) {
     p.rx_delay_base  = nvs.getFloat("rx_del", 10.0f);
     p.tx_delay_factor = nvs.getFloat("tx_del", 1.0f);
     p.direct_tx_delay_factor = nvs.getFloat("dir_tx", 1.0f);
+    p.rx_boosted_gain = nvs.getBool("rx_boost", false);
+    p.duty_cycle = nvs.getUChar("duty_cyc", 0);
+    p.advert_interval = nvs.getUChar("adv_int", 0);
+    p.advert_type = nvs.getUChar("adv_type", 1);
 
     nvs.end();
     return true;
@@ -56,6 +60,10 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putFloat("rx_del", p.rx_delay_base);
     nvs.putFloat("tx_del", p.tx_delay_factor);
     nvs.putFloat("dir_tx", p.direct_tx_delay_factor);
+    nvs.putBool("rx_boost", p.rx_boosted_gain);
+    nvs.putUChar("duty_cyc", p.duty_cycle);
+    nvs.putUChar("adv_int", p.advert_interval);
+    nvs.putUChar("adv_type", p.advert_type);
 
     nvs.end();
     return true;
