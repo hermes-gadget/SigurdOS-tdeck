@@ -20,7 +20,7 @@ Built on the [MeshCore](https://github.com/meshcore-dev/MeshCore) mesh networkin
 | Finder / Advertise / Onboarding wizard screens | ✅ Complete |
 | MeshCore protocol (radio, routing, encryption) | ✅ Integrated |
 | T-Deck HAL (display, battery, LoRa, pins) | ✅ Complete |
-| Unit tests (13 modules) | ✅ 276 tests |
+| Unit tests (17 modules) | ✅ 294 tests |
 | Touch input driver (GT911) | ✅ Complete |
 | Keyboard input driver (I2C, ESP32-C3 MCU) | ✅ Complete |
 | Full mesh messaging (send/receive queue + UI integration) | ✅ Complete |
@@ -31,7 +31,7 @@ Built on the [MeshCore](https://github.com/meshcore-dev/MeshCore) mesh networkin
 ## Test Suite
 
 ```bash
-# Run all 276 tests on native platform (no hardware needed)
+# Run all 294 tests on native platform (no hardware needed)
 pio test -e native_test -v
 
 # Run a specific test module
@@ -40,19 +40,22 @@ pio test -e native_test -f test_battery -v
 
 | Test Module | Tests | What's Covered |
 |-------------|-------|----------------|
-| `test_touch` | 22 | GT911 coordinate mapping, multitouch parsing, press→release lifecycle |
-| `test_keyboard` | 20 | Matrix scan, keymap, debounce, ghost detection, LVGL mapping |
-| `test_battery` | 16 | mV→% conversion, clamping, monotonicity, edge cases, ADC math |
-| `test_sdcard` | 15 | SPI init, mount, read/write, directory listing, edge cases |
-| `test_mesh_messaging` | 15 | Message queue, send/receive, channel ops, contact export |
-| `test_map` | 14 | Tile math (lat/lon→tile), zoom levels, bounding box |
-| `test_mesh_wrapper` | 13 | API signatures, return value ranges, unread count init |
-| `test_navigation` | 12 | Forward/back with history stack, deep nav chains, all pairs |
-| `test_gps` | 12 | NMEA parsing, coordinate conversion, fix detection |
-| `test_trackball` | 9 | Direction debounce, deadtime, click detection, idle calibration |
-| `test_pins` | 9 | GPIO ranges, SPI/I2C bus conflicts, duplicate detection, LoRa params |
-| `test_theme` | 7 | Color darkness, vibrancy, distinctness, readability hierarchy |
 | `test_build` | 7 | All headers compile together, cross-module API consistency |
+| `test_chat_truncation` | 10 | Chat message truncation, long text handling |
+| `test_emoji` | 22 | Emoji font rendering, fallback logic, sizing |
+| `test_gps` | 26 | NMEA parsing, coordinate conversion, fix detection |
+| `test_home_screen` | 16 | Home screen layout, icon grid, status bars |
+| `test_keyboard` | 20 | Matrix scan, keymap, debounce, ghost detection, LVGL mapping |
+| `test_map` | 25 | Tile math (lat/lon→tile), zoom levels, bounding box |
+| `test_mesh_messaging` | 43 | Message queue, send/receive, channel ops, contact export |
+| `test_mesh_wrapper` | 18 | API signatures, return value ranges, unread count init |
+| `test_navigation` | 22 | Forward/back with history stack, deep nav chains, all pairs |
+| `test_pins` | 9 | GPIO ranges, SPI/I2C bus conflicts, duplicate detection, LoRa params |
+| `test_sdcard` | 15 | SPI init, mount, read/write, directory listing, edge cases |
+| `test_terminal` | 7 | Terminal buffer management, command parsing |
+| `test_theme` | 7 | Color darkness, vibrancy, distinctness, readability hierarchy |
+| `test_touch` | 22 | GT911 coordinate mapping, multitouch parsing, press→release lifecycle |
+| `test_trackball` | 9 | Direction debounce, deadtime, click detection, idle calibration |
 
 Full test documentation: [`test/README.md`](test/README.md)
 
@@ -63,7 +66,7 @@ Full test documentation: [`test/README.md`](test/README.md)
 | MCU | ESP32-S3, 240 MHz, 16 MB Flash, 8 MB PSRAM |
 | Display | ST7789 240×320 TFT (landscape via rotation) |
 | Touch | GT911 capacitive (I2C) |
-| Keyboard | Physical QWERTY matrix |
+| Keyboard | Physical QWERTY (I2C, ESP32-C3 MCU) |
 | LoRa | SX1262 (SPI) |
 | GPS | Serial1 (optional) |
 | SD Card | SPI (shared bus) |
@@ -106,7 +109,7 @@ SlopOS-tdeck/
 │       └── ui.cpp/h        ← Splash → Home transition
 ├── boards/t-deck.json      ← PlatformIO board definition
 ├── platformio.ini          ← Build config (ESP32-S3 + LVGL + MeshCore)
-├── test/                   ← Unit test directory (13 modules, 171 tests)
+├── test/                   ← Unit test directory (17 modules, 294 tests)
 ```
 
 ## Build & Flash
