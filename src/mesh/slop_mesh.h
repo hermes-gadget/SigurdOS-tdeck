@@ -567,6 +567,18 @@ public:
         return (i >= 0 && i < _nContacts) ? &_contacts[i] : nullptr;
     }
 
+    // ── Remove contact at index ────────────────────────────
+    // Compacts the array so there are no gaps. Contacts are re-learned from adverts.
+    bool removeContact(int idx) {
+        if (idx < 0 || idx >= _nContacts) return false;
+        _nContacts--;
+        for (int i = idx; i < _nContacts; i++) {
+            _contacts[i] = _contacts[i + 1];
+        }
+        memset(&_contacts[_nContacts], 0, sizeof(SlopContact));
+        return true;
+    }
+
     // ── Channel management ────────────────────────────
     static int decode_b64(const char* in, size_t in_len, uint8_t* out, size_t out_cap) {
         static const char T[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

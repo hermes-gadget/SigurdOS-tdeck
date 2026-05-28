@@ -167,4 +167,11 @@ TEST_F(MeshWrapperTest, ExportContactsFullReturnsNonNegative) {
     EXPECT_GE(count, 0);
 }
 
+// ── removeContact signature exists ──────────────────────
+TEST_F(MeshWrapperTest, RemoveContactSignature) {
+    using rm_fn = bool (*)(const char*);
+    (void)static_cast<rm_fn>(slopos::mesh::removeContact);
+    SUCCEED();
+}
+
 } // anonymous namespace

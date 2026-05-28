@@ -764,6 +764,84 @@ void contact_detail_screen_show(const char* contact_name)
         // No LV_EVENT_DELETE handler needed — no heap allocation
     }
 
+    // Remove Contact button
+    {
+        const char* remove_name = contact_name;
+        lv_obj_t* remove_btn = lv_btn_create(btn_row);
+        lv_obj_set_size(remove_btn, 110, 24);
+        lv_obj_set_style_bg_color(remove_btn, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_radius(remove_btn, 0, 0);
+        lv_obj_t* rl = lv_label_create(remove_btn);
+        lv_label_set_text(rl, LV_SYMBOL_CLOSE " Remove");
+        lv_obj_set_style_text_color(rl, lv_color_hex(0xffffff), 0);
+        lv_obj_center(rl);
+        char* name_dup = strdup(remove_name);
+        lv_obj_set_user_data(remove_btn, name_dup);
+        lv_obj_add_event_cb(remove_btn, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            const char* name = (const char*)lv_obj_get_user_data(target);
+            if (!name) return;
+            lv_obj_t* scr = lv_obj_get_screen(target);
+            auto dlg_sz = dialog_size(220, 100);
+            lv_obj_t* dlg = lv_obj_create(scr);
+            lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+            lv_obj_center(dlg);
+            lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+            lv_obj_set_style_radius(dlg, 0, 0);
+            lv_obj_set_style_border_width(dlg, 0, 0);
+            lv_obj_set_style_pad_all(dlg, 8, 0);
+
+            lv_obj_t* title = lv_label_create(dlg);
+            lv_label_set_text(title, "Remove contact?");
+            lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+            lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+            lv_obj_t* msg = lv_label_create(dlg);
+            char msg_buf[64];
+            snprintf(msg_buf, sizeof(msg_buf), "Remove %s from contacts?", name);
+            lv_label_set_text(msg, msg_buf);
+            lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
+            lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+            lv_obj_align(msg, LV_ALIGN_CENTER, 0, -4);
+
+            lv_obj_t* cancel_btn = lv_btn_create(dlg);
+            lv_obj_set_size(cancel_btn, 64, 24);
+            lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 12, -4);
+            lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_INPUT), 0);
+            lv_obj_set_style_radius(cancel_btn, 0, 0);
+            lv_obj_t* cl = lv_label_create(cancel_btn);
+            lv_label_set_text(cl, "Cancel");
+            lv_obj_center(cl);
+            lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
+                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+            }, LV_EVENT_CLICKED, nullptr);
+
+            char* cn = strdup(name);
+            lv_obj_t* confirm_btn = lv_btn_create(dlg);
+            lv_obj_set_size(confirm_btn, 64, 24);
+            lv_obj_align(confirm_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
+            lv_obj_set_style_bg_color(confirm_btn, lv_color_hex(ACCENT_RED), 0);
+            lv_obj_set_style_radius(confirm_btn, 0, 0);
+            lv_obj_t* cfl_lb = lv_label_create(confirm_btn);
+            lv_label_set_text(cfl_lb, "Remove");
+            lv_obj_center(cfl_lb);
+            lv_obj_set_user_data(confirm_btn, cn);
+            lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ce) {
+                const char* cn = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(ce));
+                slopos::mesh::removeContact(cn);
+                go_back();
+            }, LV_EVENT_CLICKED, nullptr);
+            lv_obj_set_user_data(dlg, cn);
+            lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de)));
+            }, LV_EVENT_DELETE, nullptr);
+        }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(remove_btn, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
+    }
+
     show_screen(scr);
 }
 // ════════════════════════════════════════════════════════
