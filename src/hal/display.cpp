@@ -383,8 +383,8 @@ bool slopos_display_init()
 void slopos_display_loop()
 {
     // Serial screenshot trigger: send "SCREENSHOT" over USB serial
-    // Disabled in remote test mode — the test controller handles capture
-#if !defined(SLOPOS_REMOTE_TEST) || !SLOPOS_REMOTE_TEST
+    // Disabled in release builds and remote test mode
+#if !defined(NDEBUG) && (!defined(SLOPOS_REMOTE_TEST) || !SLOPOS_REMOTE_TEST)
     if (Serial.available()) {
         static char cmd_buf[64];
         static uint8_t cmd_pos = 0;

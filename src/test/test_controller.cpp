@@ -766,7 +766,7 @@ static void cmd_setrf(const char* arg) {
     float freq; int sf, cr, tx_pwr; float bw;
     int n = sscanf(arg, "%f %d %f %d %d", &freq, &sf, &bw, &cr, &tx_pwr);
     if (n != 5) {
-        Serial.printf("[test] setrf: expected 5 args, got %d\\n", n);
+        Serial.printf("[test] setrf: expected 5 args, got %d\n", n);
         return;
     }
     // Validate ranges
@@ -802,7 +802,7 @@ static void cmd_setrf(const char* arg) {
     if (prefs_save(p)) {
         slopos::prefs_set(p);
         Serial.println(F("[test] setrf: radio params saved to NVS"));
-        Serial.printf("[test] setrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm\\n",
+        Serial.printf("[test] setrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm\n",
                       freq, sf, bw, cr, tx_pwr);
         Serial.println(F("[test] setrf: reboot to apply changes"));
     } else {
@@ -821,7 +821,7 @@ static void cmd_reboot() {
 // ── Cmd: advert ───────────────────────────────────────────
 static void cmd_advert() {
     bool ok = slopos::mesh::sendAdvert();
-    Serial.printf("[test] advert: %s\\n", ok ? "sent" : "FAILED");
+    Serial.printf("[test] advert: %s\n", ok ? "sent" : "FAILED");
 }
 
 // ── Command parsing ──────────────────────────────────────

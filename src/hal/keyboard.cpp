@@ -258,9 +258,13 @@ void slopos_keyboard_reset_scan_state()
 
 void slopos_keyboard_consume_key()
 {
-    key_head  = 0;
-    key_tail  = 0;
-    key_count = 0;
+    if (key_count > 0) {
+        key_tail = (key_tail + 1) % KEY_BUF_SIZE;
+        key_count--;
+        if (key_count == 0) {
+            key_head = key_tail = 0;
+        }
+    }
     last_consumed_key = 0;
 }
 

@@ -242,4 +242,21 @@ TEST_F(KeyboardTest, ScanThrottledByPollInterval) {
     EXPECT_FALSE(slopos_keyboard_consume_event());
 }
 
+TEST_F(KeyboardTest, InjectedKeysAreQueuedAndConsumedInOrder) {
+    init_with_ack();
+    slopos_keyboard_inject('a');
+    slopos_keyboard_inject('b');
+    slopos_keyboard_inject('c');
+    EXPECT_EQ(slopos_keyboard_get_key(), 'a');
+    EXPECT_TRUE(slopos_keyboard_consume_event());
+    slopos_keyboard_consume_key();
+    EXPECT_EQ(slopos_keyboard_get_key(), 'b');
+    EXPECT_TRUE(slopos_keyboard_consume_event());
+    slopos_keyboard_consume_key();
+    EXPECT_EQ(slopos_keyboard_get_key(), 'c');
+    EXPECT_TRUE(slopos_keyboard_consume_event());
+    slopos_keyboard_consume_key();
+    EXPECT_FALSE(slopos_keyboard_consume_event());
+}
+
 } // anonymous namespace
