@@ -408,14 +408,17 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
     // First pass: collect bounds + cache each x-column's scan_y_range result
     // so the second pass can reuse them without re-opening directories.
     // Static storage to avoid stack overflow in ESP32-S3 loopTask (stack ~4KB).
-    static constexpr int MAX_XCOLS = 512;
+    // Increased from 512 to 2048 to accommodate larger offline map sets.
+    // Overflow detection below logs a warning if the cache is exhausted.
+    static constexpr int MAX_XCOLS = 2048;
     static XColCache xcache[MAX_XCOLS];
     int xcache_count = 0;
+    bool cache_overflow = false;
 
     TileCoverage c = {false, 0, 0, 0, 0, 0, 0};
     int scanned = 0;
     struct dirent* xe;
-    while ((xe = readdir(xd)) != nullptr && xcache_count < MAX_XCOLS) {
+    while ((xe = readdir(xd)) != nullptr) {
         if (xe->d_name[0] == '.') continue;
         if (!is_decimal_name(xe->d_name)) continue;
 
@@ -424,6 +427,24 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
         int mx_y = -1;
         int sample_y = -1;
         if (!scan_y_range(z, x, &mn_y, &mx_y, &sample_y)) continue;
+
+        // Detect and warn on cache overflow, but continue scanning for bounds
+        if (xcache_count >= MAX_XCOLS) {
+            if (!cache_overflow) {
+                MAP_DEBUG_PRINTF("[map] WARNING: zoom %d has >%d x-columns (found x=%d). "
+                                 "X-column cache exhausted; coverage bounds include all "
+                                 "columns but second-pass sample selection is truncated.\n",
+                                 z, MAX_XCOLS, x);
+                cache_overflow = true;
+            }
+            // Still update coverage bounds for entries beyond cache
+            if (x < c.min_x) c.min_x = x;
+            if (x > c.max_x) c.max_x = x;
+            if (mn_y < c.min_y) c.min_y = mn_y;
+            if (mx_y > c.max_y) c.max_y = mx_y;
+            if ((++scanned % 16) == 0) delay(0);
+            continue;
+        }
 
         xcache[xcache_count].x = x;
         xcache[xcache_count].min_y = mn_y;
