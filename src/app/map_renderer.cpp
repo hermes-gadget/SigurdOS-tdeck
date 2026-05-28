@@ -387,6 +387,16 @@ static bool scan_y_range(int zoom, int x, int* min_y, int* max_y, int* sample_y)
     return true;
 }
 
+// Cached per-x-column result from the first scan pass, reused in the second pass
+// to avoid re-opening every x directory on SD card (saves ~50% of SD ops).
+struct XColCache {
+    int x;
+    int min_y;
+    int max_y;
+    int sample_y;
+    bool valid;
+};
+
 static bool scan_zoom_coverage(int z, TileCoverage* out) {
     if (!out) return false;
 
@@ -395,10 +405,17 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
     DIR* xd = opendir(x_path);
     if (!xd) return false;
 
+    // First pass: collect bounds + cache each x-column's scan_y_range result
+    // so the second pass can reuse them without re-opening directories.
+    // Static storage to avoid stack overflow in ESP32-S3 loopTask (stack ~4KB).
+    static constexpr int MAX_XCOLS = 512;
+    static XColCache xcache[MAX_XCOLS];
+    int xcache_count = 0;
+
     TileCoverage c = {false, 0, 0, 0, 0, 0, 0};
     int scanned = 0;
     struct dirent* xe;
-    while ((xe = readdir(xd)) != nullptr) {
+    while ((xe = readdir(xd)) != nullptr && xcache_count < MAX_XCOLS) {
         if (xe->d_name[0] == '.') continue;
         if (!is_decimal_name(xe->d_name)) continue;
 
@@ -407,6 +424,13 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
         int mx_y = -1;
         int sample_y = -1;
         if (!scan_y_range(z, x, &mn_y, &mx_y, &sample_y)) continue;
+
+        xcache[xcache_count].x = x;
+        xcache[xcache_count].min_y = mn_y;
+        xcache[xcache_count].max_y = mx_y;
+        xcache[xcache_count].sample_y = sample_y;
+        xcache[xcache_count].valid = true;
+        xcache_count++;
 
         if (!c.valid) {
             c.valid = true;
@@ -428,36 +452,28 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
 
     if (!c.valid) return false;
 
+    // Second pass: find sample closest to coverage center — use cached data,
+    // no SD card re-scans needed.
     double mid_x = (c.min_x + c.max_x) / 2.0;
     double mid_y = (c.min_y + c.max_y) / 2.0;
     double best_dist = 0.0;
     bool have_sample = false;
 
-    xd = opendir(x_path);
-    if (!xd) return false;
-    while ((xe = readdir(xd)) != nullptr) {
-        if (xe->d_name[0] == '.') continue;
-        if (!is_decimal_name(xe->d_name)) continue;
+    for (int i = 0; i < xcache_count; i++) {
+        if (!xcache[i].valid) continue;
 
-        int x = atoi(xe->d_name);
-        int mn_y = -1;
-        int mx_y = -1;
-        int sample_y = -1;
-        if (!scan_y_range(z, x, &mn_y, &mx_y, &sample_y)) continue;
-
-        double dist_x = (double)x - mid_x;
-        double dist_y = (double)sample_y - mid_y;
+        double dist_x = (double)xcache[i].x - mid_x;
+        double dist_y = (double)xcache[i].sample_y - mid_y;
         double dist = dist_x * dist_x + dist_y * dist_y;
         if (!have_sample || dist < best_dist) {
-            c.sample_x = x;
-            c.sample_y = sample_y;
+            c.sample_x = xcache[i].x;
+            c.sample_y = xcache[i].sample_y;
             best_dist = dist;
             have_sample = true;
         }
 
         if ((++scanned % 16) == 0) delay(0);
     }
-    closedir(xd);
 
     if (!have_sample) return false;
     *out = c;
