@@ -793,10 +793,17 @@ static void create_message_list()
     lv_obj_set_flex_flow(msg_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(msg_list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(msg_list, LV_SCROLLBAR_MODE_OFF);
+    // Remove elastic/momentum/chain/focus/arrow flags so LVGL
+    // clamps scrolling naturally at content boundaries.
     lv_obj_remove_flag(msg_list, (lv_obj_flag_t)(
         LV_OBJ_FLAG_SCROLL_ELASTIC |
         LV_OBJ_FLAG_SCROLL_MOMENTUM |
-        LV_OBJ_FLAG_SCROLL_CHAIN));
+        LV_OBJ_FLAG_SCROLL_CHAIN |
+        LV_OBJ_FLAG_SCROLL_ON_FOCUS |
+        LV_OBJ_FLAG_SCROLL_WITH_ARROW));
+    // No scroll snap — messages stay at bottom naturally.
+    // Overscroll is prevented by the flag removals above,
+    // and the trackball handler also clamps scroll deltas.
 }
 
 static void render_active_messages()
@@ -1406,12 +1413,19 @@ bool chat_screen_handle_trackball(SlopOSTrackballEvent event)
 {
     if (msg_list) {
         switch (event) {
-        case SlopOSTrackballEvent::Up:
-            lv_obj_scroll_by(msg_list, 0, -44, LV_ANIM_OFF);
+        case SlopOSTrackballEvent::Up: {
+            // Let LVGL clamp at top (no elastic = hard stop at 0)
+            lv_coord_t sy = lv_obj_get_scroll_y(msg_list);
+            lv_coord_t new_y = sy > 44 ? sy - 44 : 0;
+            lv_obj_scroll_to_y(msg_list, new_y, LV_ANIM_OFF);
             return true;
-        case SlopOSTrackballEvent::Down:
-            lv_obj_scroll_by(msg_list, 0, 44, LV_ANIM_OFF);
+        }
+        case SlopOSTrackballEvent::Down: {
+            // Let LVGL clamp at bottom (no elastic = hard stop at max)
+            lv_coord_t sy = lv_obj_get_scroll_y(msg_list);
+            lv_obj_scroll_to_y(msg_list, sy + 44, LV_ANIM_OFF);
             return true;
+        }
         case SlopOSTrackballEvent::Left:
             show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
             return true;
