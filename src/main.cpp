@@ -65,10 +65,14 @@ void setup()
         slopos::mesh::setOwnName(p.node_name);
     }
 #if defined(SLOPOS_REMOTE_TEST) && SLOPOS_REMOTE_TEST
+#if defined(SLOPOS_REMOTE_TEST_RADIO) && SLOPOS_REMOTE_TEST_RADIO
+    Serial.println("[boot] REMOTE TEST MODE — LoRa radio enabled (test controller + mesh)");
+#else
     // Remote test mode — no LoRa radio initialised, but the shared SPI bus
     // (pins 40/38/41) must be initialised before SD card init or the card
     // fails with FR_NOT_READY. mesh::init() handles this via lora_spi.begin().
     Serial.println("[boot] REMOTE TEST MODE — LoRa radio disabled");
+#endif
     slopos::mesh::init(spiffs_ok);
     slopos_test_controller_init();
 #else

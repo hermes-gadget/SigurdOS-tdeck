@@ -225,7 +225,7 @@ bool init(bool spiffs_ok)
     fallback_clock.begin();
     rtc_clock.begin(Wire);
 
-#ifndef SLOPOS_REMOTE_TEST
+#if !defined(SLOPOS_REMOTE_TEST) || defined(SLOPOS_REMOTE_TEST_RADIO)
     // Delayed allocation of RadioLib Module and radio driver objects.
     // These were previously allocated at file scope (static init time),
     // before PSRAM was available. On ESP32 Arduino builds, a failed
@@ -417,7 +417,7 @@ bool init(bool spiffs_ok)
     pushPacketLog("SYSTEM", 0, 0.0f, "BOOT");
     return true;
 #else
-    // Remote test: initialise SPI bus for SD card, no LoRa radio
+    // Remote test without SLOPOS_REMOTE_TEST_RADIO: init SPI bus for SD card only, no LoRa radio
     lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
     initialized = true;
     return true;
