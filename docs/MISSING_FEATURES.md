@@ -2,7 +2,7 @@
 
 This document catalogs features present in the MeshCore protocol and ecosystem that are **not yet implemented** in SlopOS-TDeck firmware. It is a roadmap reference — not a bug tracker. Bugs and workarounds belong in `KNOWN_ISSUES.md`.
 
-SlopOS-TDeck is a standalone **companion-radio firmware** for the LilyGo T-Deck. It interoperates with any MeshCore node and is designed for the end-user handheld experience — not for infrastructure roles (dedicated repeaters, room servers, sensors). Features are tagged to distinguish companion-relevant from infrastructure-only items; the implementation plan only covers companion features.
+SlopOS-TDeck is a standalone **companion-radio firmware** for the LilyGo T-Deck. It interoperates with any MeshCore node and is designed for the end-user handheld experience — not for infrastructure roles (dedicated repeaters, room servers, sensors). Features are tagged to distinguish companion-relevant from infrastructure-only items. For build order, dependencies, and step-by-step implementation guidance, see [`ROADMAP.md`](ROADMAP.md).
 
 ## Where to find things in upstream MeshCore
 
@@ -603,91 +603,10 @@ A niche build target for running under `bmorcelli/Launcher`. Not relevant to the
 
 ---
 
-*Last reviewed: 2026-05-28 against companion firmware v1.15.0 (`FIRMWARE_VER_CODE 11`, [`examples/companion_radio/`](https://github.com/meshcore-dev/MeshCore/tree/main/examples/companion_radio)). Added: Infrastructure Interaction category (login/remote-admin, status, telemetry, path discovery, reset-path, binary-request framework), GPS/Location section (location-share policy, GPS interval), contact removal, identity backup, factory reset, message signing, node-stats query. Fixed stale ACK line reference and clarified that `SlopMesh` extends `::mesh::Mesh` directly (not `BaseChatMesh`). Cross-reference `KNOWN_ISSUES.md` for bugs in implemented features.*
+## Implementation order
+
+The phased implementation plan that used to live here has moved to **[`ROADMAP.md`](ROADMAP.md)** — it carries the build order, dependencies, step-by-step guidance, pitfalls, and per-task test plans (including the `Mesh` vs `BaseChatMesh` architecture decision). This document is now purely the *catalog* of what's missing and where to find it upstream; `ROADMAP.md` is *how and in what order* to build it.
 
 ---
 
-## Implementation Plan
-
-Phased roadmap for **companion features only** (infrastructure-only items above are excluded). Phases are ordered by dependency, effort, and value; items within a phase are interchangeable.
-
-### Dependency chains
-
-```
-Generic binary-request framework (REQ/RESPONSE)
-   ├→ Status request
-   ├→ Telemetry queries
-   ├→ Path discovery
-   └→ Room server message fetch
-
-Repeater/room login ──→ Remote administration
-                    └──→ Room server message fetch
-
-Advert parsing (✅ done) ──→ Contact locations on Map
-```
-
-Everything else is independent.
-
-### Phase 2 — Radio & node configuration (mostly UI over existing backend)
-
-| # | Feature | Effort | Note |
-|---|---------|--------|------|
-| 1 | RX gain boost toggle | S | `applyRadioParams()` already accepts `rx_gain` — add pref + toggle |
-| 2 | Duty cycle UI | M | `setDutyCycle()`/`getRemainingTxBudget()` exist — add Settings + display |
-| 3 | Temporary radio config | M | `applyRadioParams()`/`revertRadioParams()` exist — add "Try" + revert timer |
-| 4 | Auto-add contact configuration | M | Extend existing `flood_max_hops` gate with per-type bitmask |
-| 5 | Advert location-share policy | S | Privacy toggle on the existing GPS-advert path |
-| 6 | GPS enable / interval | S | Gate `gps.cpp` polling on new prefs |
-| 7 | Custom variables store | S | NVS key-value + Terminal command |
-
-### Phase 3 — Messaging & contacts polish
-
-| # | Feature | Effort | Note |
-|---|---------|--------|------|
-| 1 | Channel removal | S | `removeChannel(idx)` + gesture |
-| 2 | Contact removal | S | Compact `_contacts[]` + persist |
-| 3 | Reset path to contact | S | Clear `out_path_len` + UI action |
-| 4 | Message timestamps | S | `MeshMessage::timestamp` already present |
-| 5 | Message delivery status (ACK) | M | Port `BaseChatMesh` ACK table into `SlopMesh` |
-| 6 | Message search | M | Chat search mode |
-| 7 | Per-contact RSSI/SNR history | L | `lv_chart` sparkline |
-
-### Phase 4 — Infrastructure interaction (build the request framework first)
-
-| # | Feature | Effort | Note |
-|---|---------|--------|------|
-| 1 | Generic binary-request framework | M | Port `sendRequest()` + tag dispatch — unblocks 2–5 |
-| 2 | Status request | M | REQ to repeater/room, parse status |
-| 3 | Telemetry queries (remote + self) | M | CayenneLPP decode/encode |
-| 4 | Path discovery request | M | Active route discovery |
-| 5 | Repeater/room login + remote admin | L | Port `sendLogin()`/`sendCommandData()`, session keep-alive |
-| 6 | Room server message fetch | L | Depends on #1 + #5 |
-| 7 | Anonymous requests (send) | M | `createAnonDatagram()` + UI |
-| 8 | Group data datagrams | M | `sendGroupDatagram()` + type dispatch |
-| 9 | Multipart messages | L | Per-sender reassembly buffer |
-| 10 | Raw custom payloads | L | App dispatch + registration API |
-
-### Phase 5 — UI, identity & security
-
-| # | Feature | Effort | Note |
-|---|---------|--------|------|
-| 1 | Zero-hop ping in Finder | M | Backend done — wire the UI |
-| 2 | Graceful shutdown from UI | S | `saveState`/`shutdown` exist |
-| 3 | Contact locations on Map | M | Coordinates already in `SlopContact` |
-| 4 | Factory reset | S | Wipe NVS + identity, reboot |
-| 5 | Identity backup (export/import) | M | `IdentityStore` re-key, recompute secrets |
-| 6 | QR code generation | L | QR lib + LVGL canvas |
-| 7 | QR / URI import | M | URI parser + Terminal command |
-| 8 | Node stats query | S | Surface existing counters + drops/airtime |
-| 9 | Universal trackball back-swipe | M | Extract handler into `navigation.cpp` |
-| 10 | Device admin PIN | M | Hashed PIN in NVS |
-| 11 | ACL / contact permissions | L | `perm` field + action gating |
-| 12 | Message signing | S | Niche — port streaming sign API |
-| 13 | OTA firmware update | L | Partition layout + WiFi/BLE download |
-
-### Implementation tips
-
-- **Phase 4 #1 is the keystone** — building the REQ/RESPONSE framework once unblocks status, telemetry, path discovery, and room fetch. Do it before the others.
-- **`SlopMesh` extends `Mesh`, not `BaseChatMesh`** — for ACK, login, command-data, and request features, the fastest route is porting the relevant `BaseChatMesh` method rather than expecting it to be inherited.
-- **Any PR adding a `NodePrefs` field** must validate NVS migration — old saved prefs won't have the new key. `prefs_get()` zero-fills missing keys; follow the default-value pattern already there.
-- **Protocol features (Phase 4)** should add native-test mock coverage for new parse/dispatch paths in `test/`.
+*Last reviewed: 2026-05-28 against companion firmware v1.15.0 (`FIRMWARE_VER_CODE 11`, [`examples/companion_radio/`](https://github.com/meshcore-dev/MeshCore/tree/main/examples/companion_radio)). Added: Infrastructure Interaction category (login/remote-admin, status, telemetry, path discovery, reset-path, binary-request framework), GPS/Location section (location-share policy, GPS interval), contact removal, identity backup, factory reset, message signing, node-stats query. Fixed stale ACK line reference and clarified that `SlopMesh` extends `::mesh::Mesh` directly (not `BaseChatMesh`). Implementation plan extracted to [`ROADMAP.md`](ROADMAP.md). Cross-reference `KNOWN_ISSUES.md` for bugs in implemented features.*
