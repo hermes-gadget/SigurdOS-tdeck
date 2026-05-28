@@ -198,6 +198,13 @@ static lv_obj_t* make_screen_full(const char* title)
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
 
+    // Signal dots (right of top bar, iOS-style)
+    {
+        int rssi = slopos::mesh::getLastRSSI();
+        lv_obj_t* sig = create_signal_dots(top, rssi);
+        lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -54, 0);
+    }
+
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(scr);
     lv_obj_set_size(tdiv, LV_PCT(100), DIVIDER_H);
@@ -221,22 +228,6 @@ static lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_style_text_color(dev, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(dev, &lv_font_montserrat_10, 0);
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
-
-    // Signal bars (center, snapshot)
-    {
-        int rssi = slopos::mesh::getLastRSSI();
-        const char* bars;
-        if (rssi > -70)       bars = "▂▄▆█";
-        else if (rssi > -85)  bars = "▂▄▆ ";
-        else if (rssi > -100) bars = "▂▄  ";
-        else if (rssi > -115) bars = "▂   ";
-        else                  bars = "    ";
-        lv_obj_t* sig = lv_label_create(bot);
-        lv_label_set_text(sig, bars);
-        lv_obj_set_style_text_color(sig, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_text_font(sig, &lv_font_montserrat_10, 0);
-        lv_obj_align(sig, LV_ALIGN_CENTER, -20, 0);
-    }
 
     // Battery % (right, snapshot)
     {

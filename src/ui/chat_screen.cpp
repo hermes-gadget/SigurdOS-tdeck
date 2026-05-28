@@ -528,12 +528,6 @@ static lv_obj_t* make_chat_list_screen()
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
 
     {
-        int rssi = slopos::mesh::getLastRSSI();
-        lv_obj_t* sig = create_signal_bars(bot, rssi);
-        lv_obj_align(sig, LV_ALIGN_CENTER, -20, 0);
-    }
-
-    {
         char batt[8];
         int pct = slopos_battery_pct();
         snprintf(batt, sizeof(batt), "%d%%", pct);
@@ -1066,10 +1060,6 @@ static void create_bottom_bar()
     lv_obj_set_style_text_font(dev, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
 
-    int rssi = slopos::mesh::getLastRSSI();
-    lv_obj_t* sig = create_signal_bars(bot, rssi);
-    lv_obj_align(sig, LV_ALIGN_CENTER, -20, 0);
-
     char batt_buf[8];
     int pct = slopos_battery_pct();
     snprintf(batt_buf, sizeof(batt_buf), "%d%%", pct);
@@ -1119,7 +1109,7 @@ static void open_channel_messaging(int idx)
         int cn = slopos::mesh::exportContactsFull(cbuf, 32);
         for (int ci = 0; ci < cn; ci++) {
             if (strcmp(cbuf[ci].name, contact_name) == 0) {
-                lv_obj_t* sig = create_signal_bars(top_bar, cbuf[ci].rssi);
+                lv_obj_t* sig = create_signal_dots(top_bar, cbuf[ci].rssi);
                 lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -30, 0);
                 break;
             }

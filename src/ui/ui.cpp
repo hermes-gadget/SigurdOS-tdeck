@@ -104,7 +104,6 @@ void loop()
     if (home_shown && (millis() - last_update > 30000)) {
         last_update = millis();
         home_screen_update_battery(slopos_battery_pct());
-        home_screen_update_signal(slopos::mesh::getLastRSSI());
         home_screen_update_badges();
         {
             uint32_t epoch = slopos::mesh::getCurrentTime();

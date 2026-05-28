@@ -28,7 +28,6 @@ void home_screen_show();
 void home_screen_handle_trackball(SlopOSTrackballEvent event);
 void home_screen_update_battery(int pct);
 void home_screen_update_time(const char* time_str);
-void home_screen_update_signal(int rssi);
 void home_screen_update_channels();
 void home_screen_update_badges();
 

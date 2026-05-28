@@ -44,7 +44,6 @@ static lv_obj_t* bottom_bar    = nullptr;
 static lv_obj_t* grid          = nullptr;
 static lv_obj_t* time_label    = nullptr;
 static lv_obj_t* batt_label    = nullptr;
-static lv_obj_t* signal_label  = nullptr;
 static lv_obj_t* hashtag_label = nullptr;
 static lv_obj_t* badge_obj     = nullptr;  // CHATS unread badge container
 
@@ -205,6 +204,12 @@ static void create_top_bar()
     lv_obj_set_style_text_font(time_label, &lv_font_montserrat_12, 0);
     lv_obj_align(time_label, LV_ALIGN_RIGHT_MID, -4, 0);
 
+    // Signal dots (iOS-style, left of time)
+    {
+        lv_obj_t* sig = create_signal_dots(top_bar, slopos::mesh::getLastRSSI());
+        lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -54, 0);
+    }
+
     // Divider
     lv_obj_t* div = lv_obj_create(scr);
     lv_obj_set_size(div, LV_PCT(100), DIVIDER_H);
@@ -230,9 +235,6 @@ static void create_bottom_bar()
     lv_obj_set_style_text_color(dev, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(dev, &lv_font_montserrat_10, 0);
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
-
-    signal_label = create_signal_bars(bottom_bar, slopos::mesh::getLastRSSI());
-    lv_obj_align(signal_label, LV_ALIGN_CENTER, -20, 0);
 
     batt_label = lv_label_create(bottom_bar);
     lv_label_set_text(batt_label, "--%");
@@ -356,7 +358,6 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
     screens_clear_back_btn();
     time_label    = nullptr;
     batt_label    = nullptr;
-    signal_label  = nullptr;
     for (int i = 0; i < ICON_COUNT; i++) icon_tiles[i] = nullptr;
 
     scr = lv_obj_create(nullptr);
@@ -368,7 +369,7 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
     // in ui::loop() don't dereference freed objects.
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         scr = top_bar = bottom_bar = grid = nullptr;
-        time_label = batt_label = signal_label = hashtag_label = badge_obj = nullptr;
+        time_label = batt_label = hashtag_label = badge_obj = nullptr;
         for (int i = 0; i < ICON_COUNT; i++) icon_tiles[i] = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 
@@ -461,18 +462,6 @@ void home_screen_update_time(const char* time_str)
 {
     if (!time_label) return;
     lv_label_set_text(time_label, time_str);
-}
-
-void home_screen_update_signal(int rssi)
-{
-    if (!signal_label) return;
-    int active = rssi_to_bars(rssi);
-    uint32_t n = lv_obj_get_child_cnt(signal_label);
-    for (uint32_t i = 0; i < n && i < (uint32_t)SIGNAL_BAR_COUNT; i++) {
-        lv_obj_t* bar = lv_obj_get_child(signal_label, i);
-        lv_obj_set_style_bg_color(bar,
-            lv_color_hex((int)i < active ? ACCENT : BG_INPUT), 0);
-    }
 }
 
 void home_screen_update_channels()
