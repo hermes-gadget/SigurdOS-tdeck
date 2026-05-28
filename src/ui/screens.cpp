@@ -830,7 +830,7 @@ void repeaters_screen_show()
 }
 
 // ════════════════════════════════════════════════════════
-// Signal — radio statistics
+// Signal — radio statistics (two-column layout)
 // ════════════════════════════════════════════════════════
 void signal_screen_show()
 {
@@ -841,41 +841,18 @@ void signal_screen_show()
     int noise  = slopos::mesh::getNoiseFloor();
     const slopos::NodePrefs& p = slopos::prefs_get();
 
-    lv_obj_t* lbl = lv_label_create(scr);
-    lv_obj_set_width(lbl, CONTENT_W);
-    lv_obj_set_style_pad_left(lbl, 8, 0);
-    lv_obj_set_style_pad_right(lbl, 8, 0);
-    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
-    lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
+    if (!p.configured) {
+        // ── Unconfigured: single centered message ──────────
+        lv_obj_t* lbl = lv_label_create(scr);
+        lv_obj_set_width(lbl, CONTENT_W);
+        lv_obj_set_style_pad_left(lbl, 8, 0);
+        lv_obj_set_style_pad_right(lbl, 8, 0);
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+        lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
 
-    char buf[512];
-    if (p.configured) {
-        snprintf(buf, sizeof(buf),
-            "RSSI:    %d dBm\n"
-            "SNR:     %.1f dB\n"
-            "Noise:   %d dBm\n\n"
-            "Freq:    %.3f MHz\n"
-            "BW:      %.1f kHz\n"
-            "SF:      %d\n"
-            "CR:      4/%d\n"
-            "TX Pwr:  %d dBm\n\n"
-            "TX Air:  %lu ms\n"
-            "RX Air:  %lu ms\n\n"
-            "TX Fld:  %u\n"
-            "TX Dir:  %u\n"
-            "RX Fld:  %u\n"
-            "RX Dir:  %u",
-            rssi, snr, noise,
-            p.freq, p.bw, p.sf, p.cr, p.tx_power_dbm,
-            slopos::mesh::getTotalTxAirtimeMs(),
-            slopos::mesh::getTotalRxAirtimeMs(),
-            slopos::mesh::getNumSentFlood(),
-            slopos::mesh::getNumSentDirect(),
-            slopos::mesh::getNumRecvFlood(),
-            slopos::mesh::getNumRecvDirect());
-    } else {
+        char buf[256];
         snprintf(buf, sizeof(buf),
             "RSSI:    %d dBm\n"
             "SNR:     %.1f dB\n"
@@ -884,8 +861,61 @@ void signal_screen_show()
             "Go to Settings > Radio\n"
             "to set frequency/power.",
             rssi, snr, noise);
+        lv_label_set_text(lbl, buf);
+    } else {
+        // ── Two-column flex row ─────────────────────────────
+        lv_obj_t* row = lv_obj_create(scr);
+        lv_obj_set_size(row, CONTENT_W, LV_SIZE_CONTENT);
+        lv_obj_align(row, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 6, 0);
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                              LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+        // Left column — signal metrics + airtime
+        lv_obj_t* left = lv_label_create(row);
+        lv_obj_set_width(left, LV_PCT(48));
+        lv_obj_set_style_text_color(left, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(left, &lv_font_montserrat_12, 0);
+
+        char left_buf[256];
+        snprintf(left_buf, sizeof(left_buf),
+            "RSSI    %d dBm\n"
+            "SNR     %.1f dB\n"
+            "Noise   %d dBm\n\n"
+            "TX Air  %lu ms\n"
+            "RX Air  %lu ms",
+            rssi, snr, noise,
+            slopos::mesh::getTotalTxAirtimeMs(),
+            slopos::mesh::getTotalRxAirtimeMs());
+        lv_label_set_text(left, left_buf);
+
+        // Right column — radio config + packet counters
+        lv_obj_t* right = lv_label_create(row);
+        lv_obj_set_width(right, LV_PCT(48));
+        lv_obj_set_style_text_color(right, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(right, &lv_font_montserrat_12, 0);
+
+        char right_buf[256];
+        snprintf(right_buf, sizeof(right_buf),
+            "Freq    %.3f MHz\n"
+            "BW      %.1f kHz\n"
+            "SF      %d\n"
+            "CR      4/%d\n"
+            "TX Pwr  %d dBm\n\n"
+            "TX Fld  %u\n"
+            "TX Dir  %u\n"
+            "RX Fld  %u\n"
+            "RX Dir  %u",
+            p.freq, p.bw, p.sf, p.cr, p.tx_power_dbm,
+            slopos::mesh::getNumSentFlood(),
+            slopos::mesh::getNumSentDirect(),
+            slopos::mesh::getNumRecvFlood(),
+            slopos::mesh::getNumRecvDirect());
+        lv_label_set_text(right, right_buf);
     }
-    lv_label_set_text(lbl, buf);
 
     show_screen(scr);
 }
