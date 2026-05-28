@@ -2773,6 +2773,16 @@ void custom_rf_screen_show()
             }
         }
 
+        // Guard: all 5 textareas must have been found — layout change or
+        // allocation failure leaves dangling pointers that would crash below.
+        if (found != 5) {
+            lv_obj_t* el = lv_obj_get_child(scr, lv_obj_get_child_cnt(scr) - 2);
+            if (lv_obj_check_type(el, &lv_label_class)) {
+                lv_label_set_text(el, "Error: textarea not found");
+            }
+            return;
+        }
+
         float freq = atof(lv_textarea_get_text(ta_freq));
         int   sf   = atoi(lv_textarea_get_text(ta_sf));
         float bw   = atof(lv_textarea_get_text(ta_bw));
