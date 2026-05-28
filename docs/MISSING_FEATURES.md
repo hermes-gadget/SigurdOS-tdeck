@@ -605,7 +605,7 @@ A niche build target for running under `bmorcelli/Launcher`. Not relevant to the
 
 ## Implementation order
 
-The phased implementation plan that used to live here has moved to **[`ROADMAP.md`](ROADMAP.md)** — it carries the build order, dependencies, step-by-step guidance, pitfalls, and per-task test plans (including the `Mesh` vs `BaseChatMesh` architecture decision). This document is now purely the *catalog* of what's missing and where to find it upstream; `ROADMAP.md` is *how and in what order* to build it.
+The phased implementation plan that used to live here has moved to **[`ROADMAP.md`](ROADMAP.md)** — it carries the build order, dependencies, step-by-step guidance, pitfalls, and per-task test plans (including the foundational `BaseChatMesh` migration). This document is now purely the *catalog* of what's missing and where to find it upstream; `ROADMAP.md` is *how and in what order* to build it.
 
 ---
 
