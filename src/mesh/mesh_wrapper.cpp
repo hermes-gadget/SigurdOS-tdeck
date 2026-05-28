@@ -495,6 +495,15 @@ int exportContactsFull(ContactInfo* out, int max) {
     return n;
 }
 
+int findContactIndexByName(const char* name) {
+    if (!g_mesh || !name) return -1;
+    for (int i = 0; i < g_mesh->getContactCount(); i++) {
+        auto* c = g_mesh->getContact(i);
+        if (c && strcmp(c->name, name) == 0) return i;
+    }
+    return -1;
+}
+
 // ── Channels ────────────────────────────────────
 
 int getChannelCount() { return g_mesh ? g_mesh->getChannelCount() : 0; }
