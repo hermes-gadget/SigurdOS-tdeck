@@ -857,16 +857,32 @@ unsigned long getRemainingTxBudget() {
 
 void setDutyCycle(uint8_t percent) {
     if (!g_mesh) return;
-    g_mesh->setDutyCycle(percent);
-}
 
-// ── Contact management extensions ────────────
-bool resetPathTo(const char* name) {
-    if (!g_mesh || !name) return false;
-    int idx = findContactIndex(name);
-    if (idx < 0) return false;
-    return g_mesh->resetPathTo(idx);
-}
+    // ── Contact management extensions ────────────
+    bool removeContact(const char* name) {
+        if (!g_mesh || !name) return false;
+        for (int i = 0; i < g_mesh->getContactCount(); i++) {
+            auto* c = g_mesh->getContact(i);
+            if (c && strcmp(c->name, name) == 0) {
+                return g_mesh->removeContact(i);
+            }
+        }
+        return false;
+    }
+
+    bool resetPathTo(const char* name) {
+        if (!g_mesh || !name) return false;
+        int idx = findContactIndex(name);
+        if (idx < 0) return false;
+        return g_mesh->resetPathTo(idx);
+    }
+
+    // ── Channel management extensions ────────────
+    bool removeChannel(int idx) {
+        if (!g_mesh) return false;
+        bool ok = g_mesh->removeChannel(idx);
+        return ok;
+    }
 
 } // namespace mesh
 } // namespace slopos

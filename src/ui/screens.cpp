@@ -39,6 +39,7 @@
 #include <cstdio>
 #include <cstring>
 #include <math.h>
+#include <functional>
 
 namespace slopos::ui {
 
@@ -764,10 +765,7 @@ void contact_detail_screen_show(const char* contact_name)
         // No LV_EVENT_DELETE handler needed — no heap allocation
     }
 
-    // Reset Path button (second action row)
-    lv_obj_t* btn_row2 = lv_obj_create(scr);
-    lv_obj_set_size(btn_row2, CONTENT_W, 30);
-    lv_obj_align(btn_row2, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 32));
+    // Remove Contact button
     lv_obj_set_style_bg_opa(btn_row2, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(btn_row2, 0, 0);
     lv_obj_set_flex_flow(btn_row2, LV_FLEX_FLOW_ROW);
@@ -794,6 +792,84 @@ void contact_detail_screen_show(const char* contact_name)
                 lv_timer_del(t);
             }, 800, nullptr);
         }, LV_EVENT_CLICKED, nullptr);
+=======
+    // Remove Contact button
+    {
+        const char* remove_name = contact_name;
+        lv_obj_t* remove_btn = lv_btn_create(btn_row);
+        lv_obj_set_size(remove_btn, 110, 24);
+        lv_obj_set_style_bg_color(remove_btn, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_radius(remove_btn, 0, 0);
+        lv_obj_t* rl = lv_label_create(remove_btn);
+        lv_label_set_text(rl, LV_SYMBOL_CLOSE " Remove");
+        lv_obj_set_style_text_color(rl, lv_color_hex(0xffffff), 0);
+        lv_obj_center(rl);
+        char* name_dup = strdup(remove_name);
+        lv_obj_set_user_data(remove_btn, name_dup);
+        lv_obj_add_event_cb(remove_btn, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            const char* name = (const char*)lv_obj_get_user_data(target);
+            if (!name) return;
+            lv_obj_t* scr = lv_obj_get_screen(target);
+            auto dlg_sz = dialog_size(220, 100);
+            lv_obj_t* dlg = lv_obj_create(scr);
+            lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+            lv_obj_center(dlg);
+            lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+            lv_obj_set_style_radius(dlg, 0, 0);
+            lv_obj_set_style_border_width(dlg, 0, 0);
+            lv_obj_set_style_pad_all(dlg, 8, 0);
+
+            lv_obj_t* title = lv_label_create(dlg);
+            lv_label_set_text(title, "Remove contact?");
+            lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+            lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+            lv_obj_t* msg = lv_label_create(dlg);
+            char msg_buf[64];
+            snprintf(msg_buf, sizeof(msg_buf), "Remove %s from contacts?", name);
+            lv_label_set_text(msg, msg_buf);
+            lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
+            lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+            lv_obj_align(msg, LV_ALIGN_CENTER, 0, -4);
+
+            lv_obj_t* cancel_btn = lv_btn_create(dlg);
+            lv_obj_set_size(cancel_btn, 64, 24);
+            lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 12, -4);
+            lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_INPUT), 0);
+            lv_obj_set_style_radius(cancel_btn, 0, 0);
+            lv_obj_t* cl = lv_label_create(cancel_btn);
+            lv_label_set_text(cl, "Cancel");
+            lv_obj_center(cl);
+            lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
+                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+            }, LV_EVENT_CLICKED, nullptr);
+
+            char* cn = strdup(name);
+            lv_obj_t* confirm_btn = lv_btn_create(dlg);
+            lv_obj_set_size(confirm_btn, 64, 24);
+            lv_obj_align(confirm_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
+            lv_obj_set_style_bg_color(confirm_btn, lv_color_hex(ACCENT_RED), 0);
+            lv_obj_set_style_radius(confirm_btn, 0, 0);
+            lv_obj_t* cfl_lb = lv_label_create(confirm_btn);
+            lv_label_set_text(cfl_lb, "Remove");
+            lv_obj_center(cfl_lb);
+            lv_obj_set_user_data(confirm_btn, cn);
+            lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ce) {
+                const char* cn = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(ce));
+                slopos::mesh::removeContact(cn);
+                go_back();
+            }, LV_EVENT_CLICKED, nullptr);
+            lv_obj_set_user_data(dlg, cn);
+            lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de)));
+            }, LV_EVENT_DELETE, nullptr);
+        }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(remove_btn, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
+>>>>>>> origin/dev
     }
 
     show_screen(scr);
@@ -2498,9 +2574,9 @@ void trace_screen_show()
 }
 
 // ════════════════════════════════════════════════════════
-// Channels — channel list with create/join
+// Channels — channel list with create/join and delete
 // ════════════════════════════════════════════════════════
-static void refresh_channel_list(lv_obj_t* list);
+static std::function<void()> g_channels_rebuild = nullptr;  // set by channels_screen_show
 
 static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
 {
@@ -2558,7 +2634,6 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
 
     lv_obj_add_event_cb(create_btn, [](lv_event_t* e) {
         lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));
-        lv_obj_t* scr = lv_obj_get_screen(dlg);
         lv_obj_t* fb  = (lv_obj_t*)lv_event_get_user_data(e);
 
         uint32_t n = lv_obj_get_child_cnt(dlg);
@@ -2577,13 +2652,7 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
         bool ok = slopos::mesh::addHashtagChannel(name);
         if (ok) {
             lv_obj_del_async(dlg);
-            for (uint32_t i = 0; i < lv_obj_get_child_cnt(scr); i++) {
-                lv_obj_t* child = lv_obj_get_child(scr, i);
-                if (lv_obj_check_type(child, &lv_list_class)) {
-                    refresh_channel_list(child);
-                    break;
-                }
-            }
+            if (g_channels_rebuild) g_channels_rebuild();
         } else {
             if (fb) lv_label_set_text(fb, "Invalid or full");
         }
@@ -2592,34 +2661,76 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
     return dialog;
 }
 
-static void refresh_channel_list(lv_obj_t* list)
-{
-    lv_obj_clean(list);
-    char names[8][32];
-    int n = slopos::mesh::exportChannels(names, 8);
-    if (n == 0) {
-        lv_obj_t* item = lv_list_add_btn(list, LV_SYMBOL_WARNING, "No channels joined");
-        lv_obj_set_style_bg_color(item, lv_color_hex(BG_TERTIARY), 0);
-    } else {
-        for (int i = 0; i < n; i++) {
-            lv_obj_t* item = lv_list_add_btn(list, LV_SYMBOL_LIST, names[i]);
-            lv_obj_set_style_bg_color(item,
-                lv_color_hex(i % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
-        }
-    }
-}
-
 void channels_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Channels");
 
-    lv_obj_t* list = lv_list_create(scr);
+    lv_obj_t* list = lv_obj_create(scr);
     lv_obj_set_size(list, LV_PCT(100), CONTENT_H - 36);
     lv_obj_align(list, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_style_pad_all(list, 0, 0);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
 
-    refresh_channel_list(list);
+    std::function<void()> rebuild = [list, &rebuild]() {
+        lv_obj_clean(list);
+        char names[8][32];
+        int n = slopos::mesh::exportChannels(names, 8);
+        if (n == 0) {
+            auto* item = lv_list_add_btn(list, LV_SYMBOL_WARNING, "No channels joined");
+            lv_obj_set_style_bg_color(item, lv_color_hex(BG_TERTIARY), 0);
+        } else {
+            for (int i = 0; i < n; i++) {
+                lv_obj_t* row = lv_obj_create(list);
+                lv_obj_set_size(row, LV_PCT(100), 36);
+                lv_obj_set_style_bg_color(row,
+                    lv_color_hex(i % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+                lv_obj_set_style_border_width(row, 0, 0);
+                lv_obj_set_style_pad_all(row, 0, 0);
+                lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+                lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER,
+                                      LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+                lv_obj_t* icon = lv_label_create(row);
+                lv_label_set_text(icon, LV_SYMBOL_LIST);
+                lv_obj_set_style_text_color(icon, lv_color_hex(ACCENT), 0);
+                lv_obj_set_style_text_font(icon, &lv_font_montserrat_12, 0);
+                lv_obj_set_style_pad_left(icon, 8, 0);
+
+                lv_obj_t* name_l = lv_label_create(row);
+                lv_label_set_text(name_l, names[i]);
+                lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
+                lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
+                lv_obj_set_flex_grow(name_l, 1);
+                lv_obj_set_style_pad_left(name_l, 8, 0);
+
+                // Delete button (hidden if only 1 channel remaining)
+                if (n > 1) {
+                    lv_obj_t* del_btn = lv_btn_create(row);
+                    lv_obj_set_size(del_btn, 28, 24);
+                    lv_obj_set_style_bg_color(del_btn, lv_color_hex(ACCENT_RED), 0);
+                    lv_obj_set_style_radius(del_btn, 0, 0);
+                    lv_obj_set_style_border_width(del_btn, 0, 0);
+                    lv_obj_set_style_pad_all(del_btn, 0, 0);
+                    auto* dl = lv_label_create(del_btn);
+                    lv_label_set_text(dl, LV_SYMBOL_CLOSE);
+                    lv_obj_set_style_text_font(dl, &lv_font_montserrat_10, 0);
+                    lv_obj_center(dl);
+                    lv_obj_set_style_pad_right(del_btn, 4, 0);
+                    int ch_idx = i;
+                    lv_obj_add_event_cb(del_btn, [](lv_event_t* e) {
+                        int idx = (int)(intptr_t)lv_event_get_user_data(e);
+                        slopos::mesh::removeChannel(idx);
+                        if (g_channels_rebuild) g_channels_rebuild();
+                    }, LV_EVENT_CLICKED, (void*)(intptr_t)ch_idx);
+                }
+            }
+        }
+    };
+
+    g_channels_rebuild = rebuild;
+    rebuild();
 
     lv_obj_t* add_btn = lv_btn_create(scr);
     lv_obj_set_size(add_btn, 140, 28);
@@ -2632,9 +2743,14 @@ void channels_screen_show()
     lv_obj_center(al);
 
     lv_obj_add_event_cb(add_btn, [](lv_event_t* e) {
-        lv_obj_t* scr = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
-        channel_create_dialog(scr);
+        lv_obj_t* s = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
+        channel_create_dialog(s);
     }, LV_EVENT_CLICKED, nullptr);
+
+    // Null the rebuild callback when this screen is destroyed
+    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+        g_channels_rebuild = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
 
     show_screen(scr);
 }

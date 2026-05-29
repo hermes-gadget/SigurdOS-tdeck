@@ -52,7 +52,7 @@ src/
 │   ├── responsive.h       # Display-size-agnostic layout helpers
 │   ├── home_screen.cpp/h  # 4x3 icon grid, top/bottom bars, battery/signal/time
 │   ├── chat_screen.cpp/h  # Channels, DM, message bubbles
-│   ├── screens.cpp/h      # Heard, Contacts, Map, Settings, Trace, Terminal, Signal, Channels, Finder, Advertise, Radio Setup, Custom RF
+│   ├── screens.cpp/h      # Heard, Contacts, Contact Detail, Map, Settings, Trace, Terminal, Signal, Channels, Finder, Advertise, Radio Setup, Custom RF
 │   ├── onboarding_screen.cpp/h  # First-boot setup wizard
 │   ├── navigation.cpp/h   # Screen routing with slide transitions, universal back-swipe
 │   └── ui.cpp/h           # Splash→Home transition, main loop updates
@@ -174,6 +174,7 @@ Use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 | 13 | Radio Setup (freq presets, SF/BW/CR/Pwr controls, save & reboot) | `screens.cpp` | ✅ |
 | 14 | Onboarding (wizard) | `onboarding_screen.cpp` | ✅ |
 | 15 | Repeaters (infrastructure relay nodes only, filtered from contacts, RSSI+SNR per relay) | `screens.cpp` | ✅ |
+| 16 | Contact Detail (full contact info: type, RSSI, SNR, last seen, path, location, DM + Trace buttons) | `screens.cpp` | ✅ |
 | — | Custom RF (sub-screen of Radio Setup — Freq, SF, BW, CR, Pwr text inputs with Apply) | `screens.cpp` | ✅ |
 
 ---
@@ -213,6 +214,7 @@ slopos::mesh::getNumRecvFlood()             // Flood messages received
 slopos::mesh::getNumRecvDirect()            // Direct messages received
 slopos::mesh::resetPacketStats()            // Reset all packet counters
 slopos::mesh::getContactCount()            // Number of known contacts
+slopos::mesh::findContactIndexByName(name) // Find contact index by exact name match
 slopos::mesh::getChannelCount()            // Number of joined channels
 slopos::mesh::sendAdvert()                 // Broadcast advert
 slopos::mesh::getLastAdvertTime()          // Timestamp of last advert
@@ -231,6 +233,7 @@ slopos::mesh::getPacketLogCount()          // Entries in packet log
 slopos::mesh::getPacketLogEntry(i, out)    // Read one packet log entry
 slopos::mesh::pushPacketLog(src, rssi, snr, type) // Add packet log entry
 slopos::mesh::sendTrace(idx, &tag)         // Send trace route request
+slopos::mesh::findContactIndex(name)       // Find contact index by exact name
 slopos::mesh::hasTraceResult()             // Trace reply received?
 slopos::mesh::getTracePathLen()            // SNR/hop count in trace
 slopos::mesh::getTracePath(snrs, hashes)   // Get trace path data
@@ -240,8 +243,14 @@ slopos::mesh::sendPingNearby()              // Zero-hop ping for node discovery
 slopos::mesh::pingIsActive()                // Ping in progress?
 slopos::mesh::pingOnCooldown()              // Ping on cooldown?
 slopos::mesh::pingCooldownRemaining()       // Milliseconds until next ping allowed
+slopos::mesh::activePingRemaining()         // Milliseconds until current ping times out
 slopos::mesh::getPingResultCount()          // Number of ping responses received
 slopos::mesh::getPingResult(i)             // Read one ping response (name, RSSI)
+slopos::mesh::applyRadioParams(freq, bw, sf, cr, pwr, rx_gain) // Live radio param update (no NVS)
+slopos::mesh::revertRadioParams()          // Revert radio params to stored prefs
+slopos::mesh::getRemainingTxBudget()       // Duty cycle: remaining TX airtime in ms
+slopos::mesh::setDutyCycle(percent)        // Set duty cycle limit (0 = disabled)
+slopos::mesh::removeChannel(idx)           // Remove a joined channel by index
 ```
 
 **Messages arrive** via `chat_screen_add_msg(channel, sender, text, is_self)`. The chat screen maintains per-channel message caches (8 messages each, 16 channels max).
@@ -255,7 +264,7 @@ slopos::mesh::getPingResult(i)             // Read one ping response (name, RSSI
 
 ## Testing
 
-**Current test count: 294** (293 passed, 1 skipped for native_test).
+**Current test count: 296** (295 passed, 1 skipped for native_test).
 
 ```bash
 pio test -e native_test -v       # All tests (no hardware)
@@ -320,6 +329,12 @@ pio run -e SlopOS_TDeck_debug_869
 
 # Run native tests (no hardware)
 pio test -e native_test -v
+
+# Remote test — test controller + SIMULATED mesh (no LoRa radio)
+pio run -e SlopOS_TDeck_remote_test
+
+# Remote test WITH RADIO — test controller + full LoRa mesh
+pio run -e SlopOS_TDeck_remote_test_radio
 ```
 
 ### Serial Debugging
@@ -394,7 +409,7 @@ Once connected, the T-Deck shows a test controller banner. Type commands directl
 | Command | Example | Description |
 |---------|---------|-------------|
 | `help` | `help` | Show command list |
-| `nav chat` | `nav chat` | Navigate to screen (home/chat/contacts/channels/network/heard/map/settings/terminal/radio/trace/signal/advertise) |
+| `nav chat` | `nav chat` | Navigate to screen (home/chat/contacts/channels/network/heard/map/settings/terminal/radio/trace/signal/advertise/onboarding/contactdetail) |
 | `back` | `back` | Go back in nav stack |
 | `tb up` | `tb click` | Simulate trackball (up/down/left/right/click, or u/d/l/r/c) |
 | `type hello` | `type Hello World` | Type text — queued and injected one char per loop cycle |
@@ -402,12 +417,17 @@ Once connected, the T-Deck shows a test controller banner. Type commands directl
 | `inject Alice Hello!` | `inject Bob channel=general hi` | Simulate incoming mesh message (no radio!) |
 | `screen` | `screen` | Show current screen name |
 | `status` | `status` | Show heap and PSRAM |
+| `setrf <freq> <sf> <bw> <cr> <pwr>` | `setrf 869.525 10 250 5 22` | Set radio params in NVS |
+| `reboot` | `reboot` | Reboot the device |
+| `advert` | `advert` | Send self advert |
 
-Safety guarantees:
+Safety guarantees for `SlopOS_TDeck_remote_test`:
 - No LoRa radio initialised — `slopos::mesh::init()` is never called
 - All `sendMessage`, `sendChannelMessage`, `sendAdvert` return false (g_mesh is null)
 - Radio accessors (`getLastRSSI`, `getLastSNR`, `getNoiseFloor`) return dummy values
 - No SPI transactions ever reach the SX1262 hardware
+
+**⚠️ The `SlopOS_TDeck_remote_test_radio` env has NO such guarantees** — it initialises the full LoRa mesh (`SLOPOS_REMOTE_TEST_RADIO=1`) and actually transmits. Use only for bidirectional radio verification (T-Deck ↔ Heltec V3).
 
 **⚠️ LIMITATION: Cannot test physical input hardware.** Remote test mode simulates trackball, keyboard, and touch programmatically — events are injected directly into the input queues. This means it **cannot** validate:
 - GPIO debounce timing, edge detection, or signal quality
@@ -437,12 +457,12 @@ Main + dev branch model:
 
 ## Radio Setup
 
-The Radio Setup screen (`screens.cpp:2529`) provides a two-column layout:
+The Radio Setup screen (`screens.cpp:2864`) provides a two-column layout:
 - **Left column:** Frequency presets (868.000 EU, 869.525 UK, 869.618 UK, 915.000 US, 433.500 EU)
-- **Right column:** "Custom RF..." button → opens Custom RF sub-screen, SF −/+ controls (7-12), BW −/+ controls (steps through 500/250/125/62.5/41.7/31.25/20.8/15.6/10.4/7.8 kHz), TX power −/+ controls (2-22 dBm)
-- **Bottom:** Save & Reboot button (writes prefs, saves channels and messages, then `ESP.restart()`)
+- **Right column:** "Custom RF..." button → opens Custom RF sub-screen, SF −/+ controls (7-12), BW −/+ controls (steps through 500/250/125/62.5/41.7/31.25/20.8/15.6/10.4/7.8 kHz), TX power −/+ controls (2-22 dBm), **RX Gain toggle** (BOOST/NORMAL), **Duty cycle** setting (percentage limit)
+- **Bottom:** Save & Reboot button (writes prefs + rx_boosted_gain + duty_cycle, saves channels and messages, then `ESP.restart()`)
 
-Radio params are stored in module-level `static` vars (`s_rf_freq`, `s_rf_sf`, `s_rf_bw`, `s_rf_cr`, `s_rf_pwr`) in `screens.cpp:2389-2393`, shared between `radio_setup_screen_show` and `custom_rf_screen_show`. These defaults to 869.618 MHz / SF8 / 62.5 kHz / CR 4/5 / 22 dBm.
+Radio params are stored in module-level `static` vars (`s_rf_freq`, `s_rf_sf`, `s_rf_bw`, `s_rf_cr`, `s_rf_pwr`, `s_rx_gain`, `s_duty_cycle`) in `screens.cpp:2710-2717`, shared between `radio_setup_screen_show` and `custom_rf_screen_show`. These defaults to 869.618 MHz / SF8 / 62.5 kHz / CR 4/5 / 22 dBm / RX gain normal / duty cycle disabled.
 
 ### Custom RF Sub-Screen
 
@@ -471,7 +491,12 @@ On "Apply", validated values are written to the shared state and `go_back()` is 
 | `SLOPOS_RUNTIME_FEAT()` macro scope | The `debug_cfg.h` `SLOPOS_RUNTIME_FEAT()` macro only works under full `SLOPOS_DEBUG=1` build. In per-feature builds (e.g. `SLOPOS_DEBUG_MESH=1` alone), the macro expands to nothing — runtime `debug feat 0/1` toggle has no effect. Only compile-time `#if SLOPOS_DEBUG_MESH` guards control output. |
 | Emoji font pointer init ordering | `emoji_font.h` declares mutable globals `emoji_wrapped_montserrat_*` that are initialized to raw Montserrat before `emoji_font_setup()` runs. Any code accessing these font pointers during boot (before the setup function runs) gets un-wrapped fonts without emoji fallback glyphs. |
 || Navigation back-swipe state reset | `back_swipe_commit` is reset to 0 at the start of both `navigate_to()` and `go_back()`. If a screen transition is triggered mid-back-swipe (e.g. by a screen's constructor calling navigate internally), the two-swipe sequence is broken — the user must start over from zero Left events. |
-|| Contacts screen strdup user_data | Contacts and Repeaters screens store `strdup(c.name)` as `lv_obj_set_user_data()` for click handlers. The heap copy is freed on `LV_EVENT_DELETE`. If a row is added or manually deleted without firing the delete event, the pointer leaks. |
+||| Contacts screen strdup user_data | Contacts and Repeaters screens store `strdup(c.name)` as `lv_obj_set_user_data()` for click handlers. The heap copy is freed on `LV_EVENT_DELETE`. If a row is added or manually deleted without firing the delete event, the pointer leaks. |
+||| Contact Detail screen strdup user_data | Contact Detail screen uses `strdup(contact_name)` for DM button user_data, plus two more `strdup(c.name)` in the Contacts screen for the detail icon and row data — all freed on LV_EVENT_DELETE. Three concurrent strdups per contact row in the Contacts screen now. |
+||| Channel delete button hidden at n=1 | The Channels screen delete button is hidden when `n <= 1` — prevents deleting the last remaining channel. But `removeChannel()` is always callable from the API, so a test or code path that calls it directly could leave zero channels. |
+||| Custom RF child-scan walk order | Apply button walks `lv_obj_get_child_cnt(scr)` looking for the first 5 textareas. The sort order depends on widget creation sequence — if any non-textarea child is inserted before the textareas, the count resets and the wrong textarea is picked up. Now guarded by a `found != 5` check, but the error path still uses the fragile `lv_obj_get_child_cnt(scr) - 2` label lookup. |
+||| New: RX Gain and Duty Cycle saved on reboot | `s_rx_gain` and `s_duty_cycle` are saved in NVS only on "Save & Reboot". Navigating away from Radio Setup without pressing save discards these settings silently, same as freq/SF/etc. |
+||| New: `SlopOS_TDeck_remote_test_radio` env | Full LoRa mesh + test controller. The `SLOPOS_REMOTE_TEST_RADIO=1` flag enables both the test controller serial commands AND the radio mesh. ⚠️ This env actually transmits — unlike `_remote_test` which never initializes the radio. |
 
 ---
 
@@ -484,6 +509,7 @@ All known issues are documented in `docs/KNOWN_ISSUES.md`. Most previously track
 **Recently fixed (see `docs/KNOWN_ISSUES.md` for PR details):**
 - GPS NMEA checksum validation, Navigation history stack, Channel hash full compare, Contact expiry/eviction with LRU, Advert rate limiting at mesh layer, Null-termination on short payloads, LVGL tick starvation during TX, `lv_obj_del` in event handlers, Map screen static persistence, I2C bus speed race (400kHz touch), Trackball LEFT double-fire, `keyboard_consume_event` side effects, GT911 INT-pin-HIGH buffered event drop, TDeckBoard duplicate instances, Module static-init allocation ordering, Terminal unbounded labels, REPEATERS/PACKETS screen separation, GPS NMEA checksum, makeEpoch thread-safety, debug.h non-debug stubs, onboard restart flash write delay, screen dispatch code deduplication, SPI host pin contention, sendTrace indentation
 - **New in this sync:** Radio reception fix (SPI host moved to SPI2_HOST, channel hash full compare, auto-join Public), graceful shutdown from Settings, unread message badges on home screen, display brightness control, auto-backlight timeout, flood max hops setting, contact SNR display, TX/RX delay tuning in Settings, TX/RX airtime and packet statistics on Signal screen, GPS clock sync on first valid fix
+- **Since last sync:** Contact Detail screen (#180), Signal screen two-column layout (#183), iOS-style signal dots (#187), `setrf`/`reboot`/`advert` serial test commands (#189), channel deletion (#168/#169), NAV serial command (#35a7638), map canvas PSRAM allocation fix (#4a464f6), `SlopOS_TDeck_remote_test_radio` env (#195), ROADMAP.md (#197)
 
 ---
 

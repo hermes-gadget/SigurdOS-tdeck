@@ -137,7 +137,11 @@ unsigned long getRemainingTxBudget();
 void setDutyCycle(uint8_t percent);
 
 // ── Contact management extensions ────────────
+bool removeContact(const char* name);
 bool resetPathTo(const char* name);
+
+// ── Channel management extensions ────────────
+>>>>>>> origin/dev
 
 } // namespace mesh
 } // namespace slopos

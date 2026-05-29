@@ -567,6 +567,18 @@ public:
         return (i >= 0 && i < _nContacts) ? &_contacts[i] : nullptr;
     }
 
+    // ── Remove contact at index ────────────────────────────
+    // Compacts the array so there are no gaps. Contacts are re-learned from adverts.
+    bool removeContact(int idx) {
+        if (idx < 0 || idx >= _nContacts) return false;
+        _nContacts--;
+        for (int i = idx; i < _nContacts; i++) {
+            _contacts[i] = _contacts[i + 1];
+        }
+        memset(&_contacts[_nContacts], 0, sizeof(SlopContact));
+        return true;
+    }
+
     // ── Reset path to a contact ────────────────────────────
     // Clears the known direct path. Next message will flood until a new path is learned.
     bool resetPathTo(int idx) {
@@ -669,6 +681,18 @@ public:
     int getChannelCount() const { return _nChannels; }
     const SlopChannel* getChannel(int i) const {
         return (i >= 0 && i < _nChannels) ? &_channels[i] : nullptr;
+    }
+
+    // ── Remove channel at index ────────────────────────────
+    // Compacts the array so there are no gaps. Caller must persist after.
+    bool removeChannel(int idx) {
+        if (idx < 0 || idx >= _nChannels) return false;
+        _nChannels--;
+        for (int i = idx; i < _nChannels; i++) {
+            _channels[i] = _channels[i + 1];
+        }
+        memset(&_channels[_nChannels], 0, sizeof(SlopChannel));
+        return true;
     }
 
     bool sendGroupText(int channel_idx, const char* text) {

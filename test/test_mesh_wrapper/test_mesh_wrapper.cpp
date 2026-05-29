@@ -73,6 +73,12 @@ TEST_F(MeshWrapperTest, AddHashtagChannelSignature) {
     SUCCEED();
 }
 
+TEST_F(MeshWrapperTest, RemoveChannelSignature) {
+    using rm_fn = bool (*)(int);
+    (void)static_cast<rm_fn>(slopos::mesh::removeChannel);
+    SUCCEED();
+}
+
 TEST_F(MeshWrapperTest, GetNoiseFloorReturnsInt) {
     using fn = int (*)();
     (void)static_cast<fn>(slopos::mesh::getNoiseFloor);
@@ -165,6 +171,13 @@ TEST_F(MeshWrapperTest, ExportContactsFullReturnsNonNegative) {
     slopos::mesh::ContactInfo contacts[4];
     int count = slopos::mesh::exportContactsFull(contacts, 4);
     EXPECT_GE(count, 0);
+}
+
+// ── removeContact signature exists ──────────────────────
+TEST_F(MeshWrapperTest, RemoveContactSignature) {
+    using rm_fn = bool (*)(const char*);
+    (void)static_cast<rm_fn>(slopos::mesh::removeContact);
+    SUCCEED();
 }
 
 // ── resetPathTo signature exists ────────────────────────
