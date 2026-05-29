@@ -603,11 +603,13 @@ void slopos_map_init() {
     if (initialized) return;
 
     // Allocate draw buffer (320×240×2 = 153KB for RGB565).
-    // DRAM first: LVGL canvas draw ops require CPU/DMA-accessible memory.
+    // PSRAM first: DRAM is scarce (~320KB free) and a 153KB allocation there
+    // stresses the heap. LVGL canvas draw ops work fine with PSRAM on ESP32-S3
+    // (CPU-cacheable), matching the display's own draw buffer pattern.
     size_t buf_size = (size_t)TFT_WIDTH * TFT_HEIGHT * 2;
-    canvas_pixels = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    canvas_pixels = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!canvas_pixels) {
-        canvas_pixels = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        canvas_pixels = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (!canvas_pixels) return;
 
