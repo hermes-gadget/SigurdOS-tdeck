@@ -324,10 +324,16 @@ bool slopos_display_init()
                                LV_DISPLAY_RENDER_MODE_FULL);
     } else {
         // Fallback: partial mode with a smaller DRAM buffer
-        static lv_color_t fallback_buf[TFT_WIDTH * 80];
-        lv_display_set_buffers(lv_disp, fallback_buf, nullptr,
-                               sizeof(fallback_buf),
-                               LV_DISPLAY_RENDER_MODE_PARTIAL);
+        // Allocate dynamically so the ~51 KB is only reserved when PSRAM fails,
+        // not permanently in BSS/DRAM on every boot.
+        lv_color_t* fallback_buf = (lv_color_t*)heap_caps_malloc(
+            TFT_WIDTH * 80 * sizeof(lv_color_t),
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (fallback_buf) {
+            lv_display_set_buffers(lv_disp, fallback_buf, nullptr,
+                                   TFT_WIDTH * 80 * sizeof(lv_color_t),
+                                   LV_DISPLAY_RENDER_MODE_PARTIAL);
+        }
     }
 
 #if SLOPOS_DEBUG_DISPLAY
