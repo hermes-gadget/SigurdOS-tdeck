@@ -13,7 +13,14 @@ bool prefs_load(NodePrefs& p) {
     Preferences nvs;
     if (!nvs.begin(NVS_NS, true)) return false;
 
-    nvs.getString("name", p.node_name, sizeof(p.node_name));
+    // Use a temp buffer so the default set by set_defaults() is preserved
+    // if the NVS key is absent (defensive against library version differences)
+    char name_tmp[sizeof(p.node_name)] = {0};
+    size_t name_len = nvs.getString("name", name_tmp, sizeof(name_tmp));
+    if (name_len > 0 && name_len < sizeof(p.node_name)) {
+        memcpy(p.node_name, name_tmp, name_len);
+        p.node_name[name_len] = '\0';
+    }
     p.freq         = nvs.getFloat("freq", 0.0f);
     p.bw           = nvs.getFloat("bw", 0.0f);
     p.sf           = nvs.getUChar("sf", 0);
