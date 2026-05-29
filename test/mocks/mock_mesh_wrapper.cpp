@@ -63,7 +63,6 @@ bool addChannel(const char* name, const char* psk) { return false; }
 
 bool removeContact(const char* name) { (void)name; return false; }
 bool resetPathTo(const char* name) { (void)name; return false; }
->>>>>>> origin/dev
 
 // ── Radio stats ──────────────────────────────────
 

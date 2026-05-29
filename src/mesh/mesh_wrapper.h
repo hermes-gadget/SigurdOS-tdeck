@@ -141,7 +141,7 @@ bool removeContact(const char* name);
 bool resetPathTo(const char* name);
 
 // ── Channel management extensions ────────────
->>>>>>> origin/dev
+bool removeChannel(int idx);
 
 } // namespace mesh
 } // namespace slopos

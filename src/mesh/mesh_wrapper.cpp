@@ -857,8 +857,10 @@ unsigned long getRemainingTxBudget() {
 
 void setDutyCycle(uint8_t percent) {
     if (!g_mesh) return;
+    g_mesh->setDutyCycle(percent);
+}
 
-    // ── Contact management extensions ────────────
+// ── Contact management extensions ────────────
     bool removeContact(const char* name) {
         if (!g_mesh || !name) return false;
         for (int i = 0; i < g_mesh->getContactCount(); i++) {

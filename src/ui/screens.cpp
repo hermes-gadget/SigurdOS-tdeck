@@ -766,34 +766,6 @@ void contact_detail_screen_show(const char* contact_name)
     }
 
     // Remove Contact button
-    lv_obj_set_style_bg_opa(btn_row2, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(btn_row2, 0, 0);
-    lv_obj_set_flex_flow(btn_row2, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(btn_row2, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    {
-        const char* rp_name = contact_name;
-        lv_obj_t* rp_btn = lv_btn_create(btn_row2);
-        lv_obj_set_size(rp_btn, 140, 24);
-        lv_obj_set_style_bg_color(rp_btn, lv_color_hex(ACCENT_ORANGE), 0);
-        lv_obj_set_style_radius(rp_btn, 0, 0);
-        lv_obj_t* rp_lbl = lv_label_create(rp_btn);
-        lv_label_set_text(rp_lbl, LV_SYMBOL_REFRESH " Reset Path");
-        lv_obj_set_style_text_color(rp_lbl, lv_color_hex(0xffffff), 0);
-        lv_obj_center(rp_lbl);
-        lv_obj_set_user_data(rp_btn, (void*)(intptr_t)rp_name);
-        lv_obj_add_event_cb(rp_btn, [](lv_event_t* e) {
-            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
-            const char* name = (const char*)lv_obj_get_user_data(target);
-            slopos::mesh::resetPathTo(name);
-            // Briefly show feedback — schedule go_back
-            lv_timer_create([](lv_timer_t* t) {
-                go_back();
-                lv_timer_del(t);
-            }, 800, nullptr);
-        }, LV_EVENT_CLICKED, nullptr);
-=======
-    // Remove Contact button
     {
         const char* remove_name = contact_name;
         lv_obj_t* remove_btn = lv_btn_create(btn_row);
@@ -869,7 +841,37 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_add_event_cb(remove_btn, [](lv_event_t* e) {
             free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
         }, LV_EVENT_DELETE, nullptr);
->>>>>>> origin/dev
+    }
+
+    // Reset Path button (second action row)
+    {
+        lv_obj_t* btn_row2 = lv_obj_create(scr);
+        lv_obj_set_size(btn_row2, CONTENT_W, 30);
+        lv_obj_align(btn_row2, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 32));
+        lv_obj_set_style_bg_opa(btn_row2, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(btn_row2, 0, 0);
+        lv_obj_set_flex_flow(btn_row2, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(btn_row2, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        const char* rp_name = contact_name;
+        lv_obj_t* rp_btn = lv_btn_create(btn_row2);
+        lv_obj_set_size(rp_btn, 140, 24);
+        lv_obj_set_style_bg_color(rp_btn, lv_color_hex(ACCENT_ORANGE), 0);
+        lv_obj_set_style_radius(rp_btn, 0, 0);
+        lv_obj_t* rp_lbl = lv_label_create(rp_btn);
+        lv_label_set_text(rp_lbl, LV_SYMBOL_REFRESH " Reset Path");
+        lv_obj_set_style_text_color(rp_lbl, lv_color_hex(0xffffff), 0);
+        lv_obj_center(rp_lbl);
+        lv_obj_set_user_data(rp_btn, (void*)(intptr_t)rp_name);
+        lv_obj_add_event_cb(rp_btn, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            const char* name = (const char*)lv_obj_get_user_data(target);
+            slopos::mesh::resetPathTo(name);
+            lv_timer_create([](lv_timer_t* t) {
+                go_back();
+                lv_timer_del(t);
+            }, 800, nullptr);
+        }, LV_EVENT_CLICKED, nullptr);
     }
 
     show_screen(scr);
