@@ -853,7 +853,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_set_flex_flow(btn_row2, LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(btn_row2, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-        const char* rp_name = contact_name;
+        char* rp_name = strdup(contact_name);
         lv_obj_t* rp_btn = lv_btn_create(btn_row2);
         lv_obj_set_size(rp_btn, 140, 24);
         lv_obj_set_style_bg_color(rp_btn, lv_color_hex(ACCENT_ORANGE), 0);
@@ -862,16 +862,21 @@ void contact_detail_screen_show(const char* contact_name)
         lv_label_set_text(rp_lbl, LV_SYMBOL_REFRESH " Reset Path");
         lv_obj_set_style_text_color(rp_lbl, lv_color_hex(0xffffff), 0);
         lv_obj_center(rp_lbl);
-        lv_obj_set_user_data(rp_btn, (void*)(intptr_t)rp_name);
+        lv_obj_set_user_data(rp_btn, rp_name);
         lv_obj_add_event_cb(rp_btn, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(target);
-            slopos::mesh::resetPathTo(name);
+            if (name) {
+                slopos::mesh::resetPathTo(name);
+            }
             lv_timer_create([](lv_timer_t* t) {
                 go_back();
                 lv_timer_del(t);
             }, 800, nullptr);
         }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(rp_btn, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
     }
 
     show_screen(scr);
