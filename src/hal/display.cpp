@@ -25,6 +25,7 @@
 #include "tdeck_pins.h"
 #include "../ui/ui.h"
 #include "../ui/chat_screen.h"
+#include "../ui/navigation.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../diagnostics/debug_cfg.h"
 #include "../diagnostics/debug.h"
@@ -383,8 +384,7 @@ bool slopos_display_init()
 void slopos_display_loop()
 {
     // Serial screenshot trigger: send "SCREENSHOT" over USB serial
-    // Disabled in release builds and remote test mode
-#if !defined(NDEBUG) && (!defined(SLOPOS_REMOTE_TEST) || !SLOPOS_REMOTE_TEST)
+#if 1
     if (Serial.available()) {
         static char cmd_buf[64];
         static uint8_t cmd_pos = 0;
@@ -412,6 +412,40 @@ void slopos_display_loop()
                 } else {
                     Serial.println("[serial] SEND syntax: SEND <channel> <text>");
                 }
+            } else if (strncmp(cmd_buf, "NAV ", 4) == 0) {
+                // NAV <screen_name> — programmatic screen navigation
+                // Screen names: home, chat, contacts, channels, network, heard,
+                // map, advertise, settings, trace, terminal, signal, radio,
+                // repeaters, onboarding
+                const char* n = cmd_buf + 4;
+                while (*n == ' ') ++n;
+                struct { const char* name; slopos::ui::Screen scr; } tbl[] = {
+                    {"home",      slopos::ui::Screen::Home},
+                    {"chat",      slopos::ui::Screen::Chat},
+                    {"contacts",  slopos::ui::Screen::Contacts},
+                    {"channels",  slopos::ui::Screen::Channels},
+                    {"network",   slopos::ui::Screen::Network},
+                    {"heard",     slopos::ui::Screen::Heard},
+                    {"map",       slopos::ui::Screen::Map},
+                    {"advertise", slopos::ui::Screen::Advertise},
+                    {"settings",  slopos::ui::Screen::Settings},
+                    {"trace",     slopos::ui::Screen::Trace},
+                    {"terminal",  slopos::ui::Screen::Terminal},
+                    {"signal",    slopos::ui::Screen::Signal},
+                    {"radio",     slopos::ui::Screen::RadioSetup},
+                    {"repeaters", slopos::ui::Screen::Repeaters},
+                    {"onboarding",slopos::ui::Screen::Onboarding},
+                };
+                bool found = false;
+                for (auto& e : tbl) {
+                    if (strcasecmp(n, e.name) == 0) {
+                        slopos::ui::navigate_to(e.scr);
+                        found = true;
+                        break;
+                    }
+                }
+                Serial.printf("[serial] NAV %s -> %s\n",
+                              n, found ? "OK" : "unknown screen");
             }
             cmd_pos = 0;
         } else if (cmd_pos < sizeof(cmd_buf) - 1) {
