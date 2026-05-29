@@ -77,7 +77,9 @@ static int           unread_count = 0;
 // Non-static overload for SlopMeshV2 — takes RSSI/SNR from caller context
 // (SlopMeshV2 has packet context when calling, while the static queue_push
 //  reads from radio_driver which may not reflect the correct packet.)
-void mesh_v2_queue_push(const char* sender, const char* channel,
+// Defined with its qualified name to match the declaration in mesh_wrapper.h
+// (slopos::mesh) — SlopMeshV2 calls it as slopos::mesh::mesh_v2_queue_push().
+void slopos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
                          const char* text, int rssi, float snr) {
     if (!sender || !text) return;
     if (msg_count >= MAX_QUEUED) {
@@ -419,7 +421,11 @@ bool init(bool spiffs_ok)
     // the onboarding wizard's channel setup.
     if (g_mesh->getChannelCount() == 0) {
         Serial.println("[mesh] No channels found — auto-joining Public channel");
+#ifdef SLOPOS_MESH_V2
+        g_mesh->addChannelBool("Public", "izOH6cXN6mrJ5e26oRXNcg==");
+#else
         g_mesh->addChannel("Public", "izOH6cXN6mrJ5e26oRXNcg==");
+#endif
         // Also auto-join chat channels discovered via incoming messages so
         // the device can reply on the same channel it received from.
         // Persist immediately so the channel survives reboot.
@@ -429,7 +435,11 @@ bool init(bool spiffs_ok)
     // Debug builds: auto-join the #testingslopos test channel for RF testing on
     // 869.525/SF10/BW250/CR5. addChannel() is a no-op if already present.
 #if SLOPOS_DEBUG
+#ifdef SLOPOS_MESH_V2
+    g_mesh->addChannelBool("testingslopos", "Si/tjXzmnwmPBA43Fw4b3Q==");
+#else
     g_mesh->addChannel("testingslopos", "Si/tjXzmnwmPBA43Fw4b3Q==");
+#endif
     saveChannels();
 
     // Force-configured in debug builds so adverts broadcast and the mesh
@@ -575,12 +585,23 @@ int exportContactsFull(ContactInfo* out, int max) {
             strncpy(out[n].name, c->name, 31);
             out[n].name[31] = '\0';
             out[n].type = c->type;
+#ifdef SLOPOS_MESH_V2
+            // MeshCore's ContactInfo stores GPS as int32 (1e6 fixed-point) and
+            // carries no per-contact RSSI/SNR — pull signal from the side-channel.
+            out[n].has_location = (c->gps_lat != 0 || c->gps_lon != 0);
+            out[n].latitude  = (float)c->gps_lat / 1000000.0f;
+            out[n].longitude = (float)c->gps_lon / 1000000.0f;
+            out[n].rssi = g_mesh->getContactRSSI(c->id.pub_key);
+            out[n].snr  = g_mesh->getContactSNR(c->id.pub_key);
+            out[n].last_seen = c->last_advert_timestamp;
+#else
             out[n].has_location = c->has_location;
             out[n].latitude = c->latitude;
             out[n].longitude = c->longitude;
             out[n].rssi = c->last_rssi;
             out[n].snr = c->last_snr;
             out[n].last_seen = c->last_seen;
+#endif
             n++;
         }
     }
@@ -602,7 +623,12 @@ int exportChannels(char names[][32], int max) {
 }
 
 bool addChannel(const char* name, const char* psk) {
+#ifdef SLOPOS_MESH_V2
+    // BaseChatMesh::addChannel returns ChannelDetails* — use the bool wrapper.
+    return g_mesh ? g_mesh->addChannelBool(name, psk) : false;
+#else
     return g_mesh ? g_mesh->addChannel(name, psk) : false;
+#endif
 }
 
 bool addHashtagChannel(const char* name) {

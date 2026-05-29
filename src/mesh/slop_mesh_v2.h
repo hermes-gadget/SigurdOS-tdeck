@@ -9,6 +9,7 @@
 
 #pragma once
 #include <string.h>
+#include <stdlib.h>
 #include <helpers/BaseChatMesh.h>
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
@@ -27,15 +28,11 @@ struct SignalSample {
     uint32_t updated_at;
 };
 
-// Ping result (matches slop_mesh.h layout)
-struct PingResult {
-    char name[32];
-    int rssi;
-};
+// NOTE: PingResult is declared in mesh_wrapper.h (slopos::mesh::PingResult).
 
 class SlopMeshV2 : public ::BaseChatMesh {
 public:
-    SlopMeshV2(::mesh::Radio& radio, ::mesh::Clock& clock, ::mesh::RNG& rng,
+    SlopMeshV2(::mesh::Radio& radio, ::mesh::MillisecondClock& clock, ::mesh::RNG& rng,
                ::mesh::RTCClock& rtc, ::mesh::PacketManager& pm, ::mesh::MeshTables& mt)
         : BaseChatMesh(radio, clock, rng, rtc, pm, mt) {}
     ~SlopMeshV2() {}
@@ -50,6 +47,8 @@ public:
         }
     }
     const char* getOwnName() const { return _own_name; }
+    // Compatibility no-op — SlopMeshV2 delivers messages directly to the
+    // wrapper queue via mesh_v2_queue_push() from its on*Recv() handlers.
     void setMessageCallback(void (*)(const char*, const char*, const char*)) {}
 
     // ── RSSI/SNR side-channel ───────────────────
@@ -59,12 +58,13 @@ public:
 
     void updateSignalSample(const uint8_t* pub_key, int rssi, float snr) {
         if (!pub_key) return;
+        uint32_t now = getRTCClock()->getCurrentTime();
         for (int i = 0; i < _n_signal_samples; i++) {
             if (_signal_samples[i].key[0] == pub_key[0] &&
                 _signal_samples[i].key[1] == pub_key[1]) {
                 _signal_samples[i].rssi = rssi;
                 _signal_samples[i].snr = snr;
-                _signal_samples[i].updated_at = getCurrentTime();
+                _signal_samples[i].updated_at = now;
                 return;
             }
         }
@@ -73,7 +73,7 @@ public:
             _signal_samples[_n_signal_samples].key[1] = pub_key[1];
             _signal_samples[_n_signal_samples].rssi = rssi;
             _signal_samples[_n_signal_samples].snr = snr;
-            _signal_samples[_n_signal_samples].updated_at = getCurrentTime();
+            _signal_samples[_n_signal_samples].updated_at = now;
             _n_signal_samples++;
         }
     }
@@ -98,16 +98,32 @@ public:
     bool     _has_trace_result = false;
     uint32_t _last_trace_tag = 0;
     uint8_t  _last_trace_len = 0;
-    uint8_t  _last_trace_snrs[64] = {0};
-    uint8_t  _last_trace_hashes[64] = {0};
+    uint8_t  _last_trace_snrs[MAX_PATH_SIZE] = {0};
+    uint8_t  _last_trace_hashes[MAX_PATH_SIZE] = {0};
 
-    bool sendTrace(int contact_idx, uint32_t* out_tag) {
-        if (contact_idx < 0 || contact_idx >= (int)_n_contacts) return false;
+    // Send a TRACE packet to a contact (by index). Requires a known direct path.
+    bool sendTrace(int contact_idx, uint32_t tag) {
+        ::ContactInfo c;
+        if (!getContactByIdx((uint32_t)contact_idx, c)) return false;
+        if (c.out_path_len == OUT_PATH_UNKNOWN) return false;
         _has_trace_result = false;
-        uint32_t tag = getRNG()->nextValue();
-        if (out_tag) *out_tag = tag;
-        return sendRequest(contacts[contact_idx], 0x04, &tag, sizeof(tag));
+        ::mesh::Packet* pkt = createTrace(tag, 0, 0);
+        if (!pkt) return false;
+        sendDirect(pkt, c.out_path, c.out_path_len);
+        return true;
     }
+
+    void onTraceRecv(::mesh::Packet*, uint32_t tag, uint32_t auth_code, uint8_t flags,
+                     const uint8_t* path_snrs, const uint8_t* path_hashes,
+                     uint8_t path_len) override {
+        _last_trace_tag = tag;
+        if (path_len > MAX_PATH_SIZE) path_len = MAX_PATH_SIZE;
+        _last_trace_len = path_len;
+        memcpy(_last_trace_snrs, path_snrs, path_len);
+        memcpy(_last_trace_hashes, path_hashes, path_len);
+        _has_trace_result = true;
+    }
+
     bool hasTraceResult() { return _has_trace_result; }
     uint8_t getTracePathLen() { return _last_trace_len; }
     void getTracePath(uint8_t* snrs_out, uint8_t* hashes_out) {
@@ -127,93 +143,113 @@ public:
     int      _ping_n_results = 0;
     PingResult _ping_results[PING_RESULTS_MAX];
 
+    // Send a zero-hop PING control packet to discover nearby nodes.
     bool sendPingNearby() {
-        uint32_t now = millis();
-        if (now - _ping_last_at < PING_COOLDOWN_MS) return false;
-        _ping_tag = getRNG()->nextValue();
+        uint32_t now = _ms->getMillis();
+        if (_ping_last_at != 0 && now - _ping_last_at < PING_COOLDOWN_MS) return false;
+        _ping_tag = (uint32_t)(now ^ (uint32_t)(intptr_t)this);
         _ping_sent_at = now;
+        _ping_last_at = now;
         _ping_n_results = 0;
-        return sendRequest(nullptr, 0x01, (uint8_t*)&_ping_tag, sizeof(_ping_tag));
+
+        char ping[20];
+        int n = snprintf(ping, sizeof(ping), "PING:%08lx", (unsigned long)_ping_tag);
+        if (n <= 0 || (size_t)n > sizeof(ping)) return false;
+
+        ::mesh::Packet* pkt = createRawData((uint8_t*)ping, (size_t)n);
+        if (!pkt) return false;
+        pkt->payload[0] |= 0x80;   // control-disco bit
+        sendZeroHop(pkt);
+        return true;
     }
+
+    void onControlDataRecv(::mesh::Packet* pkt) override {
+        if (!pkt || pkt->payload_len < 5) return;
+        if ((pkt->payload[0] & 0x80) == 0) return;
+
+        uint8_t clean[32];
+        size_t clen = pkt->payload_len;
+        if (clen > sizeof(clean)) clen = sizeof(clean);
+        memcpy(clean, pkt->payload, clen);
+        clean[0] &= 0x7F;
+
+        // PING received — reply with PONG (our name + RSSI)
+        if (memcmp(clean, "PING:", 5) == 0) {
+            int rssi = (int)_radio->getLastRSSI();
+            size_t tag_start = 5;
+            size_t tag_len = pkt->payload_len - tag_start;
+            if (tag_len > 16) tag_len = 16;
+
+            char pong[128];
+            int n = snprintf(pong, sizeof(pong), "PONG:%.*s:%s:%d",
+                             (int)tag_len, (const char*)(pkt->payload + tag_start),
+                             _own_name[0] ? _own_name : "unknown", rssi);
+            if (n > 0 && (size_t)n <= sizeof(pong)) {
+                ::mesh::Packet* resp = createRawData((uint8_t*)pong, (size_t)n);
+                if (resp) {
+                    resp->payload[0] |= 0x80;
+                    sendZeroHop(resp);
+                }
+            }
+            return;
+        }
+
+        // PONG received — collect if it matches our active ping
+        if (memcmp(clean, "PONG:", 5) == 0 && _ping_sent_at != 0 && _ping_tag != 0) {
+            if (_ping_n_results >= PING_RESULTS_MAX) return;
+            uint32_t now_ms = _ms->getMillis();
+            if (now_ms > _ping_sent_at + PING_WINDOW_MS) return;
+
+            const char* tag_end = (const char*)memchr(pkt->payload + 5, ':',
+                                                      pkt->payload_len - 5);
+            if (!tag_end) return;
+            size_t tag_len = (size_t)(tag_end - (const char*)pkt->payload - 5);
+            if (tag_len == 0) return;
+
+            char recv_tag[20];
+            if (tag_len > sizeof(recv_tag) - 1) tag_len = sizeof(recv_tag) - 1;
+            memcpy(recv_tag, pkt->payload + 5, tag_len);
+            recv_tag[tag_len] = '\0';
+
+            char our_tag[20];
+            snprintf(our_tag, sizeof(our_tag), "%08lx", (unsigned long)_ping_tag);
+            if (strcmp(recv_tag, our_tag) != 0) return;
+
+            const char* remaining = tag_end + 1;
+            size_t rem_len = pkt->payload_len -
+                             (size_t)(remaining - (const char*)pkt->payload);
+            const char* rssi_start = (const char*)memchr(remaining, ':', rem_len);
+            if (!rssi_start) return;
+
+            size_t name_len = (size_t)(rssi_start - remaining);
+            if (name_len > 31) name_len = 31;
+
+            PingResult& pr = _ping_results[_ping_n_results++];
+            memcpy(pr.name, remaining, name_len);
+            pr.name[name_len] = '\0';
+            pr.rssi = atoi(rssi_start + 1);
+            return;
+        }
+    }
+
     bool pingIsActive() {
-        return _ping_sent_at > 0 && (millis() - _ping_sent_at) < PING_WINDOW_MS;
+        return _ping_sent_at > 0 && (_ms->getMillis() - _ping_sent_at) < PING_WINDOW_MS;
     }
     bool pingOnCooldown() {
-        return _ping_last_at > 0 && (millis() - _ping_last_at) < PING_COOLDOWN_MS;
+        return _ping_last_at > 0 && (_ms->getMillis() - _ping_last_at) < PING_COOLDOWN_MS;
     }
     uint32_t pingCooldownRemaining() {
         if (!pingOnCooldown()) return 0;
-        return PING_COOLDOWN_MS - (millis() - _ping_last_at);
+        return PING_COOLDOWN_MS - (_ms->getMillis() - _ping_last_at);
     }
     uint32_t activePingRemaining() {
         if (!pingIsActive()) return 0;
-        return PING_WINDOW_MS - (millis() - _ping_sent_at);
+        return PING_WINDOW_MS - (_ms->getMillis() - _ping_sent_at);
     }
     int getPingResultCount() { return _ping_n_results; }
     const PingResult* getPingResult(int i) {
         if (i < 0 || i >= _ping_n_results) return nullptr;
         return &_ping_results[i];
-    }
-
-    // ── OnResponse handler for trace/ping ───────
-    void onContactResponse(const ::ContactInfo& contact, const uint8_t* data,
-                            uint8_t len) override
-    {
-        // Check for trace result
-        if (len >= 1 && data[0] == 0x04 && len >= 2) {
-            _has_trace_result = true;
-            _last_trace_len = len - 1;
-            if (_last_trace_len > 64) _last_trace_len = 64;
-            for (int i = 0; i < (int)_last_trace_len; i++) {
-                _last_trace_snrs[i] = data[i];
-            }
-            return;
-        }
-        // Check for ping response
-        if (len >= 4) {
-            uint32_t tag;
-            memcpy(&tag, data, sizeof(tag));
-            if (tag == _ping_tag && _ping_n_results < PING_RESULTS_MAX) {
-                _ping_last_at = millis();
-                PingResult& pr = _ping_results[_ping_n_results++];
-                strncpy(pr.name, contact.name, sizeof(pr.name) - 1);
-                pr.name[sizeof(pr.name) - 1] = '\0';
-                pr.rssi = getContactRSSI(contact.id.pub_key);
-            }
-        }
-        char buf[288];
-        snprintf(buf, sizeof(buf), "[RESP] %s: %u bytes", contact.name, len);
-        slopos::mesh::mesh_v2_queue_push(contact.name, "", buf, 0, 0.0f);
-    }
-
-    // ── OnRequest handler for ping ──────────────
-    uint8_t onContactRequest(const ::ContactInfo& contact, uint32_t sender_timestamp,
-                              const uint8_t* data, uint8_t len,
-                              uint8_t* reply) override
-    {
-        if (len >= 4) {
-            // Check for ping request (type 0x01)
-            if (data[0] == 0x01 && len >= 5) {
-                memcpy(reply, data + 1, 4);
-                return 4;
-            }
-            // Check for trace request (type 0x04)
-            if (data[0] == 0x04 && len >= 5) {
-                memcpy(reply, data + 1, len - 1);
-                return len - 1;
-            }
-        }
-        // Telemetry request
-        if (len > 0 && data[0] == 0x03) {
-            slopos::NodePrefs p = slopos::prefs_get();
-            if ((p.telemetry_mode & 0x01) == 0) return 0;
-            float vbat = slopos::board::getBatteryVoltage();
-            uint16_t mv = (uint16_t)(vbat * 1000.0f);
-            reply[0] = 0x01; reply[1] = 0x76;
-            reply[2] = (mv >> 8) & 0xFF; reply[3] = mv & 0xFF;
-            return 4;
-        }
-        return 0;
     }
 
     // ════════════════════════════════════════════════════
@@ -223,58 +259,29 @@ public:
     void onDiscoveredContact(::ContactInfo& contact, bool is_new,
                              uint8_t path_len, const uint8_t* path) override
     {
-        if (_radio) {
-            updateSignalSample(contact.id.pub_key,
-                               (int)_radio->getLastRSSI(),
-                               getPacketSNR());
-        }
-        char log_name[32];
-        strncpy(log_name, contact.name, sizeof(log_name) - 1);
-        log_name[sizeof(log_name) - 1] = '\0';
-        slopos::mesh::pushPacketLog(
-            log_name,
-            getContactRSSI(contact.id.pub_key),
-            getContactSNR(contact.id.pub_key),
-            is_new ? "ADVERT" : "ADVERT(UPDATE)");
+        int rssi = (int)_radio->getLastRSSI();
+        float snr = _radio->getLastSNR();
+        updateSignalSample(contact.id.pub_key, rssi, snr);
+        slopos::mesh::pushPacketLog(contact.name, rssi, snr,
+                                    is_new ? "ADVERT" : "ADVERT(UPDATE)");
 #if SLOPOS_DEBUG_MESH
         Serial.printf("[mesh] %s contact: %s (type=%d)\n",
                       is_new ? "new" : "updated", contact.name, contact.type);
 #endif
     }
 
+    // ACK tracking is not maintained in this skeleton (parity with SlopMesh,
+    // whose onAckRecv() was a no-op). Returning nullptr means "not ours".
     ::ContactInfo* processAck(const uint8_t* data) override {
-        uint32_t ack_val;
-        memcpy(&ack_val, data, sizeof(ack_val));
-        for (int i = 0; i < 8; i++) {
-            if (expected_ack_table[i].is_pending &&
-                expected_ack_table[i].ack == ack_val) {
-                expected_ack_table[i].is_pending = false;
-                int contact_idx = expected_ack_table[i].contact_idx;
-                if (contact_idx >= 0 && contact_idx < MAX_CONTACTS) {
-                    if (contacts[contact_idx].id.pub_key[0] != 0) {
-                        slopos::mesh::pushPacketLog(
-                            contacts[contact_idx].name, 0, 0.0f, "ACK");
-                        return &contacts[contact_idx];
-                    }
-                }
-            }
-        }
         return nullptr;
     }
 
     void onMessageRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
                        uint32_t sender_timestamp, const char* text) override
     {
-        int rssi = 0;
-        float snr = 0.0f;
-        if (pkt) {
-            rssi = (int)pkt->getRSSI();
-            snr = pkt->getSNR();
-            updateSignalSample(contact.id.pub_key, rssi, snr);
-        } else {
-            rssi = getContactRSSI(contact.id.pub_key);
-            snr = getContactSNR(contact.id.pub_key);
-        }
+        int rssi = (int)_radio->getLastRSSI();
+        float snr = pkt ? pkt->getSNR() : _radio->getLastSNR();
+        updateSignalSample(contact.id.pub_key, rssi, snr);
         slopos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr);
     }
 
@@ -290,7 +297,7 @@ public:
                              uint32_t sender_timestamp, const uint8_t* sender_prefix,
                              const char* text) override
     {
-        int rssi = pkt ? (int)pkt->getRSSI() : 0;
+        int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
         slopos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr);
     }
@@ -310,17 +317,21 @@ public:
     void onChannelMessageRecv(const ::mesh::GroupChannel& channel, ::mesh::Packet* pkt,
                               uint32_t timestamp, const char* text) override
     {
-        int rssi = pkt ? (int)pkt->getRSSI() : 0;
-        float snr = pkt ? pkt->getSNR() : 0.0f;
+        int rssi = (int)_radio->getLastRSSI();
+        float snr = pkt ? pkt->getSNR() : _radio->getLastSNR();
 
-        const char* chname = nullptr;
-        for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
-            if (channels[i].channel.hash[0] == channel.hash[0]) {
-                chname = channels[i].name;
-                break;
+        // Resolve the channel name from the matched GroupChannel.
+        char chname[32] = "[group]";
+        int cidx = findChannelIdx(channel);
+        if (cidx >= 0) {
+            ChannelDetails cd;
+            if (BaseChatMesh::getChannel(cidx, cd) && cd.name[0]) {
+                strncpy(chname, cd.name, sizeof(chname) - 1);
+                chname[sizeof(chname) - 1] = '\0';
             }
         }
 
+        // text arrives as "<sender_name>: <message>" (BaseChatMesh wire format)
         const char* sender_name = text;
         const char* msg_text = "";
         const char* colon = strstr(text, ": ");
@@ -333,10 +344,17 @@ public:
             sender_name = sender_buf;
             msg_text = colon + 2;
         }
-        slopos::mesh::mesh_v2_queue_push(sender_name,
-                                  chname ? chname : "[group]",
-                                  msg_text, rssi, snr);
+        slopos::mesh::mesh_v2_queue_push(sender_name, chname, msg_text, rssi, snr);
     }
+
+    uint8_t onContactRequest(const ::ContactInfo& contact, uint32_t sender_timestamp,
+                             const uint8_t* data, uint8_t len, uint8_t* reply) override
+    {
+        return 0;  // no custom request handling in this skeleton
+    }
+
+    void onContactResponse(const ::ContactInfo& contact, const uint8_t* data,
+                           uint8_t len) override {}
 
     void onContactPathUpdated(const ::ContactInfo& contact) override {
 #if SLOPOS_DEBUG_MESH
@@ -388,10 +406,6 @@ public:
         if (p.duty_cycle == 0) return -1.0f;
         return (float)p.duty_cycle / 100.0f;
     }
-    bool allowPacketForward(const ::mesh::Packet* pkt) const override { return false; }
-
-    void onChannelDataRecv(const ::mesh::GroupChannel& channel, ::mesh::Packet* pkt,
-                            uint8_t* data, size_t len) override {}
 
     // ── Compatibility API (matches SlopMesh) ──────
 
@@ -400,118 +414,216 @@ public:
         p.duty_cycle = percent;
         slopos::prefs_set(p);
     }
-    int getContactCount() { return (int)_n_contacts; }
-    int getChannelCount() { return (int)_n_channels; }
 
+    int getContactCount() { return getNumContacts(); }
+
+    // Number of populated channels. BaseChatMesh keeps them contiguous from
+    // slot 0; an empty name marks the end.
+    int getChannelCount() {
+        int n = 0;
+        ChannelDetails tmp;
+        for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+            if (!BaseChatMesh::getChannel(i, tmp)) break;
+            if (tmp.name[0] == '\0') break;
+            n++;
+        }
+        return n;
+    }
+
+    // Transient pointer accessors backed by per-instance caches. Callers use
+    // the returned pointer before the next call (matching SlopMesh usage).
+    ChannelDetails _ch_cache;
     const ChannelDetails* getChannel(int idx) {
         if (idx < 0 || idx >= MAX_GROUP_CHANNELS) return nullptr;
-        if (channels[idx].name[0] == '\0') return nullptr;
-        return &channels[idx];
-    }
-
-    bool getContact(int idx, ContactInfo& out) {
-        if (idx < 0 || idx >= (int)_n_contacts) return false;
-        out = contacts[idx];
-        return true;
-    }
-
-    bool removeContact(int idx) {
-        if (idx < 0 || idx >= (int)_n_contacts) return false;
-        removeContact(contacts[idx].id.pub_key);
-        return true;
-    }
-
-    bool resetPathTo(int idx) {
-        if (idx < 0 || idx >= (int)_n_contacts) return false;
-        return resetPathTo(contacts[idx]);
-    }
-
-    bool removeChannel(int idx) {
-        if (idx < 0 || idx >= MAX_GROUP_CHANNELS) return false;
-        memset(&channels[idx], 0, sizeof(ChannelDetails));
-        return true;
+        if (!BaseChatMesh::getChannel(idx, _ch_cache)) return nullptr;
+        if (_ch_cache.name[0] == '\0') return nullptr;
+        return &_ch_cache;
     }
 
     const char* getChannelName(int idx) {
-        if (idx < 0 || idx >= MAX_GROUP_CHANNELS) return "";
-        return channels[idx].name;
+        const ChannelDetails* c = getChannel(idx);
+        return c ? c->name : "";
+    }
+
+    ::ContactInfo _contact_cache;
+    const ::ContactInfo* getContact(int idx) {
+        if (idx < 0 || idx >= getNumContacts()) return nullptr;
+        if (!getContactByIdx((uint32_t)idx, _contact_cache)) return nullptr;
+        return &_contact_cache;
+    }
+
+    bool removeContact(int idx) {
+        ::ContactInfo tmp;
+        if (!getContactByIdx((uint32_t)idx, tmp)) return false;
+        return BaseChatMesh::removeContact(tmp);
+    }
+
+    bool resetPathTo(int idx) {
+        ::ContactInfo tmp;
+        if (!getContactByIdx((uint32_t)idx, tmp)) return false;
+        // resetPathTo() mutates the passed reference, so operate on the live
+        // stored contact (returned by lookupContactByPubKey), not a copy.
+        ::ContactInfo* live = lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
+        if (!live) return false;
+        BaseChatMesh::resetPathTo(*live);
+        return true;
+    }
+
+    bool removeChannel(int idx) {
+        int n = getChannelCount();
+        if (idx < 0 || idx >= n) return false;
+        ChannelDetails tmp;
+        for (int i = idx; i < n - 1; i++) {
+            if (BaseChatMesh::getChannel(i + 1, tmp)) BaseChatMesh::setChannel(i, tmp);
+        }
+        ChannelDetails empty;
+        memset(&empty, 0, sizeof(empty));
+        BaseChatMesh::setChannel(n - 1, empty);
+        return true;
+    }
+
+    // Base64 PSK decode (self-contained, matches MeshCore's alphabet).
+    static int decode_b64(const char* in, size_t in_len, uint8_t* out, size_t out_cap) {
+        static const char T[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        int o = 0;
+        uint32_t buf = 0;
+        int bits = 0;
+        for (size_t i = 0; i < in_len && in[i] != '='; i++) {
+            const char* p = strchr(T, in[i]);
+            if (!p) continue;
+            buf = (buf << 6) | (uint32_t)(p - T);
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                if (o < (int)out_cap) out[o++] = (uint8_t)(buf >> bits);
+                buf &= (1U << bits) - 1;
+            }
+        }
+        return o;
+    }
+
+    // bool-returning addChannel for wrapper compatibility. Inserts via
+    // setChannel() at the next free slot (keeps the channel array contiguous
+    // and consistent with getChannelCount()).
+    bool addChannelBool(const char* name, const char* psk_base64) {
+        if (!name || !name[0]) return false;
+        int idx = getChannelCount();
+        if (idx >= MAX_GROUP_CHANNELS) return false;
+        for (int i = 0; i < idx; i++) {
+            ChannelDetails t;
+            if (BaseChatMesh::getChannel(i, t) && strcmp(t.name, name) == 0) return true;
+        }
+        ChannelDetails cd;
+        memset(&cd, 0, sizeof(cd));
+        int len = decode_b64(psk_base64, strlen(psk_base64),
+                             cd.channel.secret, sizeof(cd.channel.secret));
+        if (len != 32 && len != 16) return false;
+        strncpy(cd.name, name, sizeof(cd.name) - 1);
+        cd.name[sizeof(cd.name) - 1] = '\0';
+        return BaseChatMesh::setChannel(idx, cd);  // setChannel recomputes hash
+    }
+
+    // Hashtag channel (no PSK): secret = sha256(name), hash = sha256(secret).
+    bool addHashtagChannel(const char* name) {
+        if (!name || !name[0]) return false;
+
+        char normalized[32];
+        size_t src = 0;
+        while (name[src] == ' ' || name[src] == '\t') src++;
+        size_t out = 0;
+        if (name[src] != '#') normalized[out++] = '#';
+        while (name[src] && name[src] != ' ' && name[src] != '\t' &&
+               name[src] != '\r' && name[src] != '\n' && out < sizeof(normalized) - 1) {
+            normalized[out++] = name[src++];
+        }
+        normalized[out] = '\0';
+        if (out <= 1) return false;
+
+        int idx = getChannelCount();
+        if (idx >= MAX_GROUP_CHANNELS) return false;
+        for (int i = 0; i < idx; i++) {
+            ChannelDetails t;
+            if (BaseChatMesh::getChannel(i, t) && strcmp(t.name, normalized) == 0)
+                return true;
+        }
+        ChannelDetails cd;
+        memset(&cd, 0, sizeof(cd));
+        ::mesh::Utils::sha256(cd.channel.secret, CIPHER_KEY_SIZE,
+                              (const uint8_t*)normalized, strlen(normalized));
+        strncpy(cd.name, normalized, sizeof(cd.name) - 1);
+        cd.name[sizeof(cd.name) - 1] = '\0';
+        return BaseChatMesh::setChannel(idx, cd);  // setChannel recomputes hash
     }
 
     bool loadChannel(const uint8_t* secret, size_t secret_len,
                      const uint8_t* hash, const char* name) {
         if (!name || !name[0]) return false;
-        int slot = -1;
-        for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
-            if (channels[i].name[0] == '\0') { slot = i; break; }
-        }
-        if (slot < 0) return false;
-        ChannelDetails& cd = channels[slot];
+        int idx = getChannelCount();
+        if (idx >= MAX_GROUP_CHANNELS) return false;
+        ChannelDetails cd;
+        memset(&cd, 0, sizeof(cd));
+        size_t cpy = secret_len < sizeof(cd.channel.secret) ? secret_len
+                                                            : sizeof(cd.channel.secret);
+        memcpy(cd.channel.secret, secret, cpy);
         strncpy(cd.name, name, sizeof(cd.name) - 1);
         cd.name[sizeof(cd.name) - 1] = '\0';
-        memcpy(cd.channel.hash, hash, sizeof(cd.channel.hash));
-        if (secret && secret_len > 0) {
-            size_t cpy = secret_len < sizeof(cd.channel.secret) ? secret_len : sizeof(cd.channel.secret);
-            memcpy(cd.channel.secret, secret, cpy);
+        // setChannel() recomputes the hash from the secret (same derivation
+        // used when the channel was created), so the stored hash is reproduced.
+        return BaseChatMesh::setChannel(idx, cd);
+    }
+
+    // ── Send helpers ────────────────────────────
+
+    bool sendTextTo(const char* name, const char* text) {
+        if (!name || !text) return false;
+        int n = getNumContacts();
+        ::ContactInfo tmp;
+        for (int i = 0; i < n; i++) {
+            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+                uint32_t expected_ack = 0, est_timeout = 0;
+                uint32_t ts = getRTCClock()->getCurrentTime();
+                int r = BaseChatMesh::sendMessage(tmp, ts, 0, text,
+                                                  expected_ack, est_timeout);
+                return r != MSG_SEND_FAILED;
+            }
         }
-        _n_channels++;
-        return true;
+        return false;
     }
 
-    // Stats passthrough
-    unsigned long getTotalAirTime() { return _radio ? _radio->getTotalAirTime() : 0; }
-    unsigned long getReceiveAirTime() { return _radio ? _radio->getReceiveAirTime() : 0; }
-    void resetStats() { if (_radio) _radio->resetStats(); }
-    uint32_t getNumSentFlood() { return _radio ? _radio->getNumSentFlood() : 0; }
-    uint32_t getNumSentDirect() { return _radio ? _radio->getNumSentDirect() : 0; }
-    uint32_t getNumRecvFlood() { return _radio ? _radio->getNumRecvFlood() : 0; }
-    uint32_t getNumRecvDirect() { return _radio ? _radio->getNumRecvDirect() : 0; }
-
-    // Single-arg getContact (matches SlopMesh API)
-    const ContactInfo* getContact(int idx) {
-        if (idx < 0 || idx >= (int)_n_contacts) return nullptr;
-        if (contacts[idx].id.pub_key[0] == 0) return nullptr;
-        return &contacts[idx];
+    bool sendGroupText(int idx, const char* text) {
+        if (idx < 0 || idx >= getChannelCount() || !text || !text[0]) return false;
+        ChannelDetails cd;
+        if (!BaseChatMesh::getChannel(idx, cd)) return false;
+        uint32_t ts = getRTCClock()->getCurrentTime();
+        return BaseChatMesh::sendGroupMessage(ts, cd.channel, _own_name, text,
+                                              (int)strlen(text));
     }
 
-    // sendTrace by value (wrapper passes tag, not ptr)
-    bool sendTrace(int contact_idx, uint32_t tag) {
-        return sendTrace(contact_idx, &tag);
+    // ── Flood advert ────────────────────────────
+    void broadcastAdvert(const char* name, uint8_t adv_type = ADV_TYPE_CHAT) {
+        AdvertDataBuilder builder(adv_type, name);
+        uint8_t app[MAX_ADVERT_DATA_SIZE];
+        uint8_t app_len = builder.encodeTo(app);
+        ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
+        if (pkt) sendFlood(pkt);
     }
-
-    // bool-returning addChannel for wrapper compatibility
-    bool addChannelBool(const char* name, const char* psk_base64) {
-        return BaseChatMesh::addChannel(name, psk_base64) != nullptr;
-    }
-
-    // Hashtag channel (no PSK)
-    bool addHashtagChannel(const char* name) {
-        if (!name || !name[0]) return false;
-        ChannelDetails* cd = BaseChatMesh::addChannel(name, "");
-        return cd != nullptr;
-    }
-
-    // Flood advert
-    void broadcastAdvert(const char* name, uint8_t type) {
-        ::mesh::Packet* pkt = createSelfAdvert(name);
-        if (pkt) sendFloodScoped(pkt);
-        delete pkt;
-    }
-    void broadcastAdvert(const char* name, double lat, double lon, uint8_t type) {
-        ::mesh::Packet* pkt = createSelfAdvert(name, lat, lon);
-        if (pkt) sendFloodScoped(pkt);
-        delete pkt;
-    }
-
-    // Remaining TX budget (duty cycle)
-    uint32_t getRemainingTxBudget() {
-        if (!_radio) return 0;
-        return _radio->getRemainingTxBudget(getAirtimeBudgetFactor());
+    void broadcastAdvert(const char* name, double lat, double lon,
+                         uint8_t adv_type = ADV_TYPE_CHAT) {
+        AdvertDataBuilder builder(adv_type, name, lat, lon);
+        uint8_t app[MAX_ADVERT_DATA_SIZE];
+        uint8_t app_len = builder.encodeTo(app);
+        ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
+        if (pkt) sendFlood(pkt);
     }
 
     float getPacketSNR() const {
-        if (_radio) return _radio->getSNR();
-        return 0.0f;
+        return _radio ? _radio->getLastSNR() : 0.0f;
     }
+
+    // NOTE: airtime/packet-count stats (getTotalAirTime, getReceiveAirTime,
+    // resetStats, getNumSent/RecvFlood/Direct) and getRemainingTxBudget are
+    // inherited directly from mesh::Dispatcher — no overrides needed.
 };
 
 } // namespace mesh
