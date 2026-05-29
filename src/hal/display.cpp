@@ -383,8 +383,10 @@ bool slopos_display_init()
 
 void slopos_display_loop()
 {
-    // Serial screenshot trigger: send "SCREENSHOT" over USB serial
-#if 1
+    // Serial screenshot/nav commands — only in non-remote-test builds.
+    // In SLOPOS_REMOTE_TEST builds the test controller's serial handler
+    // owns all Serial reads; this block would steal characters from commands.
+#if !defined(SLOPOS_REMOTE_TEST)
     if (Serial.available()) {
         static char cmd_buf[64];
         static uint8_t cmd_pos = 0;
