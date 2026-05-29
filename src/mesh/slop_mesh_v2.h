@@ -274,9 +274,64 @@ public:
 #endif
     }
 
-    // ACK tracking is not maintained in this skeleton (parity with SlopMesh,
-    // whose onAckRecv() was a no-op). Returning nullptr means "not ours".
+    // ── ACK tracking ──────────────────────────────
+    struct PendingAck {
+        char dest_name[32];
+        uint32_t timestamp;
+        uint32_t expected_ack;
+        uint32_t sent_at_ms;
+        bool in_use;
+    };
+    static constexpr int MAX_PENDING_ACKS = 16;
+    PendingAck _pending_acks[MAX_PENDING_ACKS];
+
+    void addPendingAck(const char* name, uint32_t ts, uint32_t expected_ack) {
+        for (int i = 0; i < MAX_PENDING_ACKS; i++) {
+            if (!_pending_acks[i].in_use) {
+                strncpy(_pending_acks[i].dest_name, name, sizeof(_pending_acks[i].dest_name)-1);
+                _pending_acks[i].dest_name[sizeof(_pending_acks[i].dest_name)-1] = '\0';
+                _pending_acks[i].timestamp = ts;
+                _pending_acks[i].expected_ack = expected_ack;
+                _pending_acks[i].sent_at_ms = _ms->getMillis();
+                _pending_acks[i].in_use = true;
+                return;
+            }
+        }
+        // Table full — evict oldest entry
+        int oldest = 0;
+        uint32_t oldest_ms = _pending_acks[0].sent_at_ms;
+        for (int i = 1; i < MAX_PENDING_ACKS; i++) {
+            if (_pending_acks[i].sent_at_ms < oldest_ms) {
+                oldest = i;
+                oldest_ms = _pending_acks[i].sent_at_ms;
+            }
+        }
+        strncpy(_pending_acks[oldest].dest_name, name, sizeof(_pending_acks[oldest].dest_name)-1);
+        _pending_acks[oldest].dest_name[sizeof(_pending_acks[oldest].dest_name)-1] = '\0';
+        _pending_acks[oldest].timestamp = ts;
+        _pending_acks[oldest].expected_ack = expected_ack;
+        _pending_acks[oldest].sent_at_ms = _ms->getMillis();
+        _pending_acks[oldest].in_use = true;
+    }
+
     ::ContactInfo* processAck(const uint8_t* data) override {
+        if (!data) return nullptr;
+        uint32_t ack_val;
+        memcpy(&ack_val, data, 4);
+        for (int i = 0; i < MAX_PENDING_ACKS; i++) {
+            if (_pending_acks[i].in_use && _pending_acks[i].expected_ack == ack_val) {
+                _pending_acks[i].in_use = false;
+                // Notify wrapper layer
+                slopos::mesh::registerAckedMessage(_pending_acks[i].dest_name, _pending_acks[i].timestamp);
+                // Return a valid ContactInfo for BaseChatMesh internal processing
+                for (int j = 0; j < getNumContacts(); j++) {
+                    if (getContactByIdx((uint32_t)j, _contact_cache)) {
+                        return &_contact_cache;
+                    }
+                }
+                return &_contact_cache;
+            }
+        }
         return nullptr;
     }
 
@@ -598,6 +653,9 @@ public:
                 uint32_t ts = getRTCClock()->getCurrentTime();
                 int r = BaseChatMesh::sendMessage(tmp, ts, 0, text,
                                                   expected_ack, est_timeout);
+                if (r != MSG_SEND_FAILED) {
+                    addPendingAck(name, ts, expected_ack);
+                }
                 return r != MSG_SEND_FAILED;
             }
         }

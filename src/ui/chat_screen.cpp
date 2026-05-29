@@ -124,6 +124,7 @@ struct ChannelMessage {
     char     text[160];
     uint32_t timestamp;
     bool     is_self;
+    bool     acked;
 };
 static ChannelMessage* ch_msgs[MAX_CHANNELS] = {nullptr};
 static uint16_t       ch_msg_capacity[MAX_CHANNELS] = {0};
@@ -573,6 +574,7 @@ static void append_channel_message(int idx, const char* sender, const char* text
     msg.text[sizeof(msg.text) - 1] = '\0';
     msg.timestamp = timestamp;
     msg.is_self = is_self;
+    msg.acked = false;
 
     update_channel_meta(idx, msg.text, timestamp);
 }
@@ -828,7 +830,7 @@ static void create_top_bar()
 // ════════════════════════════════════════════════════
 static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
                                 const char* text, uint32_t timestamp,
-                                bool is_self)
+                                bool is_self, bool acked)
 {
     lv_obj_t* container = lv_obj_create(parent);
     lv_obj_set_width(container, LV_PCT(100));
@@ -879,8 +881,14 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
         is_self ? lv_color_hex(0xffffff) : lv_color_hex(ACCENT), 0);
     lv_obj_set_style_text_font(name, emoji_wrapped_montserrat_10, 0);
 
-    char time_buf[8];
-    format_time(time_buf, sizeof(time_buf), timestamp);
+    char time_buf[10];
+    if (is_self && acked) {
+        uint32_t t = timestamp % 86400;
+        snprintf(time_buf, sizeof(time_buf), "%02d:%02d \xe2\x9c\x93",
+                 (t / 3600) % 24, (t / 60) % 60);
+    } else {
+        format_time(time_buf, sizeof(time_buf), timestamp);
+    }
     lv_obj_t* ts = lv_label_create(header);
     lv_label_set_text(ts, time_buf);
     lv_obj_set_style_text_color(ts,
@@ -938,7 +946,18 @@ static void render_active_messages()
     lv_obj_clean(msg_list);
     for (uint16_t i = 0; i < ch_msg_count[active_channel]; i++) {
         ChannelMessage& msg = ch_msgs[active_channel][i];
-        create_bubble(msg_list, msg.sender, msg.text, msg.timestamp, msg.is_self);
+
+        // Check ACK status for self-sent DM messages
+        if (msg.is_self && !msg.acked) {
+            if (strncmp(dyn_channels[active_channel], "DM: ", 4) == 0) {
+                const char* dest = dyn_channels[active_channel] + 4;
+                if (slopos::mesh::isMessageAcked(dest, msg.timestamp)) {
+                    msg.acked = true;
+                }
+            }
+        }
+
+        create_bubble(msg_list, msg.sender, msg.text, msg.timestamp, msg.is_self, msg.acked);
     }
 
     uint32_t count = lv_obj_get_child_cnt(msg_list);
@@ -1524,7 +1543,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     // Check if user is at the bottom BEFORE adding the new bubble
     bool at_bottom = (lv_obj_get_scroll_bottom(msg_list) <= 4);
 
-    create_bubble(msg_list, sender, text, now, is_self);
+    create_bubble(msg_list, sender, text, now, is_self, false);
 
     const uint16_t cap = chat_msg_cap();
     if (lv_obj_get_child_cnt(msg_list) > cap)

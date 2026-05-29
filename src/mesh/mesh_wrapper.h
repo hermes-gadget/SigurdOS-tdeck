@@ -146,5 +146,9 @@ bool resetPathTo(const char* name);
 // ── Channel management extensions ────────────
 bool removeChannel(int idx);
 
+// ── ACK tracking ──────────────────────────────
+void registerAckedMessage(const char* dest_name, uint32_t timestamp);
+bool isMessageAcked(const char* dest_name, uint32_t timestamp);
+
 } // namespace mesh
 } // namespace slopos

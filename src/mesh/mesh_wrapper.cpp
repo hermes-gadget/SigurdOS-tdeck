@@ -210,6 +210,18 @@ static void saveIdentity(::mesh::LocalIdentity& id) {
 }
 
 // ════════════════════════════════════════════════════
+// ACK tracking bridge
+// ════════════════════════════════════════════════════
+static constexpr int MAX_ACKED = 32;
+struct AckedMsg {
+    char dest[32];
+    uint32_t timestamp;
+};
+static AckedMsg _acked_msgs[MAX_ACKED];
+static int _acked_head = 0;
+static int _acked_count = 0;
+
+// ════════════════════════════════════════════════════
 // Public API
 // ════════════════════════════════════════════════════
 
@@ -234,6 +246,31 @@ void pushPacketLog(const char* source, int rssi, float snr, const char* type) {
     e.type[sizeof(e.type) - 1] = '\0';
     pkt_log_head = (pkt_log_head + 1) % MAX_PACKET_LOG;
     if (pkt_log_count < MAX_PACKET_LOG) pkt_log_count++;
+}
+
+// ── ACK tracking bridge ──────────────────────
+void registerAckedMessage(const char* dest, uint32_t ts) {
+    if (!dest) return;
+    AckedMsg& a = _acked_msgs[_acked_head];
+    strncpy(a.dest, dest, sizeof(a.dest) - 1);
+    a.dest[sizeof(a.dest) - 1] = '\0';
+    a.timestamp = ts;
+    _acked_head = (_acked_head + 1) % MAX_ACKED;
+    if (_acked_count < MAX_ACKED) _acked_count++;
+#if SLOPOS_DEBUG_MESH
+    Serial.printf("[mesh] ACK for %s (ts=%lu) — %d total tracked\n", dest, (unsigned long)ts, _acked_count);
+#endif
+}
+
+bool isMessageAcked(const char* dest, uint32_t ts) {
+    if (!dest) return false;
+    int i = _acked_head;
+    for (int c = 0; c < _acked_count; c++) {
+        i--;
+        if (i < 0) i = MAX_ACKED - 1;
+        if (_acked_msgs[i].timestamp == ts && strcmp(_acked_msgs[i].dest, dest) == 0) return true;
+    }
+    return false;
 }
 
 // Inject a simulated message into the queue (for remote test mode — no radio)
