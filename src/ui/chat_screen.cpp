@@ -71,6 +71,15 @@ static lv_obj_t* msg_list       = nullptr;
 static lv_obj_t* input_bar      = nullptr;
 static lv_obj_t* input_field    = nullptr;
 
+// ── Search state ───────────────────────────────────────
+static bool     search_active        = false;
+static char     search_query[32]     = "";
+static int      search_matches[200]  = {0};
+static int      search_match_count   = 0;
+static int      search_current_match = -1;
+static lv_obj_t* search_bar          = nullptr;
+static lv_obj_t* search_input        = nullptr;
+
 // Channel-list view widgets
 static lv_obj_t* ch_list            = nullptr;
 static lv_obj_t* ch_back_btn        = nullptr;
@@ -189,6 +198,8 @@ static void rebuild_channel_ribbon();
 static void show_add_channel_options(lv_obj_t* parent);
 static void render_active_messages();
 static void show_emoji_picker(lv_obj_t* parent);
+static void show_search_bar();
+static void hide_search();
 
 static int channel_pill_width(const char* name)
 {
@@ -746,6 +757,170 @@ static void rebuild_channel_ribbon()
     if (top_bar) lv_obj_invalidate(top_bar);
 }
 
+// ── Search helpers ────────────────────────────────────
+static void run_search(const char* query)
+{
+    search_match_count = 0;
+    search_current_match = -1;
+    if (!query || !query[0] || !has_channel_buffer(active_channel)) return;
+
+    int n = ch_msg_count[active_channel];
+    // Lowercase query for case-insensitive matching
+    char q_lower[32];
+    size_t qlen = 0;
+    for (; query[qlen] && qlen < sizeof(q_lower) - 1; qlen++)
+        q_lower[qlen] = (query[qlen] >= 'A' && query[qlen] <= 'Z') ?
+                        (query[qlen] + 32) : query[qlen];
+    q_lower[qlen] = '\0';
+
+    for (int i = 0; i < n && search_match_count < 200; i++) {
+        bool found = false;
+        // Search message text
+        const char* text = ch_msgs[active_channel][i].text;
+        if (text[0]) {
+            for (const char* p = text; *p; p++) {
+                bool match = true;
+                for (size_t j = 0; j < qlen; j++) {
+                    char c = p[j];
+                    if (c == '\0') { match = false; break; }
+                    if (c >= 'A' && c <= 'Z') c += 32;
+                    if (c != q_lower[j]) { match = false; break; }
+                }
+                if (match) { found = true; break; }
+            }
+        }
+        // Also search sender name
+        if (!found) {
+            const char* sender = ch_msgs[active_channel][i].sender;
+            if (sender[0]) {
+                for (const char* p = sender; *p; p++) {
+                    bool match = true;
+                    for (size_t j = 0; j < qlen; j++) {
+                        char c = p[j];
+                        if (c == '\0') { match = false; break; }
+                        if (c >= 'A' && c <= 'Z') c += 32;
+                        if (c != q_lower[j]) { match = false; break; }
+                    }
+                    if (match) { found = true; break; }
+                }
+            }
+        }
+        if (found) {
+            search_matches[search_match_count++] = i;
+        }
+    }
+    if (search_match_count > 0) search_current_match = 0;
+}
+
+static void show_search_bar()
+{
+    if (!scr) return;
+    search_active = true;
+    search_query[0] = '\0';
+
+    if (!search_bar) {
+        // Create search bar — positioned below top bar divider
+        search_bar = lv_obj_create(scr);
+        lv_obj_set_size(search_bar, LV_PCT(100), 30);
+        lv_obj_align(search_bar, LV_ALIGN_TOP_MID, 0, TOP_H + DIVIDER_H);
+        lv_obj_set_style_bg_color(search_bar, lv_color_hex(BG_SECONDARY), 0);
+        lv_obj_set_style_bg_opa(search_bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(search_bar, 0, 0);
+        lv_obj_set_style_pad_all(search_bar, 3, 0);
+        lv_obj_set_scrollbar_mode(search_bar, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_scroll_dir(search_bar, LV_DIR_NONE);
+
+        // Search icon label
+        lv_obj_t* icon = lv_label_create(search_bar);
+        lv_label_set_text(icon, LV_SYMBOL_REFRESH);
+        lv_obj_set_style_text_color(icon, lv_color_hex(TEXT_MUTED), 0);
+        lv_obj_set_style_text_font(icon, emoji_wrapped_montserrat_12, 0);
+        lv_obj_align(icon, LV_ALIGN_LEFT_MID, 6, 0);
+
+        // Search text input
+        search_input = lv_textarea_create(search_bar);
+        lv_obj_set_size(search_input, 180, 24);
+        lv_obj_align(search_input, LV_ALIGN_LEFT_MID, 24, 0);
+        lv_obj_set_style_bg_color(search_input, lv_color_hex(BG_INPUT), 0);
+        lv_obj_set_style_text_color(search_input, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(search_input, emoji_wrapped_montserrat_10, 0);
+        lv_obj_set_style_border_width(search_input, 1, 0);
+        lv_obj_set_style_border_color(search_input, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_radius(search_input, 0, 0);
+        lv_obj_set_style_pad_all(search_input, 3, 0);
+        lv_textarea_set_one_line(search_input, true);
+        lv_textarea_set_max_length(search_input, 30);
+        lv_textarea_set_placeholder_text(search_input, "Search messages...");
+        lv_obj_remove_flag(search_input, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+        lv_obj_set_style_outline_width(search_input, 0, LV_STATE_FOCUSED);
+        lv_obj_set_style_outline_width(search_input, 0, (lv_state_t)(LV_STATE_FOCUSED | LV_STATE_EDITED));
+
+        // Close button (×)
+        lv_obj_t* close_btn = lv_btn_create(search_bar);
+        lv_obj_set_size(close_btn, 24, 24);
+        lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -4, 0);
+        lv_obj_set_style_bg_color(close_btn, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_border_width(close_btn, 0, 0);
+        lv_obj_set_style_radius(close_btn, 0, 0);
+        lv_obj_t* close_lbl = lv_label_create(close_btn);
+        lv_label_set_text(close_lbl, LV_SYMBOL_CLOSE);
+        lv_obj_set_style_text_font(close_lbl, emoji_wrapped_montserrat_10, 0);
+        lv_obj_center(close_lbl);
+        lv_obj_add_event_cb(close_btn, [](lv_event_t*) { hide_search(); }, LV_EVENT_CLICKED, nullptr);
+
+        // On value change — re-run search
+        lv_obj_add_event_cb(search_input, [](lv_event_t* e) {
+            if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+            const char* text = lv_textarea_get_text(search_input);
+            strncpy(search_query, text ? text : "", sizeof(search_query) - 1);
+            search_query[sizeof(search_query) - 1] = '\0';
+            run_search(search_query);
+            render_active_messages();
+        }, LV_EVENT_ALL, nullptr);
+
+        // On Enter (LV_EVENT_READY) — also re-run search
+        lv_obj_add_event_cb(search_input, [](lv_event_t* e) {
+            if (lv_event_get_code(e) != LV_EVENT_READY) return;
+            const char* text = lv_textarea_get_text(search_input);
+            strncpy(search_query, text ? text : "", sizeof(search_query) - 1);
+            search_query[sizeof(search_query) - 1] = '\0';
+            run_search(search_query);
+            render_active_messages();
+        }, LV_EVENT_ALL, nullptr);
+    }
+
+    lv_obj_remove_flag(search_bar, LV_OBJ_FLAG_HIDDEN);
+    if (search_input) {
+        lv_textarea_set_text(search_input, "");
+    }
+    // Resize message list to accommodate search bar overlay
+    if (msg_list) {
+        lv_obj_set_y(msg_list, TOP_H + DIVIDER_H + 30);
+        lv_obj_set_height(msg_list, MSG_LIST_H - 30);
+    }
+    lv_group_t* g = lv_group_get_default();
+    if (g && search_input) lv_group_focus_obj(search_input);
+    run_search("");
+    render_active_messages();
+}
+
+static void hide_search()
+{
+    search_active = false;
+    search_query[0] = '\0';
+    search_match_count = 0;
+    search_current_match = -1;
+    if (search_bar) {
+        lv_obj_add_flag(search_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+    // Restore message list position
+    if (msg_list) {
+        lv_obj_set_y(msg_list, MSG_LIST_Y);
+        lv_obj_set_height(msg_list, MSG_LIST_H);
+    }
+    render_active_messages();
+}
+
 // ════════════════════════════════════════════════════
 // Messaging view — top bar (← back + channel pills)
 // ════════════════════════════════════════════════════
@@ -776,7 +951,7 @@ static void create_top_bar()
     }, LV_EVENT_CLICKED, nullptr);
 
     // Horizontal scrollable channel ribbon — exact width for no warp (matches home grid uniform sizing)
-    int ribbon_w = CONTENT_W - 28 - 44; // back button + margins + time space
+    int ribbon_w = CONTENT_W - 28 - 44 - 28; // back button + margins + time + search btn
     channel_ribbon = lv_obj_create(top_bar);
     lv_obj_set_size(channel_ribbon, ribbon_w, TOP_H - 4);
     lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 28, 0);
@@ -811,6 +986,28 @@ static void create_top_bar()
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
+
+    // Search button (left of time label)
+    lv_obj_t* search_btn = lv_btn_create(top_bar);
+    lv_obj_set_size(search_btn, 24, TOP_H - 4);
+    lv_obj_align(search_btn, LV_ALIGN_RIGHT_MID, -28, 0);
+    lv_obj_set_style_bg_color(search_btn, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_border_width(search_btn, 0, 0);
+    lv_obj_set_style_radius(search_btn, 0, 0);
+    {
+        lv_obj_t* sl = lv_label_create(search_btn);
+        lv_label_set_text(sl, "S");
+        lv_obj_set_style_text_color(sl, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_text_font(sl, emoji_wrapped_montserrat_12, 0);
+        lv_obj_center(sl);
+    }
+    lv_obj_add_event_cb(search_btn, [](lv_event_t*) {
+        if (search_active) {
+            hide_search();
+        } else {
+            show_search_bar();
+        }
+    }, LV_EVENT_CLICKED, nullptr);
 
     for (int i = 0; i < dyn_count; i++) {
         create_channel_pill(channel_ribbon, i);
@@ -944,6 +1141,43 @@ static void render_active_messages()
     if (!has_channel_buffer(active_channel)) return;
 
     lv_obj_clean(msg_list);
+
+    // ── Search mode: render only matching messages ──
+    if (search_active && search_query[0]) {
+        if (search_match_count > 0) {
+            for (int i = 0; i < search_match_count; i++) {
+                int idx = search_matches[i];
+                if (idx < 0 || idx >= ch_msg_count[active_channel]) continue;
+                ChannelMessage& msg = ch_msgs[active_channel][idx];
+                lv_obj_t* bubble = create_bubble(msg_list, msg.sender, msg.text,
+                                                  msg.timestamp, msg.is_self, msg.acked);
+                // Highlight the current search match
+                if (i == search_current_match && bubble) {
+                    lv_obj_t* first_child = lv_obj_get_child(bubble, 0);
+                    if (first_child) {
+                        lv_obj_set_style_border_width(first_child, 2, 0);
+                        lv_obj_set_style_border_color(first_child, lv_color_hex(ACCENT), 0);
+                        lv_obj_set_style_border_opa(first_child, LV_OPA_COVER, 0);
+                    }
+                }
+            }
+        } else {
+            // No matches — show "No results" message
+            lv_obj_t* no_results = lv_label_create(msg_list);
+            lv_label_set_text(no_results, "No matching messages");
+            lv_obj_set_style_text_color(no_results, lv_color_hex(TEXT_MUTED), 0);
+            lv_obj_set_style_text_font(no_results, emoji_wrapped_montserrat_12, 0);
+            lv_obj_center(no_results);
+        }
+        // Scroll to current match
+        if (search_current_match >= 0 && search_current_match < search_match_count) {
+            lv_obj_t* child = lv_obj_get_child(msg_list, search_current_match);
+            if (child) lv_obj_scroll_to_view(child, LV_ANIM_OFF);
+        }
+        return;
+    }
+
+    // ── Normal mode: render all messages ──
     for (uint16_t i = 0; i < ch_msg_count[active_channel]; i++) {
         ChannelMessage& msg = ch_msgs[active_channel][i];
 
@@ -1251,7 +1485,18 @@ static void open_channel_messaging(int idx)
     // already set it to a new list before this delete callback fires.
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
+        search_bar = nullptr;
+        search_input = nullptr;
+        search_active = false;
     }, LV_EVENT_DELETE, nullptr);
+
+    // Reset search state
+    search_active = false;
+    search_query[0] = '\0';
+    search_match_count = 0;
+    search_current_match = -1;
+    search_bar = nullptr;
+    search_input = nullptr;
 
     create_top_bar();
 
@@ -1562,6 +1807,32 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
 bool chat_screen_handle_trackball(SlopOSTrackballEvent event)
 {
     if (msg_list) {
+        // ── Search mode: Up/Down cycles through matches, Left dismisses search ──
+        if (search_active && search_query[0] && search_match_count > 0) {
+            switch (event) {
+            case SlopOSTrackballEvent::Up:
+            case SlopOSTrackballEvent::Down: {
+                if (event == SlopOSTrackballEvent::Up) {
+                    search_current_match = (search_current_match <= 0) ?
+                        search_match_count - 1 : search_current_match - 1;
+                } else {
+                    search_current_match = (search_current_match >= search_match_count - 1) ?
+                        0 : search_current_match + 1;
+                }
+                render_active_messages();
+                lv_obj_t* child = lv_obj_get_child(msg_list, search_current_match);
+                if (child) lv_obj_scroll_to_view(child, LV_ANIM_OFF);
+                return true;
+            }
+            case SlopOSTrackballEvent::Left:
+                hide_search();
+                show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+                return true;
+            default:
+                return true;
+            }
+        }
+
         switch (event) {
         case SlopOSTrackballEvent::Up: {
             // Let LVGL clamp at top (no elastic = hard stop at 0)
