@@ -1790,6 +1790,15 @@ void chat_load_messages()
 
         int idx = find_channel_idx(ch_name);
 
+        // DM pseudo-channels ("DM: <name>") aren't returned by exportChannels(),
+        // so they won't be found in dyn_channels. Create them on demand.
+        if (idx < 0 && strncmp(ch_name, "DM: ", 4) == 0 && dyn_count < MAX_CHANNELS) {
+            idx = dyn_count;
+            strncpy(dyn_channels[idx], ch_name, 31);
+            dyn_channels[idx][31] = '\0';
+            dyn_count++;
+        }
+
         // Keep loaded history bounded by the normal append-path. This preserves
         // existing cap semantics and keeps the newest messages when historical
         // files contain more entries than the configured runtime cap.
