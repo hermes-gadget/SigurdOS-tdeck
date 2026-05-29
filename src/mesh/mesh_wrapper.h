@@ -59,7 +59,6 @@ void resetUnreadMessageCount();
 int  getContactCount();
 int  exportContacts(char names[][32], int max);
 int  exportContactsFull(ContactInfo* out, int max);
-int  findContactIndexByName(const char* name);
 
 int  getChannelCount();
 int  exportChannels(char names[][32], int max);

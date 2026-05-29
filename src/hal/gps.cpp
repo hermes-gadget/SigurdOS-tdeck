@@ -228,7 +228,7 @@ void slopos_gps_loop() {
                     // Days since 1970-01-01 (Gregorian calendar)
                     uint32_t days = (uint32_t)(365LL * y + y / 4 - y / 100 + y / 400
                                              - (365LL * 1970 + 1970 / 4 - 1970 / 100 + 1970 / 400)
-                                             + (uint32_t)(30.6 * (m + 1)) + d - 719469);
+                                             + (uint32_t)(30.6001 * (m + 1)) + d - 719469);
                     uint32_t epoch = days * 86400UL + gps.hour * 3600UL
                                    + gps.minute * 60UL + gps.second;
                     // Set system RTC (available on both ESP32 and native builds)

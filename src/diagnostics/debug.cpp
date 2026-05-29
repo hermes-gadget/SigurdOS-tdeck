@@ -322,8 +322,8 @@ void dump_home_screen_layout()
                   base_w, extra_w, base_h, extra_h);
 
     static const char* icon_names[] = {
-        "CHATS", "CONTACTS", "REPEATERS", "FINDER", "HEARD", "MAP",
-        "ADVERTISE", "SETTINGS", "TRACE", "TERMINAL", "NOISE", "SIGNAL"
+        "CHATS", "CONTACTS", "REPEATERS", "FINDER", "PACKETS", "MAP",
+        "ADVERTISE", "SETTINGS", "TRACE", "TERMINAL", "SETUP", "SIGNAL"
     };
 
     for (int i = 0; i < 12; i++) {

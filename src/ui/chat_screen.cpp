@@ -538,8 +538,9 @@ static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
     size_t slen = strlen(src);
     constexpr size_t MAX_PREVIEW_CHARS = 25;
     if (slen > MAX_PREVIEW_CHARS) {
-        memcpy(ch_meta[idx].preview, src, MAX_PREVIEW_CHARS);
-        memcpy(ch_meta[idx].preview + MAX_PREVIEW_CHARS, "...", 4);
+        size_t trunc = slopos::utf8_truncate_bytes(src, MAX_PREVIEW_CHARS);
+        memcpy(ch_meta[idx].preview, src, trunc);
+        memcpy(ch_meta[idx].preview + trunc, "...", 4);
     } else {
         memcpy(ch_meta[idx].preview, src, slen + 1);
     }

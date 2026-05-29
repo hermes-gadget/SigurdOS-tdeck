@@ -35,6 +35,7 @@ static SPIClass                  lora_spi(FSPI);
 static Module*                   lora_mod = nullptr;
 static CustomSX1262*             radio_module = nullptr;
 static CustomSX1262Wrapper*      radio_driver = nullptr;
+static bool                      radio_inited = false;
 static ESP32RTCClock             fallback_clock;
 static AutoDiscoverRTCClock      rtc_clock(fallback_clock);
 static StdRNG                    fast_rng;
@@ -76,6 +77,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
         return;
     }
     MeshMessage& m = msg_buf[msg_head];
+    if (!sender) sender = "";
     strncpy(m.sender, sender, sizeof(m.sender) - 1);
     m.sender[sizeof(m.sender) - 1] = '\0';
     strncpy(m.channel, channel ? channel : "", sizeof(m.channel) - 1);
@@ -85,7 +87,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
     m.timestamp = rtc_clock.getCurrentTime();
     m.is_self = false;
     // Increment unread count for incoming messages (reset when chat is opened)
-    if (!sender || strcmp(sender, own_name) != 0) unread_count++;
+    if (strcmp(sender, own_name) != 0) unread_count++;
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     // Log as packet entry (accessible via Packets screen)
@@ -318,6 +320,7 @@ bool init(bool spiffs_ok)
         Serial.println("[mesh] ERROR: Radio init failed");
         return false;
     }
+    radio_inited = true;
 
     radio_module->setFrequency(freq);
     radio_module->setBandwidth(bw);
@@ -534,15 +537,6 @@ int exportContactsFull(ContactInfo* out, int max) {
         }
     }
     return n;
-}
-
-int findContactIndexByName(const char* name) {
-    if (!g_mesh || !name) return -1;
-    for (int i = 0; i < g_mesh->getContactCount(); i++) {
-        auto* c = g_mesh->getContact(i);
-        if (c && strcmp(c->name, name) == 0) return i;
-    }
-    return -1;
 }
 
 // ── Channels ────────────────────────────────────
@@ -819,7 +813,7 @@ bool getPacketLogEntry(int index, PacketLogEntry* out) {
 
 // ── Live radio config (no NVS write) ──────────
 bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool rx_gain) {
-    if (!radio_module) return false;
+    if (!radio_module || !radio_inited) return false;
     radio_module->setFrequency(freq);
     radio_module->setBandwidth(bw);
     radio_module->setSpreadingFactor(sf);
@@ -832,7 +826,7 @@ bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool r
 }
 
 bool revertRadioParams() {
-    if (!radio_module) return false;
+    if (!radio_module || !radio_inited) return false;
     const slopos::NodePrefs& p = slopos::prefs_get();
     float freq = p.configured ? p.freq : LORA_FREQ;
     float bw   = p.configured ? p.bw   : LORA_BW;
