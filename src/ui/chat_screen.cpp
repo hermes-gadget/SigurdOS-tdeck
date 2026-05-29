@@ -1532,14 +1532,20 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     if (!is_self && !visible) ch_meta[idx].unread++;
     if (!visible) return;
 
+    // Check if user is at the bottom BEFORE adding the new bubble
+    bool at_bottom = (lv_obj_get_scroll_bottom(msg_list) <= 4);
+
     create_bubble(msg_list, sender, text, now, is_self);
 
     const uint16_t cap = chat_msg_cap();
     if (lv_obj_get_child_cnt(msg_list) > cap)
         lv_obj_del(lv_obj_get_child(msg_list, 0));
 
-    lv_obj_t* last = lv_obj_get_child(msg_list, lv_obj_get_child_cnt(msg_list) - 1);
-    if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
+    // Only auto-scroll if user was already at the bottom
+    if (at_bottom) {
+        lv_obj_t* last = lv_obj_get_child(msg_list, lv_obj_get_child_cnt(msg_list) - 1);
+        if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
+    }
 }
 
 // ════════════════════════════════════════════════════
