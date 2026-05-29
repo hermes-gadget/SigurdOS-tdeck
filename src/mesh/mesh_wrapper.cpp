@@ -9,10 +9,8 @@
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
 #include "hal/prefs.h"
-#include "slop_mesh.h"
-#ifdef SLOPOS_MESH_V2
 #include "slop_mesh_v2.h"
-#endif
+#include "slop_mesh.h"
 #include "../diagnostics/debug_cfg.h"
 
 #include <SPIFFS.h>
@@ -45,12 +43,8 @@ static StdRNG                    fast_rng;
 static SimpleMeshTables          tables;
 static ArduinoMillis             millis_clock;
 static StaticPoolPacketManager   pkt_mgr(16);
-#ifdef SLOPOS_MESH_V2
 using slopos::mesh::SlopMeshV2;
 using mesh_impl_t = slopos::mesh::SlopMeshV2;
-#else
-using mesh_impl_t = slopos::mesh::SlopMesh;
-#endif
 static mesh_impl_t*   g_mesh = nullptr;
 
 static bool initialized = false;
@@ -421,11 +415,7 @@ bool init(bool spiffs_ok)
     // the onboarding wizard's channel setup.
     if (g_mesh->getChannelCount() == 0) {
         Serial.println("[mesh] No channels found — auto-joining Public channel");
-#ifdef SLOPOS_MESH_V2
         g_mesh->addChannelBool("Public", "izOH6cXN6mrJ5e26oRXNcg==");
-#else
-        g_mesh->addChannel("Public", "izOH6cXN6mrJ5e26oRXNcg==");
-#endif
         // Also auto-join chat channels discovered via incoming messages so
         // the device can reply on the same channel it received from.
         // Persist immediately so the channel survives reboot.
@@ -433,16 +423,10 @@ bool init(bool spiffs_ok)
     }
 
     // Debug builds: auto-join the #testingslopos test channel for RF testing on
-    // 869.525/SF10/BW250/CR5. addChannel() is a no-op if already present.
+    // 869.525/SF10/BW250/CR5. addChannelBool() is a no-op if already present.
 #if SLOPOS_DEBUG
-#ifdef SLOPOS_MESH_V2
     g_mesh->addChannelBool("testingslopos", "Si/tjXzmnwmPBA43Fw4b3Q==");
-#else
-    g_mesh->addChannel("testingslopos", "Si/tjXzmnwmPBA43Fw4b3Q==");
-#endif
     saveChannels();
-
-    // Force-configured in debug builds so adverts broadcast and the mesh
     // is fully operational without requiring Settings → Radio Setup.
     {
         slopos::NodePrefs dp = slopos::prefs_get();
@@ -585,7 +569,6 @@ int exportContactsFull(ContactInfo* out, int max) {
             strncpy(out[n].name, c->name, 31);
             out[n].name[31] = '\0';
             out[n].type = c->type;
-#ifdef SLOPOS_MESH_V2
             // MeshCore's ContactInfo stores GPS as int32 (1e6 fixed-point) and
             // carries no per-contact RSSI/SNR — pull signal from the side-channel.
             out[n].has_location = (c->gps_lat != 0 || c->gps_lon != 0);
@@ -594,14 +577,6 @@ int exportContactsFull(ContactInfo* out, int max) {
             out[n].rssi = g_mesh->getContactRSSI(c->id.pub_key);
             out[n].snr  = g_mesh->getContactSNR(c->id.pub_key);
             out[n].last_seen = c->last_advert_timestamp;
-#else
-            out[n].has_location = c->has_location;
-            out[n].latitude = c->latitude;
-            out[n].longitude = c->longitude;
-            out[n].rssi = c->last_rssi;
-            out[n].snr = c->last_snr;
-            out[n].last_seen = c->last_seen;
-#endif
             n++;
         }
     }
@@ -623,12 +598,8 @@ int exportChannels(char names[][32], int max) {
 }
 
 bool addChannel(const char* name, const char* psk) {
-#ifdef SLOPOS_MESH_V2
     // BaseChatMesh::addChannel returns ChannelDetails* — use the bool wrapper.
     return g_mesh ? g_mesh->addChannelBool(name, psk) : false;
-#else
-    return g_mesh ? g_mesh->addChannel(name, psk) : false;
-#endif
 }
 
 bool addHashtagChannel(const char* name) {
