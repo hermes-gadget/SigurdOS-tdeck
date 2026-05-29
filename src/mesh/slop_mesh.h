@@ -674,6 +674,18 @@ public:
         return (i >= 0 && i < _nChannels) ? &_channels[i] : nullptr;
     }
 
+    // ── Remove channel at index ────────────────────────────
+    // Compacts the array so there are no gaps. Caller must persist after.
+    bool removeChannel(int idx) {
+        if (idx < 0 || idx >= _nChannels) return false;
+        _nChannels--;
+        for (int i = idx; i < _nChannels; i++) {
+            _channels[i] = _channels[i + 1];
+        }
+        memset(&_channels[_nChannels], 0, sizeof(SlopChannel));
+        return true;
+    }
+
     bool sendGroupText(int channel_idx, const char* text) {
         if (channel_idx < 0 || channel_idx >= _nChannels) return false;
         if (!text || !text[0]) return false;

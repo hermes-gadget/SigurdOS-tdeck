@@ -872,5 +872,12 @@ bool removeContact(const char* name) {
     return false;
 }
 
+// ── Channel management extensions ────────────
+bool removeChannel(int idx) {
+    if (!g_mesh) return false;
+    bool ok = g_mesh->removeChannel(idx);
+    return ok;
+}
+
 } // namespace mesh
 } // namespace slopos

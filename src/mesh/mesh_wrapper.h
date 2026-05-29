@@ -139,5 +139,8 @@ void setDutyCycle(uint8_t percent);
 // ── Contact management extensions ────────────
 bool removeContact(const char* name);
 
+// ── Channel management extensions ────────────
+bool removeChannel(int idx);
+
 } // namespace mesh
 } // namespace slopos
