@@ -671,6 +671,17 @@ uint32_t getNumRecvFlood()   { return g_mesh ? g_mesh->getNumRecvFlood() : 0; }
 uint32_t getNumRecvDirect()  { return g_mesh ? g_mesh->getNumRecvDirect() : 0; }
 void resetPacketStats()      { if (g_mesh) g_mesh->resetStats(); }
 
+// ── Signal history for sparkline ─────────────
+int getSignalHistoryCount() {
+    return g_mesh ? g_mesh->getSignalHistoryCount() : 0;
+}
+int getSignalHistoryRSSI(int idx) {
+    return g_mesh ? g_mesh->getSignalHistoryRSSI(idx) : 0;
+}
+float getSignalHistorySNR(int idx) {
+    return g_mesh ? g_mesh->getSignalHistorySNR(idx) : 0;
+}
+
 bool sendAdvert() {
     // Rate limit: reject calls within 10 seconds of the last successful advert.
     // The UI also enforces this via button cooldown, but programmatic

@@ -131,6 +131,11 @@ uint32_t activePingRemaining();
 int      getPingResultCount();
 const PingResult* getPingResult(int i);
 
+// ── Signal history for sparkline ─────────────
+int  getSignalHistoryCount();
+int  getSignalHistoryRSSI(int idx);
+float getSignalHistorySNR(int idx);
+
 // ── Live radio config (no NVS write) ──────────
 bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool rx_gain);
 bool revertRadioParams();

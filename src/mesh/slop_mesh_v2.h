@@ -60,6 +60,39 @@ public:
     SignalSample _signal_samples[SIGNAL_SAMPLES_MAX];
     int _n_signal_samples = 0;
 
+    // ── Signal history for sparkline ──────────────
+    struct SignalHistorySample {
+        int rssi;
+        float snr;
+        uint32_t timestamp;
+    };
+    static constexpr int SIGNAL_HISTORY_MAX = 64;
+    SignalHistorySample _signal_history[SIGNAL_HISTORY_MAX];
+    int _signal_history_head = 0;
+    int _signal_history_count = 0;
+
+    void pushSignalHistory(int rssi, float snr) {
+        uint32_t now = 0;
+        if (getRTCClock()) now = getRTCClock()->getCurrentTime();
+        _signal_history[_signal_history_head].rssi = rssi;
+        _signal_history[_signal_history_head].snr = snr;
+        _signal_history[_signal_history_head].timestamp = now;
+        _signal_history_head = (_signal_history_head + 1) % SIGNAL_HISTORY_MAX;
+        if (_signal_history_count < SIGNAL_HISTORY_MAX) _signal_history_count++;
+    }
+
+    int getSignalHistoryCount() const { return _signal_history_count; }
+    int getSignalHistoryRSSI(int idx) const {
+        if (idx < 0 || idx >= _signal_history_count) return 0;
+        int real = (_signal_history_head - _signal_history_count + idx + SIGNAL_HISTORY_MAX) % SIGNAL_HISTORY_MAX;
+        return _signal_history[real].rssi;
+    }
+    float getSignalHistorySNR(int idx) const {
+        if (idx < 0 || idx >= _signal_history_count) return 0.0f;
+        int real = (_signal_history_head - _signal_history_count + idx + SIGNAL_HISTORY_MAX) % SIGNAL_HISTORY_MAX;
+        return _signal_history[real].snr;
+    }
+
     void updateSignalSample(const uint8_t* pub_key, int rssi, float snr) {
         if (!pub_key) return;
         uint32_t now = getRTCClock()->getCurrentTime();
@@ -69,6 +102,7 @@ public:
                 _signal_samples[i].rssi = rssi;
                 _signal_samples[i].snr = snr;
                 _signal_samples[i].updated_at = now;
+                pushSignalHistory(rssi, snr);
                 return;
             }
         }
@@ -80,6 +114,7 @@ public:
             _signal_samples[_n_signal_samples].updated_at = now;
             _n_signal_samples++;
         }
+        pushSignalHistory(rssi, snr);
     }
     int getContactRSSI(const uint8_t* pub_key) const {
         if (!pub_key) return 0;

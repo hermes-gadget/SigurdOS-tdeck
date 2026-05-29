@@ -1162,6 +1162,37 @@ void signal_screen_show()
             "to set frequency/power.",
             rssi, snr, noise);
         lv_label_set_text(lbl, buf);
+        // ── RSSI sparkline (even unconfigured shows captured samples) ─
+        int hist_count = slopos::mesh::getSignalHistoryCount();
+        if (hist_count >= 2) {
+            lv_obj_t* chart = lv_chart_create(scr);
+            lv_obj_set_size(chart, CONTENT_W - 12, 60);
+            lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 6, CONTENT_Y + 4 + 130);
+            lv_obj_set_style_bg_color(chart, lv_color_hex(BG_TERTIARY), 0);
+            lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(chart, 1, 0);
+            lv_obj_set_style_border_color(chart, lv_color_hex(TEXT_MUTED), 0);
+            lv_obj_set_style_pad_all(chart, 4, 0);
+            lv_obj_set_style_radius(chart, 0, 0);
+            lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
+            lv_chart_set_div_line_count(chart, 4, 0);
+            lv_chart_set_point_count(chart, hist_count);
+
+            lv_chart_series_t* rssi_ser = lv_chart_add_series(chart, lv_color_hex(ACCENT), LV_CHART_AXIS_PRIMARY_Y);
+            lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, -120, 0);
+
+            lv_chart_set_all_value(chart, rssi_ser, LV_CHART_POINT_NONE);
+            for (int i = 0; i < hist_count && i < 64; i++) {
+                int rssi_val = slopos::mesh::getSignalHistoryRSSI(i);
+                lv_chart_set_value_by_id(chart, rssi_ser, i, rssi_val + 120);
+            }
+
+            lv_obj_t* ch_label = lv_label_create(scr);
+            lv_label_set_text(ch_label, "RSSI History");
+            lv_obj_set_style_text_color(ch_label, lv_color_hex(TEXT_MUTED), 0);
+            lv_obj_set_style_text_font(ch_label, &lv_font_montserrat_12, 0);
+            lv_obj_align_to(ch_label, chart, LV_ALIGN_OUT_TOP_LEFT, 0, -2);
+        }
     } else {
         // ── Two-column flex row ─────────────────────────────
         lv_obj_t* row = lv_obj_create(scr);
@@ -1221,6 +1252,41 @@ void signal_screen_show()
             (unsigned)p.duty_cycle,
             slopos::mesh::getRemainingTxBudget());
         lv_label_set_text(right, right_buf);
+
+        // ── RSSI sparkline ─────────────────────────────────
+        int hist_count = slopos::mesh::getSignalHistoryCount();
+        if (hist_count >= 2) {
+            lv_obj_t* chart = lv_chart_create(scr);
+            lv_obj_set_size(chart, CONTENT_W - 12, 60);
+            lv_obj_align(chart, LV_ALIGN_TOP_LEFT, 6, CONTENT_Y + 4 + 190);
+            lv_obj_set_style_bg_color(chart, lv_color_hex(BG_TERTIARY), 0);
+            lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(chart, 1, 0);
+            lv_obj_set_style_border_color(chart, lv_color_hex(TEXT_MUTED), 0);
+            lv_obj_set_style_pad_all(chart, 4, 0);
+            lv_obj_set_style_radius(chart, 0, 0);
+            lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
+            lv_chart_set_div_line_count(chart, 4, 0);
+            lv_chart_set_point_count(chart, hist_count);
+
+            // Create RSSI series
+            lv_chart_series_t* rssi_ser = lv_chart_add_series(chart, lv_color_hex(ACCENT), LV_CHART_AXIS_PRIMARY_Y);
+            lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, -120, 0);
+
+            // Fill series with signal history
+            lv_chart_set_all_value(chart, rssi_ser, LV_CHART_POINT_NONE);
+            for (int i = 0; i < hist_count && i < 64; i++) {
+                int rssi_val = slopos::mesh::getSignalHistoryRSSI(i);
+                lv_chart_set_value_by_id(chart, rssi_ser, i, rssi_val + 120);
+            }
+
+            // Add label
+            lv_obj_t* ch_label = lv_label_create(scr);
+            lv_label_set_text(ch_label, "RSSI History");
+            lv_obj_set_style_text_color(ch_label, lv_color_hex(TEXT_MUTED), 0);
+            lv_obj_set_style_text_font(ch_label, &lv_font_montserrat_12, 0);
+            lv_obj_align_to(ch_label, chart, LV_ALIGN_OUT_TOP_LEFT, 0, -2);
+        }
     }
 
     show_screen(scr);
