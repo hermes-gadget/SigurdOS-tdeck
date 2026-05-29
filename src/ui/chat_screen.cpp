@@ -410,6 +410,8 @@ static void populate_channel_rows(lv_obj_t* list) {
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_user_data(row, (void*)(intptr_t)i);
+        lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_scroll_dir(row, LV_DIR_NONE);
         apply_ch_row_selection(row, i == ch_list_selected);
 
         lv_obj_t* avatar = lv_obj_create(row);
@@ -420,6 +422,7 @@ static void populate_channel_rows(lv_obj_t* list) {
         lv_obj_set_style_radius(avatar, 0, 0);
         lv_obj_set_style_border_width(avatar, 0, 0);
         lv_obj_clear_flag(avatar, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_scrollbar_mode(avatar, LV_SCROLLBAR_MODE_OFF);
 
         lv_obj_t* hash = lv_label_create(avatar);
         lv_label_set_text(hash, "#");
@@ -440,8 +443,12 @@ static void populate_channel_rows(lv_obj_t* list) {
             lv_label_set_text(ts, tbuf);
             lv_obj_set_style_text_color(ts, lv_color_hex(TEXT_MUTED), 0);
             lv_obj_set_style_text_font(ts, emoji_wrapped_montserrat_10, 0);
-            lv_obj_align(ts, LV_ALIGN_TOP_RIGHT,
-                ch_meta[i].unread > 0 ? -26 : -4, 8);
+            // Account for delete button width (28px + gap) when visible
+            bool has_del = dyn_count > 1;
+            int ts_off = -4;
+            if (ch_meta[i].unread > 0) ts_off -= 22;  // unread badge
+            if (has_del)               ts_off -= 32;  // delete button (28px + gap)
+            lv_obj_align(ts, LV_ALIGN_TOP_RIGHT, ts_off, 8);
         }
 
         lv_obj_t* prev = lv_label_create(row);
@@ -451,10 +458,11 @@ static void populate_channel_rows(lv_obj_t* list) {
         lv_obj_set_style_text_font(prev, emoji_wrapped_montserrat_10, 0);
         lv_label_set_long_mode(prev, LV_LABEL_LONG_DOT);
         // Available width: start at x=46, leave room for right-side elements
-        // Timestamp ~60px, unread badge ~24px, padding ~6px
+        // Timestamp ~60px, unread badge ~24px, delete btn ~32px, padding ~6px
         int preview_w = CONTENT_W - 70;
         if (ch_meta[i].timestamp > 0) preview_w -= 60;
         if (ch_meta[i].unread > 0)    preview_w -= 24;
+        if (dyn_count > 1)            preview_w -= 32;  // delete button (28px + gap)
         if (preview_w < 10) preview_w = 10;  // safe floor for narrow displays
         lv_obj_set_width(prev, preview_w);
         lv_obj_align(prev, LV_ALIGN_TOP_LEFT, 46, 26);
@@ -462,7 +470,8 @@ static void populate_channel_rows(lv_obj_t* list) {
         if (ch_meta[i].unread > 0) {
             lv_obj_t* badge = lv_obj_create(row);
             lv_obj_set_size(badge, 18, 18);
-            lv_obj_align(badge, LV_ALIGN_RIGHT_MID, -4, 0);
+            int badge_off = dyn_count > 1 ? -36 : -4;
+            lv_obj_align(badge, LV_ALIGN_RIGHT_MID, badge_off, 0);
             lv_obj_set_style_bg_color(badge, lv_color_hex(ACCENT), 0);
             lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
             lv_obj_set_style_radius(badge, 0, 0);
@@ -524,8 +533,16 @@ static int find_channel_idx(const char* channel)
 static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
-    strncpy(ch_meta[idx].preview, text ? text : "", sizeof(ch_meta[idx].preview) - 1);
-    ch_meta[idx].preview[sizeof(ch_meta[idx].preview) - 1] = '\0';
+    // Truncate preview to fit the display: ~25 chars + "..." works in all row layouts
+    const char* src = text ? text : "";
+    size_t slen = strlen(src);
+    constexpr size_t MAX_PREVIEW_CHARS = 25;
+    if (slen > MAX_PREVIEW_CHARS) {
+        memcpy(ch_meta[idx].preview, src, MAX_PREVIEW_CHARS);
+        memcpy(ch_meta[idx].preview + MAX_PREVIEW_CHARS, "...", 4);
+    } else {
+        memcpy(ch_meta[idx].preview, src, slen + 1);
+    }
     ch_meta[idx].timestamp = timestamp;
 }
 
