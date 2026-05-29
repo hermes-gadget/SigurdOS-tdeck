@@ -47,9 +47,13 @@ public:
         }
     }
     const char* getOwnName() const { return _own_name; }
-    // Compatibility no-op — SlopMeshV2 delivers messages directly to the
-    // wrapper queue via mesh_v2_queue_push() from its on*Recv() handlers.
-    void setMessageCallback(void (*)(const char*, const char*, const char*)) {}
+
+    // Stores the wrapper's message callback (auto-reply, queue push, etc.)
+    // Called from onChannelMessageRecv after pushing to the UI queue.
+    void (*_message_cb)(const char*, const char*, const char*) = nullptr;
+    void setMessageCallback(void (*cb)(const char*, const char*, const char*)) {
+        _message_cb = cb;
+    }
 
     // ── RSSI/SNR side-channel ───────────────────
     static constexpr int SIGNAL_SAMPLES_MAX = 64;
@@ -283,6 +287,9 @@ public:
         float snr = pkt ? pkt->getSNR() : _radio->getLastSNR();
         updateSignalSample(contact.id.pub_key, rssi, snr);
         slopos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr);
+        if (_message_cb) {
+            _message_cb(contact.name, "", text);
+        }
     }
 
     void onCommandDataRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
@@ -300,6 +307,9 @@ public:
         int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
         slopos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr);
+        if (_message_cb) {
+            _message_cb(contact.name, "", text);
+        }
     }
 
     uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override {
@@ -345,6 +355,9 @@ public:
             msg_text = colon + 2;
         }
         slopos::mesh::mesh_v2_queue_push(sender_name, chname, msg_text, rssi, snr);
+        if (_message_cb) {
+            _message_cb(sender_name, chname, msg_text);
+        }
     }
 
     uint8_t onContactRequest(const ::ContactInfo& contact, uint32_t sender_timestamp,
