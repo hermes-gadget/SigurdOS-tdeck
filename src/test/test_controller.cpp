@@ -714,7 +714,10 @@ static void cmd_addchannel(const char* arg) {
         const char* psk = space + 1;
         while (*psk == ' ') psk++;
         bool ok = slopos::mesh::addChannel(name, psk);
-        if (ok) Serial.printf("[test] addchannel OK: #%s with PSK\n", name);
+        if (ok) {
+            Serial.printf("[test] addchannel OK: #%s with PSK\n", name);
+            slopos::mesh::saveChannels();
+        }
         else Serial.printf("[test] addchannel FAILED: #%s\n", name);
     } else {
         // No PSK — try as hashtag channel
