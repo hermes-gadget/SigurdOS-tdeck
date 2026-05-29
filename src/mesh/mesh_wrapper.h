@@ -17,6 +17,10 @@
 namespace slopos {
 namespace mesh {
 
+// Forward declarations from mesh_wrapper.cpp
+void mesh_v2_queue_push(const char* sender, const char* channel,
+                         const char* text, int rssi, float snr);
+
 struct MeshMessage {
     char sender[32];
     char channel[32];
