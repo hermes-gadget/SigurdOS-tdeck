@@ -43,6 +43,10 @@ bool prefs_load(NodePrefs& p) {
     p.advert_interval = nvs.getUChar("adv_int", 0);
     p.advert_type = nvs.getUChar("adv_type", 1);
     p.theme_id = nvs.getUChar("theme", 0);
+    p.gps_enabled = nvs.getBool("gps_en", true);
+    p.gps_interval = nvs.getUShort("gps_int", 0);
+    p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
+    p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
 
     nvs.end();
     return true;
@@ -73,6 +77,10 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("adv_int", p.advert_interval);
     nvs.putUChar("adv_type", p.advert_type);
     nvs.putUChar("theme", p.theme_id);
+    nvs.putBool("gps_en", p.gps_enabled);
+    nvs.putUShort("gps_int", p.gps_interval);
+    nvs.putUChar("autoadd_cfg", p.autoadd_config);
+    nvs.putUChar("autoadd_mh", p.autoadd_max_hops);
 
     nvs.end();
     return true;

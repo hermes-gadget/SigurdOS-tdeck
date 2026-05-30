@@ -315,7 +315,7 @@ public:
         uint32_t timestamp;
         uint32_t expected_ack;
         uint32_t sent_at_ms;
-        bool in_use;
+        bool in_use = false;
     };
     static constexpr int MAX_PENDING_ACKS = 16;
     PendingAck _pending_acks[MAX_PENDING_ACKS];
