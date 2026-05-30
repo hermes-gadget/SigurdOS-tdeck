@@ -93,6 +93,10 @@ void saveChannels();
 void loadChannels();
 void shutdown();
 
+// ── Contact persistence ─────────────────────────
+void saveContacts();
+void loadContacts();
+
 // RTC time for UI comparisons
 uint32_t getCurrentTime();
 bool setSystemTime(uint32_t epoch_seconds);

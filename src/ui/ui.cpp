@@ -122,6 +122,7 @@ void loop()
             save_counter = 0;
             slopos::mesh::saveState();
             slopos::mesh::saveChannels();
+            slopos::mesh::saveContacts();
             chat_save_messages();
         }
     }

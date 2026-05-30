@@ -452,6 +452,9 @@ bool init(bool spiffs_ok)
     // Restore persisted channels from NVS
     loadChannels();
 
+    // Restore persisted contacts from SPIFFS
+    loadContacts();
+
     // Safety net: if no channels are loaded, auto-join the Public channel.
     // This handles fresh flashes where NVS was erased, ensuring the device
     // can at least receive Public channel messages even without completing
@@ -887,12 +890,63 @@ void saveState() {
     if (g_mesh) saveIdentity(g_mesh->self_id);
 }
 
+// ── Contact persistence ─────────────────────────
+static const char* CONTACTS_FILE = "/contacts";
+
+void saveContacts() {
+    if (!g_mesh) return;
+    if (!SPIFFS.begin(false)) return;
+    int n = g_mesh->getNumContacts();
+    if (n <= 0) { SPIFFS.remove(CONTACTS_FILE); return; }
+
+    File f = SPIFFS.open(CONTACTS_FILE, "w");
+    if (!f) return;
+
+    // Write contact count
+    f.write((uint8_t*)&n, sizeof(n));
+
+    for (int i = 0; i < n; i++) {
+        ::ContactInfo c;
+        if (!g_mesh->getContactByIdx((uint32_t)i, c)) continue;
+        f.write(c.id.pub_key, PUB_KEY_SIZE);  // 32 bytes
+        f.write((uint8_t*)c.name, 32);         // 32 bytes
+        f.write(&c.type, 1);                    // 1 byte
+    }
+    f.close();
+}
+
+void loadContacts() {
+    if (!g_mesh) return;
+    if (!SPIFFS.begin(false)) return;
+    if (!SPIFFS.exists(CONTACTS_FILE)) return;
+
+    File f = SPIFFS.open(CONTACTS_FILE, "r");
+    if (!f) return;
+
+    int n = 0;
+    if (f.read((uint8_t*)&n, sizeof(n)) != sizeof(n) || n <= 0) { f.close(); return; }
+
+    for (int i = 0; i < n; i++) {
+        ::ContactInfo c;
+        memset(&c, 0, sizeof(c));
+        if (f.read(c.id.pub_key, PUB_KEY_SIZE) != PUB_KEY_SIZE) break;
+        if (f.read((uint8_t*)c.name, 32) != 32) break;
+        if (f.read(&c.type, 1) != 1) break;
+        c.name[31] = '\0';
+        c.out_path_len = OUT_PATH_UNKNOWN;
+        c.shared_secret_valid = false;
+        g_mesh->addContact(c);
+    }
+    f.close();
+}
+
 void shutdown()
 {
     if (!initialized) return;
     // Save all persistent state to NVS/SPIFFS before shutting down
     saveChannels();
     saveState();
+    saveContacts();
     // Give flash writes time to complete before power cut
     delay(150);
     // Enter deep sleep indefinitely. User must press power button
