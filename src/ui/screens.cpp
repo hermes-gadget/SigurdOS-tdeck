@@ -3260,7 +3260,7 @@ void terminal_screen_show()
 
         static char result[256];
         if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping emoji-list getvar setvar delvar listvars");
+            snprintf(result, sizeof(result), "Commands: help status advert ping anon emoji-list getvar setvar delvar listvars");
         } else if (strncmp(cmd, "getvar ", 7) == 0) {
             const char* key = cmd + 7;
             if (!key[0]) {
@@ -3378,6 +3378,24 @@ void terminal_screen_show()
             snprintf(result, sizeof(result), ok ? "Advert sent" : "Send failed");
         } else if (strcmp(cmd, "ping") == 0) {
             snprintf(result, sizeof(result), "Pong! Uptime: %lums", millis());
+        } else if (strncmp(cmd, "anon ", 5) == 0) {
+            const char* anon_arg = cmd + 5;
+            const char* anon_space = strchr(anon_arg, ' ');
+            if (!anon_space || anon_space == anon_arg) {
+                snprintf(result, sizeof(result), "Usage: anon <64hex_pubkey> <text>");
+            } else {
+                char pubkey_hex[65];
+                size_t pklen = (size_t)(anon_space - anon_arg);
+                if (pklen > 64) pklen = 64;
+                memcpy(pubkey_hex, anon_arg, pklen);
+                pubkey_hex[pklen] = '\0';
+                const char* msg = anon_space + 1;
+                if (slopos::mesh::sendAnonMessage(pubkey_hex, msg)) {
+                    snprintf(result, sizeof(result), "Anon msg sent to %s", pubkey_hex);
+                } else {
+                    snprintf(result, sizeof(result), "Send failed (bad hex? %zu chars)", pklen);
+                }
+            }
         } else if (strcmp(cmd, "emoji-list") == 0) {
             term_add_line(log_cont, "--- Emoji list (362 available) ---");
             char line_buf[128];

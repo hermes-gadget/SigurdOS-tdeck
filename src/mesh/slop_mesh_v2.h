@@ -480,6 +480,28 @@ public:
         slopos::mesh::mesh_v2_queue_push(contact.name, "", buf, 0, 0.0f);
     }
 
+    // ── Anonymous data (Phase 4.7) ──────────────────────
+    void onAnonDataRecv(::mesh::Packet* pkt, const uint8_t* secret,
+                        const ::mesh::Identity& sender,
+                        uint8_t* data, size_t len) override
+    {
+        if (len <= 4) return;
+        data[len - 1] = '\0';  // ensure null terminator
+        const char* text = (const char*)(data + 4);
+
+        int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
+        float snr = pkt ? pkt->getSNR() : 0.0f;
+
+        // Generate a fallback name from sender pubkey prefix
+        char fallback[16];
+        snprintf(fallback, sizeof(fallback), "anon_%02x", sender.pub_key[0]);
+
+        slopos::mesh::mesh_v2_queue_push(fallback, "", text, rssi, snr);
+        if (_message_cb) {
+            _message_cb(fallback, "", text);
+        }
+    }
+
     void onSignedMessageRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
                              uint32_t sender_timestamp, const uint8_t* sender_prefix,
                              const char* text) override
@@ -1063,6 +1085,65 @@ public:
         uint32_t ts = getRTCClock()->getCurrentTime();
         return BaseChatMesh::sendGroupMessage(ts, cd.channel, _own_name, text,
                                               (int)strlen(text));
+    }
+
+    // ── Anonymous message (Phase 4.7) ────────────────
+    // Send a text message to a node identified by raw pubkey bytes (not in contact list).
+    // Creates a temporary ContactInfo and uses BaseChatMesh::sendAnonReq().
+    // The recipient sees it via onAnonDataRecv with a fallback name.
+    bool sendAnonMessage(const uint8_t* pub_key, const char* text) {
+        if (!pub_key || !text || !text[0]) return false;
+
+        // Build a temporary ContactInfo with the given pubkey
+        ::ContactInfo tmp;
+        memset(&tmp, 0, sizeof(tmp));
+        memcpy(tmp.id.pub_key, pub_key, PUB_KEY_SIZE);
+        tmp.out_path_len = OUT_PATH_UNKNOWN;
+        tmp.type = ADV_TYPE_CHAT;
+
+        uint32_t tag = 0, est_timeout = 0;
+        uint32_t ts = getRTCClock()->getCurrentTime();
+
+        // Data format: [4-byte timestamp][null-terminated text]
+        uint8_t buf[256];
+        memcpy(buf, &ts, 4);
+        size_t tlen = strlen(text);
+        if (tlen > 250) tlen = 250;
+        memcpy(buf + 4, text, tlen);
+        buf[4 + tlen] = '\0';
+
+        int r = BaseChatMesh::sendAnonReq(tmp, buf, 5 + tlen, tag, est_timeout);
+        if (r != MSG_SEND_FAILED) {
+#if SLOPOS_DEBUG_MESH
+            Serial.printf("[mesh] Anon msg sent to pubkey %02x%02x... (result=%d, tag=%u)\n",
+                          pub_key[0], pub_key[1], r, tag);
+#endif
+            return true;
+        }
+        return false;
+    }
+
+    // Static hex-to-bytes helper (used by wrapper)
+    static int hexToBytes(const char* hex, uint8_t* out, size_t out_max) {
+        if (!hex || !out) return 0;
+        size_t hlen = strlen(hex);
+        if (hlen % 2 != 0 || hlen / 2 > out_max) return 0;
+        int o = 0;
+        for (size_t i = 0; i < hlen; i += 2) {
+            char hi = hex[i];
+            char lo = hex[i + 1];
+            uint8_t b = 0;
+            if (hi >= '0' && hi <= '9') b = (hi - '0') << 4;
+            else if (hi >= 'a' && hi <= 'f') b = (hi - 'a' + 10) << 4;
+            else if (hi >= 'A' && hi <= 'F') b = (hi - 'A' + 10) << 4;
+            else return 0;
+            if (lo >= '0' && lo <= '9') b |= (lo - '0');
+            else if (lo >= 'a' && lo <= 'f') b |= (lo - 'a' + 10);
+            else if (lo >= 'A' && lo <= 'F') b |= (lo - 'A' + 10);
+            else return 0;
+            out[o++] = b;
+        }
+        return o;
     }
 
     // ── Flood advert ────────────────────────────

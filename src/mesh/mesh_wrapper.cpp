@@ -1318,5 +1318,14 @@ void setDutyCycle(uint8_t percent) {
         return g_mesh ? g_mesh->getLoginStatus(name) : LOGIN_STATUS_NONE;
     }
 
+    // ── Anonymous requests (Phase 4.7) ────────────────
+    bool sendAnonMessage(const char* pubkey_hex, const char* text) {
+        if (!g_mesh || !pubkey_hex || !text) return false;
+        uint8_t pub_key[PUB_KEY_SIZE];
+        int n = SlopMeshV2::hexToBytes(pubkey_hex, pub_key, sizeof(pub_key));
+        if (n != PUB_KEY_SIZE) return false;
+        return g_mesh->sendAnonMessage(pub_key, text);
+    }
+
 } // namespace mesh
 } // namespace slopos

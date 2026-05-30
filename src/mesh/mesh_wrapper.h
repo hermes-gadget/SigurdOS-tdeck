@@ -236,5 +236,10 @@ bool isLoggedIn(const char* name);
 uint8_t getLoginPermission(const char* name);
 uint8_t getLoginStatus(const char* name);
 
+// ── Anonymous requests (Phase 4.7) ────────────────
+// Send a text message to a node identified by its 64-hex-char public key.
+// The node does NOT need to be in your contact list.
+bool sendAnonMessage(const char* pubkey_hex, const char* text);
+
 } // namespace mesh
 } // namespace slopos
