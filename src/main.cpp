@@ -13,6 +13,7 @@
 #include "app/map_renderer.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/ui.h"
+#include "ui/theme.h"
 #include "diagnostics/debug_cfg.h"
 #if SLOPOS_DEBUG_DIAG
 #include "diagnostics/debug.h"
@@ -65,6 +66,7 @@ void setup()
     {
         const slopos::NodePrefs& p = slopos::prefs_get();
         slopos::mesh::setOwnName(p.node_name);
+        slopos::theme::theme_apply(p.theme_id);
     }
 #if defined(SLOPOS_REMOTE_TEST) && SLOPOS_REMOTE_TEST
 #if defined(SLOPOS_REMOTE_TEST_RADIO) && SLOPOS_REMOTE_TEST_RADIO

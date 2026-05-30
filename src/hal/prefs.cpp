@@ -42,6 +42,7 @@ bool prefs_load(NodePrefs& p) {
     p.duty_cycle = nvs.getUChar("duty_cyc", 0);
     p.advert_interval = nvs.getUChar("adv_int", 0);
     p.advert_type = nvs.getUChar("adv_type", 1);
+    p.theme_id = nvs.getUChar("theme", 0);
 
     nvs.end();
     return true;
@@ -71,6 +72,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("duty_cyc", p.duty_cycle);
     nvs.putUChar("adv_int", p.advert_interval);
     nvs.putUChar("adv_type", p.advert_type);
+    nvs.putUChar("theme", p.theme_id);
 
     nvs.end();
     return true;

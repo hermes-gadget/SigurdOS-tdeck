@@ -3,35 +3,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2025 Ben
 //
-// This file is part of SlopOS-TDeck.
-//
-// SlopOS-TDeck is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// SlopOS-TDeck is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with SlopOS-TDeck.  If not, see <https://www.gnu.org/licenses/>.
+// SlopOS Pixel Theme — Discord-inspired palette with blocky pixel styling
+// Theme colors are runtime variables (inline) so they can be changed by the
+// theme system and persist across reboots via NVS.
 
 #include <lvgl.h>
+#include <cstdint>
 
-// SlopOS Pixel Theme — Discord-inspired palette with blocky pixel styling
 namespace slopos::theme {
 
-// ── Backgrounds ─────────────────────────────────────────
-constexpr uint32_t BG_PRIMARY   = 0x0f0f0f;  // deep black
-constexpr uint32_t BG_SECONDARY = 0x181818;  // status bars
-constexpr uint32_t BG_TERTIARY  = 0x1e1e1e;  // card/icon tile background
-constexpr uint32_t BG_INPUT     = 0x252525;  // input field
+// ── Themeable backgrounds ───────────────────────────────
+inline uint32_t BG_PRIMARY   = 0x0f0f0f;  // deep black
+inline uint32_t BG_SECONDARY = 0x181818;  // status bars
+inline uint32_t BG_TERTIARY  = 0x1e1e1e;  // card/icon tile background
+inline uint32_t BG_INPUT     = 0x252525;  // input field
 
-// ── Accent ──────────────────────────────────────────────
-constexpr uint32_t ACCENT       = 0x00bfff;  // bright cyan
-constexpr uint32_t ACCENT_HOVER = 0x00a5e0;
+// ── Themeable accents ───────────────────────────────────
+inline uint32_t ACCENT       = 0x00bfff;  // bright cyan
+inline uint32_t ACCENT_HOVER = 0x00a5e0;
+
+// ── Semantic accents (always fixed — status indicators) ──
 constexpr uint32_t ACCENT_GREEN = 0x3ba55d;
 constexpr uint32_t ACCENT_RED   = 0xed4245;
 constexpr uint32_t ACCENT_ORANGE= 0xfaa61a;
@@ -40,14 +31,14 @@ constexpr uint32_t ACCENT_YELLOW= 0xfee75c;
 // ── Message bubbles ──────────────────────────────────────
 constexpr uint32_t MSG_INCOMING = 0x3a4560;
 
-// ── Text ────────────────────────────────────────────────
+// ── Text (always fixed for readability) ──────────────────
 constexpr uint32_t TEXT_PRIMARY   = 0xf2f3f5;
 constexpr uint32_t TEXT_SECONDARY = 0x949ba4;
 constexpr uint32_t TEXT_MUTED     = 0x6b7078;
 constexpr uint32_t TEXT_LINK      = 0x00aff4;
 
-// ── Channel colors ──────────────────────────────────────
-constexpr uint32_t CHANNEL_HASH   = 0x00bfff;
+// ── Themeable channel colors ─────────────────────────────
+inline uint32_t CHANNEL_HASH   = 0x00bfff;
 constexpr uint32_t CHANNEL_ACTIVE = 0xffffff;
 
 // ── Structural ───────────────────────────────────────────
@@ -55,6 +46,49 @@ constexpr uint32_t DIVIDER        = 0x2a2a2a;
 
 // ── Pixel border width ───────────────────────────────────
 constexpr int32_t PIXEL_BORDER    = 2;
+
+// ── Theme preset definitions ─────────────────────────────
+struct ThemeDef {
+    const char* name;       // display name
+    uint32_t bg_primary;
+    uint32_t bg_secondary;
+    uint32_t bg_tertiary;
+    uint32_t bg_input;
+    uint32_t accent;
+    uint32_t accent_hover;
+    uint32_t channel_hash;
+};
+
+constexpr ThemeDef THEMES[] = {
+    // 0: Default Cyan
+    {"Default Cyan",   0x0f0f0f, 0x181818, 0x1e1e1e, 0x252525, 0x00bfff, 0x00a5e0, 0x00bfff},
+    // 1: Midnight Blue
+    {"Midnight Blue",  0x050510, 0x0d0d20, 0x12122a, 0x181838, 0x4488ff, 0x3377ee, 0x4488ff},
+    // 2: Forest Green
+    {"Forest Green",   0x0a0f0a, 0x121a12, 0x182218, 0x1e2a1e, 0x3ba55d, 0x2d8a4a, 0x3ba55d},
+    // 3: Sunset Orange
+    {"Sunset Orange",  0x0f0a06, 0x1a1410, 0x221c18, 0x2a2420, 0xfaa61a, 0xe09510, 0xfaa61a},
+    // 4: Royal Purple
+    {"Royal Purple",   0x0c0a12, 0x14121e, 0x1a1828, 0x222036, 0x9b59b6, 0x8a44a5, 0x9b59b6},
+    // 5: Amber Glow
+    {"Amber Glow",     0x0f0c06, 0x181610, 0x1e1c18, 0x282420, 0xffa500, 0xe89400, 0xffa500},
+};
+
+constexpr int NUM_THEMES = 6;
+
+// Apply a theme preset by index (clamped to 0..NUM_THEMES-1)
+inline void theme_apply(uint8_t id)
+{
+    if (id >= NUM_THEMES) id = 0;
+    const auto& t = THEMES[id];
+    BG_PRIMARY   = t.bg_primary;
+    BG_SECONDARY = t.bg_secondary;
+    BG_TERTIARY  = t.bg_tertiary;
+    BG_INPUT     = t.bg_input;
+    ACCENT       = t.accent;
+    ACCENT_HOVER = t.accent_hover;
+    CHANNEL_HASH = t.channel_hash;
+}
 
 // ── Signal dot constants ──────────────────────────────────
 constexpr int SIGNAL_DOT_COUNT = 5;
@@ -73,8 +107,7 @@ inline int rssi_to_dots(int rssi)
 }
 
 // Create a row of iOS-style signal strength dots.
-// Active dots are filled ACCENT (cyan), inactive are unfilled (border only, TEXT_MUTED).
-// Returns the container.
+// Active dots are filled ACCENT, inactive are unfilled (border only, TEXT_MUTED).
 inline lv_obj_t* create_signal_dots(lv_obj_t* parent, int rssi)
 {
     int total_w = SIGNAL_DOT_COUNT * SIGNAL_DOT_DIAM
@@ -195,7 +228,6 @@ inline void apply_pixel_badge(lv_obj_t* obj) {
 }
 
 // ── Legacy card style (kept for compatibility) ──────────
-// Use apply_pixel_card() for new code.
 inline void apply_card_style(lv_obj_t* obj) {
     apply_pixel_card(obj);
 }
