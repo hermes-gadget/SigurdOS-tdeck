@@ -40,6 +40,10 @@ enum class Screen {
     Repeaters,
     Onboarding,
     ContactDetail,
+    SettingsRadio,
+    SettingsGPS,
+    SettingsDisplay,
+    SettingsSystem,
     COUNT
 };
 

@@ -77,6 +77,10 @@ static void dispatch_screen(Screen screen) {
     case Screen::RadioSetup: radio_setup_screen_show(); break;
     case Screen::Repeaters:  repeaters_screen_show();   break;
     case Screen::Onboarding: onboarding_screen_show(); break;
+    case Screen::SettingsRadio:   settings_radio_show();   break;
+    case Screen::SettingsGPS:     settings_gps_show();     break;
+    case Screen::SettingsDisplay: settings_display_show(); break;
+    case Screen::SettingsSystem:  settings_system_show();  break;
     default: break;
     }
 }

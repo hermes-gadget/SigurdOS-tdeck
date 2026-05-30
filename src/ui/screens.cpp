@@ -1957,11 +1957,12 @@ static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 }
 
 // ════════════════════════════════════════════════════════
-// Settings — status rows with alternating backgrounds
+// Settings — category menu + sub-screens
 // ════════════════════════════════════════════════════════
-void settings_screen_show()
+
+void settings_radio_show()
 {
-    lv_obj_t* scr = make_screen_full("Settings");
+    lv_obj_t* scr = make_screen_full("Radio / Mesh");
 
     lv_obj_t* list = lv_list_create(scr);
     lv_obj_set_size(list, LV_PCT(100), CONTENT_H);
@@ -1974,28 +1975,17 @@ void settings_screen_show()
     char buf[128];
     int row = 0;
 
-    auto add_row = [&](const char* icon, const char* text) -> lv_obj_t* {
-        lv_obj_t* btn = lv_list_add_btn(list, icon, text);
-        lv_obj_set_style_bg_color(btn,
-            lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_text_color(btn, lv_color_hex(TEXT_PRIMARY), 0);
-        row++;
-        return btn;
-    };
-
-    // Node name
-    snprintf(buf, sizeof(buf), "  Name: %s", p.node_name);
-    add_row(LV_SYMBOL_SETTINGS, buf);
-
-    // Radio config (tappable — opens radio setup)
+    // Radio config
     if (p.configured) {
         snprintf(buf, sizeof(buf), "  Radio: %.3f MHz / %.1f kHz / SF%d / %d dBm",
                  p.freq, p.bw, p.sf, p.tx_power_dbm);
     } else {
-        snprintf(buf, sizeof(buf), "  Radio: NOT CONFIGURED — tap to configure");
+        snprintf(buf, sizeof(buf), "  Radio: NOT CONFIGURED");
     }
-    lv_obj_t* btn_rf = add_row(LV_SYMBOL_WIFI, buf);
+    lv_obj_t* btn_rf = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
+    lv_obj_set_style_bg_color(btn_rf, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_rf, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_rf, lv_color_hex(TEXT_PRIMARY), 0);
     if (!p.configured) {
         lv_obj_set_style_bg_color(btn_rf, lv_color_hex(0x4a2020), 0);
         lv_obj_set_style_bg_color(btn_rf, lv_color_hex(0x4a2020), LV_STATE_DEFAULT);
@@ -2003,155 +1993,44 @@ void settings_screen_show()
     lv_obj_add_event_cb(btn_rf, [](lv_event_t*) {
         radio_setup_screen_show();
     }, LV_EVENT_CLICKED, nullptr);
+    row++;
 
-    // SD Card
-    snprintf(buf, sizeof(buf), "  SD Card: %s",
-             slopos_sdcard_mounted() ? "Mounted" : "Not mounted");
-    add_row(LV_SYMBOL_SD_CARD, buf);
-
-    // GPS
-    snprintf(buf, sizeof(buf), "  GPS: %s",
-             slopos_gps_has_fix() ? "Fix acquired" : "No fix");
-    add_row(LV_SYMBOL_GPS, buf);
-
-    // GPS enable toggle (tappable)
-    snprintf(buf, sizeof(buf), "  GPS: %s",
-             p.gps_enabled ? "ON" : "OFF");
+    // Flood max hops
     {
-        lv_obj_t* btn_gps_en = add_row(LV_SYMBOL_GPS, buf);
-        lv_obj_add_event_cb(btn_gps_en, [](lv_event_t* e) {
-            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
-            slopos::NodePrefs np = slopos::prefs_get();
-            np.gps_enabled = !np.gps_enabled;
-            slopos::prefs_set(np);
-            char row_buf[64];
-            snprintf(row_buf, sizeof(row_buf), "  GPS: %s",
-                     np.gps_enabled ? "ON" : "OFF");
-            lv_obj_t* lbl = lv_obj_get_child(target, 1);
-            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
-                lv_label_set_text(lbl, row_buf);
-            }
-        }, LV_EVENT_CLICKED, nullptr);
-    }
-
-    // GPS interval cycle (tappable)
-    {
-        static constexpr uint16_t GPS_INT_VALUES[] = {0, 1, 5, 10, 30, 60};
-        static constexpr const char* GPS_INT_LABELS[] = {"Every loop", "1s", "5s", "10s", "30s", "60s"};
-        static constexpr int NUM_GPS_INT = 6;
-        int cur_gps = 0;
-        for (int i = 0; i < NUM_GPS_INT; i++) {
-            if (p.gps_interval == GPS_INT_VALUES[i]) { cur_gps = i; break; }
+        static constexpr uint8_t FLOOD_HOPS_VALUES[] = {0, 3, 5, 10, 20, 50};
+        static constexpr const char* FLOOD_HOPS_LABELS[] = {"No limit", "3", "5", "10", "20", "50"};
+        static constexpr int NUM_FLOOD_HOPS = 6;
+        int cur_idx = 0;
+        for (int i = 0; i < NUM_FLOOD_HOPS; i++) {
+            if (p.flood_max_hops == FLOOD_HOPS_VALUES[i]) { cur_idx = i; break; }
         }
-        snprintf(buf, sizeof(buf), "  GPS interval: %s", GPS_INT_LABELS[cur_gps]);
-        lv_obj_t* btn_gps_int = add_row(LV_SYMBOL_GPS, buf);
-        lv_obj_add_event_cb(btn_gps_int, [](lv_event_t* e) {
+        snprintf(buf, sizeof(buf), "  Flood max hops: %s", FLOOD_HOPS_LABELS[cur_idx]);
+        lv_obj_t* btn_flood = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
+        lv_obj_set_style_bg_color(btn_flood, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_flood, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_flood, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_flood, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             slopos::NodePrefs np = slopos::prefs_get();
             int idx = 0;
-            for (int i = 0; i < NUM_GPS_INT; i++) {
-                if (np.gps_interval == GPS_INT_VALUES[i]) { idx = i; break; }
+            for (int i = 0; i < 6; i++) {
+                if (np.flood_max_hops == (uint8_t[]){0,3,5,10,20,50}[i]) { idx = i; break; }
             }
-            idx = (idx + 1) % NUM_GPS_INT;
-            np.gps_interval = GPS_INT_VALUES[idx];
+            idx = (idx + 1) % 6;
+            np.flood_max_hops = (uint8_t[]){0,3,5,10,20,50}[idx];
             slopos::prefs_set(np);
             char row_buf[64];
-            snprintf(row_buf, sizeof(row_buf), "  GPS interval: %s", GPS_INT_LABELS[idx]);
+            snprintf(row_buf, sizeof(row_buf), "  Flood max hops: %s",
+                     (const char*[]){"No limit","3","5","10","20","50"}[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
             if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
                 lv_label_set_text(lbl, row_buf);
             }
         }, LV_EVENT_CLICKED, nullptr);
+        row++;
     }
 
-    // Share location (tappable toggle)
-    snprintf(buf, sizeof(buf), "  Share location: %s",
-             p.share_location ? "ON" : "OFF");
-    lv_obj_t* btn_share = add_row(LV_SYMBOL_GPS, buf);
-    lv_obj_add_event_cb(btn_share, [](lv_event_t* e) {
-        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
-        slopos::NodePrefs np = slopos::prefs_get();
-        np.share_location = !np.share_location;
-        slopos::prefs_set(np);
-        char row_buf[64];
-        snprintf(row_buf, sizeof(row_buf), "  Share location: %s",
-                 np.share_location ? "ON" : "OFF");
-        lv_obj_t* lbl = lv_obj_get_child(target, 1);
-        if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
-            lv_label_set_text(lbl, row_buf);
-        }
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Keyboard backlight (tappable — opens backlight dialog)
-    snprintf(buf, sizeof(buf), "  Keyboard BL: %d (%d%%)",
-             p.kbd_backlight, p.kbd_backlight * 100 / 255);
-    lv_obj_t* btn_bl = add_row(LV_SYMBOL_KEYBOARD, buf);
-    g_backlight_row = btn_bl;
-    lv_obj_add_event_cb(btn_bl, [](lv_event_t* e) {
-        backlight_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
-                         (lv_obj_t*)lv_event_get_target(e));
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Display brightness (tappable — opens brightness dialog)
-    snprintf(buf, sizeof(buf), "  Display: %d (%d%%)",
-             p.display_brightness, p.display_brightness * 100 / 255);
-    lv_obj_t* btn_disp = add_row(LV_SYMBOL_IMAGE, buf);
-    lv_obj_add_event_cb(btn_disp, [](lv_event_t* e) {
-        display_brightness_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
-                                 (lv_obj_t*)lv_event_get_target(e));
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Auto-off timeout (tappable — opens timeout selector)
-    if (p.auto_off_timeout == 0) {
-        snprintf(buf, sizeof(buf), "  Auto-off: Off");
-    } else {
-        snprintf(buf, sizeof(buf), "  Auto-off: %ds", p.auto_off_timeout);
-    }
-    lv_obj_t* btn_auto_off = add_row(LV_SYMBOL_IMAGE, buf);
-    g_auto_off_row = btn_auto_off;
-    lv_obj_add_event_cb(btn_auto_off, [](lv_event_t* e) {
-        auto_off_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
-                       (lv_obj_t*)lv_event_get_target(e));
-    }, LV_EVENT_CLICKED, nullptr);
-
-    snprintf(buf, sizeof(buf), "  Chat history: %d messages",
-             chat_screen_get_message_cap());
-    lv_obj_t* btn_chat_cap = add_row(LV_SYMBOL_LIST, buf);
-    g_chat_history_row = btn_chat_cap;
-    lv_obj_add_event_cb(btn_chat_cap, [](lv_event_t* e) {
-        chat_message_cap_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
-                               (lv_obj_t*)lv_event_get_target(e));
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Flood max hops (tappable — cycles through values)
-    static constexpr uint8_t FLOOD_HOPS_VALUES[] = {0, 3, 5, 10, 20, 50};
-    static constexpr const char* FLOOD_HOPS_LABELS[] = {"No limit", "3", "5", "10", "20", "50"};
-    static constexpr int NUM_FLOOD_HOPS = 6;
-    int cur_idx = 0;
-    for (int i = 0; i < NUM_FLOOD_HOPS; i++) {
-        if (p.flood_max_hops == FLOOD_HOPS_VALUES[i]) { cur_idx = i; break; }
-    }
-    snprintf(buf, sizeof(buf), "  Flood max hops: %s", FLOOD_HOPS_LABELS[cur_idx]);
-    lv_obj_t* btn_flood = add_row(LV_SYMBOL_WIFI, buf);
-    lv_obj_add_event_cb(btn_flood, [](lv_event_t* e) {
-        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
-        slopos::NodePrefs np = slopos::prefs_get();
-        int idx = 0;
-        for (int i = 0; i < NUM_FLOOD_HOPS; i++) {
-            if (np.flood_max_hops == FLOOD_HOPS_VALUES[i]) { idx = i; break; }
-        }
-        idx = (idx + 1) % NUM_FLOOD_HOPS;
-        np.flood_max_hops = FLOOD_HOPS_VALUES[idx];
-        slopos::prefs_set(np);
-        char row_buf[64];
-        snprintf(row_buf, sizeof(row_buf), "  Flood max hops: %s", FLOOD_HOPS_LABELS[idx]);
-        lv_obj_t* lbl = lv_obj_get_child(target, 1);
-        if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
-            lv_label_set_text(lbl, row_buf);
-        }
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Auto-add contact types (tappable — cycles through presets)
+    // Auto-add contact types
     {
         static constexpr uint8_t AA_CONFIG_VALUES[] = {0x1E, 0x06, 0x0A, 0x02};
         static constexpr const char* AA_CONFIG_LABELS[] = {
@@ -2162,7 +2041,10 @@ void settings_screen_show()
             if (p.autoadd_config == AA_CONFIG_VALUES[i]) { cur_aa = i; break; }
         }
         snprintf(buf, sizeof(buf), "  Auto-add: %s", AA_CONFIG_LABELS[cur_aa]);
-        lv_obj_t* btn_aa = add_row(LV_SYMBOL_WIFI, buf);
+        lv_obj_t* btn_aa = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
+        lv_obj_set_style_bg_color(btn_aa, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_aa, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_aa, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_aa, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             slopos::NodePrefs np = slopos::prefs_get();
@@ -2184,9 +2066,10 @@ void settings_screen_show()
                 lv_label_set_text(lbl, row_buf);
             }
         }, LV_EVENT_CLICKED, nullptr);
+        row++;
     }
 
-    // Auto-add max hops (tappable — cycles through values)
+    // Auto-add max hops
     {
         static constexpr uint8_t AA_HOPS_VALUES[] = {0, 3, 5, 10, 20, 50};
         static constexpr const char* AA_HOPS_LABELS[] = {"No limit", "3", "5", "10", "20", "50"};
@@ -2196,12 +2079,15 @@ void settings_screen_show()
             if (p.autoadd_max_hops == AA_HOPS_VALUES[i]) { cur_ah = i; break; }
         }
         snprintf(buf, sizeof(buf), "  Add max hops: %s", AA_HOPS_LABELS[cur_ah]);
-        lv_obj_t* btn_ah = add_row(LV_SYMBOL_WIFI, buf);
+        lv_obj_t* btn_ah = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
+        lv_obj_set_style_bg_color(btn_ah, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_ah, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_ah, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_ah, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             slopos::NodePrefs np = slopos::prefs_get();
             static constexpr uint8_t VALS[] = {0, 3, 5, 10, 20, 50};
-            static constexpr const char* LABELS[] = {"No limit", "3", "5", "10", "20", "50"};
+            static constexpr const char* LABELS[] = {"No limit","3","5","10","20","50"};
             static constexpr int N = 6;
             int idx = 0;
             for (int i = 0; i < N; i++) {
@@ -2217,192 +2103,485 @@ void settings_screen_show()
                 lv_label_set_text(lbl, row_buf);
             }
         }, LV_EVENT_CLICKED, nullptr);
+        row++;
     }
 
-    // TX/RX delay tuning
-    // RX delay base (tappable — cycles through values)
-    static constexpr float RX_DELAY_VALUES[] = {0.0f, 5.0f, 10.0f, 15.0f, 20.0f};
-    static constexpr const char* RX_DELAY_LABELS[] = {"0 (off)", "5", "10", "15", "20"};
-    static constexpr int NUM_RX_DELAY = 5;
+    // RX delay base
     {
+        static constexpr float RX_DELAY_VALUES[] = {0.0f, 5.0f, 10.0f, 15.0f, 20.0f};
+        static constexpr const char* RX_DELAY_LABELS[] = {"0 (off)", "5", "10", "15", "20"};
+        static constexpr int NUM_RX_DELAY = 5;
         int cur_rx = 0;
         for (int i = 0; i < NUM_RX_DELAY; i++) {
             if (fabsf(p.rx_delay_base - RX_DELAY_VALUES[i]) < 0.1f) { cur_rx = i; break; }
         }
         snprintf(buf, sizeof(buf), "  RX delay base: %s", RX_DELAY_LABELS[cur_rx]);
-        lv_obj_t* btn_rx = add_row(LV_SYMBOL_SETTINGS, buf);
+        lv_obj_t* btn_rx = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+        lv_obj_set_style_bg_color(btn_rx, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_rx, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_rx, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_rx, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             slopos::NodePrefs np = slopos::prefs_get();
+            static constexpr float VALS[] = {0.0f, 5.0f, 10.0f, 15.0f, 20.0f};
+            static constexpr const char* LABELS[] = {"0 (off)","5","10","15","20"};
+            static constexpr int N = 5;
             int idx = 0;
-            for (int i = 0; i < NUM_RX_DELAY; i++) {
-                if (fabsf(np.rx_delay_base - RX_DELAY_VALUES[i]) < 0.1f) { idx = i; break; }
+            for (int i = 0; i < N; i++) {
+                if (fabsf(np.rx_delay_base - VALS[i]) < 0.1f) { idx = i; break; }
             }
-            idx = (idx + 1) % NUM_RX_DELAY;
-            np.rx_delay_base = RX_DELAY_VALUES[idx];
+            idx = (idx + 1) % N;
+            np.rx_delay_base = VALS[idx];
             slopos::prefs_set(np);
             char row_buf[64];
-            snprintf(row_buf, sizeof(row_buf), "  RX delay base: %s", RX_DELAY_LABELS[idx]);
+            snprintf(row_buf, sizeof(row_buf), "  RX delay base: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
             if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
                 lv_label_set_text(lbl, row_buf);
             }
         }, LV_EVENT_CLICKED, nullptr);
+        row++;
     }
 
-    // TX delay factor (tappable — cycles through values)
-    static constexpr float TX_DELAY_VALUES[] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
-    static constexpr const char* TX_DELAY_LABELS[] = {"0 (off)", "0.5", "1.0", "1.5", "2.0"};
-    static constexpr int NUM_TX_DELAY = 5;
+    // TX delay factor
     {
+        static constexpr float TX_DELAY_VALUES[] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
+        static constexpr const char* TX_DELAY_LABELS[] = {"0 (off)", "0.5", "1.0", "1.5", "2.0"};
+        static constexpr int NUM_TX_DELAY = 5;
         int cur_tx = 0;
         for (int i = 0; i < NUM_TX_DELAY; i++) {
             if (fabsf(p.tx_delay_factor - TX_DELAY_VALUES[i]) < 0.1f) { cur_tx = i; break; }
         }
         snprintf(buf, sizeof(buf), "  TX delay factor: %s", TX_DELAY_LABELS[cur_tx]);
-        lv_obj_t* btn_tx = add_row(LV_SYMBOL_SETTINGS, buf);
+        lv_obj_t* btn_tx = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+        lv_obj_set_style_bg_color(btn_tx, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_tx, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_tx, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_tx, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             slopos::NodePrefs np = slopos::prefs_get();
+            static constexpr float VALS[] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
+            static constexpr const char* LABELS[] = {"0 (off)","0.5","1.0","1.5","2.0"};
+            static constexpr int N = 5;
             int idx = 0;
-            for (int i = 0; i < NUM_TX_DELAY; i++) {
-                if (fabsf(np.tx_delay_factor - TX_DELAY_VALUES[i]) < 0.1f) { idx = i; break; }
+            for (int i = 0; i < N; i++) {
+                if (fabsf(np.tx_delay_factor - VALS[i]) < 0.1f) { idx = i; break; }
             }
-            idx = (idx + 1) % NUM_TX_DELAY;
-            np.tx_delay_factor = TX_DELAY_VALUES[idx];
+            idx = (idx + 1) % N;
+            np.tx_delay_factor = VALS[idx];
             slopos::prefs_set(np);
             char row_buf[64];
-            snprintf(row_buf, sizeof(row_buf), "  TX delay factor: %s", TX_DELAY_LABELS[idx]);
+            snprintf(row_buf, sizeof(row_buf), "  TX delay factor: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
             if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
                 lv_label_set_text(lbl, row_buf);
             }
         }, LV_EVENT_CLICKED, nullptr);
+        row++;
     }
 
-    // Direct TX delay factor (tappable — cycles through values)
-    static constexpr float DIR_TX_DELAY_VALUES[] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
-    static constexpr const char* DIR_TX_DELAY_LABELS[] = {"0 (off)", "0.5", "1.0", "1.5", "2.0"};
-    static constexpr int NUM_DIR_TX_DELAY = 5;
+    // Direct TX delay factor
     {
+        static constexpr float DIR_TX_DELAY_VALUES[] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
+        static constexpr const char* DIR_TX_DELAY_LABELS[] = {"0 (off)", "0.5", "1.0", "1.5", "2.0"};
+        static constexpr int NUM_DIR_TX_DELAY = 5;
         int cur_dir = 0;
         for (int i = 0; i < NUM_DIR_TX_DELAY; i++) {
             if (fabsf(p.direct_tx_delay_factor - DIR_TX_DELAY_VALUES[i]) < 0.1f) { cur_dir = i; break; }
         }
         snprintf(buf, sizeof(buf), "  Direct TX delay: %s", DIR_TX_DELAY_LABELS[cur_dir]);
-        lv_obj_t* btn_dir = add_row(LV_SYMBOL_SETTINGS, buf);
+        lv_obj_t* btn_dir = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+        lv_obj_set_style_bg_color(btn_dir, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_dir, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_dir, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_dir, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             slopos::NodePrefs np = slopos::prefs_get();
+            static constexpr float VALS[] = {0.0f, 0.5f, 1.0f, 1.5f, 2.0f};
+            static constexpr const char* LABELS[] = {"0 (off)","0.5","1.0","1.5","2.0"};
+            static constexpr int N = 5;
             int idx = 0;
-            for (int i = 0; i < NUM_DIR_TX_DELAY; i++) {
-                if (fabsf(np.direct_tx_delay_factor - DIR_TX_DELAY_VALUES[i]) < 0.1f) { idx = i; break; }
+            for (int i = 0; i < N; i++) {
+                if (fabsf(np.direct_tx_delay_factor - VALS[i]) < 0.1f) { idx = i; break; }
             }
-            idx = (idx + 1) % NUM_DIR_TX_DELAY;
-            np.direct_tx_delay_factor = DIR_TX_DELAY_VALUES[idx];
+            idx = (idx + 1) % N;
+            np.direct_tx_delay_factor = VALS[idx];
             slopos::prefs_set(np);
             char row_buf[64];
-            snprintf(row_buf, sizeof(row_buf), "  Direct TX delay: %s", DIR_TX_DELAY_LABELS[idx]);
+            snprintf(row_buf, sizeof(row_buf), "  Direct TX delay: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
             if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
                 lv_label_set_text(lbl, row_buf);
             }
         }, LV_EVENT_CLICKED, nullptr);
+        row++;
     }
 
-    // Auto-advert interval (tappable — cycles through values)
-    static constexpr uint8_t ADV_INT_VALUES[] = {0, 10, 20, 40, 60, 120};
-    static constexpr const char* ADV_INT_LABELS[] = {"Disabled", "5 min", "10 min", "20 min", "30 min", "1 hour"};
-    static constexpr int NUM_ADV_INT = 6;
+    // Auto-advert interval
     {
+        static constexpr uint8_t ADV_INT_VALUES[] = {0, 10, 20, 40, 60, 120};
+        static constexpr const char* ADV_INT_LABELS[] = {"Disabled", "5 min", "10 min", "20 min", "30 min", "1 hour"};
+        static constexpr int NUM_ADV_INT = 6;
         int cur_adv = 0;
         for (int i = 0; i < NUM_ADV_INT; i++) {
             if (p.advert_interval == ADV_INT_VALUES[i]) { cur_adv = i; break; }
         }
         snprintf(buf, sizeof(buf), "  Auto-advert: %s", ADV_INT_LABELS[cur_adv]);
-        lv_obj_t* btn_adv = add_row(LV_SYMBOL_WIFI, buf);
+        lv_obj_t* btn_adv = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
+        lv_obj_set_style_bg_color(btn_adv, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_adv, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_adv, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_adv, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             slopos::NodePrefs np = slopos::prefs_get();
+            static constexpr uint8_t VALS[] = {0, 10, 20, 40, 60, 120};
+            static constexpr const char* LABELS[] = {"Disabled","5 min","10 min","20 min","30 min","1 hour"};
+            static constexpr int N = 6;
             int idx = 0;
-            for (int i = 0; i < NUM_ADV_INT; i++) {
-                if (np.advert_interval == ADV_INT_VALUES[i]) { idx = i; break; }
+            for (int i = 0; i < N; i++) {
+                if (np.advert_interval == VALS[i]) { idx = i; break; }
             }
-            idx = (idx + 1) % NUM_ADV_INT;
-            np.advert_interval = ADV_INT_VALUES[idx];
+            idx = (idx + 1) % N;
+            np.advert_interval = VALS[idx];
             slopos::prefs_set(np);
             char row_buf[64];
-            snprintf(row_buf, sizeof(row_buf), "  Auto-advert: %s", ADV_INT_LABELS[idx]);
+            snprintf(row_buf, sizeof(row_buf), "  Auto-advert: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
             if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
                 lv_label_set_text(lbl, row_buf);
             }
         }, LV_EVENT_CLICKED, nullptr);
+        row++;
     }
 
-    // Duty cycle budget (tappable — cycles through values)
-    static constexpr uint8_t DUTY_VALUES[] = {0, 1, 5, 10, 25, 50, 100};
-    static constexpr const char* DUTY_LABELS[] = {"Disabled", "1%", "5%", "10%", "25%", "50%", "100%"};
-    static constexpr int NUM_DUTY = 7;
+    // Duty cycle
     {
+        static constexpr uint8_t DUTY_VALUES[] = {0, 1, 5, 10, 25, 50, 100};
+        static constexpr const char* DUTY_LABELS[] = {"Disabled", "1%", "5%", "10%", "25%", "50%", "100%"};
+        static constexpr int NUM_DUTY = 7;
         int cur_dc = 0;
         for (int i = 0; i < NUM_DUTY; i++) {
             if (p.duty_cycle == DUTY_VALUES[i]) { cur_dc = i; break; }
         }
         snprintf(buf, sizeof(buf), "  Duty cycle: %s", DUTY_LABELS[cur_dc]);
-        lv_obj_t* btn_dc = add_row(LV_SYMBOL_SETTINGS, buf);
+        lv_obj_t* btn_dc = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+        lv_obj_set_style_bg_color(btn_dc, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_dc, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_dc, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_dc, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             slopos::NodePrefs np = slopos::prefs_get();
+            static constexpr uint8_t VALS[] = {0, 1, 5, 10, 25, 50, 100};
+            static constexpr const char* LABELS[] = {"Disabled","1%","5%","10%","25%","50%","100%"};
+            static constexpr int N = 7;
             int idx = 0;
-            for (int i = 0; i < NUM_DUTY; i++) {
-                if (np.duty_cycle == DUTY_VALUES[i]) { idx = i; break; }
+            for (int i = 0; i < N; i++) {
+                if (np.duty_cycle == VALS[i]) { idx = i; break; }
             }
-            idx = (idx + 1) % NUM_DUTY;
-            np.duty_cycle = DUTY_VALUES[idx];
+            idx = (idx + 1) % N;
+            np.duty_cycle = VALS[idx];
             slopos::prefs_set(np);
-            slopos::mesh::setDutyCycle(DUTY_VALUES[idx]);  // apply immediately
+            slopos::mesh::setDutyCycle(VALS[idx]);
             char row_buf[64];
-            snprintf(row_buf, sizeof(row_buf), "  Duty cycle: %s", DUTY_LABELS[idx]);
+            snprintf(row_buf, sizeof(row_buf), "  Duty cycle: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
             if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
                 lv_label_set_text(lbl, row_buf);
             }
         }, LV_EVENT_CLICKED, nullptr);
+        row++;
     }
 
-    // Date
-    int y, mo, d, h, mi;
-    slopos::mesh::getCurrentLocalDateTime(&y, &mo, &d, &h, &mi);
-    snprintf(buf, sizeof(buf), "  Date: %04d-%02d-%02d", y, mo, d);
-    lv_obj_t* btn_date = add_row(LV_SYMBOL_SETTINGS, buf);
-    g_date_row = btn_date;
-    lv_obj_add_event_cb(btn_date, [](lv_event_t* e) {
-        datetime_set_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)), true);
+    show_screen(scr);
+}
+
+void settings_gps_show()
+{
+    lv_obj_t* scr = make_screen_full("GPS / Location");
+
+    lv_obj_t* list = lv_list_create(scr);
+    lv_obj_set_size(list, LV_PCT(100), CONTENT_H);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
+    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+
+    const slopos::NodePrefs& p = slopos::prefs_get();
+    char buf[128];
+    int row = 0;
+
+    // GPS status
+    snprintf(buf, sizeof(buf), "  GPS: %s", slopos_gps_has_fix() ? "Fix acquired" : "No fix");
+    lv_obj_t* row0 = lv_list_add_btn(list, LV_SYMBOL_GPS, buf);
+    lv_obj_set_style_bg_color(row0, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_bg_opa(row0, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(row0, lv_color_hex(TEXT_PRIMARY), 0);
+    row++;
+
+    // GPS enable toggle
+    snprintf(buf, sizeof(buf), "  GPS: %s", p.gps_enabled ? "ON" : "OFF");
+    lv_obj_t* btn_gps_en = lv_list_add_btn(list, LV_SYMBOL_GPS, buf);
+    lv_obj_set_style_bg_color(btn_gps_en, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_gps_en, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_gps_en, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_gps_en, [](lv_event_t* e) {
+        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        slopos::NodePrefs np = slopos::prefs_get();
+        np.gps_enabled = !np.gps_enabled;
+        slopos::prefs_set(np);
+        char row_buf[64];
+        snprintf(row_buf, sizeof(row_buf), "  GPS: %s", np.gps_enabled ? "ON" : "OFF");
+        lv_obj_t* lbl = lv_obj_get_child(target, 1);
+        if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+            lv_label_set_text(lbl, row_buf);
+        }
     }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    // GPS interval cycle
+    {
+        static constexpr uint16_t GPS_INT_VALUES[] = {0, 1, 5, 10, 30, 60};
+        static constexpr const char* GPS_INT_LABELS[] = {"Every loop", "1s", "5s", "10s", "30s", "60s"};
+        static constexpr int NUM_GPS_INT = 6;
+        int cur_gps = 0;
+        for (int i = 0; i < NUM_GPS_INT; i++) {
+            if (p.gps_interval == GPS_INT_VALUES[i]) { cur_gps = i; break; }
+        }
+        snprintf(buf, sizeof(buf), "  GPS interval: %s", GPS_INT_LABELS[cur_gps]);
+        lv_obj_t* btn_gps_int = lv_list_add_btn(list, LV_SYMBOL_GPS, buf);
+        lv_obj_set_style_bg_color(btn_gps_int, lv_color_hex(BG_TERTIARY), 0);
+        lv_obj_set_style_bg_opa(btn_gps_int, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_gps_int, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_gps_int, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            slopos::NodePrefs np = slopos::prefs_get();
+            int idx = 0;
+            for (int i = 0; i < 6; i++) {
+                if (np.gps_interval == (uint16_t[]){0,1,5,10,30,60}[i]) { idx = i; break; }
+            }
+            idx = (idx + 1) % 6;
+            np.gps_interval = (uint16_t[]){0,1,5,10,30,60}[idx];
+            slopos::prefs_set(np);
+            char row_buf[64];
+            snprintf(row_buf, sizeof(row_buf), "  GPS interval: %s",
+                     (const char*[]){"Every loop","1s","5s","10s","30s","60s"}[idx]);
+            lv_obj_t* lbl = lv_obj_get_child(target, 1);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+                lv_label_set_text(lbl, row_buf);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
+    // Share location toggle
+    snprintf(buf, sizeof(buf), "  Share location: %s", p.share_location ? "ON" : "OFF");
+    lv_obj_t* btn_share = lv_list_add_btn(list, LV_SYMBOL_GPS, buf);
+    lv_obj_set_style_bg_color(btn_share, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_share, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_share, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_share, [](lv_event_t* e) {
+        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        slopos::NodePrefs np = slopos::prefs_get();
+        np.share_location = !np.share_location;
+        slopos::prefs_set(np);
+        char row_buf[64];
+        snprintf(row_buf, sizeof(row_buf), "  Share location: %s", np.share_location ? "ON" : "OFF");
+        lv_obj_t* lbl = lv_obj_get_child(target, 1);
+        if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+            lv_label_set_text(lbl, row_buf);
+        }
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    show_screen(scr);
+}
+
+void settings_display_show()
+{
+    lv_obj_t* scr = make_screen_full("Display / UI");
+
+    lv_obj_t* list = lv_list_create(scr);
+    lv_obj_set_size(list, LV_PCT(100), CONTENT_H);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
+    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+
+    const slopos::NodePrefs& p = slopos::prefs_get();
+    char buf[128];
+    int row = 0;
+
+    // Keyboard backlight
+    snprintf(buf, sizeof(buf), "  Keyboard BL: %d (%d%%)", p.kbd_backlight, p.kbd_backlight * 100 / 255);
+    lv_obj_t* btn_bl = lv_list_add_btn(list, LV_SYMBOL_KEYBOARD, buf);
+    lv_obj_set_style_bg_color(btn_bl, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_bl, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_bl, lv_color_hex(TEXT_PRIMARY), 0);
+    g_backlight_row = btn_bl;
+    lv_obj_add_event_cb(btn_bl, [](lv_event_t* e) {
+        backlight_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
+                         (lv_obj_t*)lv_event_get_target(e));
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    // Display brightness
+    snprintf(buf, sizeof(buf), "  Display: %d (%d%%)", p.display_brightness, p.display_brightness * 100 / 255);
+    lv_obj_t* btn_disp = lv_list_add_btn(list, LV_SYMBOL_IMAGE, buf);
+    lv_obj_set_style_bg_color(btn_disp, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_disp, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_disp, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_disp, [](lv_event_t* e) {
+        display_brightness_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
+                                 (lv_obj_t*)lv_event_get_target(e));
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    // Auto-off timeout
+    if (p.auto_off_timeout == 0) {
+        snprintf(buf, sizeof(buf), "  Auto-off: Off");
+    } else {
+        snprintf(buf, sizeof(buf), "  Auto-off: %ds", p.auto_off_timeout);
+    }
+    lv_obj_t* btn_auto_off = lv_list_add_btn(list, LV_SYMBOL_IMAGE, buf);
+    lv_obj_set_style_bg_color(btn_auto_off, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_auto_off, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_auto_off, lv_color_hex(TEXT_PRIMARY), 0);
+    g_auto_off_row = btn_auto_off;
+    lv_obj_add_event_cb(btn_auto_off, [](lv_event_t* e) {
+        auto_off_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
+                       (lv_obj_t*)lv_event_get_target(e));
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    // Chat history cap
+    snprintf(buf, sizeof(buf), "  Chat history: %d messages", chat_screen_get_message_cap());
+    lv_obj_t* btn_chat_cap = lv_list_add_btn(list, LV_SYMBOL_LIST, buf);
+    lv_obj_set_style_bg_color(btn_chat_cap, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_chat_cap, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_chat_cap, lv_color_hex(TEXT_PRIMARY), 0);
+    g_chat_history_row = btn_chat_cap;
+    lv_obj_add_event_cb(btn_chat_cap, [](lv_event_t* e) {
+        chat_message_cap_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)),
+                               (lv_obj_t*)lv_event_get_target(e));
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    // Theme selector
+    {
+        uint8_t cur_theme = slopos::prefs_get().theme_id;
+        if (cur_theme >= NUM_THEMES) cur_theme = 0;
+        snprintf(buf, sizeof(buf), "  Theme: %s", THEMES[cur_theme].name);
+        lv_obj_t* btn_theme = lv_list_add_btn(list, LV_SYMBOL_IMAGE, buf);
+        lv_obj_set_style_bg_color(btn_theme, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_theme, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_theme, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_theme, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            slopos::NodePrefs np = slopos::prefs_get();
+            np.theme_id = (np.theme_id + 1) % NUM_THEMES;
+            theme_apply(np.theme_id);
+            slopos::prefs_set(np);
+            char row_buf[64];
+            snprintf(row_buf, sizeof(row_buf), "  Theme: %s", THEMES[np.theme_id].name);
+            lv_obj_t* lbl = lv_obj_get_child(target, 1);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+                lv_label_set_text(lbl, row_buf);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
+    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+        g_backlight_row = nullptr;
+        g_chat_history_row = nullptr;
+        g_auto_off_row = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
+
+    show_screen(scr);
+}
+
+void settings_system_show()
+{
+    lv_obj_t* scr = make_screen_full("System");
+
+    lv_obj_t* list = lv_list_create(scr);
+    lv_obj_set_size(list, LV_PCT(100), CONTENT_H);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
+    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+
+    const slopos::NodePrefs& p = slopos::prefs_get();
+    char buf[128];
+    int row = 0;
+
+    // Node name
+    snprintf(buf, sizeof(buf), "  Name: %s", p.node_name);
+    lv_obj_t* r0 = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+    lv_obj_set_style_bg_color(r0, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(r0, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(r0, lv_color_hex(TEXT_PRIMARY), 0);
+    row++;
+
+    // SD Card
+    snprintf(buf, sizeof(buf), "  SD Card: %s", slopos_sdcard_mounted() ? "Mounted" : "Not mounted");
+    lv_obj_t* r1 = lv_list_add_btn(list, LV_SYMBOL_SD_CARD, buf);
+    lv_obj_set_style_bg_color(r1, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(r1, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(r1, lv_color_hex(TEXT_PRIMARY), 0);
+    row++;
+
+    // Date
+    {
+        int y, mo, d, h, mi;
+        slopos::mesh::getCurrentLocalDateTime(&y, &mo, &d, &h, &mi);
+        snprintf(buf, sizeof(buf), "  Date: %04d-%02d-%02d", y, mo, d);
+        lv_obj_t* btn_date = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+        lv_obj_set_style_bg_color(btn_date, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_date, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_date, lv_color_hex(TEXT_PRIMARY), 0);
+        g_date_row = btn_date;
+        lv_obj_add_event_cb(btn_date, [](lv_event_t* e) {
+            datetime_set_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)), true);
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
 
     // Time
-    snprintf(buf, sizeof(buf), "  Time: %02d:%02d", h, mi);
-    lv_obj_t* btn_time = add_row(LV_SYMBOL_SETTINGS, buf);
-    g_time_row = btn_time;
-    lv_obj_add_event_cb(btn_time, [](lv_event_t* e) {
-        datetime_set_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)), false);
-    }, LV_EVENT_CLICKED, nullptr);
+    {
+        int y, mo, d, h, mi;
+        slopos::mesh::getCurrentLocalDateTime(&y, &mo, &d, &h, &mi);
+        snprintf(buf, sizeof(buf), "  Time: %02d:%02d", h, mi);
+        lv_obj_t* btn_time = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+        lv_obj_set_style_bg_color(btn_time, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_time, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_time, lv_color_hex(TEXT_PRIMARY), 0);
+        g_time_row = btn_time;
+        lv_obj_add_event_cb(btn_time, [](lv_event_t* e) {
+            datetime_set_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)), false);
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
 
     // Run Setup Wizard
-    lv_obj_t* btn_wizard = add_row(LV_SYMBOL_SETTINGS, "  Run Setup Wizard");
+    lv_obj_t* btn_wizard = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, "  Run Setup Wizard");
+    lv_obj_set_style_bg_color(btn_wizard, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_wizard, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_wizard, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_add_event_cb(btn_wizard, [](lv_event_t*) {
         navigate_to(Screen::Onboarding);
     }, LV_EVENT_CLICKED, nullptr);
+    row++;
 
-    // Shut down — graceful power-off
-    lv_obj_t* btn_shutdown = add_row(LV_SYMBOL_POWER, "  Shut down");
+    // Shut down
+    lv_obj_t* btn_shutdown = lv_list_add_btn(list, LV_SYMBOL_POWER, "  Shut down");
     lv_obj_set_style_bg_color(btn_shutdown, lv_color_hex(0x4a2020), 0);
     lv_obj_set_style_bg_color(btn_shutdown, lv_color_hex(0x4a2020), LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(btn_shutdown, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_add_event_cb(btn_shutdown, [](lv_event_t* e) {
-        lv_obj_t* scr = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
+        lv_obj_t* scr_sh = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
         auto dlg_sz = dialog_size(240, 100);
-        lv_obj_t* dlg = lv_obj_create(scr);
+        lv_obj_t* dlg = lv_obj_create(scr_sh);
         lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
         lv_obj_center(dlg);
         lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
@@ -2422,7 +2601,6 @@ void settings_screen_show()
         lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
         lv_obj_align(msg, LV_ALIGN_CENTER, 0, -4);
 
-        // Cancel button
         lv_obj_t* cancel_btn = lv_btn_create(dlg);
         lv_obj_set_size(cancel_btn, 64, 24);
         lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 12, -4);
@@ -2431,11 +2609,10 @@ void settings_screen_show()
         lv_obj_t* cl = lv_label_create(cancel_btn);
         lv_label_set_text(cl, "Cancel");
         lv_obj_center(cl);
-        lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
-            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+        lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ev) {
+            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
         }, LV_EVENT_CLICKED, nullptr);
 
-        // Confirm button
         lv_obj_t* confirm_btn = lv_btn_create(dlg);
         lv_obj_set_size(confirm_btn, 64, 24);
         lv_obj_align(confirm_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
@@ -2448,18 +2625,63 @@ void settings_screen_show()
             slopos::mesh::shutdown();
         }, LV_EVENT_CLICKED, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
+    row++;
 
     // Version
     snprintf(buf, sizeof(buf), "  SlopOS " SLOPOS_VERSION);
-    add_row(LV_SYMBOL_HOME, buf);
+    lv_obj_t* rv = lv_list_add_btn(list, LV_SYMBOL_HOME, buf);
+    lv_obj_set_style_bg_color(rv, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(rv, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(rv, lv_color_hex(TEXT_PRIMARY), 0);
+    row++;
 
-    // Null the row pointers when this screen is deleted so stale pointers can't be used
+    // Null row pointers on delete
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         g_date_row = nullptr;
         g_time_row = nullptr;
-        g_backlight_row = nullptr;
-        g_chat_history_row = nullptr;
     }, LV_EVENT_DELETE, nullptr);
+
+    show_screen(scr);
+}
+
+// ════════════════════════════════════════════════════════
+// Settings — category menu
+// ════════════════════════════════════════════════════════
+void settings_screen_show()
+{
+    lv_obj_t* scr = make_screen_full("Settings");
+
+    lv_obj_t* list = lv_list_create(scr);
+    lv_obj_set_size(list, LV_PCT(100), CONTENT_H);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
+    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+
+    // Category helpers — compact row with accent icon
+    struct Cat { const char* icon; const char* label; Screen target; };
+    Cat cats[] = {
+        {LV_SYMBOL_WIFI,    "Radio / Mesh",     Screen::SettingsRadio},
+        {LV_SYMBOL_GPS,     "GPS / Location",   Screen::SettingsGPS},
+        {LV_SYMBOL_IMAGE,   "Display / UI",     Screen::SettingsDisplay},
+        {LV_SYMBOL_SETTINGS,"System",           Screen::SettingsSystem},
+    };
+
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t* btn = lv_list_add_btn(list, cats[i].icon, cats[i].label);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(i % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_t* arrow = lv_label_create(btn);
+        lv_label_set_text(arrow, LV_SYMBOL_RIGHT);
+        lv_obj_set_style_text_color(arrow, lv_color_hex(TEXT_MUTED), 0);
+        lv_obj_align(arrow, LV_ALIGN_RIGHT_MID, -4, 0);
+        Screen target = cats[i].target;
+        lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+            Screen s = (Screen)(intptr_t)lv_event_get_user_data(e);
+            navigate_to(s);
+        }, LV_EVENT_CLICKED, (void*)(intptr_t)target);
+    }
 
     show_screen(scr);
 }
