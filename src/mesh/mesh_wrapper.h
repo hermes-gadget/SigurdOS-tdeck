@@ -250,5 +250,34 @@ uint8_t getLoginStatus(const char* name);
 // The node does NOT need to be in your contact list.
 bool sendAnonMessage(const char* pubkey_hex, const char* text);
 
+// ── Group data datagrams (Phase 4.8) ─────────────
+// Standard data type constants
+// (Defined as static constexpr in SlopMeshV2; reusing here via enum)
+enum GroupDataType : uint16_t {
+    GDT_NONE        = 0x0000,
+    GDT_TEMPERATURE = 0x0001,
+    GDT_HUMIDITY    = 0x0002,
+    GDT_PRESSURE    = 0x0003,
+    GDT_LOCATION    = 0x0004,
+    GDT_BATTERY     = 0x0005,
+    GDT_STATUS      = 0x0006,
+    GDT_CUSTOM      = 0x00FF
+};
+
+// Hex-to-bytes helper (used by terminal commands)
+int hexToBytes(const char* hex, uint8_t* out, int out_max);
+
+// Send typed data to a group channel by index
+bool sendGroupDataToChannel(int channel_idx, uint16_t data_type,
+                            const uint8_t* data, int data_len);
+
+// Polling API for received group datagrams
+int  getGroupDataRecvCount();
+bool getGroupDataRecvEntry(int index, uint16_t* data_type_out,
+                           uint8_t* data_out, int data_out_max, int* data_len_out,
+                           char* channel_out, int channel_sz,
+                           uint32_t* timestamp_out);
+void clearGroupDataRecv();
+
 } // namespace mesh
 } // namespace slopos

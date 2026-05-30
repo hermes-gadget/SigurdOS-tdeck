@@ -3414,7 +3414,7 @@ void terminal_screen_show()
 
         static char result[256];
         if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping anon fetchmsgs emoji-list getvar setvar delvar listvars");
+            snprintf(result, sizeof(result), "Commands: help status advert ping anon fetchmsgs groupdata emoji-list getvar setvar delvar listvars");
         } else if (strncmp(cmd, "getvar ", 7) == 0) {
             const char* key = cmd + 7;
             if (!key[0]) {
@@ -3566,6 +3566,40 @@ void terminal_screen_show()
                     snprintf(result, sizeof(result), "Room fetch sent to %s for %s", contact_name, channel);
                 } else {
                     snprintf(result, sizeof(result), "Fetch failed (contact '%s' not found?)", contact_name);
+                }
+            }
+        } else if (strncmp(cmd, "groupdata ", 10) == 0) {
+            // Format: groupdata <channel_idx> <type_hex> <hex_payload>
+            const char* gd_arg = cmd + 10;
+            int ch_idx = atoi(gd_arg);
+            const char* after_ch = gd_arg;
+            while (*after_ch && *after_ch != ' ') after_ch++;
+            if (!*after_ch) {
+                snprintf(result, sizeof(result), "Usage: groupdata <channel_idx> <type_hex> <hex_payload>");
+            } else {
+                after_ch++; // skip space
+                unsigned int dt = 0;
+                if (sscanf(after_ch, "%x", &dt) != 1 || dt > 0xFFFF) {
+                    snprintf(result, sizeof(result), "Bad type hex");
+                } else {
+                    const char* hex_start = after_ch;
+                    while (*hex_start && *hex_start != ' ') hex_start++;
+                    if (!*hex_start) {
+                        snprintf(result, sizeof(result), "Usage: groupdata <channel_idx> <type_hex> <hex_payload>");
+                    } else {
+                        hex_start++; // skip space
+                        uint8_t payload[64];
+                        int plen = slopos::mesh::hexToBytes(hex_start, payload, sizeof(payload));
+                        if (plen <= 0) {
+                            snprintf(result, sizeof(result), "Bad hex payload");
+                        } else {
+                            bool ok = slopos::mesh::sendGroupDataToChannel(
+                                ch_idx, (uint16_t)dt, payload, plen);
+                            snprintf(result, sizeof(result), ok
+                                ? "Group data sent to ch%d type=0x%04x (%d bytes)"
+                                : "Send failed (bad channel? %d)", ch_idx, dt, plen);
+                        }
+                    }
                 }
             }
         } else if (strcmp(cmd, "emoji-list") == 0) {

@@ -1202,6 +1202,87 @@ public:
                                               (int)strlen(text));
     }
 
+    // ── Group data datagrams (Phase 4.8) ────────────
+    // Standard group data types
+    static constexpr uint16_t GDT_NONE        = 0x0000;
+    static constexpr uint16_t GDT_TEMPERATURE = 0x0001;
+    static constexpr uint16_t GDT_HUMIDITY    = 0x0002;
+    static constexpr uint16_t GDT_PRESSURE    = 0x0003;
+    static constexpr uint16_t GDT_LOCATION    = 0x0004;
+    static constexpr uint16_t GDT_BATTERY     = 0x0005;
+    static constexpr uint16_t GDT_STATUS      = 0x0006;
+    static constexpr uint16_t GDT_CUSTOM      = 0x00FF;
+
+    static constexpr int MAX_GROUP_DATA_RECV = 8;
+    struct GroupDataEntry {
+        uint16_t data_type;
+        uint8_t  data[64];
+        uint8_t  data_len;
+        char     channel_name[32];
+        uint32_t timestamp;
+        bool     valid;
+    };
+    GroupDataEntry _grp_data_recv[MAX_GROUP_DATA_RECV];
+    int _n_grp_data_recv = 0;
+
+    // Send a typed data datagram to a group channel.
+    bool sendGroupDataToChannel(int idx, uint16_t data_type,
+                                const uint8_t* data, int data_len) {
+        if (idx < 0 || idx >= getChannelCount()) return false;
+        if (data_len > 0 && !data) return false;
+        ChannelDetails cd;
+        if (!BaseChatMesh::getChannel(idx, cd)) return false;
+        return BaseChatMesh::sendGroupData(cd.channel, nullptr, OUT_PATH_UNKNOWN,
+                                           data_type, data, data_len);
+    }
+
+    // Override to receive group data datagrams.
+    void onChannelDataRecv(const ::mesh::GroupChannel& channel,
+                           ::mesh::Packet* pkt, uint16_t data_type,
+                           const uint8_t* data, size_t data_len) override {
+        // Store in receive buffer
+        if (_n_grp_data_recv < MAX_GROUP_DATA_RECV) {
+            // Resolve channel name
+            char chname[32] = "[group]";
+            for (int i = 0; i < getChannelCount(); i++) {
+                ChannelDetails cd;
+                if (BaseChatMesh::getChannel(i, cd) &&
+                    memcmp(cd.channel.hash, channel.hash, sizeof(channel.hash)) == 0) {
+                    strncpy(chname, cd.name, sizeof(chname) - 1);
+                    chname[sizeof(chname) - 1] = '\0';
+                    break;
+                }
+            }
+
+            GroupDataEntry& e = _grp_data_recv[_n_grp_data_recv++];
+            e.data_type = data_type;
+            e.data_len = (data_len < sizeof(e.data)) ? (uint8_t)data_len : sizeof(e.data);
+            if (e.data_len > 0 && data) memcpy(e.data, data, e.data_len);
+            strncpy(e.channel_name, chname, sizeof(e.channel_name) - 1);
+            e.channel_name[sizeof(e.channel_name) - 1] = '\0';
+            e.timestamp = getRTCClock()->getCurrentTime();
+            e.valid = true;
+
+#if SLOPOS_DEBUG_MESH
+            Serial.printf("[mesh] Group data recv on %s type=0x%04x len=%d\n",
+                          chname, data_type, (int)data_len);
+#endif
+        } else {
+#if SLOPOS_DEBUG_MESH
+            Serial.printf("[mesh] Group data recv buffer full (dropped type=0x%04x)\n",
+                          data_type);
+#endif
+        }
+    }
+
+    // Polling API
+    int getGroupDataCount() const { return _n_grp_data_recv; }
+    const GroupDataEntry* getGroupDataEntry(int idx) const {
+        if (idx < 0 || idx >= _n_grp_data_recv) return nullptr;
+        return &_grp_data_recv[idx];
+    }
+    void clearGroupData() { _n_grp_data_recv = 0; }
+
     // ── Anonymous message (Phase 4.7) ────────────────
     // Send a text message to a node identified by raw pubkey bytes (not in contact list).
     // Creates a temporary ContactInfo and uses BaseChatMesh::sendAnonReq().

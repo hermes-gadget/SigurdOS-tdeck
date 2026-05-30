@@ -1363,5 +1363,45 @@ void setDutyCycle(uint8_t percent) {
         return g_mesh->sendAnonMessage(pub_key, text);
     }
 
+    // ── Group data datagrams (Phase 4.8) ─────────────
+    bool sendGroupDataToChannel(int channel_idx, uint16_t data_type,
+                                const uint8_t* data, int data_len) {
+        return g_mesh ? g_mesh->sendGroupDataToChannel(channel_idx, data_type, data, data_len) : false;
+    }
+
+    int getGroupDataRecvCount() {
+        return g_mesh ? g_mesh->getGroupDataCount() : 0;
+    }
+
+    bool getGroupDataRecvEntry(int index, uint16_t* data_type_out,
+                               uint8_t* data_out, int data_out_max, int* data_len_out,
+                               char* channel_out, int channel_sz,
+                               uint32_t* timestamp_out) {
+        if (!g_mesh) return false;
+        const ::slopos::mesh::SlopMeshV2::GroupDataEntry* e = g_mesh->getGroupDataEntry(index);
+        if (!e || !e->valid) return false;
+        if (data_type_out) *data_type_out = e->data_type;
+        if (data_len_out) *data_len_out = e->data_len;
+        if (data_out && data_out_max > 0 && e->data_len > 0) {
+            int cp = (e->data_len < data_out_max) ? e->data_len : data_out_max;
+            memcpy(data_out, e->data, cp);
+        }
+        if (channel_out && channel_sz > 0) {
+            strncpy(channel_out, e->channel_name, channel_sz - 1);
+            channel_out[channel_sz - 1] = '\0';
+        }
+        if (timestamp_out) *timestamp_out = e->timestamp;
+        return true;
+    }
+
+    void clearGroupDataRecv() {
+        if (g_mesh) g_mesh->clearGroupData();
+    }
+
+// ── Hex-to-bytes helper ─────────────────────────
+int hexToBytes(const char* hex, uint8_t* out, int out_max) {
+    return SlopMeshV2::hexToBytes(hex, out, (size_t)out_max);
+}
+
 } // namespace mesh
 } // namespace slopos
