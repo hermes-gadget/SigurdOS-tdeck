@@ -360,6 +360,42 @@ void clearResponses() {
     if (g_mesh) g_mesh->clearResponses();
 }
 
+// ── Room message fetch (Phase 4.6) ───────────────────
+bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name) {
+    return g_mesh ? g_mesh->sendRoomMsgFetchRequest(contact_name, channel_name) : false;
+}
+
+int getRoomMsgFetchCount() {
+    return g_mesh ? g_mesh->getRoomMsgFetchCount() : 0;
+}
+
+bool getRoomMsgFetchEntry(int index, char* sender_out, int sender_sz,
+                          char* text_out, int text_sz,
+                          char* channel_out, int channel_sz,
+                          uint32_t* timestamp_out) {
+    if (!g_mesh) return false;
+    auto* e = g_mesh->getRoomMsgFetchEntry(index);
+    if (!e || !e->valid) return false;
+    if (sender_out && sender_sz > 0) {
+        strncpy(sender_out, e->sender, sender_sz - 1);
+        sender_out[sender_sz - 1] = '\0';
+    }
+    if (text_out && text_sz > 0) {
+        strncpy(text_out, e->text, text_sz - 1);
+        text_out[text_sz - 1] = '\0';
+    }
+    if (channel_out && channel_sz > 0) {
+        strncpy(channel_out, e->channel, channel_sz - 1);
+        channel_out[channel_sz - 1] = '\0';
+    }
+    if (timestamp_out) *timestamp_out = e->timestamp;
+    return true;
+}
+
+void clearRoomMsgFetch() {
+    if (g_mesh) g_mesh->clearRoomMsgFetch();
+}
+
 // ── Status request (Phase 4.2) ────────────────
 bool requestStatus(const char* dest_name) {
     if (!g_mesh || !dest_name || !dest_name[0]) return false;

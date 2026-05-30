@@ -167,6 +167,15 @@ void registerAckedMessage(const char* dest_name, uint32_t timestamp);
 bool isMessageAcked(const char* dest_name, uint32_t timestamp);
 int  getAckCounter();   // incremented each time registerAckedMessage is called
 
+// ── Room message fetch (Phase 4.6) ────────────────
+bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name);
+int  getRoomMsgFetchCount();
+bool getRoomMsgFetchEntry(int index, char* sender_out, int sender_sz,
+                          char* text_out, int text_sz,
+                          char* channel_out, int channel_sz,
+                          uint32_t* timestamp_out);
+void clearRoomMsgFetch();
+
 // ── Status request (Phase 4.2) ────────────────
 #define NODE_STATUS_RESPONSE_SIZE  56  // size of RepeaterStats binary blob
 

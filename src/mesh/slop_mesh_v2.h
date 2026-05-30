@@ -292,6 +292,9 @@ public:
     }
 
     // ════════════════════════════════════════════════════
+    // Room message fetch request type (Phase 4.6)
+    static constexpr uint8_t REQ_TYPE_GET_ROOM_MSGS = 0x03;
+
     //  REQ/RESPONSE framework (Phase 4.1)
     // ════════════════════════════════════════════════════
 
@@ -299,6 +302,8 @@ public:
     struct PendingRequest {
         uint32_t tag;
         char     dest_name[32];
+        uint8_t  req_type;       // request type (0 = unknown/data)
+        char     channel_name[32]; // for REQ_TYPE_GET_ROOM_MSGS: which channel to fetch
         uint32_t sent_at_ms;
         bool     in_use = false;
     };
@@ -330,6 +335,7 @@ public:
                     for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
                         if (!_pending_reqs[j].in_use) {
                             _pending_reqs[j].tag = tag;
+                            _pending_reqs[j].req_type = req_type;
                             strncpy(_pending_reqs[j].dest_name, name,
                                     sizeof(_pending_reqs[j].dest_name) - 1);
                             _pending_reqs[j].dest_name[sizeof(_pending_reqs[j].dest_name) - 1] = '\0';
@@ -358,6 +364,7 @@ public:
                     for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
                         if (!_pending_reqs[j].in_use) {
                             _pending_reqs[j].tag = tag;
+                            _pending_reqs[j].req_type = 0; // custom data
                             strncpy(_pending_reqs[j].dest_name, name,
                                     sizeof(_pending_reqs[j].dest_name) - 1);
                             _pending_reqs[j].dest_name[sizeof(_pending_reqs[j].dest_name) - 1] = '\0';
@@ -380,6 +387,106 @@ public:
         return &_responses[idx];
     }
     void clearResponses() { _n_responses = 0; }
+
+    // ── Room message fetch (Phase 4.6) ─────────────────
+    static constexpr int MAX_ROOM_MSG_FETCH = 16;
+    struct RoomMsgFetchEntry {
+        char sender[32];
+        char text[160];
+        uint32_t timestamp;
+        char channel[32];
+        bool valid;
+    };
+    RoomMsgFetchEntry _room_fetch_buf[MAX_ROOM_MSG_FETCH];
+    int _n_room_fetched = 0;
+
+    // Send a request to fetch recent messages from a room server.
+    // Sends a REQ with REQ_TYPE_GET_ROOM_MSGS, data = channel_name.
+    // Responses populate _room_fetch_buf and are also pushed to mesh_v2_queue.
+    bool sendRoomMsgFetchRequest(const char* name, const char* channel_name) {
+        if (!name || !name[0] || !channel_name || !channel_name[0]) return false;
+        _n_room_fetched = 0;
+        int n = getNumContacts();
+        ::ContactInfo tmp;
+        for (int i = 0; i < n; i++) {
+            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+                // REQ data: [req_type][channel_name\0]
+                uint8_t req_data[64];
+                req_data[0] = REQ_TYPE_GET_ROOM_MSGS;
+                size_t cn_len = strlen(channel_name);
+                if (cn_len > 62) cn_len = 62;
+                memcpy(&req_data[1], channel_name, cn_len + 1);
+                uint32_t tag = 0, est_timeout = 0;
+                int r = BaseChatMesh::sendRequest(tmp, req_data, 1 + cn_len + 1,
+                                                  tag, est_timeout);
+                if (r != MSG_SEND_FAILED) {
+                    for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
+                        if (!_pending_reqs[j].in_use) {
+                            _pending_reqs[j].tag = tag;
+                            _pending_reqs[j].req_type = REQ_TYPE_GET_ROOM_MSGS;
+                            strncpy(_pending_reqs[j].dest_name, name,
+                                    sizeof(_pending_reqs[j].dest_name) - 1);
+                            _pending_reqs[j].dest_name[sizeof(_pending_reqs[j].dest_name) - 1] = '\0';
+                            strncpy(_pending_reqs[j].channel_name, channel_name,
+                                    sizeof(_pending_reqs[j].channel_name) - 1);
+                            _pending_reqs[j].channel_name[sizeof(_pending_reqs[j].channel_name) - 1] = '\0';
+                            _pending_reqs[j].sent_at_ms = _ms->getMillis();
+                            _pending_reqs[j].in_use = true;
+                            break;
+                        }
+                    }
+                }
+                return r != MSG_SEND_FAILED;
+            }
+        }
+        return false;
+    }
+
+    // Polling API for fetched room messages
+    int getRoomMsgFetchCount() const { return _n_room_fetched; }
+    const RoomMsgFetchEntry* getRoomMsgFetchEntry(int idx) const {
+        if (idx < 0 || idx >= _n_room_fetched) return nullptr;
+        return &_room_fetch_buf[idx];
+    }
+    void clearRoomMsgFetch() { _n_room_fetched = 0; }
+
+    // Parse room message response data (tag has already been matched)
+    void parseRoomMsgResponse(const ::ContactInfo& contact,
+                              const uint8_t* data, uint8_t len,
+                              const char* channel_name) {
+        // Response format: repeated entries of [sender\0][text\0]
+        uint8_t pos = 0;
+        while (pos + 2 < len && _n_room_fetched < MAX_ROOM_MSG_FETCH) {
+            // Read null-terminated sender name
+            const char* sender = (const char*)(data + pos);
+            size_t slen = strnlen(sender, len - pos);
+            if (slen == 0 || slen >= len - pos) break;
+            pos += slen + 1;
+            if (pos >= len) break;
+
+            // Read null-terminated message text
+            const char* text = (const char*)(data + pos);
+            size_t tlen = strnlen(text, len - pos);
+            if (tlen == 0 || tlen >= len - pos) break;
+            pos += tlen + 1;
+
+            RoomMsgFetchEntry& e = _room_fetch_buf[_n_room_fetched++];
+            strncpy(e.sender, sender, sizeof(e.sender) - 1);
+            e.sender[sizeof(e.sender) - 1] = '\0';
+            strncpy(e.text, text, sizeof(e.text) - 1);
+            e.text[sizeof(e.text) - 1] = '\0';
+            e.timestamp = getRTCClock()->getCurrentTime();
+            strncpy(e.channel, channel_name, sizeof(e.channel) - 1);
+            e.channel[sizeof(e.channel) - 1] = '\0';
+            e.valid = true;
+
+            // Also push to mesh message queue so it appears in chat
+            slopos::mesh::mesh_v2_queue_push(e.sender, e.channel, e.text, 0, 0.0f);
+            if (_message_cb) {
+                _message_cb(e.sender, e.channel, e.text);
+            }
+        }
+    }
 
     // ════════════════════════════════════════════════════
     //  BaseChatMesh pure virtual handlers
@@ -634,10 +741,18 @@ public:
             re.valid = true;
         }
 
-        // Clear matching pending request
+        // Clear matching pending request — also parse room msg responses
         for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
             if (_pending_reqs[i].in_use && _pending_reqs[i].tag == tag) {
-                _pending_reqs[i].in_use = false;
+                if (_pending_reqs[i].req_type == REQ_TYPE_GET_ROOM_MSGS && len > 4) {
+                    char chan[32];
+                    strncpy(chan, _pending_reqs[i].channel_name, sizeof(chan) - 1);
+                    chan[sizeof(chan) - 1] = '\0';
+                    _pending_reqs[i].in_use = false;
+                    parseRoomMsgResponse(contact, data + 4, len - 4, chan);
+                } else {
+                    _pending_reqs[i].in_use = false;
+                }
                 break;
             }
         }

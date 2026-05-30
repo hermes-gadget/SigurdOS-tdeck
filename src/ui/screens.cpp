@@ -814,6 +814,128 @@ static void show_admin_cmd_dialog(const char* contact_name)
     }, LV_EVENT_DELETE, nullptr);
     lv_obj_set_user_data(dlg, cd);
 }
+
+// ── Room message fetch dialog (Phase 4.6) ──────────
+// Shows a modal dialog for entering a channel name to fetch messages from.
+static void show_fetch_msgs_dialog(const char* contact_name)
+{
+    if (!contact_name) return;
+
+    lv_obj_t* scr = lv_obj_get_screen(lv_scr_act());
+    auto dlg_sz = dialog_size(260, 100);
+    lv_obj_t* dlg = lv_obj_create(scr);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 0, 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    // Title
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "Fetch room messages");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+    // Hint
+    lv_obj_t* hint = lv_label_create(dlg);
+    lv_label_set_text(hint, "Enter channel name (e.g. #general)");
+    lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 22);
+
+    // Channel name textarea
+    lv_obj_t* ta = lv_textarea_create(dlg);
+    lv_obj_set_size(ta, dlg_sz.w - 16, 28);
+    lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 36);
+    lv_textarea_set_placeholder_text(ta, "#channel");
+    lv_textarea_set_one_line(ta, true);
+    lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_radius(ta, 0, 0);
+    lv_obj_set_style_border_color(ta, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_border_width(ta, 2, 0);
+    lv_group_t* g = lv_group_get_default();
+    if (g) lv_group_focus_obj(ta);
+
+    // Cancel button
+    lv_obj_t* cancel_btn = lv_btn_create(dlg);
+    lv_obj_set_size(cancel_btn, 80, 24);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 12, -4);
+    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_radius(cancel_btn, 0, 0);
+    lv_obj_t* cl = lv_label_create(cancel_btn);
+    lv_label_set_text(cl, "Cancel");
+    lv_obj_center(cl);
+    lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Fetch button
+    struct FetchDialogData { char* name; lv_obj_t* ta; };
+    char* fm_name = strdup(contact_name);
+    FetchDialogData* fd = new FetchDialogData{fm_name, ta};
+    lv_obj_t* fetch_btn = lv_btn_create(dlg);
+    lv_obj_set_size(fetch_btn, 80, 24);
+    lv_obj_align(fetch_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
+    lv_obj_set_style_bg_color(fetch_btn, lv_color_hex(0x0088cc), 0);
+    lv_obj_set_style_radius(fetch_btn, 0, 0);
+    lv_obj_t* fb = lv_label_create(fetch_btn);
+    lv_label_set_text(fb, "Fetch");
+    lv_obj_center(fb);
+    lv_obj_set_style_text_color(fb, lv_color_hex(0xffffff), 0);
+    lv_obj_set_user_data(fetch_btn, fd);
+
+    lv_obj_add_event_cb(fetch_btn, [](lv_event_t* le) {
+        FetchDialogData* d = (FetchDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
+        if (d && d->name) {
+            const char* channel = lv_textarea_get_text(d->ta);
+            if (channel && channel[0]) {
+                slopos::mesh::sendRoomMsgFetchRequest(d->name, channel);
+                char confirm[64];
+                snprintf(confirm, sizeof(confirm), "Fetching msgs from %s channel %s",
+                         d->name, channel);
+                slopos::mesh::mesh_v2_queue_push("System", "", confirm, 0, 0.0f);
+            }
+        }
+        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
+        lv_obj_del_async(dlg);
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Enter-key handler on textarea
+    lv_obj_add_event_cb(ta, [](lv_event_t* te) {
+        lv_obj_t* t = (lv_obj_t*)lv_event_get_target(te);
+        uint32_t key = lv_event_get_key(te);
+        if (key == LV_KEY_ENTER) {
+            lv_obj_t* parent = lv_obj_get_parent(t);
+            if (parent) {
+                uint32_t c = lv_obj_get_child_cnt(parent);
+                for (uint32_t i = 0; i < c; i++) {
+                    lv_obj_t* child = lv_obj_get_child(parent, i);
+                    if (child && lv_obj_check_type(child, &lv_button_class)) {
+                        FetchDialogData* data = (FetchDialogData*)lv_obj_get_user_data(child);
+                        if (data) {
+                            lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }, LV_EVENT_KEY, nullptr);
+
+    // Cleanup
+    lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
+        FetchDialogData* d = (FetchDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
+        if (d) {
+            free(d->name);
+            delete d;
+        }
+    }, LV_EVENT_DELETE, nullptr);
+    lv_obj_set_user_data(dlg, fd);
+}
+
 // ════════════════════════════════════════════════════════
 // Contact Detail — full info about a single contact
 // ════════════════════════════════════════════════════════
@@ -1276,6 +1398,38 @@ void contact_detail_screen_show(const char* contact_name)
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+            }, LV_EVENT_DELETE, nullptr);
+
+            // ── Fetch Msgs row (second row of buttons) ──
+            lv_obj_t* fetch_row = lv_obj_create(scr);
+            lv_obj_set_size(fetch_row, CONTENT_W, 30);
+            lv_obj_align(fetch_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 126));
+            lv_obj_set_style_bg_opa(fetch_row, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(fetch_row, 0, 0);
+            lv_obj_set_flex_flow(fetch_row, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(fetch_row, LV_FLEX_ALIGN_SPACE_EVENLY,
+                                  LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+            // ── Fetch Msgs button ──
+            char* fm_name = strdup(contact_name);
+            lv_obj_t* fm_btn = lv_btn_create(fetch_row);
+            lv_obj_set_size(fm_btn, 180, 24);
+            lv_obj_set_style_bg_color(fm_btn, lv_color_hex(0x0088cc), 0);
+            lv_obj_set_style_radius(fm_btn, 0, 0);
+            lv_obj_t* fm_lbl = lv_label_create(fm_btn);
+            lv_label_set_text(fm_lbl, LV_SYMBOL_LIST " Fetch Msgs");
+            lv_obj_center(fm_lbl);
+            lv_obj_set_style_text_color(fm_lbl, lv_color_hex(0xffffff), 0);
+            lv_obj_set_user_data(fm_btn, fm_name);
+            lv_obj_add_event_cb(fm_btn, [](lv_event_t* e) {
+                lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                const char* name = (const char*)lv_obj_get_user_data(btn);
+                if (name) {
+                    show_fetch_msgs_dialog(name);
+                }
+            }, LV_EVENT_CLICKED, nullptr);
+            lv_obj_add_event_cb(fm_btn, [](lv_event_t* e) {
                 free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
             }, LV_EVENT_DELETE, nullptr);
 
@@ -3260,7 +3414,7 @@ void terminal_screen_show()
 
         static char result[256];
         if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping anon emoji-list getvar setvar delvar listvars");
+            snprintf(result, sizeof(result), "Commands: help status advert ping anon fetchmsgs emoji-list getvar setvar delvar listvars");
         } else if (strncmp(cmd, "getvar ", 7) == 0) {
             const char* key = cmd + 7;
             if (!key[0]) {
@@ -3394,6 +3548,24 @@ void terminal_screen_show()
                     snprintf(result, sizeof(result), "Anon msg sent to %s", pubkey_hex);
                 } else {
                     snprintf(result, sizeof(result), "Send failed (bad hex? %zu chars)", pklen);
+                }
+            }
+        } else if (strncmp(cmd, "fetchmsgs ", 10) == 0) {
+            const char* fetch_arg = cmd + 10;
+            const char* fetch_space = strchr(fetch_arg, ' ');
+            if (!fetch_space || fetch_space == fetch_arg) {
+                snprintf(result, sizeof(result), "Usage: fetchmsgs <contact> <channel>");
+            } else {
+                char contact_name[64];
+                size_t cn_len = (size_t)(fetch_space - fetch_arg);
+                if (cn_len > 63) cn_len = 63;
+                memcpy(contact_name, fetch_arg, cn_len);
+                contact_name[cn_len] = '\0';
+                const char* channel = fetch_space + 1;
+                if (slopos::mesh::sendRoomMsgFetchRequest(contact_name, channel)) {
+                    snprintf(result, sizeof(result), "Room fetch sent to %s for %s", contact_name, channel);
+                } else {
+                    snprintf(result, sizeof(result), "Fetch failed (contact '%s' not found?)", contact_name);
                 }
             }
         } else if (strcmp(cmd, "emoji-list") == 0) {
