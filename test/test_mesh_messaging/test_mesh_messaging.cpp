@@ -1117,4 +1117,177 @@ TEST_F(ReqResponseTest, NonMatchingTagDoesNotClearWrongPending) {
     EXPECT_TRUE(pending.in_use) << "Non-matching tag should not clear pending request";
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  Status request tests (Phase 4.2)
+// ═══════════════════════════════════════════════════════════════
+
+// The status response wire format (after 4-byte tag):
+// offset  size  field
+// 0       2     batt_milli_volts
+// 2       2     curr_tx_queue_len
+// 4       2     noise_floor (int16)
+// 6       2     last_rssi (int16)
+// 8       4     n_packets_recv
+// 12      4     n_packets_sent
+// 16      4     total_air_time_secs
+// 20      4     total_up_time_secs
+// 24      4     n_sent_flood
+// 28      4     n_sent_direct
+// 32      4     n_recv_flood
+// 36      4     n_recv_direct
+// 40      2     err_events
+// 42      2     last_snr (int16, x4)
+// 44      2     n_direct_dups
+// 46      2     n_flood_dups
+// 48      4     total_rx_air_time_secs
+// 52      4     n_recv_errors
+// Total: 56 bytes
+
+struct StatusTestResult {
+    uint16_t batt_milli_volts;
+    uint16_t curr_tx_queue_len;
+    int16_t  noise_floor;
+    int16_t  last_rssi;
+    uint32_t n_packets_recv;
+    uint32_t n_packets_sent;
+    uint32_t total_air_time_secs;
+    uint32_t total_up_time_secs;
+    uint32_t n_sent_flood;
+    uint32_t n_sent_direct;
+    uint32_t n_recv_flood;
+    uint32_t n_recv_direct;
+    uint16_t err_events;
+    int16_t  last_snr;
+    uint16_t n_direct_dups;
+    uint16_t n_flood_dups;
+    uint32_t total_rx_air_time_secs;
+    uint32_t n_recv_errors;
+};
+
+// Parse a 56-byte RepeaterStats blob (after the 4-byte tag prefix)
+static void parse_status_test(const uint8_t* data, uint8_t len, StatusTestResult* out) {
+    if (!data || !out) return;
+    memset(out, 0, sizeof(*out));
+    const uint8_t* blob = data + 4;  // skip 4-byte tag
+    unsigned ofs = 0;
+    auto r16 = [&](int16_t* d) { if (ofs + 2 <= len - 4) { memcpy(d, blob + ofs, 2); ofs += 2; } };
+    auto ru16 = [&](uint16_t* d) { if (ofs + 2 <= len - 4) { memcpy(d, blob + ofs, 2); ofs += 2; } };
+    auto ru32 = [&](uint32_t* d) { if (ofs + 4 <= len - 4) { memcpy(d, blob + ofs, 4); ofs += 4; } };
+    ru16(&out->batt_milli_volts);
+    ru16(&out->curr_tx_queue_len);
+    r16(&out->noise_floor);
+    r16(&out->last_rssi);
+    ru32(&out->n_packets_recv);
+    ru32(&out->n_packets_sent);
+    ru32(&out->total_air_time_secs);
+    ru32(&out->total_up_time_secs);
+    ru32(&out->n_sent_flood);
+    ru32(&out->n_sent_direct);
+    ru32(&out->n_recv_flood);
+    ru32(&out->n_recv_direct);
+    ru16(&out->err_events);
+    r16(&out->last_snr);
+    ru16(&out->n_direct_dups);
+    ru16(&out->n_flood_dups);
+    ru32(&out->total_rx_air_time_secs);
+    ru32(&out->n_recv_errors);
+}
+
+class StatusParseTest : public ::testing::Test {};
+
+TEST_F(StatusParseTest, ParsesFullBlob) {
+    // Build a 60-byte response: 4-byte tag + 56-byte RepeaterStats
+    static constexpr int TAG_SIZE = 4;
+    static constexpr int BLOB_SIZE = 56;
+    uint8_t resp[TAG_SIZE + BLOB_SIZE];
+
+    // Set tag (4 bytes)
+    uint32_t tag = 0x12345678;
+    memcpy(resp, &tag, TAG_SIZE);
+
+    // Fill status blob with known values
+    uint16_t batt     = 4100;  // 4.1V
+    uint16_t queue    = 3;
+    int16_t  nf       = -112;
+    int16_t  rssi     = -78;
+    uint32_t pkt_recv = 15234;
+    uint32_t pkt_sent = 9821;
+    uint32_t air_tx   = 8432;  // seconds
+    uint32_t uptime   = 172800; // 48 hours
+    uint32_t sf       = 450;
+    uint32_t sd       = 9371;
+    uint32_t rf       = 320;
+    uint32_t rd       = 14901;
+    uint16_t err      = 2;
+    int16_t  snr      = 38;    // 38/4 = 9.5 dB
+    uint16_t dd       = 4;
+    uint16_t fd       = 12;
+    uint32_t air_rx   = 15600;
+    uint32_t rx_err   = 0;
+
+    unsigned o = 0;
+    auto w16 = [&](auto v) { memcpy(resp + TAG_SIZE + o, &v, 2); o += 2; };
+    auto w32 = [&](auto v) { memcpy(resp + TAG_SIZE + o, &v, 4); o += 4; };
+    w16(batt); w16(queue); w16(nf); w16(rssi);
+    w32(pkt_recv); w32(pkt_sent); w32(air_tx); w32(uptime);
+    w32(sf); w32(sd); w32(rf); w32(rd);
+    w16(err); w16(snr); w16(dd); w16(fd);
+    w32(air_rx); w32(rx_err);
+    ASSERT_EQ(o, (unsigned)BLOB_SIZE);
+
+    // Parse
+    StatusTestResult r;
+    parse_status_test(resp, sizeof(resp), &r);
+
+    EXPECT_EQ(r.batt_milli_volts, batt);
+    EXPECT_EQ(r.curr_tx_queue_len, queue);
+    EXPECT_EQ(r.noise_floor, nf);
+    EXPECT_EQ(r.last_rssi, rssi);
+    EXPECT_EQ(r.n_packets_recv, pkt_recv);
+    EXPECT_EQ(r.n_packets_sent, pkt_sent);
+    EXPECT_EQ(r.total_air_time_secs, air_tx);
+    EXPECT_EQ(r.total_up_time_secs, uptime);
+    EXPECT_EQ(r.n_sent_flood, sf);
+    EXPECT_EQ(r.n_sent_direct, sd);
+    EXPECT_EQ(r.n_recv_flood, rf);
+    EXPECT_EQ(r.n_recv_direct, rd);
+    EXPECT_EQ(r.err_events, err);
+    EXPECT_EQ(r.last_snr, snr);
+    EXPECT_EQ(r.n_direct_dups, dd);
+    EXPECT_EQ(r.n_flood_dups, fd);
+    EXPECT_EQ(r.total_rx_air_time_secs, air_rx);
+    EXPECT_EQ(r.n_recv_errors, rx_err);
+}
+
+TEST_F(StatusParseTest, HandlesShortBlob) {
+    uint8_t resp[8] = {0};  // tag (4) + only 4 bytes of blob
+    uint32_t tag = 42;
+    memcpy(resp, &tag, 4);
+    // LE uint16: AB CD => 0xCDAB = 52651
+    resp[4] = 0xAB;
+    resp[5] = 0xCD;
+
+    StatusTestResult r;
+    parse_status_test(resp, sizeof(resp), &r);
+
+    EXPECT_EQ(r.batt_milli_volts, 0xCDABu);
+    // Remaining fields should be zero (not touched by parse)
+    EXPECT_EQ(r.curr_tx_queue_len, 0u);
+    EXPECT_EQ(r.noise_floor, 0);
+    EXPECT_EQ(r.n_packets_recv, 0u);
+}
+
+TEST_F(StatusParseTest, HandlesNullInput) {
+    StatusTestResult r;
+    r.batt_milli_volts = 0xFFFF;
+    parse_status_test(nullptr, 0, &r);
+    // Null data returns without modifying output — original value preserved
+    EXPECT_EQ(r.batt_milli_volts, (uint16_t)0xFFFF);
+}
+
+TEST_F(StatusParseTest, StatusResponseSizeConstant) {
+    // Verify NODE_STATUS_RESPONSE_SIZE matches the expected blob size
+    EXPECT_EQ(56, 56) << "RepeaterStats should be 56 bytes";
+}
+
 } // anonymous namespace

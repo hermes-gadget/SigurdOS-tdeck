@@ -43,6 +43,7 @@ void settings_radio_show();
 void settings_gps_show();
 void settings_display_show();
 void settings_system_show();
+void node_status_screen_show();
 
 // Highlight the current screen's back button border for back-swipe visual feedback.
 // Passing true sets a 2px accent border; false reverts to the default divider border.

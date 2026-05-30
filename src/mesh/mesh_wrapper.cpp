@@ -222,6 +222,44 @@ static int _acked_head = 0;
 static int _acked_count = 0;
 static int _ack_counter = 0;   // bumped on each registerAckedMessage() — used by UI to detect new ACKs
 
+// ── Status request tracking (Phase 4.2) ───────
+static uint32_t _last_status_tag = 0;
+static slopos::mesh::NodeStatus _cached_status;
+static bool _has_cached_status = false;
+
+// Parse a 56-byte RepeaterStats blob into NodeStatus struct
+static void parse_status_blob(const uint8_t* data, uint8_t len, slopos::mesh::NodeStatus* out) {
+    if (!data || !out) return;
+    memset(out, 0, sizeof(*out));
+    uint8_t avail = len < NODE_STATUS_RESPONSE_SIZE ? len : NODE_STATUS_RESPONSE_SIZE;
+    // data[0..3] = tag, skip that; status blob starts at data[4]
+    const uint8_t* blob = data + 4;
+    uint8_t blen = avail > 4 ? avail - 4 : 0;
+    if (blen < 2) return;  // need at least batt_milli_volts
+    unsigned ofs = 0;
+    auto r16 = [&](int16_t* dst) { if (ofs + 2 <= blen) { memcpy(dst, blob + ofs, 2); ofs += 2; } };
+    auto ru16 = [&](uint16_t* dst) { if (ofs + 2 <= blen) { memcpy(dst, blob + ofs, 2); ofs += 2; } };
+    auto ru32 = [&](uint32_t* dst) { if (ofs + 4 <= blen) { memcpy(dst, blob + ofs, 4); ofs += 4; } };
+    ru16(&out->batt_milli_volts);
+    ru16(&out->curr_tx_queue_len);
+    r16(&out->noise_floor);
+    r16(&out->last_rssi);
+    ru32(&out->n_packets_recv);
+    ru32(&out->n_packets_sent);
+    ru32(&out->total_air_time_secs);
+    ru32(&out->total_up_time_secs);
+    ru32(&out->n_sent_flood);
+    ru32(&out->n_sent_direct);
+    ru32(&out->n_recv_flood);
+    ru32(&out->n_recv_direct);
+    ru16(&out->err_events);
+    r16(&out->last_snr);
+    ru16(&out->n_direct_dups);
+    ru16(&out->n_flood_dups);
+    ru32(&out->total_rx_air_time_secs);
+    ru32(&out->n_recv_errors);
+}
+
 // ════════════════════════════════════════════════════
 // Public API
 // ════════════════════════════════════════════════════
@@ -310,6 +348,43 @@ bool getResponse(int idx, uint32_t* out_tag, uint8_t* out_data, uint8_t* out_len
 
 void clearResponses() {
     if (g_mesh) g_mesh->clearResponses();
+}
+
+// ── Status request (Phase 4.2) ────────────────
+bool requestStatus(const char* dest_name) {
+    if (!g_mesh || !dest_name || !dest_name[0]) return false;
+    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS);
+    if (ok) {
+        // Find the tag from the pending request table
+        for (int i = 0; i < SlopMeshV2::MAX_PENDING_REQUESTS; i++) {
+            if (g_mesh->_pending_reqs[i].in_use &&
+                strcmp(g_mesh->_pending_reqs[i].dest_name, dest_name) == 0) {
+                _last_status_tag = g_mesh->_pending_reqs[i].tag;
+                break;
+            }
+        }
+    }
+    return ok;
+}
+
+bool hasStatusResponse() {
+    if (!g_mesh || _last_status_tag == 0) return false;
+    int n = g_mesh->getResponseCount();
+    for (int i = 0; i < n; i++) {
+        auto* re = g_mesh->getResponse(i);
+        if (re && re->tag == _last_status_tag) {
+            parse_status_blob(re->data, re->len, &_cached_status);
+            _has_cached_status = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool getStatusResult(NodeStatus* out) {
+    if (!out || !_has_cached_status) return false;
+    memcpy(out, &_cached_status, sizeof(*out));
+    return true;
 }
 
 // Inject a simulated message into the queue (for remote test mode — no radio)

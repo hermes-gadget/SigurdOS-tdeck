@@ -44,6 +44,7 @@ enum class Screen {
     SettingsGPS,
     SettingsDisplay,
     SettingsSystem,
+    NodeStatus,
     COUNT
 };
 
