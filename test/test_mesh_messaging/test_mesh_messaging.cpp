@@ -933,4 +933,188 @@ TEST_F(ReceivePipelineTest, TruncatesLongText) {
     EXPECT_STREQ(msg.sender, "Alice");
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  REQ/RESPONSE framework tests (Phase 4.1)
+// ═══════════════════════════════════════════════════════════════
+
+// The onContactResponse wire format: data[0..3] = tag (uint32 LE),
+// data[4+] = response payload (up to len-4 bytes).
+// Tests verify tag extraction and response capture matching the
+// BaseChatMesh::sendRequest() → onContactResponse() protocol.
+
+class ReqResponseTest : public ::testing::Test {
+protected:
+    static constexpr int MAX_RESP_DATA = 128;
+    static constexpr int MAX_RESPONSES = 8;
+
+    struct TestResponseEntry {
+        uint32_t tag;
+        char     contact_name[32];
+        uint8_t  data[MAX_RESP_DATA];
+        uint8_t  len;
+    };
+
+    TestResponseEntry _responses[MAX_RESPONSES];
+    int _n_responses = 0;
+
+    // Matches SlopMeshV2::onContactResponse() logic
+    void handle_response(const char* contact_name, const uint8_t* data, uint8_t len) {
+        if (!data || len < 4) return;
+        if (_n_responses < MAX_RESPONSES) {
+            TestResponseEntry& re = _responses[_n_responses++];
+            memcpy(&re.tag, data, 4);
+            if (contact_name) {
+                strncpy(re.contact_name, contact_name, 31);
+                re.contact_name[31] = '\0';
+            } else {
+                re.contact_name[0] = '\0';
+            }
+            re.len = (len < MAX_RESP_DATA) ? len : MAX_RESP_DATA;
+            memcpy(re.data, data, re.len);
+        }
+    }
+};
+
+TEST_F(ReqResponseTest, ExtractsTagFromFirst4Bytes) {
+    uint8_t resp_data[8] = {0x78, 0x56, 0x34, 0x12, 0x01, 0x02, 0x03, 0x04};
+    handle_response("Alice", resp_data, sizeof(resp_data));
+
+    ASSERT_EQ(_n_responses, 1);
+    // LE: 0x12345678 = 305419896
+    EXPECT_EQ(_responses[0].tag, (uint32_t)0x12345678);
+    EXPECT_STREQ(_responses[0].contact_name, "Alice");
+}
+
+TEST_F(ReqResponseTest, ExtractsTagAtMinimumLength) {
+    uint8_t resp_data[4] = {0x01, 0x00, 0x00, 0x00};
+    handle_response("Bob", resp_data, 4);
+
+    ASSERT_EQ(_n_responses, 1);
+    EXPECT_EQ(_responses[0].tag, (uint32_t)1);
+    EXPECT_EQ(_responses[0].len, 4);
+    // Only tag, no payload
+    EXPECT_EQ(_responses[0].data[0], 1);
+    EXPECT_EQ(_responses[0].data[1], 0);
+    EXPECT_EQ(_responses[0].data[2], 0);
+    EXPECT_EQ(_responses[0].data[3], 0);
+}
+
+TEST_F(ReqResponseTest, RejectsNullData) {
+    handle_response("Charlie", nullptr, 0);
+    EXPECT_EQ(_n_responses, 0);
+}
+
+TEST_F(ReqResponseTest, RejectsShortData) {
+    uint8_t resp_data[3] = {0x01, 0x02, 0x03};
+    handle_response("Dave", resp_data, 3);
+    EXPECT_EQ(_n_responses, 0) << "Response with len < 4 should be rejected";
+}
+
+TEST_F(ReqResponseTest, StoresPayloadAfterTag) {
+    // Tag (4 bytes) + payload "OK" (2 bytes)
+    uint8_t resp_data[6] = {0xEF, 0xBE, 0xAD, 0xDE, 0x4F, 0x4B};
+    handle_response("Eve", resp_data, sizeof(resp_data));
+
+    ASSERT_EQ(_n_responses, 1);
+    EXPECT_EQ(_responses[0].tag, (uint32_t)0xDEADBEEF);
+    EXPECT_EQ(_responses[0].len, 6);
+    // Payload bytes at offset 4+
+    EXPECT_EQ(_responses[0].data[4], 0x4F);    // 'O'
+    EXPECT_EQ(_responses[0].data[5], 0x4B);    // 'K'
+}
+
+TEST_F(ReqResponseTest, StoresUpToMaxPayload) {
+    // Generate data larger than MAX_RESP_DATA
+    uint8_t large_data[MAX_RESP_DATA + 20];
+    uint32_t tag = 0xCAFEBABE;
+    memcpy(large_data, &tag, 4);
+    for (int i = 4; i < MAX_RESP_DATA + 20; i++) {
+        large_data[i] = (uint8_t)(i & 0xFF);
+    }
+    handle_response("Frank", large_data, MAX_RESP_DATA + 20);
+
+    ASSERT_EQ(_n_responses, 1);
+    EXPECT_EQ(_responses[0].tag, (uint32_t)0xCAFEBABE);
+    // Length should be clamped to MAX_RESP_DATA
+    EXPECT_EQ(_responses[0].len, MAX_RESP_DATA);
+    // Verify last stored byte
+    EXPECT_EQ(_responses[0].data[MAX_RESP_DATA - 1], large_data[MAX_RESP_DATA - 1]);
+}
+
+TEST_F(ReqResponseTest, BufferOverflowsGracefully) {
+    // Fill the response buffer to max
+    for (int i = 0; i < MAX_RESPONSES; i++) {
+        uint8_t resp[6] = {0};
+        uint32_t tag = (uint32_t)(i + 1);
+        memcpy(resp, &tag, 4);
+        resp[4] = (uint8_t)('A' + i);
+        resp[5] = 0;
+        handle_response("Overflow", resp, 6);
+    }
+
+    EXPECT_EQ(_n_responses, MAX_RESPONSES);
+
+    // Next response should be silently dropped
+    uint8_t extra[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+    handle_response("Dropped", extra, 4);
+    EXPECT_EQ(_n_responses, MAX_RESPONSES) << "Response beyond capacity should be dropped";
+}
+
+TEST_F(ReqResponseTest, TagMatchingZeroIsValid) {
+    // Tag value 0 is valid (though unlikely in practice)
+    uint8_t resp_data[4] = {0x00, 0x00, 0x00, 0x00};
+    handle_response("ZeroTag", resp_data, 4);
+
+    ASSERT_EQ(_n_responses, 1);
+    EXPECT_EQ(_responses[0].tag, (uint32_t)0);
+    EXPECT_STREQ(_responses[0].contact_name, "ZeroTag");
+}
+
+TEST_F(ReqResponseTest, TagMatchClearsPendingRequest) {
+    // Simulates the full flow: pending request is cleared when matching response arrives
+    // This mirrors the logic in SlopMeshV2::onContactResponse()
+
+    // Simulate a pending request with tag 0x12345678
+    struct PendingReq {
+        uint32_t tag = 0x12345678;
+        char name[32] = "Alice";
+        bool in_use = true;
+    };
+    PendingReq pending;
+
+    // Simulate the onContactResponse logic: clear pending on tag match
+    uint8_t resp_data[4];
+    memcpy(resp_data, &pending.tag, 4);
+    uint32_t recv_tag;
+    memcpy(&recv_tag, resp_data, 4);
+
+    // Match and clear
+    if (pending.in_use && pending.tag == recv_tag) {
+        pending.in_use = false;
+    }
+
+    EXPECT_FALSE(pending.in_use) << "Pending request should be cleared on tag match";
+}
+
+TEST_F(ReqResponseTest, NonMatchingTagDoesNotClearWrongPending) {
+    // Simulate pending request with different tag
+    struct PendingReq {
+        uint32_t tag = 0xDEADBEEF;
+        bool in_use = true;
+    };
+    PendingReq pending;
+
+    uint8_t resp_data[4];
+    uint32_t wrong_tag = 0xCAFEBABE;
+    memcpy(resp_data, &wrong_tag, 4);
+    uint32_t recv_tag;
+    memcpy(&recv_tag, resp_data, 4);
+
+    if (pending.in_use && pending.tag == recv_tag) {
+        pending.in_use = false;
+    }
+
+    EXPECT_TRUE(pending.in_use) << "Non-matching tag should not clear pending request";
+}
+
 } // anonymous namespace

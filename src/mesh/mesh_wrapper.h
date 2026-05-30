@@ -144,6 +144,13 @@ float getSignalHistorySNR(int idx);
 bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool rx_gain);
 bool revertRadioParams();
 
+// ── REQ/RESPONSE framework (Phase 4.1) ────────
+bool sendRequest(const char* dest_name, uint8_t req_type);
+bool sendRequestWithData(const char* dest_name, const uint8_t* data, uint8_t len);
+int  getResponseCount();
+bool getResponse(int idx, uint32_t* out_tag, uint8_t* out_data, uint8_t* out_len, char* out_contact_name);
+void clearResponses();
+
 // ── Duty cycle ────────────────────────────────
 unsigned long getRemainingTxBudget();
 void setDutyCycle(uint8_t percent);

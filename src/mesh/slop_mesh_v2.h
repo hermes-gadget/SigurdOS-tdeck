@@ -292,6 +292,96 @@ public:
     }
 
     // ════════════════════════════════════════════════════
+    //  REQ/RESPONSE framework (Phase 4.1)
+    // ════════════════════════════════════════════════════
+
+    static constexpr int MAX_PENDING_REQUESTS = 8;
+    struct PendingRequest {
+        uint32_t tag;
+        char     dest_name[32];
+        uint32_t sent_at_ms;
+        bool     in_use = false;
+    };
+    PendingRequest _pending_reqs[MAX_PENDING_REQUESTS];
+
+    static constexpr int MAX_RESPONSES = 8;
+    static constexpr int MAX_RESPONSE_DATA = 128;
+    struct ResponseEntry {
+        uint32_t tag;
+        char     contact_name[32];
+        uint8_t  data[MAX_RESPONSE_DATA];
+        uint8_t  len;
+        bool     valid;
+    };
+    ResponseEntry _responses[MAX_RESPONSES];
+    int _n_responses = 0;
+
+    // Send a typed REQ to a contact by name. Returns true if sent.
+    // The response arrives via onContactResponse() and is stored in _responses[].
+    bool sendRequest(const char* name, uint8_t req_type) {
+        if (!name || !name[0]) return false;
+        int n = getNumContacts();
+        ::ContactInfo tmp;
+        for (int i = 0; i < n; i++) {
+            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+                uint32_t tag = 0, est_timeout = 0;
+                int r = BaseChatMesh::sendRequest(tmp, req_type, tag, est_timeout);
+                if (r != MSG_SEND_FAILED) {
+                    for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
+                        if (!_pending_reqs[j].in_use) {
+                            _pending_reqs[j].tag = tag;
+                            strncpy(_pending_reqs[j].dest_name, name,
+                                    sizeof(_pending_reqs[j].dest_name) - 1);
+                            _pending_reqs[j].dest_name[sizeof(_pending_reqs[j].dest_name) - 1] = '\0';
+                            _pending_reqs[j].sent_at_ms = _ms->getMillis();
+                            _pending_reqs[j].in_use = true;
+                            break;
+                        }
+                    }
+                }
+                return r != MSG_SEND_FAILED;
+            }
+        }
+        return false;
+    }
+
+    // Send a custom-data REQ to a contact by name.
+    bool sendRequestWithData(const char* name, const uint8_t* data, uint8_t data_len) {
+        if (!name || !name[0] || !data || data_len == 0) return false;
+        int n = getNumContacts();
+        ::ContactInfo tmp;
+        for (int i = 0; i < n; i++) {
+            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+                uint32_t tag = 0, est_timeout = 0;
+                int r = BaseChatMesh::sendRequest(tmp, data, data_len, tag, est_timeout);
+                if (r != MSG_SEND_FAILED) {
+                    for (int j = 0; j < MAX_PENDING_REQUESTS; j++) {
+                        if (!_pending_reqs[j].in_use) {
+                            _pending_reqs[j].tag = tag;
+                            strncpy(_pending_reqs[j].dest_name, name,
+                                    sizeof(_pending_reqs[j].dest_name) - 1);
+                            _pending_reqs[j].dest_name[sizeof(_pending_reqs[j].dest_name) - 1] = '\0';
+                            _pending_reqs[j].sent_at_ms = _ms->getMillis();
+                            _pending_reqs[j].in_use = true;
+                            break;
+                        }
+                    }
+                }
+                return r != MSG_SEND_FAILED;
+            }
+        }
+        return false;
+    }
+
+    // Polling API for received responses
+    int getResponseCount() const { return _n_responses; }
+    const ResponseEntry* getResponse(int idx) const {
+        if (idx < 0 || idx >= _n_responses) return nullptr;
+        return &_responses[idx];
+    }
+    void clearResponses() { _n_responses = 0; }
+
+    // ════════════════════════════════════════════════════
     //  BaseChatMesh pure virtual handlers
     // ════════════════════════════════════════════════════
 
@@ -457,7 +547,30 @@ public:
     }
 
     void onContactResponse(const ::ContactInfo& contact, const uint8_t* data,
-                           uint8_t len) override {}
+                           uint8_t len) override {
+        if (!data || len < 4) return;
+        uint32_t tag;
+        memcpy(&tag, data, 4);
+
+        // Store the response in the ring buffer
+        if (_n_responses < MAX_RESPONSES) {
+            ResponseEntry& re = _responses[_n_responses++];
+            re.tag = tag;
+            strncpy(re.contact_name, contact.name, sizeof(re.contact_name) - 1);
+            re.contact_name[sizeof(re.contact_name) - 1] = '\0';
+            re.len = (len < MAX_RESPONSE_DATA) ? len : MAX_RESPONSE_DATA;
+            memcpy(re.data, data, re.len);
+            re.valid = true;
+        }
+
+        // Clear matching pending request
+        for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
+            if (_pending_reqs[i].in_use && _pending_reqs[i].tag == tag) {
+                _pending_reqs[i].in_use = false;
+                break;
+            }
+        }
+    }
 
     void onContactPathUpdated(const ::ContactInfo& contact) override {
 #if SLOPOS_DEBUG_MESH

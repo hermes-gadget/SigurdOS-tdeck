@@ -279,6 +279,39 @@ int getAckCounter() {
     return _ack_counter;
 }
 
+// ── REQ/RESPONSE framework (Phase 4.1) ────────
+bool sendRequest(const char* dest_name, uint8_t req_type) {
+    if (!g_mesh || !dest_name) return false;
+    return g_mesh->sendRequest(dest_name, req_type);
+}
+
+bool sendRequestWithData(const char* dest_name, const uint8_t* data, uint8_t len) {
+    if (!g_mesh || !dest_name || !data) return false;
+    return g_mesh->sendRequestWithData(dest_name, data, len);
+}
+
+int getResponseCount() {
+    return g_mesh ? g_mesh->getResponseCount() : 0;
+}
+
+bool getResponse(int idx, uint32_t* out_tag, uint8_t* out_data, uint8_t* out_len, char* out_contact_name) {
+    if (!g_mesh) return false;
+    auto* re = g_mesh->getResponse(idx);
+    if (!re) return false;
+    if (out_tag) *out_tag = re->tag;
+    if (out_data && re->len > 0) memcpy(out_data, re->data, re->len);
+    if (out_len) *out_len = re->len;
+    if (out_contact_name) {
+        strncpy(out_contact_name, re->contact_name, 31);
+        out_contact_name[31] = '\0';
+    }
+    return true;
+}
+
+void clearResponses() {
+    if (g_mesh) g_mesh->clearResponses();
+}
+
 // Inject a simulated message into the queue (for remote test mode — no radio)
 // All functions in this file that access the radio check for g_mesh == nullptr,
 // so this is safe to call without radio initialisation.
