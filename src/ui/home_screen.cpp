@@ -65,11 +65,11 @@ static const IconDef icons[] = {
     {"FINDER",    LV_SYMBOL_EYE_OPEN,   false, Screen::Network},
     {"PACKETS",   LV_SYMBOL_LIST,       false, Screen::Heard},
     {"MAP",       LV_SYMBOL_GPS,        false, Screen::Map},
-    {"ADVERTISE", LV_SYMBOL_AUDIO,      false, Screen::Advertise},
+    {"ADVERTISE", LV_SYMBOL_BELL,       false, Screen::Advertise},
     {"SETTINGS",  LV_SYMBOL_SETTINGS,   false, Screen::Settings},
     {"TRACE",     LV_SYMBOL_SHUFFLE,    false, Screen::Trace},
     {"TERMINAL",  LV_SYMBOL_KEYBOARD,   false, Screen::Terminal},
-    {"SETUP",     LV_SYMBOL_SETTINGS,   false, Screen::Onboarding},
+    {"SETUP",     LV_SYMBOL_HOME,       false, Screen::Onboarding},
     {"SIGNAL",    LV_SYMBOL_BARS,       false, Screen::Signal},
 };
 
