@@ -48,4 +48,8 @@ void     chat_screen_set_message_cap(uint16_t cap);
 void chat_save_messages();
 void chat_load_messages();
 
+// Periodically check for newly arrived ACKs and re-render if needed.
+// Call from the main UI loop (~1s interval).
+void chat_screen_refresh_acks();
+
 } // namespace slopos::ui

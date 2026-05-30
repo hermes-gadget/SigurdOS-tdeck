@@ -220,6 +220,7 @@ struct AckedMsg {
 static AckedMsg _acked_msgs[MAX_ACKED];
 static int _acked_head = 0;
 static int _acked_count = 0;
+static int _ack_counter = 0;   // bumped on each registerAckedMessage() — used by UI to detect new ACKs
 
 // ════════════════════════════════════════════════════
 // Public API
@@ -257,6 +258,7 @@ void registerAckedMessage(const char* dest, uint32_t ts) {
     a.timestamp = ts;
     _acked_head = (_acked_head + 1) % MAX_ACKED;
     if (_acked_count < MAX_ACKED) _acked_count++;
+    _ack_counter++;
 #if SLOPOS_DEBUG_MESH
     Serial.printf("[mesh] ACK for %s (ts=%lu) — %d total tracked\n", dest, (unsigned long)ts, _acked_count);
 #endif
@@ -271,6 +273,10 @@ bool isMessageAcked(const char* dest, uint32_t ts) {
         if (_acked_msgs[i].timestamp == ts && strcmp(_acked_msgs[i].dest, dest) == 0) return true;
     }
     return false;
+}
+
+int getAckCounter() {
+    return _ack_counter;
 }
 
 // Inject a simulated message into the queue (for remote test mode — no radio)

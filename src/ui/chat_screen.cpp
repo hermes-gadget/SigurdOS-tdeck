@@ -1081,7 +1081,7 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     char time_buf[10];
     if (is_self && acked) {
         uint32_t t = timestamp % 86400;
-        snprintf(time_buf, sizeof(time_buf), "%02d:%02d \xe2\x9c\x93",
+        snprintf(time_buf, sizeof(time_buf), "%02d:%02d \xe2\x9c\x85",
                  (t / 3600) % 24, (t / 60) % 60);
     } else {
         format_time(time_buf, sizeof(time_buf), timestamp);
@@ -1089,7 +1089,7 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_obj_t* ts = lv_label_create(header);
     lv_label_set_text(ts, time_buf);
     lv_obj_set_style_text_color(ts,
-        is_self ? lv_color_hex(0xb0d4ff) : lv_color_hex(TEXT_MUTED), 0);
+        is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_MUTED), 0);
     lv_obj_set_style_text_font(ts, emoji_wrapped_montserrat_10, 0);
 
     lv_obj_t* msg_text = lv_label_create(bubble);
@@ -1798,6 +1798,20 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     if (at_bottom) {
         lv_obj_t* last = lv_obj_get_child(msg_list, lv_obj_get_child_cnt(msg_list) - 1);
         if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
+    }
+}
+
+// ════════════════════════════════════════════════════
+// Periodic ACK refresh
+// ════════════════════════════════════════════════════
+void chat_screen_refresh_acks()
+{
+    if (!msg_list) return;
+    static int last_ack_counter = 0;
+    int cur = slopos::mesh::getAckCounter();
+    if (cur != last_ack_counter) {
+        last_ack_counter = cur;
+        render_active_messages();
     }
 }
 

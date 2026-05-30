@@ -154,6 +154,7 @@ bool removeChannel(int idx);
 // ── ACK tracking ──────────────────────────────
 void registerAckedMessage(const char* dest_name, uint32_t timestamp);
 bool isMessageAcked(const char* dest_name, uint32_t timestamp);
+int  getAckCounter();   // incremented each time registerAckedMessage is called
 
 } // namespace mesh
 } // namespace slopos

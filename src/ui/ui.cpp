@@ -136,6 +136,8 @@ void loop()
             for (int i = 0; i < n; i++) {
                 chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text, msgs[i].is_self);
             }
+            // Refresh ACK status on the current chat screen
+            chat_screen_refresh_acks();
         }
     }
 }

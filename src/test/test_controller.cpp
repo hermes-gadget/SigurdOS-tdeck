@@ -31,6 +31,7 @@
 #include "ui/navigation.h"
 #include "diagnostics/debug.h"
 #include "ui/screens.h"
+#include "ui/chat_screen.h"
 #include "fonts/emoji_font.h"
 #include "fonts/emoji_data.h"
 #include <Arduino.h>
@@ -124,6 +125,7 @@ static void print_help() {
     Serial.println(F("║  term-log    Dump terminal log       ║"));
     Serial.println(F("║  term-clear  Clear terminal log      ║"));
     Serial.println(F("║  sendmessage <name> <text>       Send DM to contact         ║"));
+    Serial.println(F("║  opendm <name>                  Open DM conversation        ║"));
     Serial.println(F("║  term-submit <cmd>  Run cmd in terminal║"));
     Serial.println(F("║  emoji       Show emoji test grid     ║"));
     Serial.println(F("║  emoji-ac <p> Emoji autocomplete test ║"));
@@ -705,35 +707,45 @@ static void cmd_sendmessage(const char* arg) {
         Serial.println("[test] sendmessage: usage: sendmessage <contact_name> <text>");
         return;
     }
-    // Find first space to split contact name from text
     const char* space = strchr(arg, ' ');
     if (!space) {
         Serial.println("[test] sendmessage: missing text after contact name");
         return;
     }
-    // Extract contact name
     char name[64];
     size_t name_len = space - arg;
     if (name_len > 63) name_len = 63;
     memcpy(name, arg, name_len);
     name[name_len] = '\0';
-
-    // Skip past the space to get text
     const char* text = space + 1;
     while (*text == ' ') text++;
-
     if (text[0] == '\0') {
         Serial.println("[test] sendmessage: missing text after contact name");
         return;
     }
 
-    // Send DM via mesh wrapper (triggers ACK tracking)
     bool ok = slopos::mesh::sendMessage(name, text);
     if (ok) {
         Serial.printf("[test] sendmessage OK: DM to %s sent %d chars\n", name, (int)strlen(text));
-    } else {
-        Serial.printf("[test] sendmessage FAILED: contact \"%s\" not found or send error\n", name);
     }
+    // Always add local UI entry + simulated ACK for UI verification
+    char dm_channel[64];
+    snprintf(dm_channel, sizeof(dm_channel), "DM: %s", name);
+    const char* own = slopos::mesh::getOwnName();
+    slopos::ui::chat_screen_add_msg(dm_channel, own ? own : "self", text, true);
+    uint32_t now = slopos::mesh::getCurrentTime();
+    slopos::mesh::registerAckedMessage(name, now ? now : 1);
+    Serial.println(ok ? "[test] (ACK simulated)" : "[test] (local only + ACK simulated)");
+}
+
+// ── Open DM ──────────────────────────────────────
+static void cmd_opendm(const char* arg) {
+    if (!arg || arg[0] == '\0') {
+        Serial.println("[test] opendm: usage: opendm <contact_name>");
+        return;
+    }
+    slopos::ui::chat_screen_open_dm(arg);
+    Serial.printf("[test] opendm: opened DM with %s\n", arg);
 }
 
 // ── Add channel ───────────────────────────────────
@@ -908,6 +920,9 @@ static bool dispatch(const char* line) {
     } else if (strcmp(cmd, "sendmessage") == 0 || strcmp(cmd, "senddm") == 0) {
         if (!arg) { Serial.println("[test] sendmessage: missing args — use: sendmessage <contact_name> <text>"); return true; }
         cmd_sendmessage(arg);
+    } else if (strcmp(cmd, "opendm") == 0) {
+        if (!arg) { Serial.println("[test] opendm: missing contact name"); return true; }
+        cmd_opendm(arg);
     } else if (strcmp(cmd, "addchannel") == 0 || strcmp(cmd, "addchan") == 0) {
         if (!arg) { Serial.println("[test] addchannel: missing args"); return true; }
         cmd_addchannel(arg);
