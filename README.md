@@ -6,27 +6,7 @@ Standalone off-grid LoRa mesh messaging firmware for the **LilyGo T-Deck** (ESP3
 
 Built on the [MeshCore](https://github.com/meshcore-dev/MeshCore) mesh networking protocol — fully interoperable with existing MeshCore repeaters, room servers, and companion radios.
 
-## Status
-
-| Feature | Status |
-|---------|--------|
-| Dark Discord-like UI (LVGL v9.3.0) | ✅ Complete |
-| Home screen (4×3 icon grid + status bars) | ✅ Complete |
-| Chat screen (channel list, message bubbles, text input) | ✅ Complete |
-| Packets / Contacts / Repeaters screens | ✅ Complete |
-| Signal / Network diagnostics screens | ✅ Complete |
-| Map (offline tiles + PNG/JPEG decode) | ✅ Complete |
-| Settings / Terminal / Trace screens | ✅ Complete |
-| Finder / Advertise / Onboarding wizard screens | ✅ Complete |
-| MeshCore protocol (radio, routing, encryption) | ✅ Integrated |
-| T-Deck HAL (display, battery, LoRa, pins) | ✅ Complete |
-| Unit tests (17 modules) | ✅ 294 tests |
-| Touch input driver (GT911) | ✅ Complete |
-| Keyboard input driver (I2C, ESP32-C3 MCU) | ✅ Complete |
-| Full mesh messaging (send/receive queue + UI integration) | ✅ Complete |
-| GPS NMEA parser | ✅ Complete |
-| SD card support (SPI mount, read/write) | ✅ Complete |
-| Offline map renderer (tile math + LVGL canvas grid) | ✅ Complete |
+Full credit to the MeshCore Dev team! I won't ever accept any money or donations for this project but if you wish to put your money to good use, and not the AI hivemind, then sponsor https://github.com/meshcore-dev/MeshCore
 
 ## Test Suite
 
