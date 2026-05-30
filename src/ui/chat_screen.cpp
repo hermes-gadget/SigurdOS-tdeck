@@ -504,8 +504,8 @@ static void populate_channel_rows(lv_obj_t* list) {
 
         int ch_idx = i;
 
-        // Delete button (hidden when only 1 channel)
-        if (dyn_count > 1) {
+        // Delete button (hidden when only 1 channel, or for synthetic DM entries)
+        if (dyn_count > 1 && strncmp(dyn_channels[i], "DM: ", 4) != 0) {
             lv_obj_t* del_btn = lv_btn_create(row);
             lv_obj_set_size(del_btn, 28, 24);
             lv_obj_set_style_bg_color(del_btn, lv_color_hex(ACCENT_RED), 0);
