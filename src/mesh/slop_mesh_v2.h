@@ -552,6 +552,55 @@ public:
         uint32_t tag;
         memcpy(&tag, data, 4);
 
+        // ── Check for login response ──────────────────
+        // Format: bytes 0-3=tag, byte4=RESP_SERVER_LOGIN_OK(0)=success,
+        //         byte5=keep_alive_secs/16, byte6=permissions, byte7=ACL (v7+)
+        // Legacy: bytes 4-5 = "OK" (2 chars)
+        // Only check when there is a pending/active login entry for this contact.
+        int login_idx = findLoginEntry(contact.name);
+        if (login_idx >= 0 && _login_entries[login_idx].in_use && len >= 8) {
+            // New-style login response
+            if (data[4] == RESP_SERVER_LOGIN_OK) {
+                uint16_t keep_alive_secs = ((uint16_t)data[5]) * 16;
+                uint8_t  perm = data[6];
+                uint8_t  acl = (len > 7) ? data[7] : 0;
+
+                _login_entries[login_idx].status = LOGIN_OK;
+                _login_entries[login_idx].permission = perm;
+                _login_entries[login_idx].acl_permissions = acl;
+
+                // Start keep-alive connection
+                if (keep_alive_secs > 0) {
+                    BaseChatMesh::startConnection(contact, keep_alive_secs);
+                }
+
+#if SLOPOS_DEBUG_MESH
+                Serial.printf("[mesh] Login OK for %s (perm=%d, acl=%d, ka=%us)\n",
+                              contact.name, perm, acl, keep_alive_secs);
+#endif
+                return; // handled — don't push to ring buffer
+            }
+            // Legacy login "OK" response
+            if (data[4] == 'O' && data[5] == 'K') {
+                _login_entries[login_idx].status = LOGIN_OK;
+                _login_entries[login_idx].permission = 1; // legacy: admin if "OK"
+#if SLOPOS_DEBUG_MESH
+                Serial.printf("[mesh] Login OK (legacy) for %s\n", contact.name);
+#endif
+                return;
+            }
+            // Explicit login failure — pending entry with nonzero code
+            if (_login_entries[login_idx].status == LOGIN_PENDING && data[4] != 0) {
+                _login_entries[login_idx].status = LOGIN_FAILED;
+#if SLOPOS_DEBUG_MESH
+                Serial.printf("[mesh] Login FAILED for %s (reason=%d)\n",
+                              contact.name, data[4]);
+#endif
+                // Don't return — also store in ring buffer for inspection
+            }
+        }
+
+        // ── Existing ring buffer logic ────────────────
         // Store the response in the ring buffer
         if (_n_responses < MAX_RESPONSES) {
             ResponseEntry& re = _responses[_n_responses++];
@@ -710,7 +759,117 @@ public:
         return (float)p.duty_cycle / 100.0f;
     }
 
-    // ── Compatibility API (matches SlopMesh) ──────
+    // ── Repeater/room login session tracking (Phase 4.5) ──
+    static constexpr int MAX_LOGIN_ENTRIES = 4;
+
+    // Login status: NONE=no login, PENDING=request sent, OK=logged in, FAILED=login rejected
+    enum LoginStatus : uint8_t {
+        LOGIN_NONE = 0,
+        LOGIN_PENDING,
+        LOGIN_OK,
+        LOGIN_FAILED
+    };
+
+    struct LoginEntry {
+        char     contact_name[32];
+        uint8_t  permission;        // server permission byte (0=guest, 1=admin, etc.)
+        uint8_t  acl_permissions;   // v7+ ACL byte
+        uint8_t  status;            // LoginStatus
+        uint32_t started_at_ms;     // when login was initiated (for timeout)
+        bool     in_use;
+    };
+    LoginEntry _login_entries[MAX_LOGIN_ENTRIES];
+
+    int findLoginEntry(const char* name) const {
+        for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
+            if (_login_entries[i].in_use &&
+                strcmp(_login_entries[i].contact_name, name) == 0)
+                return i;
+        }
+        return -1;
+    }
+
+    int addLoginEntry(const char* name) {
+        int idx = findLoginEntry(name);
+        if (idx >= 0) return idx;
+        for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
+            if (!_login_entries[i].in_use) {
+                strncpy(_login_entries[i].contact_name, name,
+                        sizeof(_login_entries[i].contact_name) - 1);
+                _login_entries[i].contact_name[sizeof(_login_entries[i].contact_name) - 1] = '\0';
+                _login_entries[i].status = LOGIN_PENDING;
+                _login_entries[i].started_at_ms = millis();
+                _login_entries[i].in_use = true;
+                return i;
+            }
+        }
+        return -1; // table full
+    }
+
+    void removeLoginEntry(const char* name) {
+        int idx = findLoginEntry(name);
+        if (idx >= 0) {
+            _login_entries[idx].in_use = false;
+            _login_entries[idx].status = LOGIN_NONE;
+        }
+    }
+
+    bool isLoggedIn(const char* name) const {
+        int idx = findLoginEntry(name);
+        return idx >= 0 && _login_entries[idx].status == LOGIN_OK;
+    }
+
+    uint8_t getLoginPermission(const char* name) const {
+        int idx = findLoginEntry(name);
+        return idx >= 0 ? _login_entries[idx].permission : 0;
+    }
+
+    uint8_t getLoginStatus(const char* name) const {
+        int idx = findLoginEntry(name);
+        return idx >= 0 ? _login_entries[idx].status : LOGIN_NONE;
+    }
+
+    // Send a login request to a repeater or room server contact.
+    // Uses BaseChatMesh::sendLogin() which sends as PAYLOAD_TYPE_ANON_REQ.
+    // The response arrives in onContactResponse() with RESP_SERVER_LOGIN_OK at data[4].
+    void sendLoginTo(const ::ContactInfo& contact, const char* password) {
+        if (!password) return;
+        uint32_t est_timeout = 0;
+        int r = BaseChatMesh::sendLogin(contact, password, est_timeout);
+        if (r != MSG_SEND_FAILED) {
+            addLoginEntry(contact.name);
+#if SLOPOS_DEBUG_MESH
+            Serial.printf("[mesh] Login sent to %s (result=%d, timeout=%u)\n",
+                          contact.name, r, est_timeout);
+#endif
+        }
+    }
+
+    // Logout: stop the keep-alive connection and clear the session.
+    void sendLogoutTo(const ::ContactInfo& contact) {
+        BaseChatMesh::stopConnection(contact.id.pub_key);
+        removeLoginEntry(contact.name);
+#if SLOPOS_DEBUG_MESH
+        Serial.printf("[mesh] Logged out from %s\n", contact.name);
+#endif
+    }
+
+    // Send an admin CLI command to a logged-in repeater/room server.
+    // Uses BaseChatMesh::sendCommandData() which sends as PAYLOAD_TYPE_TXT_MSG
+    // with TXT_TYPE_CLI_DATA. The reply arrives in onCommandDataRecv or as a signed message.
+    bool sendCommandDataTo(const ::ContactInfo& contact, const char* text) {
+        if (!text || !text[0]) return false;
+        uint32_t est_timeout = 0;
+        uint32_t ts = getRTCClock()->getCurrentTime();
+        int r = BaseChatMesh::sendCommandData(contact, ts, 0, text, est_timeout);
+        if (r != MSG_SEND_FAILED) {
+#if SLOPOS_DEBUG_MESH
+            Serial.printf("[mesh] Command sent to %s (result=%d)\n", contact.name, r);
+#endif
+            return true;
+        }
+        return false;
+    }
 
     void setDutyCycle(uint8_t percent) {
         slopos::NodePrefs p = slopos::prefs_get();

@@ -222,5 +222,19 @@ uint32_t discoverPath(const char* dest_name);
 bool hasPathTo(const char* dest_name);
 uint8_t getContactPathLen(const char* dest_name);
 
+// ── Login status values ───────────────────────
+#define LOGIN_STATUS_NONE    0   // not logged in
+#define LOGIN_STATUS_PENDING 1   // login request sent, awaiting response
+#define LOGIN_STATUS_OK      2   // logged in successfully
+#define LOGIN_STATUS_FAILED  3   // login was rejected
+
+// ── Repeater/room login (Phase 4.5) ──────────────
+bool sendLogin(const char* name, const char* password);
+void sendLogout(const char* name);
+bool sendCommand(const char* name, const char* text);
+bool isLoggedIn(const char* name);
+uint8_t getLoginPermission(const char* name);
+uint8_t getLoginStatus(const char* name);
+
 } // namespace mesh
 } // namespace slopos

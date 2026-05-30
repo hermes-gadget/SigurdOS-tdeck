@@ -1271,5 +1271,52 @@ void setDutyCycle(uint8_t percent) {
         return ok;
     }
 
+    // ── Repeater/room login (Phase 4.5) ──────────────
+    bool sendLogin(const char* name, const char* password) {
+        if (!g_mesh || !name || !password) return false;
+        for (int i = 0; i < g_mesh->getContactCount(); i++) {
+            auto* c = g_mesh->getContact(i);
+            if (c && strcmp(c->name, name) == 0) {
+                g_mesh->sendLoginTo(*c, password);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void sendLogout(const char* name) {
+        if (!g_mesh || !name) return;
+        for (int i = 0; i < g_mesh->getContactCount(); i++) {
+            auto* c = g_mesh->getContact(i);
+            if (c && strcmp(c->name, name) == 0) {
+                g_mesh->sendLogoutTo(*c);
+                return;
+            }
+        }
+    }
+
+    bool sendCommand(const char* name, const char* text) {
+        if (!g_mesh || !name || !text) return false;
+        for (int i = 0; i < g_mesh->getContactCount(); i++) {
+            auto* c = g_mesh->getContact(i);
+            if (c && strcmp(c->name, name) == 0) {
+                return g_mesh->sendCommandDataTo(*c, text);
+            }
+        }
+        return false;
+    }
+
+    bool isLoggedIn(const char* name) {
+        return g_mesh ? g_mesh->isLoggedIn(name) : false;
+    }
+
+    uint8_t getLoginPermission(const char* name) {
+        return g_mesh ? g_mesh->getLoginPermission(name) : 0;
+    }
+
+    uint8_t getLoginStatus(const char* name) {
+        return g_mesh ? g_mesh->getLoginStatus(name) : LOGIN_STATUS_NONE;
+    }
+
 } // namespace mesh
 } // namespace slopos
