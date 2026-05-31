@@ -443,6 +443,12 @@ void heard_screen_show()
 // ════════════════════════════════════════════════════════
 // Contacts — tap-to-message directory
 // ════════════════════════════════════════════════════════
+static int contacts_filter_type = -1; // -1=all, else ADV_TYPE_*
+
+void contacts_screen_set_filter(int adv_type) {
+    contacts_filter_type = adv_type;
+}
+
 void contacts_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Contacts");
@@ -450,11 +456,19 @@ void contacts_screen_show()
     slopos::mesh::ContactInfo all_contacts[32];
     int total = slopos::mesh::exportContactsFull(all_contacts, 32);
 
-    // Filter to companions (CHAT) and room servers (ROOM)
+    // Filter based on mode
     int n = 0;
     for (int i = 0; i < total; i++) {
-        if (all_contacts[i].type == ADV_TYPE_CHAT ||
-            all_contacts[i].type == ADV_TYPE_ROOM) {
+        bool keep = false;
+        if (contacts_filter_type >= 0) {
+            // Specific type filter (e.g. ROOMS → ADV_TYPE_ROOM only)
+            keep = (all_contacts[i].type == contacts_filter_type);
+        } else {
+            // Default: companions (CHAT) and room servers (ROOM)
+            keep = (all_contacts[i].type == ADV_TYPE_CHAT ||
+                    all_contacts[i].type == ADV_TYPE_ROOM);
+        }
+        if (keep) {
             if (n < i) all_contacts[n] = all_contacts[i];
             n++;
         }
@@ -994,6 +1008,8 @@ static void show_fetch_msgs_dialog(const char* contact_name)
                 snprintf(confirm, sizeof(confirm), "Fetching msgs from %s channel %s",
                          d->name, channel);
                 slopos::mesh::mesh_v2_queue_push("System", "", confirm, 0, 0.0f);
+                // Navigate to Chat screen so user sees incoming messages
+                slopos::ui::navigate_to(slopos::ui::Screen::Chat);
             }
         }
         lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
@@ -1185,6 +1201,8 @@ void contact_detail_screen_show(const char* contact_name)
 
     }
 
+    bool is_room_type = (target->type == ADV_TYPE_ROOM || target->type == ADV_TYPE_REPEATER);
+
     // ── Action button row ───────────────────────────
     lv_obj_t* btn_row = lv_obj_create(scr);
     lv_obj_set_size(btn_row, CONTENT_W, 30);
@@ -1194,31 +1212,33 @@ void contact_detail_screen_show(const char* contact_name)
     lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Send DM button
-    lv_obj_t* dm_btn = lv_btn_create(btn_row);
-    lv_obj_set_size(dm_btn, 110, 24);
-    lv_obj_set_style_bg_color(dm_btn, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_radius(dm_btn, 0, 0);
-    lv_obj_t* dm_lbl = lv_label_create(dm_btn);
-    lv_label_set_text(dm_lbl, LV_SYMBOL_ENVELOPE " DM");
-    lv_obj_center(dm_lbl);
-    lv_obj_set_style_text_color(dm_lbl, lv_color_hex(BG_PRIMARY), 0);
-    char* dm_name = strdup(contact_name);
-    lv_obj_set_user_data(dm_btn, dm_name);
-    lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
-        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-        const char* name = (const char*)lv_obj_get_user_data(btn);
-        if (name) {
-            slopos::ui::chat_screen_open_dm(name);
-        }
-    }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
-        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-    }, LV_EVENT_DELETE, nullptr);
+    // Send DM button (skip for room/repeater — you don't DM a server)
+    if (!is_room_type) {
+        lv_obj_t* dm_btn = lv_btn_create(btn_row);
+        lv_obj_set_size(dm_btn, 110, 24);
+        lv_obj_set_style_bg_color(dm_btn, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_radius(dm_btn, 0, 0);
+        lv_obj_t* dm_lbl = lv_label_create(dm_btn);
+        lv_label_set_text(dm_lbl, LV_SYMBOL_ENVELOPE " DM");
+        lv_obj_center(dm_lbl);
+        lv_obj_set_style_text_color(dm_lbl, lv_color_hex(BG_PRIMARY), 0);
+        char* dm_name = strdup(contact_name);
+        lv_obj_set_user_data(dm_btn, dm_name);
+        lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
+            lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+            const char* name = (const char*)lv_obj_get_user_data(btn);
+            if (name) {
+                slopos::ui::chat_screen_open_dm(name);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
+    }
 
-    // Send Trace button
+    // Send Trace button (skip for room/repeater)
     int trace_idx = slopos::mesh::findContactIndex(contact_name);
-    if (trace_idx >= 0) {
+    if (!is_room_type && trace_idx >= 0) {
         lv_obj_t* trace_btn = lv_btn_create(btn_row);
         lv_obj_set_size(trace_btn, 110, 24);
         lv_obj_set_style_bg_color(trace_btn, lv_color_hex(BG_TERTIARY), 0);
@@ -1268,8 +1288,8 @@ void contact_detail_screen_show(const char* contact_name)
         }, LV_EVENT_DELETE, nullptr);
     }
 
-    // Request Telemetry button — second row below main buttons
-    {
+    // Request Telemetry button — second row below main buttons (skip for room/repeater)
+    if (!is_room_type) {
         lv_obj_t* tm_row = lv_obj_create(scr);
         lv_obj_set_size(tm_row, CONTENT_W, 26);
         lv_obj_align(tm_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 28));
@@ -1379,8 +1399,8 @@ void contact_detail_screen_show(const char* contact_name)
         }, LV_EVENT_DELETE, nullptr);
     }
 
-    // Reset Path + Discover Path buttons (second action row)
-    {
+    // Reset Path + Discover Path buttons (second action row) — skip for room/repeater
+    if (!is_room_type) {
         lv_obj_t* btn_row2 = lv_obj_create(scr);
         lv_obj_set_size(btn_row2, CONTENT_W, 30);
         lv_obj_align(btn_row2, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 32));
@@ -1444,8 +1464,9 @@ void contact_detail_screen_show(const char* contact_name)
         uint8_t login_st = slopos::mesh::getLoginStatus(contact_name);
         lv_obj_t* login_row = lv_obj_create(scr);
         lv_obj_set_size(login_row, CONTENT_W, 30);
-        // Stack below the existing bottom rows
-        lv_obj_align(login_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 96));
+        // Place the login row above the action btn_row so it's always visible.
+        // btn_row is at -(BOT_BAR_H + DIVIDER_H) from bottom. Place above it.
+        lv_obj_align(login_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 36));
         lv_obj_set_style_bg_opa(login_row, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(login_row, 0, 0);
         lv_obj_set_flex_flow(login_row, LV_FLEX_FLOW_ROW);
@@ -2188,6 +2209,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             const char* login_text = "Not logged in";
             uint32_t login_color = TEXT_SECONDARY;
             switch (login_st) {
+                case LOGIN_STATUS_OK:     login_text = "Logged in";      login_color = ACCENT_GREEN; break;
                 case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
                 case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
             }

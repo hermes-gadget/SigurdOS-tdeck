@@ -120,6 +120,10 @@ static char  dyn_channels[MAX_CHANNELS][32];
 static int   dyn_count      = 0;
 static int   active_channel = 0;
 
+// ── Channel filter mode ────────────────────────────────────
+// 0 = show all, 1 = #channels only, 2 = DMs only
+static int   chat_filter_mode = 0;
+
 // ── Per-channel metadata ───────────────────────────────────
 struct ChannelMeta {
     char     preview[64];
@@ -302,6 +306,45 @@ static void refresh_channels()
         }
     }
 
+    // ── Apply channel filter ─────────────────────────────
+    if (chat_filter_mode == 1) {
+        // #channels only: keep entries starting with #
+        Serial.printf("[chat] filter: #channels only, before=%d\n", dyn_count);
+        int keep = 0;
+        for (int i = 0; i < dyn_count; i++) {
+            if (dyn_channels[i][0] == '#') {
+                if (keep < i) strcpy(dyn_channels[keep], dyn_channels[i]);
+                keep++;
+            }
+        }
+        dyn_count = keep;
+        Serial.printf("[chat] filter: #channels only, after=%d\n", dyn_count);
+    } else if (chat_filter_mode == 2) {
+        // DMs only: keep entries starting with "DM:"
+        Serial.printf("[chat] filter: DMs only, before=%d\n", dyn_count);
+        int keep = 0;
+        for (int i = 0; i < dyn_count; i++) {
+            if (strncmp(dyn_channels[i], "DM:", 3) == 0) {
+                if (keep < i) strcpy(dyn_channels[keep], dyn_channels[i]);
+                keep++;
+            }
+        }
+        dyn_count = keep;
+        Serial.printf("[chat] filter: DMs only, after=%d\n", dyn_count);
+    }
+    // mode 0: no filter, show all
+
+    // ── Fallback: if filter removed everything, add a default ─
+    if (dyn_count == 0) {
+        if (chat_filter_mode == 1) {
+            // #channels filter: add #general
+            strncpy(dyn_channels[0], "#general", 31);
+            dyn_channels[0][31] = '\0';
+            dyn_count = 1;
+        }
+        // DMs filter with no DMs: leave empty (user can start one from Contacts)
+    }
+
     // ── Remap: transfer message buffers by matching names ─
     // For each new channel from the mesh, look for a matching
     // old channel by name and carry its buffer + metadata forward.
@@ -321,28 +364,31 @@ static void refresh_channels()
     }
 
     // ── Restore DM entries ───────────────────────────────
-    // DM conversations are synthetic entries (prefixed "DM: ")
+    // DM conversations are synthetic entries (prefixed "DM:")
     // that aren't part of the mesh channel export. Re-append
     // any that existed before the refresh so they persist.
-    for (int old_idx = 0; old_idx < old_count; old_idx++) {
-        if (old_names[old_idx][0] == '\0') continue;
-        if (strncmp(old_names[old_idx], "DM: ", 4) != 0) continue;
-        if (dyn_count >= MAX_CHANNELS) {
-            // No room — free the orphaned buffer
-            if (old_msgs[old_idx]) {
-                heap_caps_free(old_msgs[old_idx]);
-                old_msgs[old_idx] = nullptr;
+    // Skip when filtering to #channels only (mode 1).
+    if (chat_filter_mode != 1) {
+        for (int old_idx = 0; old_idx < old_count; old_idx++) {
+            if (old_names[old_idx][0] == '\0') continue;
+            if (strncmp(old_names[old_idx], "DM:", 3) != 0) continue;
+            if (dyn_count >= MAX_CHANNELS) {
+                // No room — free the orphaned buffer
+                if (old_msgs[old_idx]) {
+                    heap_caps_free(old_msgs[old_idx]);
+                    old_msgs[old_idx] = nullptr;
+                }
+                continue;
             }
-            continue;
+            int new_idx = dyn_count++;
+            strncpy(dyn_channels[new_idx], old_names[old_idx], 31);
+            dyn_channels[new_idx][31] = '\0';
+            ch_msgs[new_idx] = old_msgs[old_idx];
+            ch_msg_capacity[new_idx] = old_caps[old_idx];
+            ch_msg_count[new_idx] = old_counts[old_idx];
+            ch_meta[new_idx] = old_meta[old_idx];
+            old_msgs[old_idx] = nullptr; // claimed
         }
-        int new_idx = dyn_count++;
-        strncpy(dyn_channels[new_idx], old_names[old_idx], 31);
-        dyn_channels[new_idx][31] = '\0';
-        ch_msgs[new_idx] = old_msgs[old_idx];
-        ch_msg_capacity[new_idx] = old_caps[old_idx];
-        ch_msg_count[new_idx] = old_counts[old_idx];
-        ch_meta[new_idx] = old_meta[old_idx];
-        old_msgs[old_idx] = nullptr; // claimed
     }
 
     // ── Free orphaned buffers ────────────────────────────
@@ -720,6 +766,11 @@ static void show_channel_list(lv_scr_load_anim_t anim)
         LV_OBJ_FLAG_SCROLL_CHAIN));
 
     populate_channel_rows(ch_list);
+    Serial.printf("[chat] populate: dyn_count=%d names=[", dyn_count);
+    for (int i = 0; i < dyn_count; i++) {
+        Serial.printf("%s%s", i > 0 ? "," : "", dyn_channels[i]);
+    }
+    Serial.println("]");
 
     ch_add_btn = lv_btn_create(s);
     lv_obj_set_size(ch_add_btn, CONTENT_W > 200 ? 180 : CONTENT_W - 20, 28);
@@ -1727,6 +1778,10 @@ static void show_add_channel_options(lv_obj_t* parent) {
             if (feedback) lv_label_set_text(feedback, "Invalid or full");
         }
     }, LV_EVENT_ALL, (void*)fb);
+}
+
+void chat_screen_set_filter(int mode) {
+    chat_filter_mode = mode;
 }
 
 void chat_screen_show()
