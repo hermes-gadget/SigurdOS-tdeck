@@ -121,6 +121,9 @@ static void print_help() {
     Serial.println(F("║  sendchannel <ch> <text>          Send on a channel        ║"));
     Serial.println(F("║  addchannel <name> [psk]          Add channel              ║"));
     Serial.println(F("║  addrepeater <name>           Add test repeater contact  ║"));
+    Serial.println(F("║  addroomserver <name>        Add test room server    ║"));
+    Serial.println(F("║  login <name> <pw>            Login to room server      ║"));
+    Serial.println(F("║  fetchmsgs <name> [chan]      Fetch room messages       ║"));
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
     Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
@@ -161,7 +164,8 @@ static void cmd_navigate(const char* arg) {
     if (strncmp(arg, "repeaterdetail ", 15) == 0) {
         const char* name = arg + 15;
         if (name[0]) {
-            slopos::ui::repeater_detail_screen_show(name);
+            bool skip = (slopos::mesh::getLoginStatus(name) == 2);
+            slopos::ui::repeater_detail_screen_show(name, skip);
             return;
         }
     }
@@ -773,17 +777,29 @@ static void cmd_sendmessage(const char* arg) {
         Serial.println("[test] sendmessage: usage: sendmessage <contact_name> <text>");
         return;
     }
-    const char* space = strchr(arg, ' ');
-    if (!space) {
-        Serial.println("[test] sendmessage: missing text after contact name");
-        return;
-    }
     char name[64];
-    size_t name_len = space - arg;
-    if (name_len > 63) name_len = 63;
-    memcpy(name, arg, name_len);
-    name[name_len] = '\0';
-    const char* text = space + 1;
+    const char* text;
+    if (arg[0] == '"') {
+        // Quoted name: "Heltec Room" text
+        const char* endq = strchr(arg + 1, '"');
+        if (!endq) { Serial.println("[test] sendmessage: mismatched quote"); return; }
+        size_t nlen = endq - (arg + 1);
+        if (nlen > 63) nlen = 63;
+        memcpy(name, arg + 1, nlen);
+        name[nlen] = 0;
+        text = endq + 1;
+    } else {
+        const char* space = strchr(arg, ' ');
+        if (!space) {
+            Serial.println("[test] sendmessage: missing text after contact name");
+            return;
+        }
+        size_t name_len = space - arg;
+        if (name_len > 63) name_len = 63;
+        memcpy(name, arg, name_len);
+        name[name_len] = '\0';
+        text = space + 1;
+    }
     while (*text == ' ') text++;
     if (text[0] == '\0') {
         Serial.println("[test] sendmessage: missing text after contact name");
@@ -1007,6 +1023,33 @@ static bool dispatch(const char* line) {
         if (!arg) { Serial.println("[test] addroomserver: missing name"); return true; }
         bool ok = slopos::mesh::addTestRoomServer(arg);
         Serial.printf("[test] addroomserver %s: %s\n", arg, ok ? "OK" : "FAILED");
+    } else if (strcmp(cmd, "login") == 0) {
+        if (!arg) { Serial.println("[test] login: missing args — use: login <contact> <password>"); return true; }
+        char name[64];
+        const char* pw_start;
+        if (arg[0] == '"') {
+            // Quoted name: "Heltec Room" rest
+            const char* endq = strchr(arg + 1, '"');
+            if (!endq) { Serial.println("[test] login: mismatched quote"); return true; }
+            size_t nlen = endq - (arg + 1);
+            if (nlen > 63) nlen = 63;
+            memcpy(name, arg + 1, nlen);
+            name[nlen] = 0;
+            pw_start = endq + 1;
+        } else {
+            // Unquoted name: first token
+            const char* sp = strchr(arg, ' ');
+            if (!sp) { Serial.println("[test] login: need name and password"); return true; }
+            size_t nlen = sp - arg;
+            if (nlen > 63) nlen = 63;
+            memcpy(name, arg, nlen);
+            name[nlen] = 0;
+            pw_start = sp + 1;
+        }
+        while (*pw_start == ' ') pw_start++;
+        if (!pw_start[0]) { Serial.println("[test] login: need name and password"); return true; }
+        bool ok = slopos::mesh::sendLogin(name, pw_start);
+        Serial.printf("[test] login %s: %s\n", name, ok ? "OK" : "FAILED");
     } else if (strcmp(cmd, "setlogin") == 0) {
         if (!arg) { Serial.println("[test] setlogin: usage: setlogin <name>"); return true; }
         slopos::mesh::forceLoginState(arg, 2, 1);  // LOGIN_OK + admin permission
@@ -1030,6 +1073,15 @@ static bool dispatch(const char* line) {
         cmd_emoji_ac(arg);
     } else if (strcmp(cmd, "capture") == 0) {
         cmd_capture();
+    } else if (strcmp(cmd, "acmd") == 0) {
+        if (!arg) { Serial.println("[test] acmd: missing name"); return true; }
+        Serial.printf("[test] acmd -> %s\n", arg);
+        slopos::ui::admin_cmd_show(arg);
+    } else if (strcmp(cmd, "loginstat") == 0) {
+        if (!arg) { Serial.println("[test] loginstat: missing name"); return true; }
+        uint8_t st = slopos::mesh::getLoginStatus(arg);
+        uint8_t perm = slopos::mesh::getLoginPermission(arg);
+        Serial.printf("[test] loginstat %s: status=%d perm=%d\n", arg, (int)st, (int)perm);
     } else if (strcmp(cmd, "tree") == 0) {
         cmd_tree();
     } else if (strcmp(cmd, "widgets") == 0) {
@@ -1042,6 +1094,29 @@ static bool dispatch(const char* line) {
         cmd_tap(arg);
     } else if (strcmp(cmd, "backlight") == 0) {
         cmd_backlight(arg);
+    } else if (strcmp(cmd, "fetchmsgs") == 0) {
+        if (!arg) { Serial.println("[test] fetchmsgs: usage: fetchmsgs <contact> <channel>"); return true; }
+        // Parse: fetchmsgs <contact> <channel>
+        char name[64], channel[32];
+        const char* p = arg;
+        if (*p == '"') {
+            const char* end = strchr(p + 1, '"');
+            if (!end) { Serial.println("[test] fetchmsgs: mismatched quote"); return true; }
+            int nlen = end - (p + 1);
+            if (nlen > 63) nlen = 63;
+            strncpy(name, p + 1, nlen); name[nlen] = '\0';
+            p = end + 1;
+            while (*p == ' ') p++;
+        } else {
+            if (sscanf(p, "%63s", name) < 1) { Serial.println("[test] fetchmsgs: need contact name"); return true; }
+            int nlen = strlen(name);
+            p += nlen;
+            while (*p == ' ') p++;
+        }
+        strncpy(channel, p[0] ? p : "0", sizeof(channel) - 1);
+        channel[sizeof(channel) - 1] = '\0';
+        bool ok = slopos::mesh::sendRoomMsgFetchRequest(name, channel);
+        Serial.printf("[test] fetchmsgs %s channel=%s: %s\n", name, channel, ok ? "OK" : "FAILED");
     } else if (strcmp(cmd, "setrf") == 0) {
         cmd_setrf(arg);
     } else if (strcmp(cmd, "reboot") == 0 || strcmp(cmd, "restart") == 0) {
