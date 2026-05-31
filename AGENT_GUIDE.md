@@ -53,7 +53,7 @@ src/
 │   ├── responsive.h       # Display-size-agnostic layout helpers
 │   ├── home_screen.cpp/h  # 4x3 icon grid, top/bottom bars, battery/signal/time
 │   ├── chat_screen.cpp/h  # Channels, DM, message bubbles
-│   ├── screens.cpp/h      # Heard, Contacts, Contact Detail, Map, Settings, Trace, Terminal, Signal, Channels, Finder, Advertise, Radio Setup, Custom RF
+│   ├── screens.cpp/h      # Heard, Contacts, Contact Detail, Map, Settings, Trace, Terminal, Signal, Channels, Finder, Advertise, Radio Setup, Custom RF, Telemetry, Node Status
 │   ├── onboarding_screen.cpp/h  # First-boot setup wizard
 │   ├── navigation.cpp/h   # Screen routing with slide transitions, universal back-swipe
 │   └── ui.cpp/h           # Splash→Home transition, main loop updates
@@ -108,13 +108,23 @@ src/
 
 Deep black `#0F0F0F` background, cyan `#00BFFF` accents, zero radius, 2px minimum borders.
 
+**Runtime theme system:** Theme colors are now runtime-variable `inline uint32_t` values in `theme.h` (not `constexpr`). Six presets are defined in `slopos::theme::THEMES[]`:
+- 0: Default Cyan, 1: Midnight Blue, 2: Forest Green, 3: Sunset Orange, 4: Royal Purple, 5: Amber Glow
+
+Call `slopos::theme::theme_apply(id)` to switch themes. Theme ID is persisted in NVS via `NodePrefs.theme_id`. Changing theme applies to new screen creations immediately; existing screens may need to be re-entered to pick up new colors.
+
 Theme helpers in `src/ui/theme.h`:
-- `apply_dark_bg(obj)` — sets full-screen black
+- `apply_dark_bg(obj)` — sets full-screen background (`BG_PRIMARY`)
 - `apply_pixel_card(obj)` — `BG_TERTIARY`, 0 radius, 2px border
 - `apply_pixel_btn(obj)` — filled `ACCENT` button
 - `apply_pixel_btn_outline(obj)` — transparent with `ACCENT` border
 - `apply_pixel_input(obj)` — input field, `BG_INPUT`, 2px border
 - `apply_topbar_icon_btn(btn)` — themed back button styling, state-aware
+- `apply_pixel_card_accent(obj)` — card with accent border
+- `apply_pixel_badge(obj)` — accent-colored small badge (transparent fill)
+- `apply_focus_style(obj)` — shared keyboard/trackball focus border treatment
+- `create_signal_dots(parent, rssi)` — iOS-style signal strength dots (5 dots, ACCENT fill or TEXT_MUTED border)
+- `rssi_to_dots(rssi)` — convert RSSI dBm to 1-5 active dots
 
 All screens MUST call `apply_dark_bg()` and use helpers from `theme.h`. Do not hardcode colors.
 
@@ -168,15 +178,21 @@ Use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 | 6 | Packets / Heard (packet log, 50 entries, 5-column TIME/SOURCE/RSSI/SNR/TYPE headers) | `screens.cpp` | ✅ |
 | 7 | Map (touch pan, auto-center, PSRAM tile cache) | `screens.cpp` | ✅ |
 | 8 | Advertise (broadcast presence, status timer, send button) | `screens.cpp` | ✅ |
-| 9 | Settings (radio, keyboard BL, display brightness, auto-off timeout, chat history cap, share location, flood max hops, RX/TX delay tuning, GPS enable/interval, auto-add contact types/max hops, auto-advert interval, duty cycle, date/time, shut down) | `screens.cpp` | ✅ |
+| 9 | Settings (menu → 4 sub-screens: Radio/Mesh, GPS/Location, Display/UI, System) | `screens.cpp` | ✅ |
 | 10 | Trace (path discovery per contact) | `screens.cpp` | ✅ |
 | 11 | Terminal (colored log + commands, 64 line cap) | `screens.cpp` | ✅ |
 | 12 | Signal (live RSSI, SNR, noise floor, radio params from prefs, TX/RX airtime, packet statistics, RSSI sparkline chart) | `screens.cpp` | ✅ |
 | 13 | Radio Setup (freq presets, SF/BW/CR/Pwr controls, save & reboot) | `screens.cpp` | ✅ |
-| 14 | Onboarding (wizard) | `onboarding_screen.cpp` | ✅ |
+| 14 | Onboarding (wizard) | `screens.cpp` | ✅ |
 | 15 | Repeaters (infrastructure relay nodes only, filtered from contacts, RSSI+SNR per relay) | `screens.cpp` | ✅ |
-| 16 | Contact Detail (full contact info: type, RSSI, SNR, last seen, path, location, RSSI sparkline, DM + Trace buttons) | `screens.cpp` | ✅ |
+| 16 | Contact Detail (full contact info: type, RSSI, SNR, last seen, path, location, RSSI sparkline, DM + Trace buttons, Request Status + Telemetry buttons) | `screens.cpp` | ✅ |
+| 17 | Telemetry (request & display CayenneLPP sensor data — voltage, temperature from remote nodes) | `screens.cpp` | ✅ |
+| 18 | Node Status (request & display remote node stats — battery, uptime, airtime, packet counters) | `screens.cpp` | ✅ |
 | — | Custom RF (sub-screen of Radio Setup — Freq, SF, BW, CR, Pwr text inputs with Apply) | `screens.cpp` | ✅ |
+| — | SettingsRadio (Radio/Mesh sub-screen — radio params, bandwidth/SF/tuning, duty cycle, RX gain) | `screens.cpp` | ✅ |
+| — | SettingsGPS (GPS/Location sub-screen — GPS enable toggle, read interval, location sharing) | `screens.cpp` | ✅ |
+| — | SettingsDisplay (Display/UI sub-screen — keyboard BL, display brightness, auto-off timeout, theme selector) | `screens.cpp` | ✅ |
+| — | SettingsSystem (System sub-screen — node name, SD card, date/time, chat history cap, auto-add contacts, shut down) | `screens.cpp` | ✅ |
 
 ---
 
@@ -224,6 +240,10 @@ slopos::mesh::getLastAdvertUsedGps()       // Whether GPS data was included
 slopos::mesh::saveState()                  // Save contacts to NVS
 slopos::mesh::saveChannels()               // Save channels to NVS
 slopos::mesh::loadChannels()               // Restore channels from NVS
+slopos::mesh::saveContacts()               // Save contacts to NVS (Phase 2.6+)
+slopos::mesh::loadContacts()               // Restore contacts from NVS
+slopos::mesh::isContactFavourite(name)     // Check if contact is favourited
+slopos::mesh::setContactFavourite(n, fav)  // Set favourite flag
 slopos::mesh::shutdown()                   // Graceful radio + power off
 slopos::mesh::injectMessage(sender, ch, text)  // Simulate incoming (test only)
 slopos::mesh::getCurrentTime()             // RTC epoch seconds
@@ -259,6 +279,48 @@ slopos::mesh::registerAckedMessage(name, ts) // Register DM for ACK delivery tra
 slopos::mesh::isMessageAcked(name, ts)     // Check if a DM was acknowledged
 slopos::mesh::removeContact(name)           // Remove a contact by name
 slopos::mesh::resetPathTo(name)             // Reset route path to a contact
+slopos::mesh::getAckCounter()               // Incremented each registerAckedMessage call
+// ── Generic request/response (Phase 4.1) ──
+slopos::mesh::sendRequest(dest, type)       // Send typed request to a node
+slopos::mesh::sendRequestWithData(d, dat, len) // Request with payload
+slopos::mesh::getResponseCount()            // Responses waiting
+slopos::mesh::getResponse(idx, &tag, &data, &len, &name) // Read response
+slopos::mesh::clearResponses()              // Clear response buffer
+// ── Status request (Phase 4.2) ──
+slopos::mesh::requestStatus(name)           // Request remote node status (battery, uptime, etc.)
+slopos::mesh::hasStatusResponse()           // Status reply received?
+slopos::mesh::getStatusResult(&st)          // Read NodeStatus struct
+// ── Telemetry (Phase 4.3) ──
+slopos::mesh::requestTelemetry(name)        // Request CayenneLPP sensor data
+slopos::mesh::hasTelemetryResponse()        // Telemetry reply received?
+slopos::mesh::getTelemetryResult(&tr)       // Read TelemetryResult struct
+// ── Path discovery (Phase 4.4) ──
+slopos::mesh::discoverPath(name)            // Flood-force route discovery, returns tag
+slopos::mesh::hasPathTo(name)               // Path known for this contact?
+slopos::mesh::getContactPathLen(name)       // Hop count to contact
+// ── Repeater/room login (Phase 4.5) ──
+slopos::mesh::sendLogin(name, password)     // Login to repeater/room
+slopos::mesh::sendLogout(name)              // Logout
+slopos::mesh::sendCommand(name, text)       // Admin command to repeater
+slopos::mesh::isLoggedIn(name)              // Currently logged in?
+slopos::mesh::getLoginStatus(name)          // LOGIN_STATUS_NONE/PENDING/OK/FAILED
+slopos::mesh::getLoginPermission(name)      // Permission level
+slopos::mesh::forceLoginState(n, s, p)      // Override login state (test)
+// ── Room message fetch (Phase 4.6) ──
+slopos::mesh::sendRoomMsgFetchRequest(contact, channel) // Fetch room history
+slopos::mesh::getRoomMsgFetchCount()         // Entries in fetch result
+slopos::mesh::getRoomMsgFetchEntry(idx, &s, &t, &c, &ts) // Read fetch entry
+slopos::mesh::clearRoomMsgFetch()            // Clear fetch buffer
+// ── Anonymous messages (Phase 4.7) ──
+slopos::mesh::sendAnonMessage(pubkey_hex, text) // DM by public key (no contact needed)
+// ── Group data datagrams (Phase 4.8) ──
+slopos::mesh::sendGroupDataToChannel(ch_idx, type, data, len) // Send typed data to group
+slopos::mesh::getGroupDataRecvCount()         // Received group datagrams
+slopos::mesh::getGroupDataRecvEntry(idx, &type, &data, &len, &ch, &ts) // Read datagram
+slopos::mesh::clearGroupDataRecv()            // Clear datagram buffer
+// ── Test helpers (SLOPOS_REMOTE_TEST only) ──
+slopos::mesh::addTestRepeater(name)          // Inject fake repeater contact
+slopos::mesh::addTestRoomServer(name)        // Inject fake room server contact
 ```
 
 **Messages arrive** via `chat_screen_add_msg(channel, sender, text, is_self)`. The chat screen maintains per-channel message caches (8 messages each, 16 channels max).
@@ -272,7 +334,7 @@ slopos::mesh::resetPathTo(name)             // Reset route path to a contact
 
 ## Testing
 
-**Current test count: 298** (297 passed, 1 skipped for native_test).
+**Current test count: 319** (318 passed, 1 skipped for native_test).
 
 ```bash
 pio test -e native_test -v       # All tests (no hardware)
@@ -423,7 +485,7 @@ Once connected, the T-Deck shows a test controller banner. Type commands directl
 | Command | Example | Description |
 |---------|---------|-------------|
 | `help` | `help` | Show command list |
-| `nav chat` | `nav chat` | Navigate to screen (home/chat/contacts/channels/network/heard/map/settings/terminal/radio/trace/signal/advertise/onboarding/contactdetail) |
+| `nav chat` | `nav chat` | Navigate to screen (home/chat/contacts/channels/network/heard/map/settings/terminal/radio/trace/signal/advertise/onboarding/contactdetail/telemetry/nodestatus/s-radio/s-gps/s-display/s-system) |
 | `back` | `back` | Go back in nav stack |
 | `tb up` | `tb click` | Simulate trackball (up/down/left/right/click, or u/d/l/r/c) |
 | `type hello` | `type Hello World` | Type text — queued and injected one char per loop cycle |
@@ -460,7 +522,7 @@ If the issue involves physical input hardware (trackball, keyboard, touch, butto
 Main + dev branch model:
 - `dev` — integration branch. All PRs merge here.
 - `main` — stable releases only.
-- Tags: `beta-0.1.XX` (zero-padded for correct sort: `beta-0.1.09` not `beta-0.1.9`). Current: `beta-0.1.36`
+- Tags: `beta-0.1.XX` (zero-padded for correct sort: `beta-0.1.09` not `beta-0.1.9`). Current: `beta-0.1.37`
 
 **Release flow (maintainer only):**
 1. Update `SLOPOS_VERSION` in `tdeck_pins.h`
@@ -472,12 +534,12 @@ Main + dev branch model:
 
 ## Radio Setup
 
-The Radio Setup screen (`screens.cpp:2864`) provides a two-column layout:
+The Radio Setup screen (`screens.cpp:4935`) provides a two-column layout:
 - **Left column:** Frequency presets (868.000 EU, 869.525 UK, 869.618 UK, 915.000 US, 433.500 EU)
 - **Right column:** "Custom RF..." button → opens Custom RF sub-screen, SF −/+ controls (7-12), BW −/+ controls (steps through 500/250/125/62.5/41.7/31.25/20.8/15.6/10.4/7.8 kHz), TX power −/+ controls (2-22 dBm), **RX Gain toggle** (BOOST/NORMAL), **Duty cycle** setting (percentage limit)
 - **Bottom:** Save & Reboot button (writes prefs + rx_boosted_gain + duty_cycle, saves channels and messages, then `ESP.restart()`)
 
-Radio params are stored in module-level `static` vars (`s_rf_freq`, `s_rf_sf`, `s_rf_bw`, `s_rf_cr`, `s_rf_pwr`, `s_rx_gain`, `s_duty_cycle`) in `screens.cpp:2710-2717`, shared between `radio_setup_screen_show` and `custom_rf_screen_show`. These defaults to 869.618 MHz / SF8 / 62.5 kHz / CR 4/5 / 22 dBm / RX gain normal / duty cycle disabled.
+Radio params are stored in module-level `static` vars (`s_rf_freq`, `s_rf_sf`, `s_rf_bw`, `s_rf_cr`, `s_rf_pwr`, `s_rx_gain`, `s_duty_cycle`) in `screens.cpp:4782-4788`, shared between `radio_setup_screen_show` and `custom_rf_screen_show`. These defaults to 869.618 MHz / SF8 / 62.5 kHz / CR 4/5 / 22 dBm / RX gain normal / duty cycle disabled.
 
 ### Custom RF Sub-Screen
 
@@ -514,7 +576,13 @@ On "Apply", validated values are written to the shared state and `go_back()` is 
 |||| New: `SlopOS_TDeck_remote_test_radio` env | Full LoRa mesh + test controller. The `SLOPOS_REMOTE_TEST_RADIO=1` flag enables both the test controller serial commands AND the radio mesh. ⚠️ This env actually transmits — unlike `_remote_test` which never initializes the radio. |
 |||| New: SlopMeshV2 compile-time selection | `-D SLOPOS_MESH_V2=1` selects `SlopMeshV2` (BaseChatMesh subclass) instead of the original `SlopMesh`. Both classes coexist but only one mesh instance runs per build. The `SlopOS_TDeck_meshv2` env sets this flag — use the correct env when testing meshv2 features. |
 |||| New: ACK tracking state is in-memory only | `registerAckedMessage`/`isMessageAcked` delivery state resets on every boot. No NVS persistence — ACK data is lost after power cycle. |
-|||| New: Custom vars SPIFFS no file locking | Custom variables at `/custom_vars.txt` (key=value lines) are read/written from terminal commands with no file locking. Concurrent `getvar`/`setvar`/`delvar` can intermix reads and writes, corrupting the file. Single-user terminal usage is safe but avoid concurrent access. |
+||||| New: Custom vars SPIFFS no file locking | Custom variables at `/custom_vars.txt` (key=value lines) are read/written from terminal commands with no file locking. Concurrent `getvar`/`setvar`/`delvar` can intermix reads and writes, corrupting the file. Single-user terminal usage is safe but avoid concurrent access. |
+|||| New: Settings sub-screens are full navigable screens | SettingsRadio, SettingsGPS, SettingsDisplay, SettingsSystem are all in the `Screen` enum and use `navigate_to()` with slide animation — they have nav stack entries and can be gone back from. Each calls `prefs_get()` at entry to get fresh state. State changes in one sub-screen are not visible in another until the user exits and re-enters. |
+|||| New: Runtime theme system (6 presets, NVS persisted) | `theme.h` now has `slopos::theme::THEMES[6]` with presets (Default Cyan, Midnight Blue, Forest Green, Sunset Orange, Royal Purple, Amber Glow). `theme_apply(id)` writes to mutable inline vars (`BG_PRIMARY`, `ACCENT`, etc.). Theme ID stored in NVS via `p.theme_id`. Not all screens re-read theme vars on `theme_apply()` — some may need to be re-entered to pick up new colors. |
+|||| New: Repeater login state is in-memory | `sendLogin()`/`sendLogout()` login state resets on every boot. Password can be saved to NVS via `NodePrefs.repeater_password` for auto-login on restart. |
+|||| New: Room message fetch is polling-based | `sendRoomMsgFetchRequest()` triggers a fetch; results are read via `getRoomMsgFetchCount()`/`getRoomMsgFetchEntry()`. Only one fetch result can be stored at a time — calling fetch again overwrites previous results. |
+|||| New: NodeStatus/Telemetry screens need mesh response | Both screens use `show_screen()` (not `navigate_to()`) and rely on `hasStatusResponse()`/`hasTelemetryResponse()` being set before entry. If no response arrives, they show a "waiting" message. `clearResponses()` is called after reading, so re-entering without a new request shows the waiting state. |
+|||| New: Group data datagrams are one-shot poll | `getGroupDataRecvCount()` / `getGroupDataRecvEntry()` / `clearGroupDataRecv()` follow the same polling pattern as room message fetch. No persistent storage — data is lost on each `clearGroupDataRecv()`. |
 
 ---
 
@@ -526,8 +594,8 @@ All known issues are documented in `docs/KNOWN_ISSUES.md`. Most previously track
 
 **Recently fixed (see `docs/KNOWN_ISSUES.md` for PR details):**
 - GPS NMEA checksum validation, Navigation history stack, Channel hash full compare, Contact expiry/eviction with LRU, Advert rate limiting at mesh layer, Null-termination on short payloads, LVGL tick starvation during TX, `lv_obj_del` in event handlers, Map screen static persistence, I2C bus speed race (400kHz touch), Trackball LEFT double-fire, `keyboard_consume_event` side effects, GT911 INT-pin-HIGH buffered event drop, TDeckBoard duplicate instances, Module static-init allocation ordering, Terminal unbounded labels, REPEATERS/PACKETS screen separation, GPS NMEA checksum, makeEpoch thread-safety, debug.h non-debug stubs, onboard restart flash write delay, screen dispatch code deduplication, SPI host pin contention, sendTrace indentation
-- **Previously synced:** Radio reception fix (SPI host moved to SPI2_HOST, channel hash full compare, auto-join Public), graceful shutdown from Settings, unread message badges on home screen, display brightness control, auto-backlight timeout, flood max hops setting, contact SNR display, TX/RX delay tuning in Settings, TX/RX airtime and packet statistics on Signal screen, GPS clock sync on first valid fix, Contact Detail screen (#180), Signal screen two-column layout (#183), iOS-style signal dots (#187), `setrf`/`reboot`/`advert` serial test commands (#189), channel deletion (#168/#169), NAV serial command (#35a7638), map canvas PSRAM allocation fix (#4a464f6), `SlopOS_TDeck_remote_test_radio` env (#195), ROADMAP.md (#197), beta-0.1.36 release
-- **Since last sync:** SlopMeshV2 migration (Phase 0, #223/#224), per-contact RSSI/SNR history with sparkline chart (#236), message search in chat (#234), message delivery status (ACK ticks) in chat bubbles (#232), custom variables key-value store via terminal commands (Phase 2.6), auto-add contact type config (Phase 2.3), GPS enable/read-interval controls (Phase 2.5), `sendmessage` test controller command, `SlopOS_TDeck_meshv2` and `SlopOS_TDeck_remote_test_radio_meshv2` build envs
+- **Previously synced:** Radio reception fix (SPI host moved to SPI2_HOST, channel hash full compare, auto-join Public), graceful shutdown from Settings, unread message badges on home screen, display brightness control, auto-backlight timeout, flood max hops setting, contact SNR display, TX/RX delay tuning in Settings, TX/RX airtime and packet statistics on Signal screen, GPS clock sync on first valid fix, Contact Detail screen (#180), Signal screen two-column layout (#183), iOS-style signal dots (#187), `setrf`/`reboot`/`advert` serial test commands (#189), channel deletion (#168/#169), NAV serial command (#35a7638), map canvas PSRAM allocation fix (#4a464f6), `SlopOS_TDeck_remote_test_radio` env (#195), ROADMAP.md (#197), beta-0.1.36 release, SlopMeshV2 migration (Phase 0, #223/#224), per-contact RSSI/SNR history with sparkline chart (#236), message search in chat (#234), message delivery status (ACK ticks) in chat bubbles (#232), custom variables key-value store via terminal commands (Phase 2.6), auto-add contact type config (Phase 2.3), GPS enable/read-interval controls (Phase 2.5), `sendmessage` test controller command, `SlopOS_TDeck_meshv2` and `SlopOS_TDeck_remote_test_radio_meshv2` build envs
+- **Since last sync:** Settings organized into category sub-menus (Phase 2.7, #246), runtime theme system with 6 presets + NVS persistence (#244), PendingAck bugfix + 4 unpersisted NodePrefs fields (#249), beta-0.1.37 release, generic binary-request framework (Phase 4.1, #251), status request with UI — battery/uptime/airtime from remote node (Phase 4.2, #253), telemetry request with CayenneLPP parsing (Phase 4.3), path discovery with flood-force routing (Phase 4.4), repeater/room login with admin commands (Phase 4.5, #259), room server message fetch (Phase 4.6, #263), anonymous message send/receive (Phase 4.7, #260), group data datagrams (Phase 4.8, #265), dedicated repeater detail screen with login flow (#257/#258), repeater login with password save and compact UI, NAV serial entries for settings submenus and new screens
 
 ---
 
