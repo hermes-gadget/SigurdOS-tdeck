@@ -1325,10 +1325,15 @@ static void do_send()
     const char* dest = is_dm ? (chan + 4) : chan;
 
     bool sent = false;
-    if (is_dm) sent = slopos::mesh::sendMessage(dest, text);
-    else       sent = slopos::mesh::sendChannelMessage(dest, text);
+    uint32_t ts = slopos::mesh::getCurrentTime();
+    if (is_dm) {
+        uint32_t send_ts = slopos::mesh::sendMessage(dest, text);
+        sent = (send_ts != 0);
+        if (sent) ts = send_ts;  // use the timestamp the mesh layer tracked the ACK with
+    } else {
+        sent = slopos::mesh::sendChannelMessage(dest, text);
+    }
 
-    uint32_t now = slopos::mesh::getCurrentTime();
     int sent_channel = active_channel;
     // Always show the message locally, but mark it if send failed
     char display_text[200];
@@ -1337,7 +1342,7 @@ static void do_send()
     } else {
         snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
     }
-    append_channel_message(sent_channel, slopos::mesh::getOwnName(), display_text, now, true);
+    append_channel_message(sent_channel, slopos::mesh::getOwnName(), display_text, ts, true);
     mark_channel_used(sent_channel);
     render_active_messages();
     lv_textarea_set_text(input_field, "");
