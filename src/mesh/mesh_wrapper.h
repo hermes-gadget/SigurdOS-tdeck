@@ -246,6 +246,14 @@ bool sendCommand(const char* name, const char* text);
 bool isLoggedIn(const char* name);
 uint8_t getLoginPermission(const char* name);
 uint8_t getLoginStatus(const char* name);
+void forceLoginState(const char* name, uint8_t status, uint8_t permission);
+
+#if defined(SLOPOS_REMOTE_TEST)
+// Test helper: inject a fake repeater contact into the mesh contact list.
+// The contact will have the given name, type ADV_TYPE_REPEATER, and test SNR/RSSI.
+// Used by the test controller to verify the repeater detail UI without real radio traffic.
+bool addTestRepeater(const char* name);
+#endif
 
 // ── Anonymous requests (Phase 4.7) ────────────────
 // Send a text message to a node identified by its 64-hex-char public key.
