@@ -2261,7 +2261,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         };
 
         // Set-value button: opens an input dialog and sends <prefix> + user input
-        struct SetCtx { char* name; char prefix[20]; char title[24]; char hint[32]; bool pw; };
+        struct SetCtx { char* name; char prefix[24]; char title[24]; char hint[32]; bool pw; };
         auto add_set = [&](const char* icon_lbl, const char* title, const char* hint, const char* prefix, bool pw) {
             auto* ctx = new SetCtx();
             ctx->name = strdup(contact_name);
@@ -2430,6 +2430,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     lv_obj_set_style_text_color(tl, lv_color_hex(ACCENT_RED), 0);
                     lv_obj_align(tl, LV_ALIGN_TOP_MID, 0, 10);
                     char* cn = strdup(name);
+                    lv_obj_set_user_data(dlg, cn);
                     lv_obj_t* yb = lv_btn_create(dlg);
                     lv_obj_set_size(yb, 80, 24);
                     lv_obj_align(yb, LV_ALIGN_BOTTOM_LEFT, 10, -4);
@@ -2439,12 +2440,11 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     lv_label_set_text(yl, "Reboot");
                     lv_obj_center(yl);
                     lv_obj_set_style_text_color(yl, lv_color_hex(0xffffff), 0);
-                    lv_obj_set_user_data(yb, cn);
                     lv_obj_add_event_cb(yb, [](lv_event_t* ce) {
-                        const char* cn = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(ce));
+                        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce));
+                        const char* cn = (const char*)lv_obj_get_user_data(dlg);
                         if (cn) { repeater_send(cn, "reboot", "Reboot sent to %s"); }
-                        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
-                        free((void*)cn);
+                        lv_obj_del_async(dlg);
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_t* nb = lv_btn_create(dlg);
                     lv_obj_set_size(nb, 80, 24);
@@ -2457,6 +2457,9 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     lv_obj_add_event_cb(nb, [](lv_event_t* ce) {
                         lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
                     }, LV_EVENT_CLICKED, nullptr);
+                    lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
+                        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de)));
+                    }, LV_EVENT_DELETE, nullptr);
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {
