@@ -830,10 +830,14 @@ void loop()
 
 // ── Send ────────────────────────────────────────
 
-bool sendMessage(const char* dest, const char* text) {
-    bool ok = g_mesh ? g_mesh->sendTextTo(dest, text) : false;
+uint32_t sendMessage(const char* dest, const char* text) {
+    if (!g_mesh) return 0;
+    uint32_t ts = getCurrentTime();
+    // sendTextTo now takes a fixed timestamp so the UI and mesh layer agree
+    // (see slop_mesh_v2.h sendTextTo overload)
+    bool ok = g_mesh->sendTextTo(dest, text, ts);
     if (ok) pushPacketLog(own_name, 0, 0.0f, "TX_DM");
-    return ok;
+    return ok ? ts : 0;
 }
 
 bool sendChannelMessage(const char* channel_name, const char* text) {
@@ -1444,6 +1448,16 @@ void setDutyCycle(uint8_t percent) {
         strncpy(c.name, name, sizeof(c.name) - 1);
         c.name[sizeof(c.name) - 1] = '\0';
         c.type = ADV_TYPE_REPEATER;
+        return g_mesh->addContact(c);
+    }
+
+    bool addTestRoomServer(const char* name) {
+        if (!g_mesh || !name || !name[0]) return false;
+        ::ContactInfo c;
+        memset(&c, 0, sizeof(c));
+        strncpy(c.name, name, sizeof(c.name) - 1);
+        c.name[sizeof(c.name) - 1] = '\0';
+        c.type = ADV_TYPE_ROOM;
         return g_mesh->addContact(c);
     }
 #endif

@@ -56,7 +56,7 @@ TEST_F(MeshWrapperTest, LoopFunctionExists) {
 }
 
 TEST_F(MeshWrapperTest, SendDirectSignature) {
-    using send_fn = bool (*)(const char*, const char*);
+    using send_fn = uint32_t (*)(const char*, const char*);
     (void)static_cast<send_fn>(slopos::mesh::sendMessage);
     SUCCEED();
 }

@@ -293,7 +293,9 @@ public:
 
     // ════════════════════════════════════════════════════
     // Room message fetch request type (Phase 4.6)
-    static constexpr uint8_t REQ_TYPE_GET_ROOM_MSGS = 0x03;
+    // NOTE: 0x03 is REQ_TYPE_GET_TELEMETRY_DATA in room server firmware,
+    // so we use 0x06 to avoid conflict.
+    static constexpr uint8_t REQ_TYPE_GET_ROOM_MSGS = 0x06;
 
     //  REQ/RESPONSE framework (Phase 4.1)
     // ════════════════════════════════════════════════════
@@ -1186,6 +1188,27 @@ public:
                                                   expected_ack, est_timeout);
                 if (r != MSG_SEND_FAILED) {
                     addPendingAck(name, ts, expected_ack);
+                }
+                return r != MSG_SEND_FAILED;
+            }
+        }
+        return false;
+    }
+
+    // Overload that accepts a pre-captured timestamp so the caller (UI layer)
+    // can store the same value for ACK matching. Prevents the ~1-2% silent ACK
+    // failure caused by timestamps diverging across separate getCurrentTime() calls.
+    bool sendTextTo(const char* name, const char* text, uint32_t fixed_ts) {
+        if (!name || !text) return false;
+        int n = getNumContacts();
+        ::ContactInfo tmp;
+        for (int i = 0; i < n; i++) {
+            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+                uint32_t expected_ack = 0, est_timeout = 0;
+                int r = BaseChatMesh::sendMessage(tmp, fixed_ts, 0, text,
+                                                  expected_ack, est_timeout);
+                if (r != MSG_SEND_FAILED) {
+                    addPendingAck(name, fixed_ts, expected_ack);
                 }
                 return r != MSG_SEND_FAILED;
             }
