@@ -79,4 +79,9 @@ bool prefs_exists();
 const NodePrefs& prefs_get();
 void             prefs_set(const NodePrefs& p);
 
+// ── Saved repeater passwords (persist across firmware updates in NVS) ──
+bool saveRepeaterPassword(const char* name, const char* password);
+bool loadRepeaterPassword(const char* name, char* password, size_t max_len);
+void removeRepeaterPassword(const char* name);
+
 } // namespace slopos

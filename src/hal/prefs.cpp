@@ -109,4 +109,115 @@ void prefs_set(const NodePrefs& p) {
     prefs_save(p);
 }
 
+// ── Repeater password storage ─────────────────────────────────────────
+static constexpr const char* PW_NS = "slopos_pw";
+static constexpr int MAX_SAVED_PWS = 8;
+
+bool saveRepeaterPassword(const char* name, const char* password) {
+    if (!name || !name[0] || !password) return false;
+    Preferences nvs;
+    if (!nvs.begin(PW_NS, false)) return false;
+
+    uint8_t count = nvs.getUChar("count", 0);
+    int slot = -1;
+
+    // Find existing entry for this name
+    for (uint8_t i = 0; i < count; i++) {
+        char key[10];
+        snprintf(key, sizeof(key), "name%u", i);
+        char existing[32];
+        size_t len = nvs.getString(key, existing, sizeof(existing));
+        if (len > 0 && strcmp(existing, name) == 0) {
+            slot = i;
+            break;
+        }
+    }
+
+    // Find first free slot
+    if (slot < 0 && count < MAX_SAVED_PWS) {
+        slot = count;
+        count++;
+    }
+
+    if (slot < 0) {
+        nvs.end();
+        return false;
+    }
+
+    char nk[10], pk[10];
+    snprintf(nk, sizeof(nk), "name%u", (uint8_t)slot);
+    snprintf(pk, sizeof(pk), "pw%u", (uint8_t)slot);
+    nvs.putString(nk, name);
+    nvs.putString(pk, password);
+    nvs.putUChar("count", count);
+    nvs.end();
+    return true;
+}
+
+bool loadRepeaterPassword(const char* name, char* password, size_t max_len) {
+    if (!name || !name[0] || !password || max_len == 0) return false;
+    Preferences nvs;
+    if (!nvs.begin(PW_NS, true)) return false;
+
+    uint8_t count = nvs.getUChar("count", 0);
+    for (uint8_t i = 0; i < count; i++) {
+        char key[10];
+        snprintf(key, sizeof(key), "name%u", i);
+        char existing[32];
+        size_t len = nvs.getString(key, existing, sizeof(existing));
+        if (len > 0 && strcmp(existing, name) == 0) {
+            char pwkey[10];
+            snprintf(pwkey, sizeof(pwkey), "pw%u", i);
+            size_t ret = nvs.getString(pwkey, password, max_len);
+            nvs.end();
+            password[max_len - 1] = '\0';
+            return ret > 0;
+        }
+    }
+    nvs.end();
+    return false;
+}
+
+void removeRepeaterPassword(const char* name) {
+    if (!name || !name[0]) return;
+    Preferences nvs;
+    if (!nvs.begin(PW_NS, false)) return;
+
+    uint8_t count = nvs.getUChar("count", 0);
+    for (uint8_t i = 0; i < count; i++) {
+        char key[10];
+        snprintf(key, sizeof(key), "name%u", i);
+        char existing[32];
+        size_t len = nvs.getString(key, existing, sizeof(existing));
+        if (len > 0 && strcmp(existing, name) == 0) {
+            char nk[10], pk[10];
+            snprintf(nk, sizeof(nk), "name%u", i);
+            snprintf(pk, sizeof(pk), "pw%u", i);
+            nvs.remove(nk);
+            nvs.remove(pk);
+            // Shift remaining entries down
+            for (uint8_t j = i; j + 1 < count; j++) {
+                char oldnk[10], oldpk[10], newnk[10], newpk[10];
+                snprintf(oldnk, sizeof(oldnk), "name%u", j + 1);
+                snprintf(oldpk, sizeof(oldpk), "pw%u", j + 1);
+                snprintf(newnk, sizeof(newnk), "name%u", j);
+                snprintf(newpk, sizeof(newpk), "pw%u", j);
+                char tmp_name[32] = {0}, tmp_pw[64] = {0};
+                if (nvs.getString(oldnk, tmp_name, sizeof(tmp_name)) > 0) {
+                    nvs.putString(newnk, tmp_name);
+                    nvs.remove(oldnk);
+                }
+                if (nvs.getString(oldpk, tmp_pw, sizeof(tmp_pw)) > 0) {
+                    nvs.putString(newpk, tmp_pw);
+                    nvs.remove(oldpk);
+                }
+            }
+            count = (count > 0) ? count - 1 : 0;
+            nvs.putUChar("count", count);
+            break;
+        }
+    }
+    nvs.end();
+}
+
 } // namespace slopos
