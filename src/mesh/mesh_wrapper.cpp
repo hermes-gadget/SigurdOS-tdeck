@@ -1371,6 +1371,18 @@ void setDutyCycle(uint8_t percent) {
         return g_mesh ? g_mesh->isLoggedIn(name) : false;
     }
 
+    // Force login state for a contact (test/override only)
+    void forceLoginState(const char* name, uint8_t status, uint8_t permission) {
+        if (!g_mesh || !name) return;
+        int idx = g_mesh->findLoginEntry(name);
+        if (idx < 0) {
+            idx = g_mesh->addLoginEntry(name);
+            if (idx < 0) return;
+        }
+        g_mesh->_login_entries[idx].status = status;
+        g_mesh->_login_entries[idx].permission = permission;
+    }
+
     uint8_t getLoginPermission(const char* name) {
         return g_mesh ? g_mesh->getLoginPermission(name) : 0;
     }
@@ -1422,6 +1434,19 @@ void setDutyCycle(uint8_t percent) {
     void clearGroupDataRecv() {
         if (g_mesh) g_mesh->clearGroupData();
     }
+
+#if defined(SLOPOS_REMOTE_TEST)
+    // ── Test repeater helper ──────────────────────────
+    bool addTestRepeater(const char* name) {
+        if (!g_mesh || !name || !name[0]) return false;
+        ::ContactInfo c;
+        memset(&c, 0, sizeof(c));
+        strncpy(c.name, name, sizeof(c.name) - 1);
+        c.name[sizeof(c.name) - 1] = '\0';
+        c.type = ADV_TYPE_REPEATER;
+        return g_mesh->addContact(c);
+    }
+#endif
 
 // ── Hex-to-bytes helper ─────────────────────────
 int hexToBytes(const char* hex, uint8_t* out, int out_max) {
