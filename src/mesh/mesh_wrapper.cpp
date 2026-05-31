@@ -1463,6 +1463,47 @@ void setDutyCycle(uint8_t percent) {
     }
 #endif
 
+// ── Command response ring buffer ────────────────
+struct CmdResponse {
+    char name[32];
+    char text[160];
+};
+CmdResponse _cmd_responses[MAX_CMD_RESPONSES];
+int _cmd_resp_head = 0;
+int _cmd_resp_count = 0;
+
+void pushCmdResponse(const char* name, const char* text) {
+    if (!name || !text) return;
+    if (_cmd_resp_count >= MAX_CMD_RESPONSES) return;  // drop if full
+    int idx = (_cmd_resp_head + _cmd_resp_count) % MAX_CMD_RESPONSES;
+    strncpy(_cmd_responses[idx].name, name, sizeof(_cmd_responses[idx].name) - 1);
+    _cmd_responses[idx].name[sizeof(_cmd_responses[idx].name) - 1] = '\0';
+    strncpy(_cmd_responses[idx].text, text, sizeof(_cmd_responses[idx].text) - 1);
+    _cmd_responses[idx].text[sizeof(_cmd_responses[idx].text) - 1] = '\0';
+    _cmd_resp_count++;
+}
+
+bool pollCmdResponse(char* name_out, int name_sz, char* text_out, int text_sz) {
+    if (_cmd_resp_count <= 0) return false;
+    CmdResponse& r = _cmd_responses[_cmd_resp_head];
+    if (name_out && name_sz > 0) {
+        strncpy(name_out, r.name, name_sz - 1);
+        name_out[name_sz - 1] = '\0';
+    }
+    if (text_out && text_sz > 0) {
+        strncpy(text_out, r.text, text_sz - 1);
+        text_out[text_sz - 1] = '\0';
+    }
+    _cmd_resp_head = (_cmd_resp_head + 1) % MAX_CMD_RESPONSES;
+    _cmd_resp_count--;
+    return true;
+}
+
+void clearCmdResponses() {
+    _cmd_resp_head = 0;
+    _cmd_resp_count = 0;
+}
+
 // ── Hex-to-bytes helper ─────────────────────────
 int hexToBytes(const char* hex, uint8_t* out, int out_max) {
     return SlopMeshV2::hexToBytes(hex, out, (size_t)out_max);
