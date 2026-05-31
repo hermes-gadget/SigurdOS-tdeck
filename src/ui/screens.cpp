@@ -554,17 +554,28 @@ void contacts_screen_show()
         lv_obj_set_style_text_font(snr_l, &lv_font_montserrat_10, 0);
         lv_obj_align(snr_l, LV_ALIGN_RIGHT_MID, -56, 0);
 
+        // Store name + type for click handler
+        // Room servers open the detail screen; chat nodes open DM
+        struct ContactRowData { char* name; uint8_t type; };
+        ContactRowData* row_data = new ContactRowData{strdup(c.name), c.type};
+        lv_obj_set_user_data(row, row_data);
+
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
-            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
-            const char* name = (const char*)lv_obj_get_user_data(target);
-            if (name) {
-                chat_screen_open_dm(name);
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_current_target(e);
+            ContactRowData* d = (ContactRowData*)lv_obj_get_user_data(target);
+            if (d && d->name) {
+                if (d->type == ADV_TYPE_ROOM) {
+                    repeater_detail_screen_show(d->name);
+                } else {
+                    chat_screen_open_dm(d->name);
+                }
             }
         }, LV_EVENT_CLICKED, nullptr);
 
         // Free the heap-allocated name copy when the row is deleted
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
-            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+            ContactRowData* d = (ContactRowData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
+            if (d) { free(d->name); delete d; }
         }, LV_EVENT_DELETE, nullptr);
     }
 
@@ -2009,9 +2020,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 {
     if (!contact_name || !contact_name[0]) return;
 
-    lv_obj_t* scr = make_screen_full("Repeater");
-
-    // Look up the contact
+    // Look up the contact first (need type for screen title)
     slopos::mesh::ContactInfo contacts[64];
     int total = slopos::mesh::exportContactsFull(contacts, 64);
     const slopos::mesh::ContactInfo* target = nullptr;
@@ -2021,9 +2030,22 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             break;
         }
     }
+
+    // Determine screen title from contact type
+    const char* screen_title = "Repeater";
+    if (target) {
+        switch (target->type) {
+            case ADV_TYPE_REPEATER: screen_title = "Repeater"; break;
+            case ADV_TYPE_ROOM:     screen_title = "Room Server"; break;
+            default:                screen_title = "Node"; break;
+        }
+    }
+
+    lv_obj_t* scr = make_screen_full(screen_title);
+
     if (!target) {
         lv_obj_t* err = lv_label_create(scr);
-        lv_label_set_text(err, "Repeater not found");
+        lv_label_set_text(err, "Contact not found");
         lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
         lv_obj_set_style_text_font(err, &lv_font_montserrat_12, 0);
         lv_obj_align(err, LV_ALIGN_CENTER, 0, 0);

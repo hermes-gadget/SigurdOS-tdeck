@@ -21,8 +21,8 @@ void loop() {}
 
 // ── Send ─────────────────────────────────────────
 
-bool sendMessage(const char* dest_name, const char* text) {
-    (void)dest_name; (void)text; return false;
+uint32_t sendMessage(const char* dest_name, const char* text) {
+    (void)dest_name; (void)text; return 0;
 }
 
 bool sendChannelMessage(const char* channel_name, const char* text) {
