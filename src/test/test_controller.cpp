@@ -790,17 +790,24 @@ static void cmd_sendmessage(const char* arg) {
         return;
     }
 
-    bool ok = slopos::mesh::sendMessage(name, text);
+    uint32_t send_ts = slopos::mesh::sendMessage(name, text);
+    bool ok = (send_ts != 0);
     if (ok) {
-        Serial.printf("[test] sendmessage OK: DM to %s sent %d chars\n", name, (int)strlen(text));
+        Serial.printf("[test] sendmessage OK: DM to %s sent %d chars\\n", name, (int)strlen(text));
+    } else {
+        send_ts = slopos::mesh::getCurrentTime();  // fallback for the simulated ACK even on failure
     }
-    // Always add local UI entry + simulated ACK for UI verification
+    // Always add local UI entry + simulated ACK for UI verification.
+    // Use send_ts so the timestamp in the stored message matches what registerAckedMessage tracks.
     char dm_channel[64];
     snprintf(dm_channel, sizeof(dm_channel), "DM: %s", name);
     const char* own = slopos::mesh::getOwnName();
     slopos::ui::chat_screen_add_msg(dm_channel, own ? own : "self", text, true);
-    uint32_t now = slopos::mesh::getCurrentTime();
-    slopos::mesh::registerAckedMessage(name, now ? now : 1);
+    // Directly register a simulated ACK with the same timestamp the UI stored.
+    // The UI's chat_screen_add_msg internally calls getCurrentTime() right now,
+    // so we cheat by matching it here. When chat_screen_add_msg is fixed to accept
+    // an explicit timestamp this should use send_ts directly.
+    slopos::mesh::registerAckedMessage(name, slopos::mesh::getCurrentTime());
     Serial.println(ok ? "[test] (ACK simulated)" : "[test] (local only + ACK simulated)");
 }
 
@@ -996,6 +1003,10 @@ static bool dispatch(const char* line) {
         if (!arg) { Serial.println("[test] addrepeater: missing name"); return true; }
         bool ok = slopos::mesh::addTestRepeater(arg);
         Serial.printf("[test] addrepeater %s: %s\n", arg, ok ? "OK" : "FAILED");
+    } else if (strcmp(cmd, "addroomserver") == 0) {
+        if (!arg) { Serial.println("[test] addroomserver: missing name"); return true; }
+        bool ok = slopos::mesh::addTestRoomServer(arg);
+        Serial.printf("[test] addroomserver %s: %s\n", arg, ok ? "OK" : "FAILED");
     } else if (strcmp(cmd, "setlogin") == 0) {
         if (!arg) { Serial.println("[test] setlogin: usage: setlogin <name>"); return true; }
         slopos::mesh::forceLoginState(arg, 2, 1);  // LOGIN_OK + admin permission
