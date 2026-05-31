@@ -809,21 +809,21 @@ static void cmd_sendmessage(const char* arg) {
     uint32_t send_ts = slopos::mesh::sendMessage(name, text);
     bool ok = (send_ts != 0);
     if (ok) {
-        Serial.printf("[test] sendmessage OK: DM to %s sent %d chars\\n", name, (int)strlen(text));
+        Serial.printf("[test] sendmessage OK: DM to %s sent %d chars\n", name, (int)strlen(text));
     } else {
         send_ts = slopos::mesh::getCurrentTime();  // fallback for the simulated ACK even on failure
     }
     // Always add local UI entry + simulated ACK for UI verification.
-    // Use send_ts so the timestamp in the stored message matches what registerAckedMessage tracks.
+    // The UI's chat_screen_add_msg() internally calls getCurrentTime(); this
+    // captures 'now' once so registerAckedMessage uses the same value.
+    // TODO: add chat_screen_add_msg_with_ts() to accept an explicit timestamp.
+    uint32_t now = slopos::mesh::getCurrentTime();
     char dm_channel[64];
     snprintf(dm_channel, sizeof(dm_channel), "DM: %s", name);
     const char* own = slopos::mesh::getOwnName();
     slopos::ui::chat_screen_add_msg(dm_channel, own ? own : "self", text, true);
     // Directly register a simulated ACK with the same timestamp the UI stored.
-    // The UI's chat_screen_add_msg internally calls getCurrentTime() right now,
-    // so we cheat by matching it here. When chat_screen_add_msg is fixed to accept
-    // an explicit timestamp this should use send_ts directly.
-    slopos::mesh::registerAckedMessage(name, slopos::mesh::getCurrentTime());
+    slopos::mesh::registerAckedMessage(name, now);
     Serial.println(ok ? "[test] (ACK simulated)" : "[test] (local only + ACK simulated)");
 }
 

@@ -309,7 +309,9 @@ static void refresh_channels()
     // ── Apply channel filter ─────────────────────────────
     if (chat_filter_mode == 1) {
         // #channels only: keep entries starting with #
+#if defined(SLOPOS_DEBUG)
         Serial.printf("[chat] filter: #channels only, before=%d\n", dyn_count);
+#endif
         int keep = 0;
         for (int i = 0; i < dyn_count; i++) {
             if (dyn_channels[i][0] == '#') {
@@ -318,10 +320,14 @@ static void refresh_channels()
             }
         }
         dyn_count = keep;
+#if defined(SLOPOS_DEBUG)
         Serial.printf("[chat] filter: #channels only, after=%d\n", dyn_count);
+#endif
     } else if (chat_filter_mode == 2) {
         // DMs only: keep entries starting with "DM:"
+#if defined(SLOPOS_DEBUG)
         Serial.printf("[chat] filter: DMs only, before=%d\n", dyn_count);
+#endif
         int keep = 0;
         for (int i = 0; i < dyn_count; i++) {
             if (strncmp(dyn_channels[i], "DM:", 3) == 0) {
@@ -330,7 +336,9 @@ static void refresh_channels()
             }
         }
         dyn_count = keep;
+#if defined(SLOPOS_DEBUG)
         Serial.printf("[chat] filter: DMs only, after=%d\n", dyn_count);
+#endif
     }
     // mode 0: no filter, show all
 
@@ -766,11 +774,13 @@ static void show_channel_list(lv_scr_load_anim_t anim)
         LV_OBJ_FLAG_SCROLL_CHAIN));
 
     populate_channel_rows(ch_list);
+#if defined(SLOPOS_DEBUG)
     Serial.printf("[chat] populate: dyn_count=%d names=[", dyn_count);
     for (int i = 0; i < dyn_count; i++) {
         Serial.printf("%s%s", i > 0 ? "," : "", dyn_channels[i]);
     }
     Serial.println("]");
+#endif
 
     ch_add_btn = lv_btn_create(s);
     lv_obj_set_size(ch_add_btn, CONTENT_W > 200 ? 180 : CONTENT_W - 20, 28);

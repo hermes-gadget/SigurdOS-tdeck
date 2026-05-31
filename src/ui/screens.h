@@ -46,7 +46,6 @@ void settings_radio_show();
 void settings_gps_show();
 void settings_display_show();
 void settings_system_show();
-void admin_cmd_show(const char* contact_name);  // test hook: open admin cmd terminal
 void telemetry_screen_show();
 void node_status_screen_show();
 

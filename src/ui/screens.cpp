@@ -748,8 +748,10 @@ static void show_login_password_dialog(const char* contact_name)
 struct LoginPollCtx {
     char* name;
     lv_obj_t* screen;
+    uint32_t gen;        // matches g_login_poll_gen at creation time; stale if timer restarted
 };
 static lv_timer_t* g_login_poll_timer = nullptr;
+static uint32_t g_login_poll_gen = 0;
 
 static void on_login_poll_timer(lv_timer_t* t) {
     LoginPollCtx* ctx = (LoginPollCtx*)lv_timer_get_user_data(t);
@@ -759,8 +761,9 @@ static void on_login_poll_timer(lv_timer_t* t) {
         return;
     }
 
+    // If a newer generation timer was started, this ctx is stale
     // If user navigated away from the screen, stop polling
-    if (lv_scr_act() != ctx->screen) {
+    if (!ctx->screen || ctx->gen != g_login_poll_gen || lv_scr_act() != ctx->screen) {
         free(ctx->name);
         delete ctx;
         lv_timer_del(t);
@@ -800,7 +803,8 @@ static void start_login_poll_timer(const char* name) {
         lv_timer_del(g_login_poll_timer);
         g_login_poll_timer = nullptr;
     }
-    LoginPollCtx* ctx = new LoginPollCtx{strdup(name), lv_scr_act()};
+    g_login_poll_gen++;
+    LoginPollCtx* ctx = new LoginPollCtx{strdup(name), lv_scr_act(), g_login_poll_gen};
     g_login_poll_timer = lv_timer_create(on_login_poll_timer, 2000, ctx);
 }
 
@@ -969,8 +973,13 @@ static void show_admin_cmd_dialog(const char* contact_name)
                                     const char* mid = full + 1500;
                                     while (*mid && *mid != '\n') mid++;
                                     if (*mid) mid++;
+                                    char mid_copy[2048];
+                                    size_t copy_len = strlen(mid);
+                                    if (copy_len >= sizeof(mid_copy)) copy_len = sizeof(mid_copy) - 1;
+                                    memcpy(mid_copy, mid, copy_len);
+                                    mid_copy[copy_len] = '\0';
                                     lv_textarea_set_text(dd2->out, "(...trimmed...)\n");
-                                    lv_textarea_add_text(dd2->out, mid);
+                                    lv_textarea_add_text(dd2->out, mid_copy);
                                 }
                                 lv_textarea_add_text(dd2->out, rb);
                             }
@@ -2559,7 +2568,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     lv_obj_add_event_cb(yb, [](lv_event_t* ce) {
                         lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce));
                         const char* cn = (const char*)lv_obj_get_user_data(dlg);
-                        if (cn) { repeater_send(cn, "reboot", "Reboot sent to %s"); }
+                        if (cn) { repeater_send(cn, "reboot", "Reboot sent"); }
                         lv_obj_del_async(dlg);
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_t* nb = lv_btn_create(dlg);
