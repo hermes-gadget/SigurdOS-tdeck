@@ -833,6 +833,7 @@ void loop()
 uint32_t sendMessage(const char* dest, const char* text) {
     if (!g_mesh) return 0;
     uint32_t ts = getCurrentTime();
+    if (ts == 0) ts = 1;  // 0 means failure; use 1 as fallback so ACK matching still works
     // sendTextTo now takes a fixed timestamp so the UI and mesh layer agree
     // (see slop_mesh_v2.h sendTextTo overload)
     bool ok = g_mesh->sendTextTo(dest, text, ts);
