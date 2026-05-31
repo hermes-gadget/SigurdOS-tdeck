@@ -103,6 +103,12 @@ TEST_F(MeshWrapperTest, GetUnreadCountReturnsInt) {
     SUCCEED();
 }
 
+TEST_F(MeshWrapperTest, ApplyRadioParamsAcceptsRxGainFlag) {
+    using fn = bool (*)(float, float, int, int, int, bool);
+    (void)static_cast<fn>(slopos::mesh::applyRadioParams);
+    SUCCEED();
+}
+
 // ── Initial unread count is zero ────────────────────────
 TEST_F(MeshWrapperTest, UnreadCountStartsAtZero) {
     EXPECT_EQ(slopos::mesh::pendingMessageCount(), 0);
