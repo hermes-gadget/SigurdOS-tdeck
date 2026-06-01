@@ -89,6 +89,7 @@ static const ScreenEntry screen_table[] = {
     {"nodestatus",      sigurdos::ui::Screen::NodeStatus},
     {"telemetry",       sigurdos::ui::Screen::Telemetry},
     {"repeaters",       sigurdos::ui::Screen::Repeaters},
+    {"system",          sigurdos::ui::Screen::SettingsSystem},
 };
 
 static const char* screen_name(sigurdos::ui::Screen s) {
@@ -970,6 +971,13 @@ static void cmd_reboot() {
     esp_restart();
 }
 
+// ── Cmd: factoryreset ─────────────────────────────────────────
+static void cmd_factoryreset() {
+    Serial.println(F("[test] factory reset: erasing all data and rebooting..."));
+    Serial.flush();
+    sigurdos::mesh::factoryReset();
+}
+
 // ── Cmd: advert ───────────────────────────────────────────
 static void cmd_advert() {
     bool ok = sigurdos::mesh::sendAdvert();
@@ -1133,6 +1141,8 @@ static bool dispatch(const char* line) {
         cmd_setrf(arg);
     } else if (strcmp(cmd, "reboot") == 0 || strcmp(cmd, "restart") == 0) {
         cmd_reboot();
+    } else if (strcmp(cmd, "factoryreset") == 0 || strcmp(cmd, "wipe") == 0) {
+        cmd_factoryreset();
     } else if (strcmp(cmd, "advert") == 0) {
         cmd_advert();
     } else {
