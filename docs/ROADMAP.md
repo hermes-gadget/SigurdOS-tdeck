@@ -173,8 +173,9 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 
 > Some `NodePrefs` fields already exist (`advert_interval`, `advert_type`, `flood_max_hops`) — check `src/hal/prefs.h` before adding new ones.
 
-### 2.1 — Periodic auto-advert — ❌ NOT NEEDED
-> User declined — not implementing.
+### 2.1 — Periodic auto-advert — S ✅
+- **Status:** Done. *(Audit 2026-06-01 reclassified this from "declined" — the feature is in fact wired.)* `advert_interval` (half-minutes, `0` = disabled) in `NodePrefs`, a Settings cycle in `screens.cpp`, persisted in `prefs.cpp`, and a re-advert timer in `mesh::loop()` (`mesh_wrapper.cpp`) that calls `sendAdvert()` on the interval. Defaults to `0` (off).
+- **Upstream ref:** MISSING_FEATURES → "Periodic auto-advert" (`NodePrefs::advert_interval`).
 
 ### 2.2 — Temporary radio config (no NVS write) — ❌ NOT NEEDED
 > User declined — not implementing.
@@ -219,7 +220,7 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 
 ## Phase 4 — Infrastructure interaction ✅ COMPLETED
 
-> **Status: ✅ Items 4.1–4.8 done. Items 4.9–4.10 declined — not implementing.**
+> **Status: ✅ Items 4.1–4.8 done (4.3 has an outstanding answer-side — see its note and 6.4). Items 4.9–4.10 declined — not implementing.**
 > Phase 0 cutover was the prerequisite.
 
 ### 4.1 — Generic binary-request framework (REQ/RESPONSE) — M ✅
@@ -230,8 +231,8 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 - **Status:** Done. `REQ_TYPE_GET_STATUS` request with NodeStatus UI panel.
 - **PR:** #253.
 
-### 4.3 — Telemetry queries (remote + self, CayenneLPP) — M ✅
-- **Status:** Done. Send `REQ_TYPE_GET_TELEMETRY_DATA`; decode CayenneLPP (voltage, temp, humidity, lat-lon); answer inbound requests with own battery.
+### 4.3 — Telemetry queries (remote + self, CayenneLPP) — M ✅ ⚠️ answer-side outstanding
+- **Status:** Remote query done. Send `REQ_TYPE_GET_TELEMETRY_DATA` and decode the CayenneLPP response (voltage, temp, humidity, lat-lon) — `requestTelemetry()` in `mesh_wrapper.cpp`. **Answering inbound telemetry is NOT implemented:** `SigurdMeshV2::onContactRequest()` (`sigurd_mesh_v2.h`) is a skeleton that returns `0`, so the T-Deck never replies with its own battery/telemetry when queried. *(Audit 2026-06-01 found the "answer inbound requests with own battery" claim inaccurate.)* The answer side + per-type policy is tracked as **6.4** below.
 - **PRs:** #2907746, #0ee06ea.
 
 ### 4.4 — Path discovery request — M ✅
@@ -267,9 +268,9 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 ### 5.1 — Contact locations on Map — M
 - **Upstream ref:** MISSING_FEATURES → "Contact locations on Map screen". Coordinates already in `SlopContact` (`has_location`/`latitude`/`longitude`). Render labelled markers on the map canvas; tap → contact detail. Pure UI + map math.
 
-### 5.2 — Factory reset — S
-- **Upstream ref:** MISSING_FEATURES → "Factory reset". Settings action (double-confirm): clear NVS prefs + contacts + channels, regenerate identity, delay for flash, reboot.
-- **Trap:** the `ESP.restart()` flash-write delay (see trap list).
+### 5.2 — Factory reset — S ✅
+- **Status:** Done. "Factory reset" action on the Settings → System screen (double-confirm) → `mesh::factoryReset()` clears NVS prefs + contacts + channels, regenerates identity, delays for flash, then reboots.
+- **PR:** #275 (issue #274).
 
 ### 5.3 — Identity backup (export/import) — M
 - **Upstream ref:** MISSING_FEATURES → "Identity backup". Export the private key (hex/QR); import re-keys the node. **Hard part:** on import, every contact's shared secret must be recomputed (`calcSharedSecret`). See [`src/helpers/IdentityStore.h`](https://github.com/meshcore-dev/MeshCore/blob/main/src/helpers/IdentityStore.h).
@@ -277,8 +278,9 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 ### 5.4 — QR code generation + URI import — L / M
 - **Upstream ref:** MISSING_FEATURES → "QR code generation", "QR code / URI import". Add a tiny MIT QR encoder (~2 KB; check GPL-3.0 compatibility — a rejection trigger if not). Post-migration, `BaseChatMesh::exportContact`/`importContact` produce the payloads. URI scheme: `meshcore://contact/add?...` / `meshcore://channel/add?...`.
 
-### 5.5 — Node stats query — S
-- **Upstream ref:** MISSING_FEATURES → "Node stats query". Surface the existing counters (`getNumSent*`, `getNumRecv*`, airtime) + drops on a diagnostics panel.
+### 5.5 — Node stats query — S ✅
+- **Status:** Done. Node Stats diagnostics panel surfacing sent/recv flood+direct counters, airtime totals, and duplicate/drop counts. Reachable from navigation (`nodestats` nav entry).
+- **PR:** #277 (issue #276).
 
 ### 5.6 — Universal trackball back-swipe — M
 - **Upstream ref:** MISSING_FEATURES → "Universal trackball back-swipe". Also KNOWN_ISSUES. Extract the swipe handler from `chat_screen.cpp` into `navigation.cpp`; apply to all screens; resolve conflicts with screens that use left-swipe themselves (two-swipe-commit pattern suggested).
@@ -294,6 +296,47 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 
 ### 5.10 — OTA firmware update — L
 - **Upstream ref:** MISSING_FEATURES → "OTA firmware update". OTA partition layout in `platformio.ini`; WiFi or BLE download (neither initialised today); UI progress. Transfer uses ESP-IDF `esp_ota_ops.h`. Biggest single item — do last.
+
+---
+
+## Phase 6 — Companion parity gaps (audit 2026-06-01)
+
+> **Status: open.** New companion-firmware deltas found auditing SigurdOS against `lib/meshcore/examples/companion_radio/` (`FIRMWARE_VER_CODE 12` / v1.15.0). Every item here is **companion-relevant** — infrastructure-only deltas (region / flood-scope routing, allowed-repeat-freq, path-hash-mode, BLE-modem) are deliberately excluded, as are the transport/handshake-only codes (`CMD_APP_START`, `CMD_DEVICE_QEURY`, `CMD_SYNC_NEXT_MESSAGE`) that only exist for a phone-tethered modem. These are not yet catalogued in the protected [`MISSING_FEATURES.md`](MISSING_FEATURES.md), so they cite upstream companion source directly; fold them into that file in a separate protected-file PR. Do them as independent small PRs.
+
+### 6.1 — Multi-ACK reliability toggle — S
+- **What:** The companion can send extra redundant ACK transmissions for direct messages to improve delivery on lossy links. SigurdOS does not override the hook, so it always sends the minimum, and there is no setting.
+- **What's needed:** Add `multi_acks` (0/1) to `NodePrefs`; override `getExtraAckTransmitCount()` in `SigurdMeshV2` to return it; add a Settings toggle.
+- **Upstream ref:** [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `getExtraAckTransmitCount()` returns `_prefs.multi_acks`; `CMD_SET_OTHER_PARAMS` (38) sets it. [`NodePrefs.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/NodePrefs.h) — `multi_acks`.
+
+### 6.2 — Message-arrival notification (buzzer) + quiet toggle — M
+- **What:** The companion beeps the buzzer on message arrival and exposes a `buzzer_quiet` mute. SigurdOS defines `PIN_BUZZER` (GPIO 46) in `tdeck_pins.h` but never drives it — there is no audible notification at all, and no mute setting.
+- **What's needed:** A small buzzer HAL (active-low on GPIO 46) + mock + test; beep on incoming DM/channel message; a `buzzer_quiet` pref and a Settings "Notification sound ON/OFF" toggle.
+- **Upstream ref:** [`NodePrefs.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/NodePrefs.h) — `buzzer_quiet`; companion UI calls `buzzer.quiet(_node_prefs->buzzer_quiet)`.
+
+### 6.3 — Client-repeat mode (companion also relays) — M
+- **What:** The companion can optionally relay/forward packets while remaining a chat node (`client_repeat`). SigurdOS has no packet-forwarding path and no toggle; the `advert_type` pref exists in `NodePrefs` but has no UI. (Full node-type-as-repeater is infrastructure — out of scope; this is only the companion's opportunistic-relay flag.)
+- **What's needed:** Add `client_repeat` to `NodePrefs`; gate forwarding on it in `SigurdMeshV2`; an "Advanced" Settings toggle. Relaying raises airtime — respect the duty-cycle budget.
+- **Upstream ref:** MISSING_FEATURES → "Node type selection" (broader, infra-leaning context). [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — forwarding gated on `_prefs.client_repeat != 0`. [`NodePrefs.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/NodePrefs.h) — `client_repeat`.
+
+### 6.4 — Answer inbound telemetry + telemetry-mode policy — M
+- **What:** Completes the answer side of **4.3**. The companion replies to an inbound `REQ_TYPE_GET_TELEMETRY_DATA` with its own CayenneLPP telemetry (battery, optionally location/environment), gated by per-category policy (`telemetry_mode_base`/`_loc`/`_env`: deny / allow-by-flags / allow-all). SigurdOS's `onContactRequest()` is a stub returning `0`.
+- **What's needed:** Implement `SigurdMeshV2::onContactRequest()` to build a CayenneLPP reply with `addVoltage(TELEM_CHANNEL_SELF, battery)`; add `telemetry_mode_*` prefs + a Settings policy control.
+- **Upstream ref:** MISSING_FEATURES → "Telemetry queries (remote + self, CayenneLPP)" (answer-side bullet). [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `onContactRequest()` answers `REQ_TYPE_GET_TELEMETRY_DATA`; `TELEM_MODE_DENY/ALLOW_FLAGS/ALLOW_ALL` in [`NodePrefs.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/NodePrefs.h).
+
+### 6.5 — Advert path query (diagnostic) — S *(niche)*
+- **What:** Report the network path an advert took to reach this node (per-pubkey advert-path table). A useful diagnostic; SigurdOS keeps no advert-path table and exposes nothing.
+- **What's needed:** Track recent advert paths keyed by pubkey prefix; surface the path for a contact on Contact Detail or the Signal/Trace screen.
+- **Upstream ref:** [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `CMD_GET_ADVERT_PATH` (42) / `RESP_CODE_ADVERT_PATH`; the `advert_paths[]` table.
+
+### 6.6 — Storage usage display — S *(niche)*
+- **What:** The companion reports filesystem storage used/total alongside battery. SigurdOS shows battery but never surfaces flash/SD usage — `hal/sdcard.cpp` already computes SD capacity/free, so the data exists; only the display is missing.
+- **What's needed:** Add used/total (SPIFFS + SD) to the Node Stats panel (5.5) or a storage line on Settings → System.
+- **Upstream ref:** [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `CMD_GET_BATT_AND_STORAGE` (20) / `RESP_CODE_BATT_AND_STORAGE` (battery mV + used/total KB).
+
+### 6.7 — Reboot action — S *(low value)*
+- **What:** A plain "Reboot". Largely covered already — Radio Setup has "Save & Reboot", Factory Reset reboots, and `tdeck_board.h` has `reboot()`. Listed for completeness against `CMD_REBOOT`.
+- **What's needed:** Optionally a dedicated "Reboot" button on Settings → System next to Factory Reset (flush pending saves, ~100 ms delay, `esp_restart()`).
+- **Upstream ref:** [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `CMD_REBOOT` (19, guarded by a literal `"reboot"` payload).
 
 ---
 
@@ -313,10 +356,13 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 |                               │
 |                               ▼
 |                           Phase 5 (identity/UI/security/OTA)
+|                               │
+|                               ▼
+|                           Phase 6 (companion parity gaps)
 ```
 
-- **Phases 0–4 ✅** are complete.
-- **Phase 5** is the remaining work. Items within it are independent unless a dependency is noted — do them as separate small PRs.
+- **Phases 0–4 ✅** are complete (4.3 has an outstanding answer-side, tracked as 6.4).
+- **Phase 5 & 6** are the remaining work. Items within them are independent unless a dependency is noted — do them as separate small PRs.
 
 ## Final reminders for the agent
 
