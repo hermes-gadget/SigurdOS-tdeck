@@ -217,44 +217,48 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 
 ---
 
-## Phase 4 — Infrastructure interaction
+## Phase 4 — Infrastructure interaction ✅ COMPLETED
 
-> **Phase 0 cutover is a prerequisite for this entire phase.** Then build the request framework FIRST (4.1) — it unblocks 4.2–4.5.
+> **Status: ✅ Items 4.1–4.8 done. Items 4.9–4.10 declined — not implementing.**
+> Phase 0 cutover was the prerequisite.
 
-### 4.1 — Generic binary-request framework (REQ/RESPONSE) — M  ★ keystone
-- **Upstream ref:** MISSING_FEATURES → "Generic binary request framework" + "Direct request/response".
-- **Steps:** expose `BaseChatMesh::sendRequest()` (both overloads) through the wrapper; add a tag→handler dispatch in `onContactResponse`.
-- **Done when:** you can send an arbitrary REQ to a contact and route the tagged RESPONSE to a handler. Add native-test coverage for the parse/dispatch path in `test_mesh_messaging`.
+### 4.1 — Generic binary-request framework (REQ/RESPONSE) — M ✅
+- **Status:** Done. `BaseChatMesh::sendRequest()` exposed through wrapper with tag→handler dispatch.
+- **PR:** #251.
 
-### 4.2 — Status request — M  (depends on 4.1)
-- **Upstream ref:** MISSING_FEATURES → "Status request". Send `REQ_TYPE_GET_STATUS`, parse the status blob (uptime/battery/airtime/queue), show on a node-status panel. Reference field layout in [`examples/simple_repeater/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/simple_repeater/MyMesh.cpp).
+### 4.2 — Status request — M ✅
+- **Status:** Done. `REQ_TYPE_GET_STATUS` request with NodeStatus UI panel.
+- **PR:** #253.
 
-### 4.3 — Telemetry queries (remote + self, CayenneLPP) — M  (depends on 4.1)
-- **Upstream ref:** MISSING_FEATURES → "Telemetry queries". Send `REQ_TYPE_GET_TELEMETRY_DATA`; decode CayenneLPP channels (voltage/temp/humidity/lat-lon); optionally answer inbound requests with our own battery.
-- **Note:** CayenneLPP decode is a small amount of byte parsing — see [`src/helpers/sensors/`](https://github.com/meshcore-dev/MeshCore/tree/main/src/helpers/sensors).
+### 4.3 — Telemetry queries (remote + self, CayenneLPP) — M ✅
+- **Status:** Done. Send `REQ_TYPE_GET_TELEMETRY_DATA`; decode CayenneLPP (voltage, temp, humidity, lat-lon); answer inbound requests with own battery.
+- **PRs:** #2907746, #0ee06ea.
 
-### 4.4 — Path discovery request — M  (depends on 4.1)
-- **Upstream ref:** MISSING_FEATURES → "Path discovery request". Distinct from Trace. Discover a route to a contact with no known path; store into `out_path`.
+### 4.4 — Path discovery request — M ✅
+- **Status:** Done. Distinct from Trace — discovers route to a contact with unknown path.
+- **PRs:** #944bded, #ae68b3d.
 
-### 4.5 — Repeater/room login + remote administration — L
-- **Upstream ref:** MISSING_FEATURES → "Repeater / room-server login + remote administration".
-- **Steps:** expose `sendLogin()` + `sendCommandData()` + connection sessions through the wrapper; parse the login response permission byte.
-- **UI:** "Login / Admin" on repeater/room contacts; password field; command console; show permission level.
+### 4.5 — Repeater/room login + remote administration — L ✅
+- **Status:** Done. Dedicated repeater detail screen with login flow, password field, admin command terminal with live response polling.
+- **PR:** #259.
 
-### 4.6 — Room server message fetch — L  (depends on 4.1 + 4.5)
-- **Upstream ref:** MISSING_FEATURES → "Room server message fetch". Detect `ADV_TYPE_ROOM` contacts (type already parsed); login; fetch stored posts; merge into the message store. Reference: [`examples/simple_room_server/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/simple_room_server/MyMesh.cpp).
+### 4.6 — Room server message fetch — L ✅
+- **Status:** Done. Login to room server, fetch stored posts, merge into message store.
+- **PR:** #263.
 
-### 4.7 — Anonymous requests (send) — M
-- **Upstream ref:** MISSING_FEATURES → "Anonymous requests". We already *receive* them. Expose `BaseChatMesh::sendAnonReq()` through the wrapper. UI: "Message unknown node" / Terminal command.
+### 4.7 — Anonymous requests (send) — M ✅
+- **Status:** Done. Expose `BaseChatMesh::sendAnonReq()` through wrapper with UI.
+- **PR:** #260.
 
-### 4.8 — Group data datagrams — M
-- **Upstream ref:** MISSING_FEATURES → "Group data datagrams". Add `sendGroupDatagram(channel, type_code, data, len)` + a received-datagram type dispatch (currently `onGroupDataRecv` renders everything as text).
+### 4.8 — Group data datagrams — M ✅
+- **Status:** Done. `sendGroupDatagram(channel, type_code, data, len)` + received-datagram type dispatch.
+- **PR:** #265.
 
-### 4.9 — Multipart messages — L
-- **Upstream ref:** MISSING_FEATURES → "Multipart messages". Per-sender PSRAM reassembly buffer; raise the 150-byte send cap in `sendTextTo`/`sendGroupText`. The library only has multi-ACK today — this is mostly new code in `SlopMesh`.
+### 4.9 — Multipart messages — L ❌ NOT DOING
+- **Reason:** User declined — not implementing.
 
-### 4.10 — Raw custom payloads — L
-- **Upstream ref:** MISSING_FEATURES → "Raw custom payloads". `onRawDataRecv` is a stub (note: we already use `createRawData` internally for PING/PONG). Define an app dispatch + registration API. Lowest priority.
+### 4.10 — Raw custom payloads — L ❌ NOT DOING
+- **Reason:** User declined — not implementing.
 
 ---
 
@@ -301,8 +305,8 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 |        ▼
 | Phase 0  migrate to BaseChatMesh ──── ✅ COMPLETED
 |        │
-|        ├──────────────► Phase 4  keystone 4.1 → 4.2..4.10
-|        │                        │
+|        ├──────────────► Phase 4 (4.1–4.8) ──── ✅ COMPLETED
+|        │                        │            (4.9–4.10 declined)
 | Phase 2 (radio/config) ── ✅ COMPLETED
 |        │                        │
 |        └────────► Phase 3 (messaging polish) ── ✅ COMPLETED
@@ -311,9 +315,8 @@ The cost is concentrated in **one place**: adopting `BaseChatMesh`'s `ContactInf
 |                           Phase 5 (identity/UI/security/OTA)
 ```
 
-- **Phase 0 ✅**, **Phase 1 ✅**, **Phase 2 ✅**, and **Phase 3 ✅** are complete.
-- **Phase 4 keystone (4.1 generic binary-request framework)** is the next logical step. It unblocks 4.2–4.5 and Phase 3 items that depend on request/response infrastructure.
-- **Within a phase, items are independent** unless a dependency is noted — do them as separate small PRs.
+- **Phases 0–4 ✅** are complete.
+- **Phase 5** is the remaining work. Items within it are independent unless a dependency is noted — do them as separate small PRs.
 
 ## Final reminders for the agent
 

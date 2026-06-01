@@ -19,6 +19,7 @@
 
 #include "home_screen.h"
 #include "screens.h"
+#include "chat_screen.h"
 #include "navigation.h"
 #include "theme.h"
 #include "responsive.h"
@@ -60,15 +61,15 @@ struct IconDef {
 
 static const IconDef icons[] = {
     {"CHATS",     LV_SYMBOL_ENVELOPE,   true,  Screen::Chat},
+    {"DMs",       LV_SYMBOL_FILE,       false, Screen::Chat},
+    {"ROOMS",     LV_SYMBOL_DIRECTORY,  false, Screen::Contacts},
     {"CONTACTS",  LV_SYMBOL_CALL,       false, Screen::Contacts},
     {"REPEATERS", LV_SYMBOL_WIFI,       false, Screen::Repeaters},
-    {"FINDER",    LV_SYMBOL_EYE_OPEN,   false, Screen::Network},
-    {"PACKETS",   LV_SYMBOL_LIST,       false, Screen::Heard},
-    {"MAP",       LV_SYMBOL_GPS,        false, Screen::Map},
     {"ADVERTISE", LV_SYMBOL_BELL,       false, Screen::Advertise},
-    {"SETTINGS",  LV_SYMBOL_SETTINGS,   false, Screen::Settings},
-    {"TRACE",     LV_SYMBOL_SHUFFLE,    false, Screen::Trace},
+    {"MAP",       LV_SYMBOL_GPS,        false, Screen::Map},
     {"TERMINAL",  LV_SYMBOL_KEYBOARD,   false, Screen::Terminal},
+    {"PACKETS",   LV_SYMBOL_LIST,       false, Screen::Heard},
+    {"SETTINGS",  LV_SYMBOL_SETTINGS,   false, Screen::Settings},
     {"SETUP",     LV_SYMBOL_HOME,       false, Screen::Onboarding},
     {"SIGNAL",    LV_SYMBOL_BARS,       false, Screen::Signal},
 };
@@ -165,8 +166,22 @@ static void apply_selection(int old_idx = -1)
 static void on_icon_click(lv_event_t* e)
 {
     int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    if (idx >= 0 && idx < ICON_COUNT)
+    if (idx >= 0 && idx < ICON_COUNT) {
+        // Reset filters to defaults
+        chat_screen_set_filter(0);
+        contacts_screen_set_filter(-1);
+
+        // Apply filter based on which icon was clicked
+        if (strcmp(icons[idx].label, "DMs") == 0) {
+            chat_screen_set_filter(2);       // DMs only
+        } else if (strcmp(icons[idx].label, "CHATS") == 0) {
+            chat_screen_set_filter(1);       // #channels only
+        } else if (strcmp(icons[idx].label, "ROOMS") == 0) {
+            contacts_screen_set_filter(ADV_TYPE_ROOM);  // room servers only
+        }
+        // CONTACTS: default filter (CHAT + ROOM) — start DM from here
         navigate_to(icons[idx].target);
+    }
 }
 
 // ── Top bar ─────────────────────────────────────────────

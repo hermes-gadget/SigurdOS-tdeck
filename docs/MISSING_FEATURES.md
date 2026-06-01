@@ -126,16 +126,10 @@ When a learned path goes stale (a repeater moves or dies), messages keep failing
 
 ---
 
-### Multipart messages (PAYLOAD_TYPE_MULTIPART 0x0A) — L
+### Multipart messages (PAYLOAD_TYPE_MULTIPART 0x0A) — ❌ NOT DOING
 
-MeshCore defines a multipart packet type for segmenting large payloads across LoRa frames. SlopOS caps outgoing text at 150 bytes (`sendTextTo`/`sendGroupText` in `slop_mesh.h`) — longer messages are silently truncated. The library only implements one subtype today (multi-ACK); there is no general reassembly buffer.
-
-**What's needed:** Implement multipart send/receive in `SlopMesh`. Raise the chat input limit. Add a per-sender PSRAM reassembly buffer.
-
-**MeshCore reference:**
-- [`src/Packet.h`](https://github.com/meshcore-dev/MeshCore/blob/main/src/Packet.h) — `#define PAYLOAD_TYPE_MULTIPART 0x0A`
-- [`src/Mesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/src/Mesh.cpp) — `case PAYLOAD_TYPE_MULTIPART:` dispatch (parses `remaining` high nibble + embedded subtype low nibble)
-- [`src/Mesh.h`](https://github.com/meshcore-dev/MeshCore/blob/main/src/Mesh.h) — `Mesh::createMultiAck(uint32_t ack_crc, uint8_t remaining)` (the only multipart factory)
+- **Reason:** User declined — not implementing. 150-byte send cap remains.
+- **Reference (for posterity):** MeshCore defines a multipart packet type for segmenting large payloads across LoRa frames. [`src/Packet.h`](https://github.com/meshcore-dev/MeshCore/blob/main/src/Packet.h) — `#define PAYLOAD_TYPE_MULTIPART 0x0A`
 
 ---
 
@@ -192,16 +186,10 @@ SlopOS *receives* anonymous requests in `onAnonDataRecv` (shown as `anon_XX`) bu
 
 ---
 
-### Raw custom payloads (PAYLOAD_TYPE_RAW_CUSTOM 0x0F) — L
+### Raw custom payloads (PAYLOAD_TYPE_RAW_CUSTOM 0x0F) — ❌ NOT DOING
 
-`onRawDataRecv` in `slop_mesh.h` is a stub. (Note: SlopOS *does* use `createRawData()` internally to carry its PING/PONG control strings, but there is no general app dispatch.) This payload type carries unstructured encrypted byte strings — the building block for custom apps.
-
-**What's needed:** Define an application dispatch interface and a registration API.
-
-**MeshCore reference:**
-- [`src/Packet.h`](https://github.com/meshcore-dev/MeshCore/blob/main/src/Packet.h) — `#define PAYLOAD_TYPE_RAW_CUSTOM 0x0F`
-- [`src/Mesh.h`](https://github.com/meshcore-dev/MeshCore/blob/main/src/Mesh.h) — `Mesh::createRawData()`, `onRawDataRecv()`
-- [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `CMD_SEND_RAW_DATA` (25) handler; `onRawDataRecv()` pushes `PUSH_CODE_RAW_DATA`
+- **Reason:** User declined — not implementing.
+- **Reference (for posterity):** `onRawDataRecv` in `slop_mesh.h` is a stub. (Note: SlopOS uses `createRawData()` internally for PING/PONG, but there is no general app dispatch.) [`src/Packet.h`](https://github.com/meshcore-dev/MeshCore/blob/main/src/Packet.h) — `#define PAYLOAD_TYPE_RAW_CUSTOM 0x0F`
 
 ---
 

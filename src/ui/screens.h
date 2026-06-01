@@ -23,6 +23,7 @@
 namespace slopos::ui {
 void heard_screen_show();
 void contacts_screen_show();
+void contacts_screen_set_filter(int adv_type); // -1=all, else ADV_TYPE_*
 void contact_detail_screen_show(const char* contact_name);
 void signal_screen_show();
 void map_screen_show();
@@ -37,6 +38,9 @@ void channels_screen_show();
 void finder_screen_show();
 void repeaters_screen_show();
 void repeater_detail_screen_show(const char* contact_name, bool skip_login = false);
+
+void admin_cmd_show(const char* contact_name);  // test hook: open admin cmd terminal
+ origin/dev
 void advertise_screen_show();
 void radio_setup_screen_show();
 void custom_rf_screen_show();

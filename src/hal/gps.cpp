@@ -231,9 +231,13 @@ void slopos_gps_loop() {
                                              + (uint32_t)(30.6001 * (m + 1)) + d - 719469);
                     uint32_t epoch = days * 86400UL + gps.hour * 3600UL
                                    + gps.minute * 60UL + gps.second;
-                    // Set system RTC (available on both ESP32 and native builds)
-                    struct timeval tv = { (time_t)epoch, 0 };
+                    // Set system RTC where settimeofday is available.
+                    // Native Windows builds do not expose it, and the tests only
+                    // need to validate that the GPS parser reaches synced state.
+#if !defined(_WIN32)
+                    struct timeval tv = { static_cast<time_t>(epoch), 0 };
                     settimeofday(&tv, nullptr);
+#endif
                 }
             }
         } else if (c == '\r') {

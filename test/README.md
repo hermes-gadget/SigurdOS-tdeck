@@ -3,7 +3,7 @@
 ## Running Tests
 
 ```bash
-# Run all 294 tests on native platform (no hardware needed)
+# Run all 323 tests on native platform (no hardware needed)
 pio test -e native_test -v
 
 # Run specific test file
@@ -36,6 +36,7 @@ test/
 ├── test_mesh_wrapper/         # Mesh API contract, return value ranges
 ├── test_navigation/           # Screen routing state machine, back nav
 ├── test_pins/                 # Pin conflicts, GPIO ranges, bus consistency
+├── test_prefs/                # NodePrefs defaults and persistence behavior
 ├── test_sdcard/               # SPI init, mount, read/write, edge cases
 ├── test_terminal/             # Terminal buffer management, command parsing
 ├── test_theme/                # Color constants, distinctness, brightness
@@ -52,12 +53,13 @@ test/
 | Emoji | 22 | Emoji font rendering, fallback, sizing |
 | GPS | 26 | NMEA parsing, coordinate conversion, fix detection |
 | Home screen | 16 | Layout, icon grid, status bar interactions |
-| Keyboard | 20 | Matrix scan, keymap, debounce, ghost detection, LVGL mapping |
+| Keyboard | 21 | Matrix scan, keymap, debounce, ghost detection, LVGL mapping |
 | Map renderer | 25 | Tile math (lat/lon→tile), zoom levels, bounding box |
-| Mesh messaging | 43 | Message queue, send/receive, channel ops, contact export |
-| Mesh wrapper | 18 | API signatures, return ranges, unread count init |
+| Mesh messaging | 64 | Message queue, send/receive, channel ops, contact export |
+| Mesh wrapper | 22 | API signatures, return ranges, unread count init |
 | Navigation | 22 | Forward/back, history stack, deep nav, all pairs |
 | Pin definitions | 9 | GPIO range, SPI/I2C conflicts, duplicates, LoRa params |
+| Preferences | 3 | NodePrefs defaults, mock persistence, RX boosted gain setting |
 | SD Card | 15 | SPI init, mount, read/write, directory listing, edge cases |
 | Terminal | 7 | Buffer management, command parsing, line handling |
 | Theme constants | 7 | Darkness, vibrancy, distinctness, readability |

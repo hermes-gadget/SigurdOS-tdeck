@@ -443,6 +443,12 @@ void heard_screen_show()
 // ════════════════════════════════════════════════════════
 // Contacts — tap-to-message directory
 // ════════════════════════════════════════════════════════
+static int contacts_filter_type = -1; // -1=all, else ADV_TYPE_*
+
+void contacts_screen_set_filter(int adv_type) {
+    contacts_filter_type = adv_type;
+}
+
 void contacts_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Contacts");
@@ -450,11 +456,19 @@ void contacts_screen_show()
     slopos::mesh::ContactInfo all_contacts[32];
     int total = slopos::mesh::exportContactsFull(all_contacts, 32);
 
-    // Filter to companions (CHAT) and room servers (ROOM)
+    // Filter based on mode
     int n = 0;
     for (int i = 0; i < total; i++) {
-        if (all_contacts[i].type == ADV_TYPE_CHAT ||
-            all_contacts[i].type == ADV_TYPE_ROOM) {
+        bool keep = false;
+        if (contacts_filter_type >= 0) {
+            // Specific type filter (e.g. ROOMS → ADV_TYPE_ROOM only)
+            keep = (all_contacts[i].type == contacts_filter_type);
+        } else {
+            // Default: companions (CHAT) and room servers (ROOM)
+            keep = (all_contacts[i].type == ADV_TYPE_CHAT ||
+                    all_contacts[i].type == ADV_TYPE_ROOM);
+        }
+        if (keep) {
             if (n < i) all_contacts[n] = all_contacts[i];
             n++;
         }
@@ -734,8 +748,12 @@ static void show_login_password_dialog(const char* contact_name)
 struct LoginPollCtx {
     char* name;
     lv_obj_t* screen;
+
+    uint32_t gen;        // matches g_login_poll_gen at creation time; stale if timer restarted
 };
 static lv_timer_t* g_login_poll_timer = nullptr;
+static uint32_t g_login_poll_gen = 0;
+ origin/dev
 
 static void on_login_poll_timer(lv_timer_t* t) {
     LoginPollCtx* ctx = (LoginPollCtx*)lv_timer_get_user_data(t);
@@ -745,8 +763,11 @@ static void on_login_poll_timer(lv_timer_t* t) {
         return;
     }
 
+
+    // If a newer generation timer was started, this ctx is stale
     // If user navigated away from the screen, stop polling
-    if (lv_scr_act() != ctx->screen) {
+    if (!ctx->screen || ctx->gen != g_login_poll_gen || lv_scr_act() != ctx->screen) {
+ origin/dev
         free(ctx->name);
         delete ctx;
         lv_timer_del(t);
@@ -786,7 +807,10 @@ static void start_login_poll_timer(const char* name) {
         lv_timer_del(g_login_poll_timer);
         g_login_poll_timer = nullptr;
     }
-    LoginPollCtx* ctx = new LoginPollCtx{strdup(name), lv_scr_act()};
+
+    g_login_poll_gen++;
+    LoginPollCtx* ctx = new LoginPollCtx{strdup(name), lv_scr_act(), g_login_poll_gen};
+ origin/dev
     g_login_poll_timer = lv_timer_create(on_login_poll_timer, 2000, ctx);
 }
 
@@ -796,120 +820,219 @@ static void show_admin_cmd_dialog(const char* contact_name)
 {
     if (!contact_name) return;
 
+    // Clear stale responses from previous session
+    slopos::mesh::clearCmdResponses();
+
+    static constexpr int TERM_TOP_H    = TOP_BAR_H;         // 21
+    static constexpr int TERM_INPUT_H  = 28;
+    static constexpr int TERM_OUTPUT_H = DISPLAY_H - TERM_TOP_H - DIVIDER_H - TERM_INPUT_H;  // 190
+
     lv_obj_t* scr = lv_obj_get_screen(lv_scr_act());
-    auto dlg_sz = dialog_size(260, 110);
     lv_obj_t* dlg = lv_obj_create(scr);
-    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
-    lv_obj_center(dlg);
-    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_size(dlg, LV_PCT(100), LV_PCT(100));
+    lv_obj_align(dlg, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_PRIMARY), 0);
     lv_obj_set_style_radius(dlg, 0, 0);
     lv_obj_set_style_border_width(dlg, 0, 0);
-    lv_obj_set_style_pad_all(dlg, 8, 0);
+    lv_obj_set_style_pad_all(dlg, 0, 0);
 
-    // Title
-    lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Send admin command");
-    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    // ── Top bar (matches make_screen_full) ──────
+    lv_obj_t* top = lv_obj_create(dlg);
+    lv_obj_set_size(top, LV_PCT(100), TERM_TOP_H);
+    lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(top, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(top, 0, 0);
+    lv_obj_set_style_border_width(top, 0, 0);
+    lv_obj_set_style_pad_all(top, 0, 0);
+
+    lv_obj_t* title = lv_label_create(top);
+    char title_buf[48];
+    snprintf(title_buf, sizeof(title_buf), "> Admin: %s", contact_name);
+    lv_label_set_text(title, title_buf);
+    lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 4, 0);
 
-    // Hint
-    lv_obj_t* hint = lv_label_create(dlg);
-    lv_label_set_text(hint, "e.g. set name, set freq, reboot, status");
-    lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 22);
+    // Close button (top-right)
+    lv_obj_t* close_btn = lv_btn_create(top);
+    lv_obj_set_size(close_btn, 20, TERM_TOP_H - 2);
+    lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -2, 0);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(ACCENT_RED), 0);
+    lv_obj_set_style_radius(close_btn, 0, 0);
+    lv_obj_set_style_pad_all(close_btn, 0, 0);
+    lv_obj_t* x_lbl = lv_label_create(close_btn);
+    lv_label_set_text(x_lbl, LV_SYMBOL_CLOSE);
+    lv_obj_center(x_lbl);
+    lv_obj_set_style_text_color(x_lbl, lv_color_hex(0xffffff), 0);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_t* top = lv_obj_get_parent(btn);
+        lv_obj_t* dlg = lv_obj_get_parent(top);
+        lv_obj_del_async(dlg);
+    }, LV_EVENT_CLICKED, nullptr);
 
-    // Command textarea
-    lv_obj_t* ta = lv_textarea_create(dlg);
-    lv_obj_set_size(ta, dlg_sz.w - 16, 28);
-    lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 36);
-    lv_textarea_set_placeholder_text(ta, "Type command...");
+    // Divider below top bar
+    lv_obj_t* tdiv = lv_obj_create(dlg);
+    lv_obj_set_size(tdiv, LV_PCT(100), DIVIDER_H);
+    lv_obj_align(tdiv, LV_ALIGN_TOP_MID, 0, TERM_TOP_H);
+    lv_obj_set_style_bg_color(tdiv, lv_color_hex(DIVIDER), 0);
+    lv_obj_set_style_bg_opa(tdiv, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(tdiv, 0, 0);
+
+    // ── Output area (scrollable, read-only, pure black) ─
+    lv_obj_t* out = lv_textarea_create(dlg);
+    lv_obj_set_size(out, LV_PCT(100), TERM_OUTPUT_H);
+    lv_obj_align(out, LV_ALIGN_TOP_MID, 0, TERM_TOP_H + DIVIDER_H);
+    lv_obj_set_style_bg_color(out, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(out, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(out, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(out, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_radius(out, 0, 0);
+    lv_obj_set_style_border_width(out, 0, 0);
+    lv_obj_set_style_pad_all(out, 4, 0);
+    lv_textarea_set_cursor_click_pos(out, false);
+    lv_textarea_set_max_length(out, 4096);  // prevent unbounded growth
+
+    // Welcome banner
+    lv_textarea_add_text(out, "-- Admin Terminal --\n");
+    lv_textarea_add_text(out, "Commands: ver, reboot, password,\n");
+    lv_textarea_add_text(out, "set freq, get name, etc.\n");
+
+    // Divider above input
+    lv_obj_t* bdiv = lv_obj_create(dlg);
+    lv_obj_set_size(bdiv, LV_PCT(100), DIVIDER_H);
+    lv_obj_align(bdiv, LV_ALIGN_BOTTOM_MID, 0, -TERM_INPUT_H);
+    lv_obj_set_style_bg_color(bdiv, lv_color_hex(DIVIDER), 0);
+    lv_obj_set_style_bg_opa(bdiv, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(bdiv, 0, 0);
+
+    // ── Input row (full-width flex) ──────────────
+    lv_obj_t* input_row = lv_obj_create(dlg);
+    lv_obj_set_size(input_row, LV_PCT(100), TERM_INPUT_H);
+    lv_obj_align(input_row, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_opa(input_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(input_row, 0, 0);
+    lv_obj_set_style_pad_all(input_row, 2, 0);
+    lv_obj_set_flex_flow(input_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(input_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* ta = lv_textarea_create(input_row);
+    lv_obj_set_size(ta, LV_PCT(80), TERM_INPUT_H - 4);
+    lv_textarea_set_placeholder_text(ta, "> command...");
     lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_max_length(ta, 240);  // prevent buffer overflow in echo buffer
     lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(ta, &lv_font_montserrat_12, 0);
     lv_obj_set_style_radius(ta, 0, 0);
     lv_obj_set_style_border_color(ta, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_border_width(ta, 2, 0);
     lv_group_t* g = lv_group_get_default();
     if (g) lv_group_focus_obj(ta);
 
-    // Cancel button
-    lv_obj_t* cancel_btn = lv_btn_create(dlg);
-    lv_obj_set_size(cancel_btn, 80, 24);
-    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 12, -4);
-    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_INPUT), 0);
-    lv_obj_set_style_radius(cancel_btn, 0, 0);
-    lv_obj_t* cl = lv_label_create(cancel_btn);
-    lv_label_set_text(cl, "Cancel");
-    lv_obj_center(cl);
-    lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
-        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Send button
+    // Store contact name + widget handles
     char* cmd_name = strdup(contact_name);
-    struct CmdDialogData { char* name; lv_obj_t* ta; };
-    CmdDialogData* cd = new CmdDialogData{cmd_name, ta};
+    struct TermData { char* name; lv_obj_t* ta; lv_obj_t* out; lv_timer_t* timer; bool deleted; };
+    TermData* td = new TermData{cmd_name, ta, out, nullptr, false};
+    lv_obj_set_user_data(dlg, td);
 
-    lv_obj_t* send_btn = lv_btn_create(dlg);
-    lv_obj_set_size(send_btn, 80, 24);
-    lv_obj_align(send_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
+    // ── Send button ──────────────────────────────
+    lv_obj_t* send_btn = lv_btn_create(input_row);
+    lv_obj_set_size(send_btn, LV_PCT(18), TERM_INPUT_H - 4);
     lv_obj_set_style_bg_color(send_btn, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_radius(send_btn, 0, 0);
+    lv_obj_set_style_pad_all(send_btn, 0, 0);
     lv_obj_t* sb = lv_label_create(send_btn);
     lv_label_set_text(sb, "Send");
     lv_obj_center(sb);
     lv_obj_set_style_text_color(sb, lv_color_hex(BG_PRIMARY), 0);
-    lv_obj_set_user_data(send_btn, cd);
-
-    lv_obj_add_event_cb(send_btn, [](lv_event_t* le) {
-        CmdDialogData* d = (CmdDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(le));
-        if (d && d->name) {
-            const char* cmd = lv_textarea_get_text(d->ta);
-            if (cmd && cmd[0]) {
-                slopos::mesh::sendCommand(d->name, cmd);
-                // Push a confirmation message so the user sees it in the message queue
-                char confirm[64];
-                snprintf(confirm, sizeof(confirm), "Admin cmd sent to %s", d->name);
-                slopos::mesh::mesh_v2_queue_push("System", "", confirm, 0, 0.0f);
-            }
+    lv_obj_set_user_data(send_btn, td);
+    lv_obj_add_event_cb(send_btn, [](lv_event_t* e) {
+        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+        TermData* d = (TermData*)lv_obj_get_user_data(btn);
+        if (d) {
+            auto send = [](TermData* dd) {
+                if (!dd || !dd->name) return;
+                const char* cmd = lv_textarea_get_text(dd->ta);
+                if (!cmd || !cmd[0]) return;
+                char echo[256];
+                snprintf(echo, sizeof(echo), "\n> %s\n", cmd);
+                lv_textarea_add_text(dd->out, echo);
+                bool ok = slopos::mesh::sendCommand(dd->name, cmd);
+                lv_textarea_set_text(dd->ta, "");
+                if (lv_group_get_default()) lv_group_focus_obj(dd->ta);
+                if (!ok) lv_textarea_add_text(dd->out, "! Send failed\n");
+                if (!dd->timer) {
+                    dd->timer = lv_timer_create([](lv_timer_t* t) {
+                        TermData* dd2 = (TermData*)lv_timer_get_user_data(t);
+                        if (!dd2 || dd2->deleted) return;
+                        char nb[32], tb[160];
+                        while (slopos::mesh::pollCmdResponse(nb, sizeof(nb), tb, sizeof(tb))) {
+                            if (dd2->deleted) return;
+                            if (dd2->name && strcmp(nb, dd2->name) == 0) {
+                                char rb[256];
+                                snprintf(rb, sizeof(rb), "< %s\n", tb);
+                                // Trim output if near max to prevent overflow
+                                const char* full = lv_textarea_get_text(dd2->out);
+                                if (full && strlen(full) > 3500) {
+                                    const char* mid = full + 1500;
+                                    while (*mid && *mid != '\n') mid++;
+                                    if (*mid) mid++;
+                                    char mid_copy[2048];
+                                    size_t copy_len = strlen(mid);
+                                    if (copy_len >= sizeof(mid_copy)) copy_len = sizeof(mid_copy) - 1;
+                                    memcpy(mid_copy, mid, copy_len);
+                                    mid_copy[copy_len] = '\0';
+                                    lv_textarea_set_text(dd2->out, "(...trimmed...)\n");
+                                    lv_textarea_add_text(dd2->out, mid_copy);
+                                }
+                                lv_textarea_add_text(dd2->out, rb);
+                            }
+                        }
+                    }, 500, dd);
+                }
+            };
+            send(d);
         }
-        lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
-        lv_obj_del_async(dlg);
     }, LV_EVENT_CLICKED, nullptr);
 
-    // Enter-key handler on textarea
+    // ── Enter key on textarea ────────────────────
     lv_obj_add_event_cb(ta, [](lv_event_t* te) {
-        lv_obj_t* t = (lv_obj_t*)lv_event_get_target(te);
         uint32_t key = lv_event_get_key(te);
         if (key == LV_KEY_ENTER) {
-            lv_obj_t* parent = lv_obj_get_parent(t);
-            if (parent) {
-                uint32_t c = lv_obj_get_child_cnt(parent);
-                for (uint32_t i = 0; i < c; i++) {
-                    lv_obj_t* child = lv_obj_get_child(parent, i);
-                    if (child && lv_obj_check_type(child, &lv_button_class)) {
-                        CmdDialogData* data = (CmdDialogData*)lv_obj_get_user_data(child);
-                        if (data) {
-                            lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
-                            break;
-                        }
+            lv_obj_t* t = (lv_obj_t*)lv_event_get_target(te);
+            lv_obj_t* row = lv_obj_get_parent(t);
+            uint32_t c = lv_obj_get_child_cnt(row);
+            for (uint32_t i = 0; i < c; i++) {
+                lv_obj_t* child = lv_obj_get_child(row, i);
+                if (child && lv_obj_check_type(child, &lv_button_class)) {
+                    TermData* d = (TermData*)lv_obj_get_user_data(child);
+                    if (d) {
+                        lv_obj_send_event(child, LV_EVENT_CLICKED, nullptr);
+                        break;
                     }
                 }
             }
         }
     }, LV_EVENT_KEY, nullptr);
 
-    // Cleanup
+    // ── Cleanup ──────────────────────────────────
     lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
-        CmdDialogData* d = (CmdDialogData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
+        TermData* d = (TermData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de));
         if (d) {
-            free(d->name);
+            d->deleted = true;  // prevent timer callback from using members
+            if (d->timer) lv_timer_del(d->timer);
+            if (d->name) free(d->name);
             delete d;
         }
+        slopos::mesh::clearCmdResponses();
     }, LV_EVENT_DELETE, nullptr);
-    lv_obj_set_user_data(dlg, cd);
+}
+
+// Public test hook — callable from test_controller
+void admin_cmd_show(const char* contact_name) {
+    show_admin_cmd_dialog(contact_name);
 }
 
 // ── Room message fetch dialog (Phase 4.6) ──────────
@@ -994,6 +1117,8 @@ static void show_fetch_msgs_dialog(const char* contact_name)
                 snprintf(confirm, sizeof(confirm), "Fetching msgs from %s channel %s",
                          d->name, channel);
                 slopos::mesh::mesh_v2_queue_push("System", "", confirm, 0, 0.0f);
+                // Navigate to Chat screen so user sees incoming messages
+                slopos::ui::navigate_to(slopos::ui::Screen::Chat);
             }
         }
         lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
@@ -1185,6 +1310,8 @@ void contact_detail_screen_show(const char* contact_name)
 
     }
 
+    bool is_room_type = (target->type == ADV_TYPE_ROOM || target->type == ADV_TYPE_REPEATER);
+
     // ── Action button row ───────────────────────────
     lv_obj_t* btn_row = lv_obj_create(scr);
     lv_obj_set_size(btn_row, CONTENT_W, 30);
@@ -1194,31 +1321,33 @@ void contact_detail_screen_show(const char* contact_name)
     lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Send DM button
-    lv_obj_t* dm_btn = lv_btn_create(btn_row);
-    lv_obj_set_size(dm_btn, 110, 24);
-    lv_obj_set_style_bg_color(dm_btn, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_radius(dm_btn, 0, 0);
-    lv_obj_t* dm_lbl = lv_label_create(dm_btn);
-    lv_label_set_text(dm_lbl, LV_SYMBOL_ENVELOPE " DM");
-    lv_obj_center(dm_lbl);
-    lv_obj_set_style_text_color(dm_lbl, lv_color_hex(BG_PRIMARY), 0);
-    char* dm_name = strdup(contact_name);
-    lv_obj_set_user_data(dm_btn, dm_name);
-    lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
-        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-        const char* name = (const char*)lv_obj_get_user_data(btn);
-        if (name) {
-            slopos::ui::chat_screen_open_dm(name);
-        }
-    }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
-        free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
-    }, LV_EVENT_DELETE, nullptr);
+    // Send DM button (skip for room/repeater — you don't DM a server)
+    if (!is_room_type) {
+        lv_obj_t* dm_btn = lv_btn_create(btn_row);
+        lv_obj_set_size(dm_btn, 110, 24);
+        lv_obj_set_style_bg_color(dm_btn, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_radius(dm_btn, 0, 0);
+        lv_obj_t* dm_lbl = lv_label_create(dm_btn);
+        lv_label_set_text(dm_lbl, LV_SYMBOL_ENVELOPE " DM");
+        lv_obj_center(dm_lbl);
+        lv_obj_set_style_text_color(dm_lbl, lv_color_hex(BG_PRIMARY), 0);
+        char* dm_name = strdup(contact_name);
+        lv_obj_set_user_data(dm_btn, dm_name);
+        lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
+            lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+            const char* name = (const char*)lv_obj_get_user_data(btn);
+            if (name) {
+                slopos::ui::chat_screen_open_dm(name);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(dm_btn, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
+    }
 
-    // Send Trace button
+    // Send Trace button (skip for room/repeater)
     int trace_idx = slopos::mesh::findContactIndex(contact_name);
-    if (trace_idx >= 0) {
+    if (!is_room_type && trace_idx >= 0) {
         lv_obj_t* trace_btn = lv_btn_create(btn_row);
         lv_obj_set_size(trace_btn, 110, 24);
         lv_obj_set_style_bg_color(trace_btn, lv_color_hex(BG_TERTIARY), 0);
@@ -1268,8 +1397,8 @@ void contact_detail_screen_show(const char* contact_name)
         }, LV_EVENT_DELETE, nullptr);
     }
 
-    // Request Telemetry button — second row below main buttons
-    {
+    // Request Telemetry button — second row below main buttons (skip for room/repeater)
+    if (!is_room_type) {
         lv_obj_t* tm_row = lv_obj_create(scr);
         lv_obj_set_size(tm_row, CONTENT_W, 26);
         lv_obj_align(tm_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 28));
@@ -1379,8 +1508,8 @@ void contact_detail_screen_show(const char* contact_name)
         }, LV_EVENT_DELETE, nullptr);
     }
 
-    // Reset Path + Discover Path buttons (second action row)
-    {
+    // Reset Path + Discover Path buttons (second action row) — skip for room/repeater
+    if (!is_room_type) {
         lv_obj_t* btn_row2 = lv_obj_create(scr);
         lv_obj_set_size(btn_row2, CONTENT_W, 30);
         lv_obj_align(btn_row2, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 32));
@@ -1444,8 +1573,9 @@ void contact_detail_screen_show(const char* contact_name)
         uint8_t login_st = slopos::mesh::getLoginStatus(contact_name);
         lv_obj_t* login_row = lv_obj_create(scr);
         lv_obj_set_size(login_row, CONTENT_W, 30);
-        // Stack below the existing bottom rows
-        lv_obj_align(login_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 96));
+        // Place the login row above the action btn_row so it's always visible.
+        // btn_row is at -(BOT_BAR_H + DIVIDER_H) from bottom. Place above it.
+        lv_obj_align(login_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 36));
         lv_obj_set_style_bg_opa(login_row, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(login_row, 0, 0);
         lv_obj_set_flex_flow(login_row, LV_FLEX_FLOW_ROW);
@@ -2113,7 +2243,9 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 if (name) {
                     bool cur = slopos::mesh::isContactFavourite(name);
                     slopos::mesh::setContactFavourite(name, !cur);
-                    repeater_detail_screen_show(name, false);
+
+                    repeater_detail_screen_show(name, true);
+ origin/dev
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(fav_btn, [](lv_event_t* e) {
@@ -2188,6 +2320,9 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             const char* login_text = "Not logged in";
             uint32_t login_color = TEXT_SECONDARY;
             switch (login_st) {
+
+                case LOGIN_STATUS_OK:     login_text = "Logged in";      login_color = ACCENT_GREEN; break;
+ origin/dev
                 case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
                 case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
             }
@@ -2443,7 +2578,9 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     lv_obj_add_event_cb(yb, [](lv_event_t* ce) {
                         lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce));
                         const char* cn = (const char*)lv_obj_get_user_data(dlg);
-                        if (cn) { repeater_send(cn, "reboot", "Reboot sent to %s"); }
+
+                        if (cn) { repeater_send(cn, "reboot", "Reboot sent"); }
+ origin/dev
                         lv_obj_del_async(dlg);
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_t* nb = lv_btn_create(dlg);

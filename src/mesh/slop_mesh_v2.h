@@ -584,6 +584,7 @@ public:
     void onCommandDataRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
                            uint32_t sender_timestamp, const char* text) override
     {
+        slopos::mesh::pushCmdResponse(contact.name, text);
         char buf[288];
         snprintf(buf, sizeof(buf), "[CMD] %s: %s", contact.name, text);
         slopos::mesh::mesh_v2_queue_push(contact.name, "", buf, 0, 0.0f);
