@@ -753,7 +753,7 @@ struct LoginPollCtx {
 };
 static lv_timer_t* g_login_poll_timer = nullptr;
 static uint32_t g_login_poll_gen = 0;
- origin/dev
+
 
 static void on_login_poll_timer(lv_timer_t* t) {
     LoginPollCtx* ctx = (LoginPollCtx*)lv_timer_get_user_data(t);
@@ -767,7 +767,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
     // If a newer generation timer was started, this ctx is stale
     // If user navigated away from the screen, stop polling
     if (!ctx->screen || ctx->gen != g_login_poll_gen || lv_scr_act() != ctx->screen) {
- origin/dev
+
         free(ctx->name);
         delete ctx;
         lv_timer_del(t);
@@ -810,7 +810,7 @@ static void start_login_poll_timer(const char* name) {
 
     g_login_poll_gen++;
     LoginPollCtx* ctx = new LoginPollCtx{strdup(name), lv_scr_act(), g_login_poll_gen};
- origin/dev
+
     g_login_poll_timer = lv_timer_create(on_login_poll_timer, 2000, ctx);
 }
 
@@ -2245,7 +2245,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     slopos::mesh::setContactFavourite(name, !cur);
 
                     repeater_detail_screen_show(name, true);
- origin/dev
+
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(fav_btn, [](lv_event_t* e) {
@@ -2322,7 +2322,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             switch (login_st) {
 
                 case LOGIN_STATUS_OK:     login_text = "Logged in";      login_color = ACCENT_GREEN; break;
- origin/dev
+
                 case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
                 case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
             }
@@ -2580,7 +2580,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                         const char* cn = (const char*)lv_obj_get_user_data(dlg);
 
                         if (cn) { repeater_send(cn, "reboot", "Reboot sent"); }
- origin/dev
+
                         lv_obj_del_async(dlg);
                     }, LV_EVENT_CLICKED, nullptr);
                     lv_obj_t* nb = lv_btn_create(dlg);

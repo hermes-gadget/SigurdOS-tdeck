@@ -257,7 +257,6 @@ void pushCmdResponse(const char* name, const char* text);
 bool pollCmdResponse(char* name_out, int name_sz, char* text_out, int text_sz);
 void clearCmdResponses();
 
- origin/dev
 #if defined(SLOPOS_REMOTE_TEST)
 // Test helper: inject a fake repeater contact into the mesh contact list.
 // The contact will have the given name, type ADV_TYPE_REPEATER, and test SNR/RSSI.
