@@ -1259,6 +1259,43 @@ void shutdown()
     board.sleep(0);
 }
 
+void factoryReset()
+{
+    // Save identity in case we need it for rollback, then wipe everything
+    if (g_mesh) saveIdentity(g_mesh->self_id);
+    saveChannels();
+    saveContacts();
+
+    // Close SPIFFS before reformatting
+    SPIFFS.end();
+
+    // Erase known NVS namespaces (prefs + channels, repeater passwords)
+    {
+        Preferences nvs;
+        if (nvs.begin("sigurdos", false)) {
+            nvs.clear();
+            nvs.end();
+        }
+    }
+    {
+        Preferences nvs;
+        if (nvs.begin("sigurdos_pw", false)) {
+            nvs.clear();
+            nvs.end();
+        }
+    }
+
+    // Reformat SPIFFS to wipe identity, contacts, and any other files
+    SPIFFS.format();
+
+    // Give flash writes time to complete before restart
+    delay(200);
+
+    // Reboot — on next boot, init() will find no prefs and no identity,
+    // so it will use defaults and generate a fresh identity
+    ESP.restart();
+}
+
 int getPacketLogCount() { return pkt_log_count; }
 
 bool getPacketLogEntry(int index, PacketLogEntry* out) {

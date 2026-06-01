@@ -193,4 +193,10 @@ TEST_F(MeshWrapperTest, ResetPathToSignature) {
     SUCCEED();
 }
 
+TEST_F(MeshWrapperTest, FactoryResetSignature) {
+    using fn = void (*)();
+    (void)static_cast<fn>(sigurdos::mesh::factoryReset);
+    SUCCEED();
+}
+
 } // anonymous namespace

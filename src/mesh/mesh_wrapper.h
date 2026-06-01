@@ -96,6 +96,7 @@ void saveState();
 void saveChannels();
 void loadChannels();
 void shutdown();
+void factoryReset();
 
 // ── Contact persistence ─────────────────────────
 void saveContacts();
