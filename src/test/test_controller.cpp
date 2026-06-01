@@ -90,6 +90,7 @@ static const ScreenEntry screen_table[] = {
     {"telemetry",       sigurdos::ui::Screen::Telemetry},
     {"repeaters",       sigurdos::ui::Screen::Repeaters},
     {"system",          sigurdos::ui::Screen::SettingsSystem},
+    {"nodestats",       sigurdos::ui::Screen::NodeStats},
 };
 
 static const char* screen_name(sigurdos::ui::Screen s) {
