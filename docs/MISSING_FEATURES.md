@@ -6,10 +6,10 @@ SigurdOS-TDeck is a standalone **companion-radio firmware** for the LilyGo T-Dec
 
 ## Where to find things in upstream MeshCore
 
-Every reference below links directly into **`https://github.com/meshcore-dev/MeshCore`** (main branch) so other agents can jump straight to the source. The repo submodule (`lib/meshcore/`) is pinned to companion firmware **v1.15.0 / `FIRMWARE_VER_CODE 11`** ([`examples/companion_radio/MyMesh.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.h)). Line numbers drift between versions — references cite **symbol names**, so grep the linked file if a line has moved. If a symbol can't be found upstream, check `lib/meshcore/` directly (the pinned commit is authoritative for what SigurdOS actually builds against).
+Every reference below links directly into **`https://github.com/meshcore-dev/MeshCore`** (main branch) so other agents can jump straight to the source. The repo submodule (`lib/meshcore/`) is pinned to companion firmware **v1.15.0 / `FIRMWARE_VER_CODE 12`** ([`examples/companion_radio/MyMesh.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.h)). Line numbers drift between versions — references cite **symbol names**, so grep the linked file if a line has moved. If a symbol can't be found upstream, check `lib/meshcore/` directly (the pinned commit is authoritative for what SigurdOS actually builds against).
 
 The single most useful reference is the companion radio command dispatcher:
-[`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `handleCmdFrame()` defines all **64 `CMD_*` request codes**, **28 `RESP_CODE_*` reply codes**, and **17 `PUSH_CODE_*` async push codes**. Almost every protocol feature below has a worked example in this one file.
+[`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `handleCmdFrame()` defines all **58 `CMD_*` request codes** (numbered up to 65, with gaps), **28 `RESP_CODE_*` reply codes**, and **17 `PUSH_CODE_*` async push codes**. Almost every protocol feature below has a worked example in this one file.
 
 ### ⚠️ Architectural note — read before estimating effort
 
@@ -65,13 +65,16 @@ A companion logs into a repeater or room server with a password, receiving a per
 
 ### Telemetry queries (remote + self, CayenneLPP) — M
 
-MeshCore carries sensor telemetry in CayenneLPP format. `CMD_SEND_TELEMETRY_REQ` queries a remote node's telemetry (battery voltage, environment sensors, GPS); a length-4 self-request returns the device's own telemetry. SigurdOS exposes none of this — neither requesting a remote node's battery/sensors nor reporting its own over the mesh.
+> **⚠️ Partially implemented** — the *remote query* is done (`requestTelemetry()` sends `REQ_TYPE_GET_TELEMETRY_DATA` and decodes the CayenneLPP reply; see [`ROADMAP.md`](ROADMAP.md) §4.3). The *answer side* below is still outstanding (tracked as ROADMAP §6.4).
 
-**What's needed:** Port `sendRequest(recipient, REQ_TYPE_GET_TELEMETRY_DATA, …)`. Decode the CayenneLPP response and render channels (voltage, temp, humidity, lat/lon). Optionally answer inbound telemetry requests with the T-Deck's own battery via `onContactRequest()`.
+MeshCore carries sensor telemetry in CayenneLPP format. `CMD_SEND_TELEMETRY_REQ` queries a remote node's telemetry (battery voltage, environment sensors, GPS); a length-4 self-request returns the device's own telemetry. SigurdOS can now *request* a remote node's telemetry and decode it, but it does **not answer** inbound telemetry requests — `SigurdMeshV2::onContactRequest()` is a skeleton returning 0, so the T-Deck never reports its own battery/sensors over the mesh, and there is no per-category response policy.
+
+**What's needed:** Implement `onContactRequest()` to answer `REQ_TYPE_GET_TELEMETRY_DATA` with a `CayenneLPP` reply (`addVoltage(TELEM_CHANNEL_SELF, …)`, optionally location/environment). Add the `telemetry_mode_base`/`telemetry_mode_loc`/`telemetry_mode_env` policy fields (deny / allow-by-flags / allow-all) to gate what is shared.
 
 **MeshCore reference:**
 - [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `CMD_SEND_TELEMETRY_REQ` (39): remote variant calls `sendRequest(*recipient, REQ_TYPE_GET_TELEMETRY_DATA, …)`; `len==4` self variant fills a `CayenneLPP telemetry` with `addVoltage(TELEM_CHANNEL_SELF, …)` + `sensors.querySensors()` and pushes `PUSH_CODE_TELEMETRY_RESPONSE`; `onContactRequest()` answers `REQ_TYPE_GET_TELEMETRY_DATA`
 - `REQ_TYPE_GET_TELEMETRY_DATA` (0x03) is defined at the top of [`examples/companion_radio/MyMesh.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.h)
+- [`examples/companion_radio/NodePrefs.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/NodePrefs.h) — `telemetry_mode_base` / `telemetry_mode_loc` / `telemetry_mode_env`; `TELEM_MODE_DENY` (0) / `TELEM_MODE_ALLOW_FLAGS` (1) / `TELEM_MODE_ALLOW_ALL` (2). [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `CMD_SET_OTHER_PARAMS` (38) sets them; `onContactRequest()` honours them
 - [`src/helpers/SensorManager.h`](https://github.com/meshcore-dev/MeshCore/blob/main/src/helpers/SensorManager.h) and [`src/helpers/sensors/`](https://github.com/meshcore-dev/MeshCore/tree/main/src/helpers/sensors) — the sensor/telemetry framework and CayenneLPP usage
 
 ---
@@ -259,6 +262,18 @@ Per-type bitmask: `AUTO_ADD_CHAT` (0x02), `AUTO_ADD_REPEATER` (0x04), `AUTO_ADD_
 
 ---
 
+### Multi-ACK reliability toggle — S
+
+The companion can send **extra redundant ACK transmissions** for direct messages, improving delivery on lossy links at the cost of a little airtime. The count comes from `NodePrefs::multi_acks` (0/1) via the `getExtraAckTransmitCount()` hook. SigurdOS does not override this hook, so it always sends the minimum, and there is no setting.
+
+**What's needed:** Add `multi_acks` (0/1) to `NodePrefs`; override `getExtraAckTransmitCount()` in `SigurdMeshV2` to return it; add a Settings toggle. (Implemented as ROADMAP §6.1.)
+
+**MeshCore reference:**
+- [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `getExtraAckTransmitCount()` returns `_prefs.multi_acks`; `CMD_SET_OTHER_PARAMS` (38) sets it
+- [`examples/companion_radio/NodePrefs.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/NodePrefs.h) — `multi_acks`
+
+---
+
 ## GPS and Location
 
 ### Advert location-share policy (privacy) — S
@@ -286,6 +301,8 @@ The companion stores `gps_enabled` and `gps_interval` (seconds) and applies them
 ---
 
 ### Periodic auto-advert — S
+
+> **✅ Implemented** — `advert_interval` (half-minutes, 0 = off) in `NodePrefs` + Settings cycle + a re-advert timer in `mesh::loop()`. See [`ROADMAP.md`](ROADMAP.md) §2.1. Kept here for the upstream reference.
 
 Companion nodes can broadcast periodic adverts so they stay discoverable. SigurdOS only adverts on manual taps of the Advertise screen — a node left on for hours is invisible to new nodes. Optional, user-toggled.
 
@@ -411,6 +428,8 @@ The Signal screen shows a snapshot bar chart, no trend. `SlopContact` keeps only
 
 ### Factory reset — S
 
+> **✅ Implemented** — Settings → System "Factory reset" (double-confirm) → `mesh::factoryReset()`. See [`ROADMAP.md`](ROADMAP.md) §5.2 (PR #275). Kept here for the upstream reference.
+
 `CMD_FACTORY_RESET` wipes prefs, contacts, channels, and identity to a clean state. SigurdOS has no reset path — recovering from a corrupt config means reflashing.
 
 **What's needed:** A "Factory reset" action in Settings (double-confirm). Clear NVS prefs, contacts, channels, and regenerate identity. Delay for flash writes, then reboot.
@@ -463,9 +482,34 @@ Companions advertise as `ADV_TYPE_CHAT`. A fixed T-Deck might advertise as repea
 
 ---
 
+### Client-repeat mode (companion also relays) — M
+
+A companion can optionally relay/forward packets while staying a chat node — the `client_repeat` flag. This is the *companion* version of repeating (opportunistic relay), distinct from full repeater node-type (see "Node type selection" above, which is more infrastructure). SigurdOS has no packet-forwarding path and no toggle.
+
+**What's needed:** Add `client_repeat` to `NodePrefs`; gate forwarding on it in `SigurdMeshV2`; an "Advanced" Settings toggle. Relaying raises airtime — respect the duty-cycle budget. (Tracked as ROADMAP §6.3.)
+
+**MeshCore reference:**
+- [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — forwarding gated on `_prefs.client_repeat != 0`; `CMD_SET_TUNING_PARAMS` carries the repeat flag
+- [`examples/companion_radio/NodePrefs.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/NodePrefs.h) — `client_repeat`
+
+---
+
+### Message-arrival notification buzzer + quiet toggle — M
+
+The companion beeps the buzzer on message arrival and exposes a `buzzer_quiet` mute. SigurdOS defines `PIN_BUZZER` (GPIO 46) in `tdeck_pins.h` but **never drives it** — there is no audible notification at all, and no mute setting.
+
+**What's needed:** A small buzzer HAL (active-low on GPIO 46) + mock + test; beep on incoming DM/channel message; a `buzzer_quiet` pref and a Settings "Notification sound ON/OFF" toggle. (Tracked as ROADMAP §6.2.)
+
+**MeshCore reference:**
+- [`examples/companion_radio/NodePrefs.h`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/NodePrefs.h) — `buzzer_quiet`; companion UI calls `buzzer.quiet(_node_prefs->buzzer_quiet)`
+
+---
+
 ## Diagnostics and Statistics
 
 ### Node stats query (CMD_GET_STATS) — S
+
+> **✅ Implemented** — Node Stats diagnostics panel (sent/recv flood+direct counters, airtime totals, dups/drops). See [`ROADMAP.md`](ROADMAP.md) §5.5 (PR #277). Kept here for the upstream reference.
 
 SigurdOS tracks `getNumSentFlood/Direct`, `getNumRecvFlood/Direct`, and airtime totals in the wrapper, but does not expose the full companion stats set (per-type counters, dropped packets, airtime budget). The companion `CMD_GET_STATS` returns a typed stats blob.
 
@@ -484,6 +528,28 @@ Also in `KNOWN_ISSUES.md`. The Terminal has no `help` command — users read sou
 **What's needed:** A `help` command listing commands with one-line descriptions.
 
 *(No MeshCore reference — local UI.)*
+
+---
+
+### Advert path query (diagnostic) — S *(niche)*
+
+`CMD_GET_ADVERT_PATH` reports the network path an advert took to reach this node (a per-pubkey `advert_paths[]` table). A useful diagnostic for understanding routing; SigurdOS keeps no advert-path table and exposes nothing.
+
+**What's needed:** Track recent advert paths keyed by pubkey prefix; surface the path for a contact on Contact Detail or the Signal/Trace screen. (Tracked as ROADMAP §6.5.)
+
+**MeshCore reference:**
+- [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `CMD_GET_ADVERT_PATH` (42) / `RESP_CODE_ADVERT_PATH`; the `advert_paths[]` table and `AdvertPath` struct
+
+---
+
+### Storage usage display — S *(niche)*
+
+`CMD_GET_BATT_AND_STORAGE` returns battery millivolts **plus filesystem storage used/total (KB)**. SigurdOS shows battery but never surfaces flash/SD usage — `hal/sdcard.cpp` already computes SD capacity/free, so the data exists; only the display is missing.
+
+**What's needed:** Add used/total (SPIFFS + SD) to the Node Stats panel or a storage line on Settings → System. (Tracked as ROADMAP §6.6.)
+
+**MeshCore reference:**
+- [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `CMD_GET_BATT_AND_STORAGE` (20) / `RESP_CODE_BATT_AND_STORAGE` (battery mV + used/total KB via `_store->getStorageUsedKb()` / `getStorageTotalKb()`)
 
 ---
 
@@ -557,6 +623,17 @@ MeshCore supports `start ota` over BLE/serial. SigurdOS requires a USB cable + f
 
 ---
 
+### Reboot action — S *(low value)*
+
+`CMD_REBOOT` simply restarts the device. SigurdOS already reboots via "Save & Reboot" in Radio Setup and after a Factory Reset, and `tdeck_board.h` has `reboot()` — so this is largely covered. Listed for completeness against the companion command set.
+
+**What's needed:** Optionally a dedicated "Reboot" button on Settings → System next to Factory Reset (flush pending saves, ~100 ms delay, `esp_restart()`). (Tracked as ROADMAP §6.7.)
+
+**MeshCore reference:**
+- [`examples/companion_radio/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) — `CMD_REBOOT` (19, guarded by a literal `"reboot"` payload)
+
+---
+
 ## Infrastructure-only (documented, not planned)
 
 > These turn the T-Deck into something other than a handheld companion. Listed for completeness; excluded from the implementation plan.
@@ -597,4 +674,4 @@ The phased implementation plan that used to live here has moved to **[`ROADMAP.m
 
 ---
 
-*Last reviewed: 2026-05-28 against companion firmware v1.15.0 (`FIRMWARE_VER_CODE 11`, [`examples/companion_radio/`](https://github.com/meshcore-dev/MeshCore/tree/main/examples/companion_radio)). Added: Infrastructure Interaction category (login/remote-admin, status, telemetry, path discovery, reset-path, binary-request framework), GPS/Location section (location-share policy, GPS interval), contact removal, identity backup, factory reset, message signing, node-stats query. Fixed stale ACK line reference and clarified that `SlopMesh` extends `::mesh::Mesh` directly (not `BaseChatMesh`). Implementation plan extracted to [`ROADMAP.md`](ROADMAP.md). Cross-reference `KNOWN_ISSUES.md` for bugs in implemented features.*
+*Last reviewed: 2026-06-01 against companion firmware v1.15.0 (`FIRMWARE_VER_CODE 12`, [`examples/companion_radio/`](https://github.com/meshcore-dev/MeshCore/tree/main/examples/companion_radio)). 2026-06-01 audit (paired with [`ROADMAP.md`](ROADMAP.md) Phase 6): corrected the version code (was 11) and the CMD count (58, not 64); marked Periodic auto-advert / Factory reset / Node stats as ✅ implemented (kept for their refs); clarified Telemetry is remote-query-only (answer side via `onContactRequest` still a stub); added Multi-ACK toggle, Client-repeat mode, Notification buzzer + quiet, Advert-path query, Storage usage display, and Reboot action. Earlier (2026-05-28): Added Infrastructure Interaction category (login/remote-admin, status, telemetry, path discovery, reset-path, binary-request framework), GPS/Location section (location-share policy, GPS interval), contact removal, identity backup, message signing; fixed stale ACK line reference and clarified that `SlopMesh` extends `::mesh::Mesh` directly (not `BaseChatMesh`); extracted the implementation plan to [`ROADMAP.md`](ROADMAP.md). Cross-reference `KNOWN_ISSUES.md` for bugs in implemented features.*
