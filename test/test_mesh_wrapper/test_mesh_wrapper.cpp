@@ -199,4 +199,25 @@ TEST_F(MeshWrapperTest, FactoryResetSignature) {
     SUCCEED();
 }
 
+// ── Node Stats API surface ──
+
+TEST_F(MeshWrapperTest, NodeStatsCounterSignatures) {
+    // All getter return types compile-time-checked
+    using getU32 = uint32_t (*)();
+    using getUL  = unsigned long (*)();
+    using getInt = int (*)();
+
+    (void)static_cast<getU32>(sigurdos::mesh::getNumSentFlood);
+    (void)static_cast<getU32>(sigurdos::mesh::getNumSentDirect);
+    (void)static_cast<getU32>(sigurdos::mesh::getNumRecvFlood);
+    (void)static_cast<getU32>(sigurdos::mesh::getNumRecvDirect);
+    (void)static_cast<getUL>(sigurdos::mesh::getTotalTxAirtimeMs);
+    (void)static_cast<getUL>(sigurdos::mesh::getTotalRxAirtimeMs);
+    (void)static_cast<getUL>(sigurdos::mesh::getRemainingTxBudget);
+    (void)static_cast<getInt>(sigurdos::mesh::getAckCounter);
+    (void)static_cast<void (*)()>(sigurdos::mesh::resetPacketStats);
+
+    SUCCEED();
+}
+
 } // anonymous namespace

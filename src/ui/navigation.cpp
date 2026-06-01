@@ -81,6 +81,7 @@ static void dispatch_screen(Screen screen) {
     case Screen::SettingsGPS:     settings_gps_show();     break;
     case Screen::SettingsDisplay: settings_display_show(); break;
     case Screen::SettingsSystem:  settings_system_show();  break;
+    case Screen::NodeStats:       node_stats_screen_show(); break;
     case Screen::Telemetry:       telemetry_screen_show(); break;
     case Screen::NodeStatus:      node_status_screen_show(); break;
     default: break;
