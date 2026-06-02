@@ -6,6 +6,7 @@
 
 #pragma once
 #include <cstdint>
+#include <cstddef>
 
 // Node type identifiers from MeshCore adverts — kept local so UI code can filter.
 #define ADV_TYPE_NONE      0
