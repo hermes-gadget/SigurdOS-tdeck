@@ -4180,6 +4180,21 @@ void settings_system_show()
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 
+    row++;
+
+    // Reboot
+    lv_obj_t* btn_reboot = lv_list_add_btn(list, LV_SYMBOL_POWER, "  Reboot");
+    lv_obj_set_style_bg_color(btn_reboot, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_bg_opa(btn_reboot, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_reboot, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_reboot, [](lv_event_t*) {
+        // Small delay for flash writes to complete, then restart
+        sigurdos::mesh::saveState();
+        sigurdos::mesh::saveChannels();
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
+    }, LV_EVENT_CLICKED, nullptr);
+
     // Factory reset
     lv_obj_t* btn_reset = lv_list_add_btn(list, LV_SYMBOL_WARNING, "  Factory reset");
     lv_obj_set_style_bg_color(btn_reset, lv_color_hex(0x4a2020), 0);
