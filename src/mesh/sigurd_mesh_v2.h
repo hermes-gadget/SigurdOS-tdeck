@@ -898,6 +898,9 @@ public:
         if (p.duty_cycle == 0) return -1.0f;
         return (float)p.duty_cycle / 100.0f;
     }
+    uint8_t getExtraAckTransmitCount() const override {
+        return sigurdos::prefs_get().multi_acks ? 1 : 0;
+    }
 
     // ── Repeater/room login session tracking (Phase 4.5) ──
     static constexpr int MAX_LOGIN_ENTRIES = 4;

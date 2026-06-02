@@ -2735,10 +2735,12 @@ void signal_screen_show()
             "SF      %d\n"
             "CR      4/%d\n"
             "TX Pwr  %d dBm\n"
-            "RX Gain %s",
+            "RX Gain %s\n"
+            "Multi-ACK %s",
             rssi, snr, noise,
             p.freq, p.bw, p.sf, p.cr, p.tx_power_dbm,
-            p.rx_boosted_gain ? "BOOST" : "NORMAL");
+            p.rx_boosted_gain ? "BOOST" : "NORMAL",
+            p.multi_acks ? "ON" : "OFF");
         lv_label_set_text(left, left_buf);
 
         // Right column — packet counters + airtime + duty cycle
@@ -5204,6 +5206,7 @@ static float s_rf_bw   = 62.5f;
 static int   s_rf_cr   = 5;
 static int   s_rf_pwr  = 22;
 static bool  s_rx_gain    = false;  // RX boosted gain toggle state
+static bool  s_multi_ack  = false;  // multi-ACK toggle state
 static uint8_t s_duty_cycle = 0;    // duty cycle percentage (0 = disabled)
 
 void custom_rf_screen_show()
@@ -5364,6 +5367,7 @@ void radio_setup_screen_show()
     s_rf_pwr  = p.configured ? p.tx_power_dbm  : 22;
     s_rx_gain    = p.rx_boosted_gain;
     s_duty_cycle = p.duty_cycle;
+    s_multi_ack  = p.multi_acks;
 
     // Warning
     auto* warn = lv_label_create(scr);
@@ -5561,6 +5565,36 @@ void radio_setup_screen_show()
     }, LV_EVENT_CLICKED, (void*)gain_lbl);
     ry += 24;
 
+    // ── Multi-ACK toggle ────────────────────────────
+    snprintf(buf, sizeof(buf), "Multi-ACK: %s", s_multi_ack ? "ON" : "OFF");
+    auto* mack_lbl = lv_label_create(scr);
+    lv_label_set_text(mack_lbl, buf);
+    lv_obj_set_style_text_color(mack_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(mack_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_align(mack_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
+
+    auto* mack_toggle = lv_btn_create(scr);
+    lv_obj_set_size(mack_toggle, 48, 20);
+    lv_obj_align(mack_toggle, LV_ALIGN_TOP_LEFT, rx + rw - 52, ry - 2);
+    lv_obj_set_style_bg_color(mack_toggle, lv_color_hex(s_multi_ack ? ACCENT : ACCENT_RED), 0);
+    lv_obj_set_style_radius(mack_toggle, 0, 0);
+    auto* mtl = lv_label_create(mack_toggle);
+    lv_label_set_text(mtl, s_multi_ack ? "ON" : "OFF");
+    lv_obj_center(mtl);
+    lv_obj_add_event_cb(mack_toggle, [](lv_event_t* e) {
+        s_multi_ack = !s_multi_ack;
+        lv_obj_t* lbl = (lv_obj_t*)lv_event_get_user_data(e);
+        char b[32]; snprintf(b, sizeof(b), "Multi-ACK: %s", s_multi_ack ? "ON" : "OFF");
+        lv_label_set_text(lbl, b);
+        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_set_style_bg_color(target, lv_color_hex(s_multi_ack ? ACCENT : ACCENT_RED), 0);
+        lv_obj_t* bl = lv_obj_get_child(target, 0);
+        if (bl && lv_obj_check_type(bl, &lv_label_class)) {
+            lv_label_set_text(bl, s_multi_ack ? "ON" : "OFF");
+        }
+    }, LV_EVENT_CLICKED, (void*)mack_lbl);
+    ry += 24;
+
     // Save & Reboot
     auto* save_btn = lv_btn_create(scr);
     lv_obj_set_size(save_btn, rw, 28);
@@ -5578,6 +5612,7 @@ void radio_setup_screen_show()
         np.cr           = (uint8_t)s_rf_cr;
         np.tx_power_dbm = (int8_t)s_rf_pwr;
         np.rx_boosted_gain = s_rx_gain;
+        np.multi_acks     = s_multi_ack;
         np.duty_cycle   = s_duty_cycle;
         np.configured   = true;
         sigurdos::prefs_set(np);

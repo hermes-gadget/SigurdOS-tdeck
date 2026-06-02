@@ -38,6 +38,7 @@ struct NodePrefs {
     uint8_t  autoadd_config;         // bitmask: bit1=chat, bit2=repeater, bit3=room, bit4=sensor
     uint8_t  autoadd_max_hops;       // 0=no limit, max flood hops for auto-add
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
+    bool     multi_acks;              // send extra redundant ACK transmissions for lossy links
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -67,6 +68,7 @@ struct NodePrefs {
         autoadd_config = 0x1E;        // auto-add: chat|repeater|room|sensor (bits 1-4), no overwrite (bit 0)
         autoadd_max_hops = 0;         // 0 = no limit
         theme_id = 0;                 // default theme
+        multi_acks = false;           // default: send minimum ACKs
     }
 };
 
