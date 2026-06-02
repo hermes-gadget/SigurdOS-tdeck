@@ -26,6 +26,7 @@
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
 #include "../hal/sdcard.h"
+#include "../hal/wifi_ota.h"
 #include "../hal/gps.h"
 #include "../hal/prefs.h"
 #include "../hal/display.h"
@@ -4403,6 +4404,55 @@ void settings_system_show()
         }, LV_EVENT_CLICKED, nullptr);
         row++;
     }
+
+    // OTA firmware update (WiFi AP + web upload)
+    lv_obj_t* btn_ota = lv_list_add_btn(list, LV_SYMBOL_WIFI, "  OTA Update");
+    lv_obj_set_style_bg_color(btn_ota, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_text_color(btn_ota, lv_color_hex(BG_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_ota, [](lv_event_t* e) {
+        lv_obj_t* scr_ota = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
+        auto dlg_sz = dialog_size(260, 120);
+        lv_obj_t* dlg = lv_obj_create(scr_ota);
+        lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+        lv_obj_center(dlg);
+        lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+        lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_border_width(dlg, 2, 0);
+        lv_obj_set_style_radius(dlg, 0, 0);
+        lv_obj_set_style_pad_all(dlg, 8, 0);
+
+        sigurdos::ota::start("SigurdOS-OTA");
+        const char* ip = sigurdos::ota::getIP();
+
+        lv_obj_t* title = lv_label_create(dlg);
+        lv_label_set_text(title, "OTA Update Active");
+        lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+        char info[80];
+        snprintf(info, sizeof(info),
+            "WiFi: SigurdOS-OTA\n"
+            "IP: %s\n"
+            "Open browser, upload firmware.bin", ip);
+        lv_obj_t* msg = lv_label_create(dlg);
+        lv_label_set_text(msg, info);
+        lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+        lv_obj_align(msg, LV_ALIGN_CENTER, 0, 0);
+
+        lv_obj_t* close_btn = lv_btn_create(dlg);
+        lv_obj_set_size(close_btn, 80, 24);
+        lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -4);
+        lv_obj_set_style_bg_color(close_btn, lv_color_hex(BG_INPUT), 0);
+        lv_obj_set_style_radius(close_btn, 0, 0);
+        lv_obj_t* cl = lv_label_create(close_btn);
+        lv_label_set_text(cl, "Close");
+        lv_obj_center(cl);
+        lv_obj_add_event_cb(close_btn, [](lv_event_t* ev) {
+            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
+        }, LV_EVENT_CLICKED, nullptr);
+    }, LV_EVENT_CLICKED, nullptr);
 
     // Shut down
     lv_obj_t* btn_shutdown = lv_list_add_btn(list, LV_SYMBOL_POWER, "  Shut down");

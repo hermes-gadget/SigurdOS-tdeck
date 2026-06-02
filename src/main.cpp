@@ -9,6 +9,7 @@
 #include "hal/battery.h"
 #include "hal/gps.h"
 #include "hal/sdcard.h"
+#include "hal/wifi_ota.h"
 #include "hal/prefs.h"
 #include "hal/buzzer.h"
 #include "app/map_renderer.h"
@@ -132,6 +133,7 @@ void loop()
 
     // Process display/LVGL first so UI stays responsive during mesh ops
     sigurdos_display_loop();
+    sigurdos::ota::loop();  // WiFi OTA web server
     {   // GPS enabled + interval gate
         static uint32_t last_gps_poll = 0;
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();
