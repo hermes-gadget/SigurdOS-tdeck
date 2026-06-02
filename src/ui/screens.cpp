@@ -1272,6 +1272,14 @@ void contact_detail_screen_show(const char* contact_name)
         } else if (cidx >= 0) {
             add_row("Path", "Flood", TEXT_SECONDARY);
         }
+
+        // Show inbound advert path (how the advert reached us)
+        uint8_t advert_hops = sigurdos::mesh::getAdvertPathLen(contact_name);
+        if (advert_hops > 0) {
+            char ad_buf[32];
+            snprintf(ad_buf, sizeof(ad_buf), "%d hop%s via mesh", advert_hops, advert_hops == 1 ? "" : "s");
+            add_row("Advert Path", ad_buf, ACCENT);
+        }
     } else {
         add_row("Last Seen", "N/A", TEXT_SECONDARY);
     }

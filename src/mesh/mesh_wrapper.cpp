@@ -1547,6 +1547,12 @@ int hexToBytes(const char* hex, uint8_t* out, int out_max) {
     return SigurdMeshV2::hexToBytes(hex, out, (size_t)out_max);
 }
 
+// ── Advert path (inbound) ─────────────────────
+uint8_t getAdvertPathLen(const char* name) {
+    if (!g_mesh || !name) return 0;
+    return g_mesh->getAdvertPathLen(name);
+}
+
 int signMessage(const char* data, uint8_t* sig_out) {
     if (!g_mesh || !data || !sig_out) return 0;
     if (!data[0]) return 0;  // empty data — nothing to sign

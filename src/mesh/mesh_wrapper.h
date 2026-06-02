@@ -237,6 +237,11 @@ uint32_t discoverPath(const char* dest_name);
 bool hasPathTo(const char* dest_name);
 uint8_t getContactPathLen(const char* dest_name);
 
+// ── Advert path (inbound) ─────────────────────
+// Returns the number of hops the advert from this contact traversed
+// to reach us. Returns 0 if no advert path is known for this contact.
+uint8_t getAdvertPathLen(const char* name);
+
 // ── Login status values ───────────────────────
 #define LOGIN_STATUS_NONE    0   // not logged in
 #define LOGIN_STATUS_PENDING 1   // login request sent, awaiting response

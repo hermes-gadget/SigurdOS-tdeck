@@ -506,6 +506,12 @@ public:
         updateSignalSample(contact.id.pub_key, rssi, snr);
         sigurdos::mesh::pushPacketLog(contact.name, rssi, snr,
                                     is_new ? "ADVERT" : "ADVERT(UPDATE)");
+
+        // ── Track inbound advert path ──────────────
+        if (path && ::mesh::Packet::isValidPathLen(path_len)) {
+            storeAdvertPath(contact.id.pub_key, contact.name, path_len, path);
+        }
+
 #if SIGURDOS_DEBUG_MESH
         Serial.printf("[mesh] %s contact: %s (type=%d)\n",
                       is_new ? "new" : "updated", contact.name, contact.type);
@@ -1419,6 +1425,53 @@ public:
 
     float getPacketSNR() const {
         return _radio ? _radio->getLastSNR() : 0.0f;
+    }
+
+    // ── Advert path tracking ──────────────────────
+    static constexpr int ADVERT_PATH_TABLE_SIZE = 16;
+    struct AdvertPathEntry {
+        uint8_t pubkey_prefix[7];  // first 7 bytes of pub_key
+        uint8_t path_len;          // number of hops in the advert path
+        char    name[32];
+        uint32_t recv_timestamp;
+    };
+    AdvertPathEntry _advert_paths[ADVERT_PATH_TABLE_SIZE] = {};
+
+    void storeAdvertPath(const uint8_t* pub_key, const char* name,
+                         uint8_t path_len, const uint8_t* /*path*/) {
+        if (!pub_key || !name) return;
+        // Find existing entry for this pubkey or the oldest slot
+        AdvertPathEntry* target = &_advert_paths[0];
+        uint32_t oldest = _advert_paths[0].recv_timestamp;
+        for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+            if (memcmp(_advert_paths[i].pubkey_prefix, pub_key,
+                       sizeof(_advert_paths[i].pubkey_prefix)) == 0) {
+                target = &_advert_paths[i];
+                break;
+            }
+            if (_advert_paths[i].recv_timestamp < oldest) {
+                oldest = _advert_paths[i].recv_timestamp;
+                target = &_advert_paths[i];
+            }
+        }
+        memcpy(target->pubkey_prefix, pub_key, sizeof(target->pubkey_prefix));
+        target->path_len = path_len;
+        strncpy(target->name, name, sizeof(target->name) - 1);
+        target->name[sizeof(target->name) - 1] = '\0';
+        target->recv_timestamp = getRTCClock()->getCurrentTime();
+    }
+
+    // Returns the inbound advert path length (hops) for a contact, or 0 if unknown.
+    uint8_t getAdvertPathLen(const char* name) const {
+        if (!name) return 0;
+        // Find by name match in the advert path table
+        for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+            if (_advert_paths[i].recv_timestamp > 0
+                && strcmp(_advert_paths[i].name, name) == 0) {
+                return _advert_paths[i].path_len;
+            }
+        }
+        return 0;
     }
 
     // NOTE: airtime/packet-count stats (getTotalAirTime, getReceiveAirTime,
