@@ -331,5 +331,16 @@ bool importContactByUri(const char* uri);
 // Returns true if the channel was successfully added.
 bool addChannelByUri(const char* uri);
 
+// ── QR code support ─────────────────────────────
+// Look up a contact by name and write its 64-hex-char public key to hex_out.
+// hex_sz must be at least PUB_KEY_SIZE * 2 + 1 (65). Returns false if
+// g_mesh is null, the contact is not found, or the buffer is too small.
+bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz);
+
+// Write the 64-hex-char channel secret for the given channel index to hex_out.
+// hex_sz must be at least PUB_KEY_SIZE * 2 + 1 (65). Returns false if
+// g_mesh is null, the channel index is out of range, or the buffer is too small.
+bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz);
+
 } // namespace mesh
 } // namespace sigurdos

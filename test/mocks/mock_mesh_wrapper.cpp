@@ -116,6 +116,14 @@ void mock_set_rssi(int v)   { mock_rssi = v; }
 void mock_set_snr(float v)  { mock_snr = v; }
 void mock_set_drop_count(uint32_t v) { mock_drop_count = v; }
 
+// ── QR code support stubs ──────────────────────
+bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz) {
+    (void)name; (void)hex_out; (void)hex_sz; return false;
+}
+bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz) {
+    (void)channel_idx; (void)hex_out; (void)hex_sz; return false;
+}
+
 // ── Identity backup stubs ──────────────────────
 bool exportIdentity(char* hex_out, size_t hex_sz) {
     if (!hex_out || hex_sz < 2) return false;

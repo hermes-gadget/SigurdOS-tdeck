@@ -34,6 +34,7 @@
 #include "../mesh/mesh_wrapper.h"
 #include "../app/map_renderer.h"
 #include "../fonts/emoji_font.h"
+#include "../app/qr_show.h"
 #include <MeshCore.h>
 #include <Arduino.h>
 #include <lvgl.h>
@@ -1441,6 +1442,60 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_add_event_cb(tm_btn, [](lv_event_t* e) {
             free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
         }, LV_EVENT_DELETE, nullptr);
+    }
+
+    // ── Share via QR button row ─────────────────────
+    {
+        lv_obj_t* qr_row = lv_obj_create(scr);
+        lv_obj_set_size(qr_row, CONTENT_W, 26);
+        lv_obj_align(qr_row, LV_ALIGN_BOTTOM_LEFT, 0, -(BOT_BAR_H + DIVIDER_H + 28 + (is_room_type ? 0 : 28)));
+        lv_obj_set_style_bg_opa(qr_row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(qr_row, 0, 0);
+        lv_obj_set_flex_flow(qr_row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(qr_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* qr_btn = lv_btn_create(qr_row);
+        lv_obj_set_size(qr_btn, CONTENT_W - 20, 22);
+        apply_pixel_btn(qr_btn);
+        lv_obj_t* qr_lbl = lv_label_create(qr_btn);
+        lv_label_set_text(qr_lbl, "Share via QR");
+        lv_obj_set_style_text_color(qr_lbl, lv_color_hex(BG_PRIMARY), 0);
+        lv_obj_center(qr_lbl);
+
+        char* qr_name = strdup(contact_name);
+        lv_obj_set_user_data(qr_btn, qr_name);
+        lv_obj_add_event_cb(qr_btn, [](lv_event_t* e) {
+            lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+            const char* name = (const char*)lv_obj_get_user_data(btn);
+            if (!name) return;
+
+            // Get public key hex for this contact
+            char pubkey_hex[65] = {0};
+            if (!sigurdos::mesh::getContactPubkeyHex(name, pubkey_hex, sizeof(pubkey_hex))) {
+                Serial.println("[qr] Failed to get pubkey for contact");
+                return;
+            }
+
+            // Determine contact type from the stored type in row's user data
+            int ctype = 1; // default ADV_TYPE_CHAT
+            // Check if row has type data on its parent
+            lv_obj_t* row = lv_obj_get_parent(btn);
+            if (row) {
+                void* td = lv_obj_get_user_data(row);
+                if (td) ctype = (int)(intptr_t)td;
+            }
+
+            // Build URI: meshcore://contact/add?name=<url_encoded>&public_key=<64hex>&type=<type>
+            char uri[512];
+            snprintf(uri, sizeof(uri), "meshcore://contact/add?name=%s&public_key=%s&type=%d",
+                     name, pubkey_hex, ctype);
+            sigurdos::app::qr_show("Share Contact", uri);
+        }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(qr_btn, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
+        // Store the contact type on the row object for the callback to retrieve
+        lv_obj_set_user_data(qr_row, (void*)(intptr_t)target->type);
     }
 
     // Remove Contact button
@@ -5414,6 +5469,42 @@ void channels_screen_show()
                             lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
                         }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
                     }, LV_EVENT_CLICKED, (void*)(intptr_t)ch_idx);
+                }
+
+                // Share via QR button (always shown)
+                {
+                    lv_obj_t* qr_btn = lv_btn_create(row);
+                    lv_obj_set_size(qr_btn, 32, 24);
+                    lv_obj_set_style_bg_color(qr_btn, lv_color_hex(ACCENT), 0);
+                    lv_obj_set_style_radius(qr_btn, 0, 0);
+                    lv_obj_set_style_border_width(qr_btn, 0, 0);
+                    lv_obj_set_style_pad_all(qr_btn, 0, 0);
+                    auto* ql = lv_label_create(qr_btn);
+                    lv_label_set_text(ql, "QR");
+                    lv_obj_set_style_text_font(ql, &lv_font_montserrat_10, 0);
+                    lv_obj_center(ql);
+                    lv_obj_set_style_pad_right(qr_btn, 4, 0);
+                    int qr_idx = i;
+                    lv_obj_add_event_cb(qr_btn, [](lv_event_t* e) {
+                        int idx = (int)(intptr_t)lv_event_get_user_data(e);
+                        lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
+                        lv_obj_t* row = lv_obj_get_parent(btn);
+                        if (!row) return;
+                        lv_obj_t* name_l = lv_obj_get_child(row, 1);
+                        if (!name_l) return;
+                        const char* ch_name = lv_label_get_text(name_l);
+                        if (!ch_name || !ch_name[0]) return;
+
+                        char secret_hex[65] = {0};
+                        if (!sigurdos::mesh::getChannelSecretHex(idx, secret_hex, sizeof(secret_hex))) {
+                            Serial.println("[qr] Failed to get channel secret");
+                            return;
+                        }
+                        char uri[512];
+                        snprintf(uri, sizeof(uri), "meshcore://channel/add?name=%s&secret=%s",
+                                 ch_name, secret_hex);
+                        sigurdos::app::qr_show("Share Channel", uri);
+                    }, LV_EVENT_CLICKED, (void*)(intptr_t)qr_idx);
                 }
             }
         }

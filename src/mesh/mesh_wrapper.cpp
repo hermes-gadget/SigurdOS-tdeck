@@ -1796,5 +1796,32 @@ bool addChannelByUri(const char* uri) {
     return g_mesh->addChannelBool(name, b64);
 }
 
+// ── QR code support ─────────────────────────────
+bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz)
+{
+    if (!g_mesh || !name || !hex_out) return false;
+    // Need 2*PUB_KEY_SIZE hex chars + null terminator
+    if (hex_sz < (size_t)(PUB_KEY_SIZE * 2 + 1)) return false;
+    int count = g_mesh->getNumContacts();
+    for (int i = 0; i < count; i++) {
+        ::ContactInfo c;
+        if (g_mesh->getContactByIdx(i, c) && strcmp(c.name, name) == 0) {
+            ::mesh::Utils::toHex(hex_out, c.id.pub_key, PUB_KEY_SIZE);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz)
+{
+    if (!g_mesh || !hex_out) return false;
+    if (hex_sz < (size_t)(PUB_KEY_SIZE * 2 + 1)) return false;
+    const ChannelDetails* ch = g_mesh->getChannel(channel_idx);
+    if (!ch) return false;
+    ::mesh::Utils::toHex(hex_out, ch->channel.secret, PUB_KEY_SIZE);
+    return true;
+}
+
 } // namespace mesh
 } // namespace sigurdos
