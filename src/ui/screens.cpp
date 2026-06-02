@@ -1258,9 +1258,16 @@ void contact_detail_screen_show(const char* contact_name)
             add_row("Last Seen", "?", TEXT_SECONDARY);
         }
 
-        // Show path status
+        // Show path status with hop count
         if (cidx >= 0 && sigurdos::mesh::contactHasPath(cidx)) {
-            add_row("Path", "Direct", ACCENT_GREEN);
+            uint8_t pl = sigurdos::mesh::getContactPathLen(contact_name);
+            if (pl > 0 && pl < 0xFF) {
+                char path_buf[32];
+                snprintf(path_buf, sizeof(path_buf), "Direct (%d hop%s)", pl, pl == 1 ? "" : "s");
+                add_row("Path", path_buf, ACCENT_GREEN);
+            } else {
+                add_row("Path", "Direct", ACCENT_GREEN);
+            }
         } else if (cidx >= 0) {
             add_row("Path", "Flood", TEXT_SECONDARY);
         }
