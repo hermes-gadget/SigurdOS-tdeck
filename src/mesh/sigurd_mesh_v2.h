@@ -911,6 +911,10 @@ public:
 
     // ── Behavior overrides ──────────────────────
 
+    bool allowPacketForward(const ::mesh::Packet*) override {
+        return sigurdos::prefs_get().client_repeat != 0;
+    }
+
     bool isAutoAddEnabled() const override { return true; }
     bool shouldAutoAddContactType(uint8_t type) const override {
         return type == ADV_TYPE_CHAT || type == ADV_TYPE_ROOM || type == ADV_TYPE_REPEATER || type == ADV_TYPE_NONE;

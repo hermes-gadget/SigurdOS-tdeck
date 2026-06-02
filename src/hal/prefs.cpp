@@ -49,6 +49,7 @@ bool prefs_load(NodePrefs& p) {
     p.gps_interval = nvs.getUShort("gps_int", 0);
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
     p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
+    p.client_repeat = nvs.getUChar("clirep", 0);
 
     nvs.end();
     return true;
@@ -85,6 +86,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUShort("gps_int", p.gps_interval);
     nvs.putUChar("autoadd_cfg", p.autoadd_config);
     nvs.putUChar("autoadd_mh", p.autoadd_max_hops);
+    nvs.putUChar("clirep", p.client_repeat);
 
     nvs.end();
     return true;

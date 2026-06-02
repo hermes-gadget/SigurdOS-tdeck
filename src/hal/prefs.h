@@ -40,6 +40,7 @@ struct NodePrefs {
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
     bool     multi_acks;              // send extra redundant ACK transmissions for lossy links
     bool     buzzer_quiet;            // mute message-arrival buzzer
+    uint8_t  client_repeat;           // 0=no forwarding, !=0=opportunistic relay (client-repeat mode)
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -71,6 +72,7 @@ struct NodePrefs {
         theme_id = 0;                 // default theme
         multi_acks = false;           // default: send minimum ACKs
         buzzer_quiet = false;         // default: buzzer enabled
+        client_repeat = 0;            // default: no forwarding
     }
 };
 

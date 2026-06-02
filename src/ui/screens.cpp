@@ -3852,6 +3852,28 @@ void settings_radio_show()
         row++;
     }
 
+    // Client repeat (opportunistic relay)
+    {
+        snprintf(buf, sizeof(buf), "  Client repeat: %s", p.client_repeat ? "ON" : "OFF");
+        lv_obj_t* btn_cr = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
+        lv_obj_set_style_bg_color(btn_cr, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_cr, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_cr, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_cr, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            sigurdos::NodePrefs np = sigurdos::prefs_get();
+            np.client_repeat = np.client_repeat ? 0 : 1;
+            sigurdos::prefs_set(np);
+            char row_buf[64];
+            snprintf(row_buf, sizeof(row_buf), "  Client repeat: %s", np.client_repeat ? "ON" : "OFF");
+            lv_obj_t* lbl = lv_obj_get_child(target, 1);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+                lv_label_set_text(lbl, row_buf);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
     show_screen(scr);
 }
 
