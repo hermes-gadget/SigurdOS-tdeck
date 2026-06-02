@@ -272,6 +272,62 @@ public:
             pr.rssi = atoi(rssi_start + 1);
             return;
         }
+
+        // ── Node Discovery Protocol (0x80/0x90) ──
+        // Interoperability with MeshCore repeaters & sensors.
+        // Request: payload[0]=0x80|prefix_flag, [1]=filter_bitmask,
+        //          [2-5]=4-byte-tag, [6-9]=since (optional)
+        // Response: payload[0]=0x90|node_type, [1]=snr×4,
+        //           [2-5]=echoed_tag, [6-37]=pubkey (32 or 8 bytes)
+        if ((pkt->payload[0] & 0xF0) == 0x80) {
+            // Only answer discovery requests, not responses
+            if (pkt->payload[0] == 0x80 || pkt->payload[0] == 0x81) {
+                if (pkt->payload_len < 6) return;  // min: type+filter+tag
+
+                bool prefix_only = (pkt->payload[0] & 0x01) != 0;
+                uint8_t filter = pkt->payload[1];
+                uint32_t tag;
+                memcpy(&tag, pkt->payload + 2, 4);
+
+                // Get our node type from prefs (default CHAT=1)
+                uint8_t node_type = sigurdos::prefs_get().advert_type;
+                if (node_type < 1 || node_type > 4) node_type = 1;
+
+                // Check filter — skip if our type doesn't match requested types
+                if (filter != 0 && !(filter & (1 << node_type))) return;
+
+                // Build response
+                uint8_t resp[64];
+                size_t resp_len = 0;
+                resp[resp_len++] = 0x90 | (node_type & 0x0F);
+
+                // SNR (×4, clamped to 0-255)
+                float snr_db = _radio->getLastSNR();
+                int snr_scaled = (int)(snr_db * 4.0f);
+                if (snr_scaled < 0) snr_scaled = 0;
+                if (snr_scaled > 255) snr_scaled = 255;
+                resp[resp_len++] = (uint8_t)snr_scaled;
+
+                // Echo the request tag
+                memcpy(resp + resp_len, &tag, 4);
+                resp_len += 4;
+
+                // Pubkey (full 32 bytes or 8-byte prefix)
+                if (prefix_only) {
+                    memcpy(resp + resp_len, self_id.pub_key, 8);
+                    resp_len += 8;
+                } else {
+                    memcpy(resp + resp_len, self_id.pub_key, 32);
+                    resp_len += 32;
+                }
+
+                ::mesh::Packet* r = createControlData(resp, resp_len);
+                if (r) {
+                    sendZeroHop(r);
+                }
+            }
+            return;
+        }
     }
 
     bool pingIsActive() {
