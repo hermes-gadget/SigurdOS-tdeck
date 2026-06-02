@@ -55,3 +55,17 @@ bool sigurdos_map_tiles_available();
 
 // Convert screen pixel to lat/lon
 void sigurdos_map_pixel_to_latlon(int px, int py, double* out_lat, double* out_lon);
+
+// Convert lat/lon to screen pixel (inverse of above)
+void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_py);
+
+// Contact marker overlay (pool of pre-allocated dots)
+// Call after map_init, before first render. parent = the map overlay object.
+void sigurdos_map_contact_init(lv_obj_t* parent);
+// Reposition markers for contacts that have location data
+void sigurdos_map_contact_render(const void* contacts, int count);
+// Free the marker pool
+void sigurdos_map_contact_deinit();
+// Set tap callback — called when user taps a contact dot
+typedef void (*map_contact_tap_cb_t)(const char* name);
+void sigurdos_map_contact_set_tap_cb(map_contact_tap_cb_t cb);

@@ -32,6 +32,15 @@
 #include <lodepng.h>
 #include <esp_heap_caps.h>
 #include "../diagnostics/debug_cfg.h"
+#include "../mesh/mesh_wrapper.h"
+#include "../ui/theme.h"
+
+// Forward declare — the map screen sets this via sigurdos_map_contact_set_tap_cb
+static map_contact_tap_cb_t g_contact_tap_cb = nullptr;
+
+void sigurdos_map_contact_set_tap_cb(map_contact_tap_cb_t cb) {
+    g_contact_tap_cb = cb;
+}
 
 extern void lodepng_free(void* ptr);
 
@@ -970,4 +979,92 @@ void sigurdos_map_pixel_to_latlon(int px, int py, double* out_lat, double* out_l
 
     *out_lon = tile_x_to_lon(tile_x, zoom_level);
     *out_lat = tile_y_to_lat(tile_y, zoom_level);
+}
+
+void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_py) {
+    double center_tx = lon_to_tile_x(center_lon, zoom_level);
+    double center_ty = lat_to_tile_y(center_lat, zoom_level);
+    double tile_x = lon_to_tile_x(lon, zoom_level);
+    double tile_y = lat_to_tile_y(lat, zoom_level);
+    double px_per_tile = TILE_SIZE;
+    int center_px = TFT_WIDTH / 2;
+    int center_py = TFT_HEIGHT / 2;
+    *out_px = center_px + (int)((tile_x - center_tx) * px_per_tile);
+    *out_py = center_py + (int)((tile_y - center_ty) * px_per_tile);
+}
+
+// ── Contact marker pool ─────────────────────────────────────
+static constexpr int MAX_CONTACT_DOTS = 32;
+static constexpr int CONTACT_DOT_SIZE = 8;
+
+struct ContactDot {
+    lv_obj_t* obj;
+    char name[32];
+};
+
+static ContactDot g_contact_dots[MAX_CONTACT_DOTS];
+static bool g_contact_pool_init = false;
+
+void sigurdos_map_contact_init(lv_obj_t* parent) {
+    for (int i = 0; i < MAX_CONTACT_DOTS; i++) {
+        lv_obj_t* dot = lv_obj_create(parent);
+        lv_obj_set_size(dot, CONTACT_DOT_SIZE, CONTACT_DOT_SIZE);
+        lv_obj_set_style_bg_color(dot, lv_color_hex(0xFF4444), 0);  // red for visibility
+        lv_obj_set_style_radius(dot, CONTACT_DOT_SIZE / 2, 0);
+        lv_obj_set_style_border_width(dot, 0, 0);
+        lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+        g_contact_dots[i].obj = dot;
+        g_contact_dots[i].name[0] = '\0';
+
+        lv_obj_add_event_cb(dot, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            for (int j = 0; j < MAX_CONTACT_DOTS; j++) {
+                if (g_contact_dots[j].obj == target && g_contact_dots[j].name[0]) {
+                    if (g_contact_tap_cb) g_contact_tap_cb(g_contact_dots[j].name);
+                    break;
+                }
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+    }
+    g_contact_pool_init = true;
+}
+
+void sigurdos_map_contact_render(const void* contacts_ptr, int count) {
+    if (!g_contact_pool_init) return;
+    const sigurdos::mesh::ContactInfo* contacts = (const sigurdos::mesh::ContactInfo*)contacts_ptr;
+    int slot = 0;
+
+    for (int i = 0; i < count && slot < MAX_CONTACT_DOTS; i++) {
+        if (!contacts[i].has_location) continue;
+        if (contacts[i].latitude == 0.0 && contacts[i].longitude == 0.0) continue;
+
+        int px, py;
+        sigurdos_map_latlon_to_pixel(contacts[i].latitude, contacts[i].longitude, &px, &py);
+
+        // Skip if off-screen (with margin)
+        if (px < -20 || px > TFT_WIDTH + 20 || py < -20 || py > TFT_HEIGHT + 20) continue;
+
+        lv_obj_clear_flag(g_contact_dots[slot].obj, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_pos(g_contact_dots[slot].obj, px - CONTACT_DOT_SIZE/2, py - CONTACT_DOT_SIZE/2);
+        strncpy(g_contact_dots[slot].name, contacts[i].name, sizeof(g_contact_dots[slot].name) - 1);
+        g_contact_dots[slot].name[sizeof(g_contact_dots[slot].name) - 1] = '\0';
+        slot++;
+    }
+
+    // Hide unused
+    for (int i = slot; i < MAX_CONTACT_DOTS; i++) {
+        lv_obj_add_flag(g_contact_dots[i].obj, LV_OBJ_FLAG_HIDDEN);
+        g_contact_dots[i].name[0] = '\0';
+    }
+}
+
+void sigurdos_map_contact_deinit() {
+    for (int i = 0; i < MAX_CONTACT_DOTS; i++) {
+        if (g_contact_dots[i].obj) {
+            lv_obj_del(g_contact_dots[i].obj);
+            g_contact_dots[i].obj = nullptr;
+        }
+    }
+    g_contact_pool_init = false;
 }

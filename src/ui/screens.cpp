@@ -2819,13 +2819,22 @@ void signal_screen_show()
 // ════════════════════════════════════════════════════════
 // Map — offline tile maps
 // ════════════════════════════════════════════════════════
+
+// Helper: render map tiles then overlay contact markers
+static void render_map_with_contacts() {
+    sigurdos_map_render();
+    sigurdos::mesh::ContactInfo contacts[64];
+    int n = sigurdos::mesh::exportContactsFull(contacts, 64);
+    sigurdos_map_contact_render(contacts, n);
+}
+
 void map_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Map");
 
     sigurdos_map_init();
     sigurdos_map_reparent(scr);
-    sigurdos_map_render();
+    render_map_with_contacts();
 
     lv_obj_t* map = lv_obj_create(scr);
     lv_obj_set_size(map, DISPLAY_W, CONTENT_H);
@@ -2833,6 +2842,10 @@ void map_screen_show()
     lv_obj_set_style_bg_opa(map, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(map, 0, 0);
     lv_obj_add_flag(map, LV_OBJ_FLAG_CLICKABLE);
+
+    // Pre-allocate contact marker dots on top of map
+    sigurdos_map_contact_init(map);
+    sigurdos_map_contact_set_tap_cb(contact_detail_screen_show);
 
     static int drag_start_x = 0, drag_start_y = 0;
     static uint32_t map_last_render_ms = 0;
@@ -2860,11 +2873,11 @@ void map_screen_show()
             if (dx != 0 || dy != 0) sigurdos_map_pan(dx, dy);
             uint32_t now = millis();
             if (now - map_last_render_ms >= 200) {
-                sigurdos_map_render();
+                render_map_with_contacts();
                 map_last_render_ms = now;
             }
         } else if (code == LV_EVENT_RELEASED) {
-            sigurdos_map_render();
+            render_map_with_contacts();
             map_last_render_ms = millis();
         }
     }, LV_EVENT_ALL, nullptr);
@@ -2879,7 +2892,7 @@ void map_screen_show()
     lv_obj_set_style_radius(zoom_in, 0, 0);
     lv_obj_t* zi = lv_label_create(zoom_in);
     lv_label_set_text(zi, "+"); lv_obj_center(zi);
-    lv_obj_add_event_cb(zoom_in, [](lv_event_t*) { sigurdos_map_zoom_in(); sigurdos_map_render(); },
+    lv_obj_add_event_cb(zoom_in, [](lv_event_t*) { sigurdos_map_zoom_in(); render_map_with_contacts(); },
                         LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* zoom_out = lv_btn_create(scr);
@@ -2889,7 +2902,7 @@ void map_screen_show()
     lv_obj_set_style_radius(zoom_out, 0, 0);
     lv_obj_t* zo = lv_label_create(zoom_out);
     lv_label_set_text(zo, "-"); lv_obj_center(zo);
-    lv_obj_add_event_cb(zoom_out, [](lv_event_t*) { sigurdos_map_zoom_out(); sigurdos_map_render(); },
+    lv_obj_add_event_cb(zoom_out, [](lv_event_t*) { sigurdos_map_zoom_out(); render_map_with_contacts(); },
                         LV_EVENT_CLICKED, nullptr);
 
     (void)zoom_y_base;
