@@ -1585,5 +1585,210 @@ bool importIdentity(const char* hex_privkey) {
     return true;
 }
 
+// ── URI import helpers ────────────────────────
+
+// Simple URL decoder (in-place). Handles '+' -> ' ' and '%XX' -> char.
+static uint8_t hexDigitVal(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return 0;
+}
+
+static void urlDecode(char* str) {
+    if (!str) return;
+    char* src = str;
+    char* dst = str;
+    while (*src) {
+        if (*src == '+') {
+            *dst++ = ' ';
+            src++;
+        } else if (*src == '%'
+                && ::mesh::Utils::isHexChar(src[1])
+                && ::mesh::Utils::isHexChar(src[2])) {
+            *dst++ = (char)((hexDigitVal(src[1]) << 4)
+                          |  hexDigitVal(src[2]));
+            src += 3;
+        } else {
+            *dst++ = *src++;
+        }
+    }
+    *dst = '\0';
+}
+
+// Minimal base64 encoder — returns output length.
+// Caller must provide out buffer sized at least ((inLen + 2) / 3) * 4 + 1.
+static int encodeBase64(const uint8_t* in, int inLen, char* out) {
+    static const char ALPHABET[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int o = 0;
+    for (int i = 0; i < inLen; i += 3) {
+        uint32_t word = (uint32_t)in[i] << 16;
+        if (i + 1 < inLen) word |= (uint32_t)in[i + 1] << 8;
+        if (i + 2 < inLen) word |= (uint32_t)in[i + 2];
+        out[o++] = ALPHABET[(word >> 18) & 0x3F];
+        out[o++] = ALPHABET[(word >> 12) & 0x3F];
+        if (i + 1 < inLen)
+            out[o++] = ALPHABET[(word >> 6) & 0x3F];
+        else
+            out[o++] = '=';
+        if (i + 2 < inLen)
+            out[o++] = ALPHABET[word & 0x3F];
+        else
+            out[o++] = '=';
+    }
+    out[o] = '\0';
+    return o;
+}
+
+bool importContactByUri(const char* uri) {
+    if (!uri || !g_mesh) return false;
+
+    // Must start with "meshcore://"
+    if (strncmp(uri, "meshcore://", 11) != 0) return false;
+    const char* p = uri + 11;
+
+    // ── Query-parameter format: meshcore://contact/add?name=…&public_key=…&type=… ──
+    if (strncmp(p, "contact/add?", 12) == 0) {
+        p += 12;
+
+        char name[32] = {0};
+        char pubkey_hex[65] = {0};
+        int type = 1;  // default to chat
+
+        while (*p) {
+            const char* key_start = p;
+            while (*p && *p != '=' && *p != '&') p++;
+            int key_len = (int)(p - key_start);
+            if (*p == '=') {
+                p++; // skip =
+                const char* val_start = p;
+                while (*p && *p != '&') p++;
+                int val_len = (int)(p - val_start);
+
+                if (key_len == 4 && strncmp(key_start, "name", 4) == 0) {
+                    int copy = val_len < (int)(sizeof(name) - 1)
+                        ? val_len : (int)(sizeof(name) - 1);
+                    memcpy(name, val_start, copy);
+                    name[copy] = '\0';
+                    urlDecode(name);
+                } else if (key_len == 10 && strncmp(key_start, "public_key", 10) == 0) {
+                    int copy = val_len < 64 ? val_len : 64;
+                    memcpy(pubkey_hex, val_start, copy);
+                    pubkey_hex[copy] = '\0';
+                } else if (key_len == 4 && strncmp(key_start, "type", 4) == 0) {
+                    char tbuf[4] = {0};
+                    int copy = val_len < 3 ? val_len : 3;
+                    memcpy(tbuf, val_start, copy);
+                    type = atoi(tbuf);
+                }
+            }
+            if (*p == '&') p++;
+        }
+
+        if (!name[0] || !pubkey_hex[0]) return false;
+
+        uint8_t pub_key[PUB_KEY_SIZE];
+        int n = SigurdMeshV2::hexToBytes(pubkey_hex, pub_key, sizeof(pub_key));
+        if (n != PUB_KEY_SIZE) return false;
+
+        if (type < 1 || type > 4) type = 1; // default to chat
+
+        ::ContactInfo c;
+        memset(&c, 0, sizeof(c));
+        strncpy(c.name, name, sizeof(c.name) - 1);
+        c.name[sizeof(c.name) - 1] = '\0';
+        memcpy(c.id.pub_key, pub_key, PUB_KEY_SIZE);
+        c.type = (uint8_t)type;
+        c.out_path_len = OUT_PATH_UNKNOWN;
+        return g_mesh->addContact(c);
+    }
+
+    // ── channel/add query-parameter format ──
+    if (strncmp(p, "channel/add?", 12) == 0) {
+        return addChannelByUri(uri);  // delegate
+    }
+
+    // ── Raw hex blob format: meshcore://<hex> (biz card) ──
+    // Extract all hex chars and convert to binary for importContact()
+    {
+        char hex[512];
+        int i = 0;
+        while (*p && i < (int)(sizeof(hex) - 1)) {
+            if (::mesh::Utils::isHexChar(*p)) {
+                hex[i++] = *p;
+            }
+            p++;
+        }
+        hex[i] = '\0';
+
+        if (i >= (int)(PUB_KEY_SIZE * 2)) { // at least a public key's worth
+            uint8_t buf[256];
+            int blen = SigurdMeshV2::hexToBytes(hex, buf, sizeof(buf));
+            if (blen > 0) {
+                return g_mesh->importContact(buf, (uint8_t)blen);
+            }
+        }
+    }
+
+    return false;
+}
+
+bool addChannelByUri(const char* uri) {
+    if (!uri || !g_mesh) return false;
+
+    // Must start with "meshcore://"
+    if (strncmp(uri, "meshcore://", 11) != 0) return false;
+    const char* p = uri + 11;
+
+    // Must be channel/add?...
+    if (strncmp(p, "channel/add?", 12) != 0) return false;
+    p += 12;
+
+    char name[32] = {0};
+    char secret_hex[65] = {0};  // 32 hex chars = 16 bytes, but allow up to 64
+
+    while (*p) {
+        const char* key_start = p;
+        while (*p && *p != '=' && *p != '&') p++;
+        int key_len = (int)(p - key_start);
+        if (*p == '=') {
+            p++;
+            const char* val_start = p;
+            while (*p && *p != '&') p++;
+            int val_len = (int)(p - val_start);
+
+            if (key_len == 4 && strncmp(key_start, "name", 4) == 0) {
+                int copy = val_len < (int)(sizeof(name) - 1)
+                    ? val_len : (int)(sizeof(name) - 1);
+                memcpy(name, val_start, copy);
+                name[copy] = '\0';
+                urlDecode(name);
+            } else if (key_len == 6 && strncmp(key_start, "secret", 6) == 0) {
+                int copy = val_len < (int)(sizeof(secret_hex) - 1)
+                    ? val_len : (int)(sizeof(secret_hex) - 1);
+                memcpy(secret_hex, val_start, copy);
+                secret_hex[copy] = '\0';
+            }
+        }
+        if (*p == '&') p++;
+    }
+
+    if (!name[0] || !secret_hex[0]) return false;
+
+    // Decode secret hex → bytes → base64 (what addChannel expects)
+    uint8_t raw_secret[32];  // up to 32 bytes
+    int raw_len = SigurdMeshV2::hexToBytes(secret_hex, raw_secret, sizeof(raw_secret));
+    if (raw_len <= 0) return false;
+
+    // Base64-encode the raw secret
+    // Output size: ((raw_len + 2) / 3) * 4 + 1 — max 45 for 32 bytes
+    char b64[48];
+    encodeBase64(raw_secret, raw_len, b64);
+
+    // Use the wrapper's addChannel which accepts base64 PSK
+    return g_mesh->addChannelBool(name, b64);
+}
+
 } // namespace mesh
 } // namespace sigurdos

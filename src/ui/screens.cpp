@@ -4675,7 +4675,25 @@ void terminal_screen_show()
 
         static char result[256];
         if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping sign anon fetchmsgs groupdata emoji-list exportkey importkey getvar setvar delvar listvars");
+            snprintf(result, sizeof(result), "Commands: help status advert ping sign anon fetchmsgs groupdata emoji-list exportkey importkey import getvar setvar delvar listvars");
+        } else if (strncmp(cmd, "import ", 7) == 0) {
+            const char* uri = cmd + 7;
+            while (*uri == ' ' || *uri == '\\t') uri++;
+            if (!*uri) {
+                snprintf(result, sizeof(result), "Usage: import meshcore://contact/add?name=...&public_key=...&type=...  OR  import meshcore://channel/add?name=...&secret=...");
+            } else if (strstr(uri, "channel/add")) {
+                if (sigurdos::mesh::addChannelByUri(uri)) {
+                    snprintf(result, sizeof(result), "Channel added via URI");
+                } else {
+                    snprintf(result, sizeof(result), "Failed to add channel (invalid URI or already exists?)");
+                }
+            } else {
+                if (sigurdos::mesh::importContactByUri(uri)) {
+                    snprintf(result, sizeof(result), "Contact imported via URI");
+                } else {
+                    snprintf(result, sizeof(result), "Failed to import (invalid URI or already exists?)");
+                }
+            }
         } else if (strncmp(cmd, "getvar ", 7) == 0) {
             const char* key = cmd + 7;
             if (!key[0]) {

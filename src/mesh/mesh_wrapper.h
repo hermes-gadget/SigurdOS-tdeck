@@ -317,5 +317,14 @@ bool exportIdentity(char* hex_out, size_t hex_sz);
 // Returns true on success if the key is valid.
 bool importIdentity(const char* hex_privkey);
 
+// ── URI import ──
+// Import a contact from a meshcore:// URI (query-param or raw hex blob format).
+// Returns true if a contact was successfully imported.
+bool importContactByUri(const char* uri);
+
+// Add a channel from a meshcore://channel/add?... URI.
+// Returns true if the channel was successfully added.
+bool addChannelByUri(const char* uri);
+
 } // namespace mesh
 } // namespace sigurdos
