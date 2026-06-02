@@ -1554,5 +1554,36 @@ int signMessage(const char* data, uint8_t* sig_out) {
     return SIGNATURE_SIZE;
 }
 
+// ── Identity backup ─────────────────────────────
+bool exportIdentity(char* hex_out, size_t hex_sz) {
+    if (!g_mesh || !hex_out || hex_sz < (PRV_KEY_SIZE * 2 + 1)) return false;
+    uint8_t buf[PRV_KEY_SIZE + PUB_KEY_SIZE];
+    size_t len = g_mesh->self_id.writeTo(buf, sizeof(buf));
+    if (len < PRV_KEY_SIZE) return false;
+    // Hex-encode the private key portion (first PRV_KEY_SIZE bytes)
+    for (size_t i = 0; i < PRV_KEY_SIZE; i++) {
+        int p = snprintf(hex_out + i * 2, hex_sz - i * 2, "%02x", buf[i]);
+        if (p != 2) return false;
+    }
+    hex_out[PRV_KEY_SIZE * 2] = '\0';
+    return true;
+}
+
+bool importIdentity(const char* hex_privkey) {
+    if (!g_mesh || !hex_privkey) return false;
+    size_t hex_len = strlen(hex_privkey);
+    if (hex_len != PRV_KEY_SIZE * 2) return false;  // must be exactly 128 hex chars
+    uint8_t buf[PRV_KEY_SIZE];
+    int n = SigurdMeshV2::hexToBytes(hex_privkey, buf, sizeof(buf));
+    if (n != PRV_KEY_SIZE) return false;
+    // Validate the private key using MeshCore's validation (ECDH check)
+    if (!::mesh::LocalIdentity::validatePrivateKey(buf)) return false;
+    // Re-key the node — readFrom with PRV_KEY_SIZE will derive pub_key from prv_key
+    g_mesh->self_id.readFrom(buf, PRV_KEY_SIZE);
+    // Persist the new identity to SPIFFS
+    saveIdentity(g_mesh->self_id);
+    return true;
+}
+
 } // namespace mesh
 } // namespace sigurdos

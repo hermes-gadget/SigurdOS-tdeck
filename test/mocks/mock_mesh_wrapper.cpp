@@ -116,4 +116,16 @@ void mock_set_rssi(int v)   { mock_rssi = v; }
 void mock_set_snr(float v)  { mock_snr = v; }
 void mock_set_drop_count(uint32_t v) { mock_drop_count = v; }
 
+// ── Identity backup stubs ──────────────────────
+bool exportIdentity(char* hex_out, size_t hex_sz) {
+    if (!hex_out || hex_sz < 2) return false;
+    hex_out[0] = '0'; hex_out[1] = '\0';
+    return false; // mock: no real identity
+}
+
+bool importIdentity(const char* hex_privkey) {
+    (void)hex_privkey;
+    return false; // mock: cannot import
+}
+
 } // namespace sigurdos::mesh

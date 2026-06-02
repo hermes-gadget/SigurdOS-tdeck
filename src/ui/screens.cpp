@@ -34,6 +34,7 @@
 #include "../mesh/mesh_wrapper.h"
 #include "../app/map_renderer.h"
 #include "../fonts/emoji_font.h"
+#include <MeshCore.h>
 #include <Arduino.h>
 #include <lvgl.h>
 #include <cstdio>
@@ -4661,7 +4662,7 @@ void terminal_screen_show()
 
         static char result[256];
         if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping sign anon fetchmsgs groupdata emoji-list getvar setvar delvar listvars");
+            snprintf(result, sizeof(result), "Commands: help status advert ping sign anon fetchmsgs groupdata emoji-list exportkey importkey getvar setvar delvar listvars");
         } else if (strncmp(cmd, "getvar ", 7) == 0) {
             const char* key = cmd + 7;
             if (!key[0]) {
@@ -4881,6 +4882,29 @@ void terminal_screen_show()
             term_add_line(log_cont, "--- End emoji list ---");
             lv_textarea_set_text(ta, "");
             return;
+        } else if (strcmp(cmd, "exportkey") == 0) {
+            char hex[PRV_KEY_SIZE * 2 + 1] = {0};
+            if (sigurdos::mesh::exportIdentity(hex, sizeof(hex))) {
+                term_add_line(log_cont, "Private key (keep secret!):");
+                snprintf(result, sizeof(result), "%s", hex);
+            } else {
+                snprintf(result, sizeof(result), "Export failed (mesh not ready?)");
+            }
+        } else if (strncmp(cmd, "importkey ", 10) == 0) {
+            const char* hex_in = cmd + 10;
+            while (*hex_in == ' ' || *hex_in == '\t') hex_in++;
+            size_t hlen = strlen(hex_in);
+            if (hlen != PRV_KEY_SIZE * 2) {
+                snprintf(result, sizeof(result),
+                    "Bad key length: got %zu hex, need %d",
+                    hlen, PRV_KEY_SIZE * 2);
+            } else if (sigurdos::mesh::importIdentity(hex_in)) {
+                term_add_line(log_cont, "Identity imported. Reboot for contacts to re-pair.");
+                lv_textarea_set_text(ta, "");
+                return;
+            } else {
+                snprintf(result, sizeof(result), "Import failed (invalid key?)");
+            }
         } else {
             snprintf(result, sizeof(result), "Unknown: %s  (type 'help')", cmd);
         }

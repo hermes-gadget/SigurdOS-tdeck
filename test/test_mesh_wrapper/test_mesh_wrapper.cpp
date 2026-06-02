@@ -220,4 +220,18 @@ TEST_F(MeshWrapperTest, NodeStatsCounterSignatures) {
     SUCCEED();
 }
 
+// ── Identity backup API surface ──
+
+TEST_F(MeshWrapperTest, ExportIdentitySignature) {
+    using export_fn = bool (*)(char*, size_t);
+    (void)static_cast<export_fn>(sigurdos::mesh::exportIdentity);
+    SUCCEED();
+}
+
+TEST_F(MeshWrapperTest, ImportIdentitySignature) {
+    using import_fn = bool (*)(const char*);
+    (void)static_cast<import_fn>(sigurdos::mesh::importIdentity);
+    SUCCEED();
+}
+
 } // anonymous namespace
