@@ -41,6 +41,7 @@ struct NodePrefs {
     bool     multi_acks;              // send extra redundant ACK transmissions for lossy links
     bool     buzzer_quiet;            // mute message-arrival buzzer
     uint8_t  client_repeat;           // 0=no forwarding, !=0=opportunistic relay (client-repeat mode)
+    uint32_t device_pin;               // 4-6 digit device PIN (0 = disabled)
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -73,6 +74,7 @@ struct NodePrefs {
         multi_acks = false;           // default: send minimum ACKs
         buzzer_quiet = false;         // default: buzzer enabled
         client_repeat = 0;            // default: no forwarding
+        device_pin = 0;               // default: no PIN
     }
 };
 

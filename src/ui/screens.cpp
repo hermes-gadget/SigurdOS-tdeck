@@ -61,6 +61,10 @@ static constexpr uint32_t ADVERT_COOLDOWN_SECONDS = 10;
 // Back button reference for back-swipe visual feedback
 static lv_obj_t* s_back_btn = nullptr;
 
+// ── Device PIN forward declarations ────────────────────
+static bool pin_grace_active();
+static void pin_entry_show(Screen target_screen);
+
 // ── Packets screen live-update state ──────────────────────
 static lv_obj_t*  g_packets_list       = nullptr;
 static lv_timer_t* g_packets_timer     = nullptr;
@@ -4177,6 +4181,102 @@ void settings_system_show()
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 
+    // Device PIN
+    {
+        bool has_pin = (p.device_pin != 0);
+        snprintf(buf, sizeof(buf), "  Device PIN: %s", has_pin ? "Change" : "Set");
+        lv_obj_t* btn_pin = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, buf);
+        lv_obj_set_style_bg_color(btn_pin, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_pin, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_pin, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_pin, [](lv_event_t* e) {
+            lv_obj_t* scr_pin = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
+            auto dlg_sz = dialog_size(260, 160);
+            lv_obj_t* dlg = lv_obj_create(scr_pin);
+            lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+            lv_obj_center(dlg);
+            lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+            lv_obj_set_style_radius(dlg, 0, 0);
+            lv_obj_set_style_border_width(dlg, 2, 0);
+            lv_obj_set_style_border_color(dlg, lv_color_hex(DIVIDER), 0);
+            lv_obj_set_style_pad_all(dlg, 8, 0);
+
+            lv_obj_t* title = lv_label_create(dlg);
+            lv_label_set_text(title, "Set/Change PIN");
+            lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+            lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+            lv_obj_t* msg = lv_label_create(dlg);
+            lv_label_set_text(msg, "Enter new 4-digit PIN:");
+            lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
+            lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+            lv_obj_align(msg, LV_ALIGN_TOP_LEFT, 8, 24);
+
+            lv_obj_t* pin_ta = lv_textarea_create(dlg);
+            lv_obj_set_size(pin_ta, 120, 30);
+            lv_obj_align(pin_ta, LV_ALIGN_TOP_MID, 0, 48);
+            lv_textarea_set_password_mode(pin_ta, true);
+            lv_textarea_set_one_line(pin_ta, true);
+            lv_textarea_set_max_length(pin_ta, 4);
+            lv_textarea_set_accepted_chars(pin_ta, "0123456789");
+            lv_obj_set_style_text_align(pin_ta, LV_TEXT_ALIGN_CENTER, 0);
+            apply_pixel_input(pin_ta);
+
+            // Save button
+            lv_obj_t* save_btn = lv_btn_create(dlg);
+            lv_obj_set_size(save_btn, 80, 26);
+            lv_obj_align(save_btn, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
+            apply_pixel_btn(save_btn);
+            lv_obj_t* save_lbl = lv_label_create(save_btn);
+            lv_label_set_text(save_lbl, "Save");
+            lv_obj_center(save_lbl);
+            lv_obj_add_event_cb(save_btn, [](lv_event_t* ev) {
+                lv_obj_t* ta = (lv_obj_t*)lv_event_get_user_data(ev);
+                lv_obj_t* dlg = lv_obj_get_parent(ta);
+                const char* pin_str = lv_textarea_get_text(ta);
+                if (pin_str && strlen(pin_str) >= 4) {
+                    auto p = sigurdos::prefs_get();
+                    p.device_pin = (uint32_t)atoi(pin_str);
+                    sigurdos::prefs_set(p);
+                }
+                lv_obj_del_async(dlg);
+            }, LV_EVENT_CLICKED, pin_ta);
+
+            // Cancel button
+            lv_obj_t* cancel_btn = lv_btn_create(dlg);
+            lv_obj_set_size(cancel_btn, 80, 26);
+            lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+            apply_pixel_btn_outline(cancel_btn);
+            lv_obj_t* cancel_lbl = lv_label_create(cancel_btn);
+            lv_label_set_text(cancel_lbl, "Cancel");
+            lv_obj_center(cancel_lbl);
+            lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ev) {
+                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
+            }, LV_EVENT_CLICKED, nullptr);
+
+            // If PIN is already set, add a "Clear PIN" button
+            if (sigurdos::prefs_get().device_pin != 0) {
+                lv_obj_t* clear_btn = lv_btn_create(dlg);
+                lv_obj_set_size(clear_btn, 80, 26);
+                lv_obj_align(clear_btn, LV_ALIGN_BOTTOM_MID, 0, -8);
+                lv_obj_set_style_bg_color(clear_btn, lv_color_hex(ACCENT_RED), 0);
+                lv_obj_set_style_radius(clear_btn, 0, 0);
+                lv_obj_t* clear_lbl = lv_label_create(clear_btn);
+                lv_label_set_text(clear_lbl, "Clear");
+                lv_obj_center(clear_lbl);
+                lv_obj_add_event_cb(clear_btn, [](lv_event_t* ev) {
+                    lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev));
+                    auto p = sigurdos::prefs_get();
+                    p.device_pin = 0;
+                    sigurdos::prefs_set(p);
+                    lv_obj_del_async(dlg);
+                }, LV_EVENT_CLICKED, nullptr);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
     // Shut down
     lv_obj_t* btn_shutdown = lv_list_add_btn(list, LV_SYMBOL_POWER, "  Shut down");
     lv_obj_set_style_bg_color(btn_shutdown, lv_color_hex(0x4a2020), 0);
@@ -4529,6 +4629,11 @@ void node_stats_screen_show()
 // ════════════════════════════════════════════════════════
 void settings_screen_show()
 {
+    // PIN gate check
+    if (sigurdos::prefs_get().device_pin != 0 && !pin_grace_active()) {
+        pin_entry_show(Screen::Settings);
+        return;
+    }
     lv_obj_t* scr = make_screen_full("Settings");
 
     lv_obj_t* list = lv_list_create(scr);
@@ -4613,6 +4718,11 @@ static void term_add_line(lv_obj_t* log, const char* text)
 // ════════════════════════════════════════════════════════
 void terminal_screen_show()
 {
+    // PIN gate check
+    if (sigurdos::prefs_get().device_pin != 0 && !pin_grace_active()) {
+        pin_entry_show(Screen::Terminal);
+        return;
+    }
     lv_obj_t* scr = make_screen_full("Terminal");
 
     static constexpr int TERM_INPUT_H = 28;
@@ -6038,6 +6148,127 @@ void highlight_back_button(bool show)
 void screens_clear_back_btn()
 {
     s_back_btn = nullptr;
+}
+
+// ════════════════════════════════════════════════════════
+// Device PIN protection
+// ════════════════════════════════════════════════════════
+static uint32_t g_pin_last_unlock = 0;
+static constexpr uint32_t PIN_GRACE_SECONDS = 300; // 5 minutes
+
+static bool pin_grace_active() {
+    if (g_pin_last_unlock == 0) return false;
+    uint32_t now = sigurdos::mesh::getCurrentTime();
+    if (now == 0) return true; // time not synced — keep grace alive
+    return (now - g_pin_last_unlock) < PIN_GRACE_SECONDS;
+}
+
+struct PinEntryCtx {
+    int attempts;
+    lv_obj_t* attempts_label;
+    Screen target;
+};
+
+static void pin_entry_success(Screen target) {
+    g_pin_last_unlock = sigurdos::mesh::getCurrentTime();
+    if (g_pin_last_unlock == 0) g_pin_last_unlock = 1;
+    navigate_to(target);
+}
+
+static void pin_entry_show(Screen target_screen) {
+    lv_obj_t* scr = lv_obj_create(nullptr);
+    apply_dark_bg(scr);
+
+    // Title
+    lv_obj_t* title = lv_label_create(scr);
+    lv_label_set_text(title, "Enter Device PIN");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
+
+    // Subtitle
+    lv_obj_t* sub = lv_label_create(scr);
+    lv_label_set_text(sub, "4-digit PIN to unlock");
+    lv_obj_set_style_text_color(sub, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(sub, &lv_font_montserrat_10, 0);
+    lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 60);
+
+    // PIN input
+    lv_obj_t* ta = lv_textarea_create(scr);
+    lv_obj_set_size(ta, 160, 44);
+    lv_obj_center(ta);
+    lv_obj_set_style_text_align(ta, LV_TEXT_ALIGN_CENTER, 0);
+    lv_textarea_set_password_mode(ta, true);
+    lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_max_length(ta, 4);
+    lv_textarea_set_accepted_chars(ta, "0123456789");
+    lv_textarea_set_placeholder_text(ta, "----");
+    lv_obj_set_style_text_font(ta, &lv_font_montserrat_14, 0);
+    apply_pixel_input(ta);
+
+    // Attempts remaining label
+    lv_obj_t* attempts_label = lv_label_create(scr);
+    lv_label_set_text(attempts_label, "3 attempts remaining");
+    lv_obj_set_style_text_color(attempts_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(attempts_label, &lv_font_montserrat_10, 0);
+    lv_obj_align(attempts_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+
+    // Back to Home button
+    lv_obj_t* cancel_btn = lv_btn_create(scr);
+    lv_obj_set_size(cancel_btn, 120, 28);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_MID, 0, -60);
+    apply_pixel_btn_outline(cancel_btn);
+    lv_obj_t* cancel_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_lbl, "Back to Home");
+    lv_obj_center(cancel_lbl);
+    lv_obj_add_event_cb(cancel_btn, [](lv_event_t*) {
+        go_back();
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Allocate context
+    PinEntryCtx* ctx = new PinEntryCtx{3, attempts_label, target_screen};
+
+    // Value change callback — auto-submit on 4 digits
+    lv_obj_add_event_cb(ta, [](lv_event_t* e) {
+        PinEntryCtx* ctx = (PinEntryCtx*)lv_event_get_user_data(e);
+        lv_obj_t* ta_obj = (lv_obj_t*)lv_event_get_target(e);
+
+        const char* text = lv_textarea_get_text(ta_obj);
+        if (strlen(text) == 4) {
+            uint32_t entered = (uint32_t)atoi(text);
+            if (entered == sigurdos::prefs_get().device_pin) {
+                pin_entry_success(ctx->target);
+                return;
+            }
+            // Wrong PIN
+            ctx->attempts--;
+            lv_textarea_set_text(ta_obj, "");
+            if (ctx->attempts <= 0) {
+                go_back();
+            } else {
+                char att_buf[32];
+                snprintf(att_buf, sizeof(att_buf), "%d attempts remaining", ctx->attempts);
+                lv_label_set_text(ctx->attempts_label, att_buf);
+            }
+        }
+    }, LV_EVENT_VALUE_CHANGED, ctx);
+
+    // Store ctx on screen for cleanup
+    lv_obj_set_user_data(scr, ctx);
+    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+        PinEntryCtx* c = (PinEntryCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+        delete c;
+    }, LV_EVENT_DELETE, nullptr);
+
+    // Focus the textarea
+    lv_group_t* g = lv_group_get_default();
+    if (g) {
+        lv_group_remove_all_objs(g);
+        lv_group_add_obj(g, ta);
+        lv_group_focus_obj(ta);
+    }
+
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
 }
 
 } // namespace sigurdos::ui

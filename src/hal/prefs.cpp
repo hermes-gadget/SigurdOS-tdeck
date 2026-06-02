@@ -50,6 +50,7 @@ bool prefs_load(NodePrefs& p) {
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
     p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
     p.client_repeat = nvs.getUChar("clirep", 0);
+    p.device_pin = nvs.getULong("dev_pin", 0);
 
     nvs.end();
     return true;
@@ -87,6 +88,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("autoadd_cfg", p.autoadd_config);
     nvs.putUChar("autoadd_mh", p.autoadd_max_hops);
     nvs.putUChar("clirep", p.client_repeat);
+    nvs.putULong("dev_pin", p.device_pin);
 
     nvs.end();
     return true;
