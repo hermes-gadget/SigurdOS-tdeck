@@ -15,7 +15,10 @@
 #include "mesh_wrapper.h"
 #include "hal/prefs.h"
 #include "hal/tdeck_board.h"
+#include "hal/battery.h"
+#include "hal/gps.h"
 #include "../diagnostics/debug_cfg.h"
+#include <helpers/sensors/LPPDataHelpers.h>
 
 namespace sigurdos {
 namespace mesh {
@@ -296,6 +299,7 @@ public:
     // NOTE: 0x03 is REQ_TYPE_GET_TELEMETRY_DATA in room server firmware,
     // so we use 0x06 to avoid conflict.
     static constexpr uint8_t REQ_TYPE_GET_ROOM_MSGS = 0x06;
+    static constexpr uint8_t REQ_TYPE_GET_TELEMETRY_DATA = 0x03;
 
     //  REQ/RESPONSE framework (Phase 4.1)
     // ════════════════════════════════════════════════════
@@ -675,7 +679,30 @@ public:
     uint8_t onContactRequest(const ::ContactInfo& contact, uint32_t sender_timestamp,
                              const uint8_t* data, uint8_t len, uint8_t* reply) override
     {
-        return 0;  // no custom request handling in this skeleton
+        // Telemetry request: send battery voltage (and GPS if available)
+        if (len >= 1 && data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
+            uint8_t pos = 0;
+
+            // Battery voltage as CayenneLPP analog input (channel 1, 0.01V resolution)
+            uint16_t mv = sigurdos_battery_mv();
+            uint16_t val = mv / 10;  // mV → decivolts (0.01V)
+            reply[pos++] = 0x01;          // channel 1
+            reply[pos++] = LPP_ANALOG_INPUT; // analog input type
+            reply[pos++] = (val >> 8) & 0xFF;
+            reply[pos++] = val & 0xFF;
+
+            // Optional: GPS position if fix available
+            if (sigurdos_gps_has_fix() && pos + 11 <= 64) {
+                LPPWriter lpp(reply + pos, 64 - pos);
+                lpp.writeGPS(2, sigurdos_gps_latitude(),
+                             sigurdos_gps_longitude(),
+                             sigurdos_gps_altitude_m());
+                pos += lpp.length();
+            }
+
+            return pos;
+        }
+        return 0;  // unknown request type
     }
 
     void onContactResponse(const ::ContactInfo& contact, const uint8_t* data,
