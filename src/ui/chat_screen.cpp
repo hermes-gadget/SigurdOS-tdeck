@@ -70,6 +70,7 @@ static lv_obj_t* channel_ribbon = nullptr;
 static lv_obj_t* msg_list       = nullptr;
 static lv_obj_t* input_bar      = nullptr;
 static lv_obj_t* input_field    = nullptr;
+static lv_obj_t* byte_counter   = nullptr;
 
 // ── Search state ───────────────────────────────────────
 static bool     search_active        = false;
@@ -1372,12 +1373,10 @@ static void do_send()
     const char* raw = lv_textarea_get_text(input_field);
     if (!raw || !raw[0]) return;
 
-    // Byte-level truncation to mesh payload limit (MAX_MSG_BYTES = 149)
-    // LVGL's max_length is character-based, but mesh limits are byte-based,
-    // so multi-byte UTF-8 text needs explicit truncation before sending.
-    // Use utf8_truncate_bytes to avoid splitting a multi-byte codepoint.
+    // Input is now enforced to ≤ 149 bytes at the UI level (see byte-counter
+    // handler in create_input_bar), so no truncation is needed before sending.
     char text[150];
-    size_t len = sigurdos::utf8_truncate_bytes(raw, MAX_MSG_BYTES);
+    size_t len = strnlen(raw, sizeof(text) - 1);
     memcpy(text, raw, len);
     text[len] = '\0';
 
@@ -1455,6 +1454,14 @@ static void create_input_bar()
     lv_obj_set_style_outline_width(input_field, 0, (lv_state_t)(LV_STATE_FOCUSED | LV_STATE_EDITED));
     apply_focus_style(input_field);
 
+    // Byte counter: small overlay showing remaining bytes (mesh limit = 149)
+    lv_obj_set_style_pad_right(input_field, 28, 0);
+    byte_counter = lv_label_create(input_field);
+    lv_label_set_text(byte_counter, "149");
+    lv_obj_set_style_text_font(byte_counter, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_style_text_color(byte_counter, lv_color_hex(TEXT_MUTED), 0);
+    lv_obj_align(byte_counter, LV_ALIGN_RIGHT_MID, -2, 0);
+
     // Emoji button — opens emoji picker dialog
     lv_obj_t* emoji_btn = lv_btn_create(input_bar);
     lv_obj_set_size(emoji_btn, 30, INPUT_H - 8);
@@ -1491,7 +1498,30 @@ static void create_input_bar()
     lv_obj_add_event_cb(send_btn, [](lv_event_t*) { do_send(); },
                         LV_EVENT_CLICKED, nullptr);
     lv_obj_add_event_cb(input_field, [](lv_event_t* e) {
-        if (lv_event_get_code(e) == LV_EVENT_READY) do_send();
+        lv_event_code_t code = lv_event_get_code(e);
+        if (code == LV_EVENT_READY) {
+            do_send();
+        } else if (code == LV_EVENT_VALUE_CHANGED) {
+            const char* raw = lv_textarea_get_text(input_field);
+            size_t byte_len = strlen(raw);
+            if (byte_len > MAX_MSG_BYTES) {
+                // Truncate to 149 bytes (UTF-8 safe)
+                size_t trunc_len = sigurdos::utf8_truncate_bytes(raw, MAX_MSG_BYTES);
+                char buf[MAX_MSG_BYTES + 1];
+                memcpy(buf, raw, trunc_len);
+                buf[trunc_len] = '\0';
+                lv_textarea_set_text(input_field, buf);
+                // Counter will be updated by the recursive VALUE_CHANGED
+            } else {
+                // Update remaining-bytes counter
+                if (byte_counter) {
+                    int remaining = (int)MAX_MSG_BYTES - (int)byte_len;
+                    char cb[8];
+                    snprintf(cb, sizeof(cb), "%d", remaining);
+                    lv_label_set_text(byte_counter, cb);
+                }
+            }
+        }
     }, LV_EVENT_ALL, nullptr);
 }
 
