@@ -4360,6 +4360,40 @@ void node_stats_screen_show()
     lv_obj_set_style_pad_bottom(r7, 4, 0);
     row++;
 
+    // ── Storage ──
+    {
+        // SPIFFS
+        size_t spiffs_total = SPIFFS.totalBytes();
+        size_t spiffs_used  = SPIFFS.usedBytes();
+        snprintf(buf, sizeof(buf), "  SPIFFS:       %u/%u KB", (unsigned)(spiffs_used / 1024), (unsigned)(spiffs_total / 1024));
+        lv_obj_t* rs0 = lv_list_add_btn(list, LV_SYMBOL_SD_CARD, buf);
+        lv_obj_set_style_bg_color(rs0, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(rs0, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(rs0, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(rs0, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_pad_top(rs0, 4, 0);
+        lv_obj_set_style_pad_bottom(rs0, 4, 0);
+        row++;
+
+        // SD Card
+        if (sigurdos_sdcard_mounted()) {
+            uint64_t sd_total = sigurdos_sdcard_capacity_bytes();
+            uint64_t sd_free  = sigurdos_sdcard_free_bytes();
+            char total_str[16], free_str[16];
+            sigurdos_sdcard_format_size(sd_total, total_str, sizeof(total_str));
+            sigurdos_sdcard_format_size(sd_free, free_str, sizeof(free_str));
+            snprintf(buf, sizeof(buf), "  SD Card:      %s free / %s", free_str, total_str);
+            lv_obj_t* rs1 = lv_list_add_btn(list, LV_SYMBOL_SD_CARD, buf);
+            lv_obj_set_style_bg_color(rs1, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_obj_set_style_bg_opa(rs1, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(rs1, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_set_style_text_font(rs1, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_pad_top(rs1, 4, 0);
+            lv_obj_set_style_pad_bottom(rs1, 4, 0);
+            row++;
+        }
+    }
+
     // ── Section spacer ──
     row++;
 
