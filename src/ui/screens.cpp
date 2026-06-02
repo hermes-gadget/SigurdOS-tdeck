@@ -4181,7 +4181,11 @@ void settings_system_show()
         lv_label_set_text(cl, "Cancel");
         lv_obj_center(cl);
         lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ev) {
-            lv_obj_del(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
+            // Defer deletion: deleting the dialog (this button's parent) from
+            // inside its own click handler is a use-after-free — LVGL may still
+            // dereference the freed object after the callback returns. Matches
+            // the async-delete pattern used by every other dialog close here.
+            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
         }, LV_EVENT_CLICKED, nullptr);
 
         // Confirm (red, dangerous)
