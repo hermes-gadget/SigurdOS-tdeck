@@ -4639,7 +4639,7 @@ void terminal_screen_show()
 
         static char result[256];
         if (strcmp(cmd, "help") == 0) {
-            snprintf(result, sizeof(result), "Commands: help status advert ping anon fetchmsgs groupdata emoji-list getvar setvar delvar listvars");
+            snprintf(result, sizeof(result), "Commands: help status advert ping sign anon fetchmsgs groupdata emoji-list getvar setvar delvar listvars");
         } else if (strncmp(cmd, "getvar ", 7) == 0) {
             const char* key = cmd + 7;
             if (!key[0]) {
@@ -4757,6 +4757,23 @@ void terminal_screen_show()
             snprintf(result, sizeof(result), ok ? "Advert sent" : "Send failed");
         } else if (strcmp(cmd, "ping") == 0) {
             snprintf(result, sizeof(result), "Pong! Uptime: %lums", millis());
+        } else if (strncmp(cmd, "sign ", 5) == 0) {
+            const char* sign_data = cmd + 5;
+            if (!sign_data[0]) {
+                snprintf(result, sizeof(result), "Usage: sign <data>");
+            } else {
+                uint8_t sig[64];
+                int sig_len = sigurdos::mesh::signMessage(sign_data, sig);
+                if (sig_len > 0) {
+                    // Hex-encode the signature
+                    int pos = 0;
+                    for (int i = 0; i < sig_len && pos < (int)sizeof(result) - 3; i++) {
+                        pos += snprintf(result + pos, sizeof(result) - pos, "%02x", sig[i]);
+                    }
+                } else {
+                    snprintf(result, sizeof(result), "Sign failed (no identity?)");
+                }
+            }
         } else if (strncmp(cmd, "anon ", 5) == 0) {
             const char* anon_arg = cmd + 5;
             const char* anon_space = strchr(anon_arg, ' ');

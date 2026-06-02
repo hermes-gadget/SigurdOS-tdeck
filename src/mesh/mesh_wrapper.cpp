@@ -1547,5 +1547,12 @@ int hexToBytes(const char* hex, uint8_t* out, int out_max) {
     return SigurdMeshV2::hexToBytes(hex, out, (size_t)out_max);
 }
 
+int signMessage(const char* data, uint8_t* sig_out) {
+    if (!g_mesh || !data || !sig_out) return 0;
+    if (!data[0]) return 0;  // empty data — nothing to sign
+    g_mesh->self_id.sign(sig_out, (const uint8_t*)data, strlen(data));
+    return SIGNATURE_SIZE;
+}
+
 } // namespace mesh
 } // namespace sigurdos

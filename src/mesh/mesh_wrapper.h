@@ -300,5 +300,10 @@ bool getGroupDataRecvEntry(int index, uint16_t* data_type_out,
                            uint32_t* timestamp_out);
 void clearGroupDataRecv();
 
+// ── Message signing ──
+// Sign arbitrary data with this node's private key.
+// Returns number of bytes written to sig_out (SIGNATURE_SIZE=64 on success, 0 on failure).
+int signMessage(const char* data, uint8_t* sig_out);
+
 } // namespace mesh
 } // namespace sigurdos
