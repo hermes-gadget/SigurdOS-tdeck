@@ -10,7 +10,6 @@
 #include "hal/gps.h"
 #include "hal/prefs.h"
 #include "sigurd_mesh_v2.h"
-#include "sigurd_mesh.h"
 #include "../diagnostics/debug_cfg.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 
@@ -702,7 +701,7 @@ bool init(bool spiffs_ok)
 
     g_mesh = new mesh_impl_t(*radio_driver, millis_clock, fast_rng, rtc_clock, pkt_mgr, tables);
     if (!g_mesh) {
-        Serial.println("[mesh] ERROR: SigurdMesh allocation failed");
+        Serial.println("[mesh] ERROR: SigurdMeshV2 allocation failed");
         return false;
     }
     g_mesh->setMessageCallback(onMeshMessage);
@@ -776,7 +775,7 @@ bool init(bool spiffs_ok)
 
     initialized = true;
 #if SIGURDOS_DEBUG_MESH
-    Serial.println("[mesh] SigurdMesh initialized");
+    Serial.println("[mesh] SigurdMeshV2 initialized");
 #endif
     // Test entry to verify packet log works
     pushPacketLog("SYSTEM", 0, 0.0f, "BOOT");
