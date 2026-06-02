@@ -3770,6 +3770,43 @@ void settings_radio_show()
         row++;
     }
 
+    // Node type (advert_type)
+    {
+        static constexpr uint8_t TYPE_VALUES[] = {1, 2, 3, 4};
+        static constexpr const char* TYPE_LABELS[] = {"Chat", "Repeater", "Room Server", "Sensor"};
+        static constexpr int NUM_TYPE = 4;
+        int cur_type = 0;
+        for (int i = 0; i < NUM_TYPE; i++) {
+            if (p.advert_type == TYPE_VALUES[i]) { cur_type = i; break; }
+        }
+        snprintf(buf, sizeof(buf), "  Node type: %s", TYPE_LABELS[cur_type]);
+        lv_obj_t* btn_type = lv_list_add_btn(list, LV_SYMBOL_HOME, buf);
+        lv_obj_set_style_bg_color(btn_type, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_type, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_type, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_type, [](lv_event_t* e) {
+            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+            sigurdos::NodePrefs np = sigurdos::prefs_get();
+            static constexpr uint8_t VALS[] = {1, 2, 3, 4};
+            static constexpr const char* LABELS[] = {"Chat", "Repeater", "Room Server", "Sensor"};
+            static constexpr int N = 4;
+            int idx = 0;
+            for (int i = 0; i < N; i++) {
+                if (np.advert_type == VALS[i]) { idx = i; break; }
+            }
+            idx = (idx + 1) % N;
+            np.advert_type = VALS[idx];
+            sigurdos::prefs_set(np);
+            char row_buf[64];
+            snprintf(row_buf, sizeof(row_buf), "  Node type: %s", LABELS[idx]);
+            lv_obj_t* lbl = lv_obj_get_child(target, 1);
+            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
+                lv_label_set_text(lbl, row_buf);
+            }
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
     // Duty cycle
     {
         static constexpr uint8_t DUTY_VALUES[] = {0, 1, 5, 10, 25, 50, 100};
