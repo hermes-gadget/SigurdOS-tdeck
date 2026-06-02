@@ -44,6 +44,7 @@ bool prefs_load(NodePrefs& p) {
     p.advert_type = nvs.getUChar("adv_type", 1);
     p.theme_id = nvs.getUChar("theme", 0);
     p.multi_acks = nvs.getBool("multi_ack", false);
+    p.buzzer_quiet = nvs.getBool("buzz_q", false);
     p.gps_enabled = nvs.getBool("gps_en", true);
     p.gps_interval = nvs.getUShort("gps_int", 0);
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
@@ -79,6 +80,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("adv_type", p.advert_type);
     nvs.putUChar("theme", p.theme_id);
     nvs.putBool("multi_ack", p.multi_acks);
+    nvs.putBool("buzz_q", p.buzzer_quiet);
     nvs.putBool("gps_en", p.gps_enabled);
     nvs.putUShort("gps_int", p.gps_interval);
     nvs.putUChar("autoadd_cfg", p.autoadd_config);

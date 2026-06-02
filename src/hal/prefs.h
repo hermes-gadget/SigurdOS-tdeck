@@ -39,6 +39,7 @@ struct NodePrefs {
     uint8_t  autoadd_max_hops;       // 0=no limit, max flood hops for auto-add
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
     bool     multi_acks;              // send extra redundant ACK transmissions for lossy links
+    bool     buzzer_quiet;            // mute message-arrival buzzer
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -69,6 +70,7 @@ struct NodePrefs {
         autoadd_max_hops = 0;         // 0 = no limit
         theme_id = 0;                 // default theme
         multi_acks = false;           // default: send minimum ACKs
+        buzzer_quiet = false;         // default: buzzer enabled
     }
 };
 

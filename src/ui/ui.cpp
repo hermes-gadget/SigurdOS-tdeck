@@ -27,6 +27,7 @@ using namespace sigurdos::responsive;
 #include "../mesh/mesh_wrapper.h"
 #include "../hal/battery.h"
 #include "../hal/prefs.h"
+#include "../hal/buzzer.h"
 #include "../fonts/emoji_font.h"
 #include <Arduino.h>
 #include <lvgl.h>
@@ -134,8 +135,12 @@ void loop()
             last_msg_poll = millis();
             sigurdos::mesh::MeshMessage msgs[4];
             int n = sigurdos::mesh::pollMessages(msgs, 4);
+            bool got_new = (n > 0);
             for (int i = 0; i < n; i++) {
                 chat_screen_add_msg(msgs[i].channel, msgs[i].sender, msgs[i].text, msgs[i].is_self);
+            }
+            if (got_new && !sigurdos::prefs_get().buzzer_quiet) {
+                sigurdos::hal::buzzer_beep_short();
             }
             // Refresh ACK status on the current chat screen
             chat_screen_refresh_acks();

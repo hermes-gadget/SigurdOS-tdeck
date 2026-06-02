@@ -10,6 +10,7 @@
 #include "hal/gps.h"
 #include "hal/sdcard.h"
 #include "hal/prefs.h"
+#include "hal/buzzer.h"
 #include "app/map_renderer.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/ui.h"
@@ -39,6 +40,7 @@ void setup()
     Serial.println("[boot] step 2: board init OK");
 #endif
     sigurdos_battery_init();
+    sigurdos::hal::buzzer_init();
 
     bool spiffs_ok = SPIFFS.begin(true);
     if (!spiffs_ok)

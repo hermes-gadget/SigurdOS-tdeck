@@ -5244,6 +5244,7 @@ static int   s_rf_cr   = 5;
 static int   s_rf_pwr  = 22;
 static bool  s_rx_gain    = false;  // RX boosted gain toggle state
 static bool  s_multi_ack  = false;  // multi-ACK toggle state
+static bool  s_buzzer_quiet = false; // buzzer quiet toggle state
 static uint8_t s_duty_cycle = 0;    // duty cycle percentage (0 = disabled)
 
 void custom_rf_screen_show()
@@ -5405,6 +5406,7 @@ void radio_setup_screen_show()
     s_rx_gain    = p.rx_boosted_gain;
     s_duty_cycle = p.duty_cycle;
     s_multi_ack  = p.multi_acks;
+    s_buzzer_quiet = p.buzzer_quiet;
 
     // Warning
     auto* warn = lv_label_create(scr);
@@ -5632,6 +5634,36 @@ void radio_setup_screen_show()
     }, LV_EVENT_CLICKED, (void*)mack_lbl);
     ry += 24;
 
+    // ── Buzzer toggle ──────────────────────────────
+    snprintf(buf, sizeof(buf), "Buzzer: %s", s_buzzer_quiet ? "OFF" : "ON");
+    auto* buzzer_lbl = lv_label_create(scr);
+    lv_label_set_text(buzzer_lbl, buf);
+    lv_obj_set_style_text_color(buzzer_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(buzzer_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_align(buzzer_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
+
+    auto* buzzer_toggle = lv_btn_create(scr);
+    lv_obj_set_size(buzzer_toggle, 48, 20);
+    lv_obj_align(buzzer_toggle, LV_ALIGN_TOP_LEFT, rx + rw - 52, ry - 2);
+    lv_obj_set_style_bg_color(buzzer_toggle, lv_color_hex(s_buzzer_quiet ? ACCENT_RED : ACCENT), 0);
+    lv_obj_set_style_radius(buzzer_toggle, 0, 0);
+    auto* btl = lv_label_create(buzzer_toggle);
+    lv_label_set_text(btl, s_buzzer_quiet ? "OFF" : "ON");
+    lv_obj_center(btl);
+    lv_obj_add_event_cb(buzzer_toggle, [](lv_event_t* e) {
+        s_buzzer_quiet = !s_buzzer_quiet;
+        lv_obj_t* lbl = (lv_obj_t*)lv_event_get_user_data(e);
+        char b[32]; snprintf(b, sizeof(b), "Buzzer: %s", s_buzzer_quiet ? "OFF" : "ON");
+        lv_label_set_text(lbl, b);
+        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_set_style_bg_color(target, lv_color_hex(s_buzzer_quiet ? ACCENT_RED : ACCENT), 0);
+        lv_obj_t* bl = lv_obj_get_child(target, 0);
+        if (bl && lv_obj_check_type(bl, &lv_label_class)) {
+            lv_label_set_text(bl, s_buzzer_quiet ? "OFF" : "ON");
+        }
+    }, LV_EVENT_CLICKED, (void*)buzzer_lbl);
+    ry += 24;
+
     // Save & Reboot
     auto* save_btn = lv_btn_create(scr);
     lv_obj_set_size(save_btn, rw, 28);
@@ -5650,6 +5682,7 @@ void radio_setup_screen_show()
         np.tx_power_dbm = (int8_t)s_rf_pwr;
         np.rx_boosted_gain = s_rx_gain;
         np.multi_acks     = s_multi_ack;
+        np.buzzer_quiet   = s_buzzer_quiet;
         np.duty_cycle   = s_duty_cycle;
         np.configured   = true;
         sigurdos::prefs_set(np);
