@@ -93,6 +93,7 @@ static const ScreenEntry screen_table[] = {
     {"system",          sigurdos::ui::Screen::SettingsSystem},
     {"wifinetworks",    sigurdos::ui::Screen::WiFiNetworks},
     {"nodestats",       sigurdos::ui::Screen::NodeStats},
+    {"regions",        sigurdos::ui::Screen::Regions},
 };
 
 static const char* screen_name(sigurdos::ui::Screen s) {
