@@ -75,14 +75,8 @@ uint32_t hb_ring_count() {
 bool hb_ring_get(uint32_t index, HbRingEntry* out) {
     if (!s_ring || index >= s_ring_count) return false;
 
-    uint32_t phys;
-    if (s_ring_count < HB_RING_SIZE) {
-        // Not yet wrapped — linear order
-        phys = index;
-    } else {
-        // Wrapped — logical index 0 is the oldest entry still in the buffer
-        phys = (s_ring_head + index) % HB_RING_SIZE;
-    }
+    // Physical slot = index % size (works for both wrapped and unwrapped)
+    uint32_t phys = index % HB_RING_SIZE;
     *out = s_ring[phys];
     return true;
 }

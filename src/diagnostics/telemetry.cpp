@@ -221,7 +221,7 @@ static void emit_pktlog() {
     }
     uint32_t start = total > 20 ? total - 20 : 0;
     for (uint32_t idx = start; idx < total; idx++) {
-        uint32_t phys = total < PKTLOG_SIZE ? idx : (s_pktlog_head + idx) % PKTLOG_SIZE;
+        uint32_t phys = idx % PKTLOG_SIZE;
         const PktLogEntry& e = s_pktlog[phys];
         emit_tag(tag::PKT);
         emit_sep();

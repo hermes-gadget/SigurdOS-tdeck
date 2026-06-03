@@ -53,6 +53,9 @@ static int capture_backtrace(uint16_t* out_pcs, int max_frames) {
         // or internal SRAM (0x3FF0_0000+)
         uint32_t sp_addr = (uint32_t)sp;
         if (sp_addr < 0x3F000000 || sp_addr > 0x40000000) break;
+        // Xtensa requires 4-byte aligned stack pointer — unaligned
+        // access triggers Hardware Exception (double-fault) in crash handler
+        if (sp_addr & 0x3) break;
 
         // The return address is at sp[1] (caller's a0 saved by ENTRY instruction)
         uint32_t ret_addr = sp[1];
@@ -77,7 +80,7 @@ static void IRAM_ATTR crash_shutdown_handler(void) {
     g_crash_record.magic = CRASH_MAGIC;
     g_crash_record.reset_reason = (uint8_t)esp_reset_reason();
     g_crash_record.crash_pc = (uint32_t)__builtin_return_address(0);
-    g_crash_record.crash_timestamp = millis();  // best effort during shutdown
+    g_crash_record.crash_timestamp = (uint32_t)(esp_timer_get_time() / 1000);  // hw timer, safe during shutdown
     g_crash_record.backtrace_count = (uint8_t)capture_backtrace(
         g_crash_record.backtrace_pcs, 8);
 }
