@@ -119,6 +119,7 @@ static constexpr int LIST_ROW_H  = 44;
 static constexpr int MAX_CHANNELS = 16;
 static char  dyn_channels[MAX_CHANNELS][32];
 static int   dyn_count      = 0;
+static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
 static int   active_channel = 0;
 
 // ── Channel filter mode ────────────────────────────────────
@@ -1875,6 +1876,14 @@ void chat_screen_set_filter(int mode) {
 void chat_screen_show()
 {
     screens_clear_back_btn();
+    // Skip channel list when DM is being opened directly —
+    // open_channel_messaging() will create the messaging screen instead.
+    if (g_skip_channel_list) {
+        g_skip_channel_list = false;
+        // Reset unread badge counter when the user opens chat
+        sigurdos::mesh::resetUnreadMessageCount();
+        return;
+    }
     show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
     // Reset unread badge counter when the user opens chat
     sigurdos::mesh::resetUnreadMessageCount();
@@ -1884,6 +1893,11 @@ void chat_screen_open_dm(const char* contact_name)
 {
     if (!contact_name || !contact_name[0]) return;
 
+    // Signal chat_screen_show() to skip the channel-list screen
+    // so we go directly to the messaging view without a wasteful
+    // intermediate lv_scr_load_anim that causes a crash when
+    // open_channel_messaging() triggers a second screen load.
+    g_skip_channel_list = true;
     navigate_to(Screen::Chat);
     refresh_channels();
 
