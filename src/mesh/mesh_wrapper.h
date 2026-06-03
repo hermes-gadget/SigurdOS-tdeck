@@ -352,5 +352,26 @@ bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz);
 // g_mesh is null, the channel index is out of range, or the buffer is too small.
 bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz);
 
+// ── Regions (flood scope) ──────────────────────────
+struct SigurdRegion;
+// List saved regions. Returns count (≤ max).
+int  listRegions(SigurdRegion* out, int max);
+
+// Add a region. For #public names, key is auto-derived.
+// For $private names, key_b64_or_null must be a 16-byte base64 key.
+bool addRegion(const char* name, const char* key_b64_or_null);
+
+// Remove a saved region by name.
+bool removeRegion(const char* name);
+
+// Set the active flood-scope region (empty = wildcard/unscoped).
+bool setActiveRegion(const char* name);
+
+// Get the current active region name. Returns "" if wildcard.
+const char* getActiveRegion();
+
+// Temporarily send the next message unscoped (resets after one use).
+void setSendUnscopedOnce(bool v);
+
 } // namespace mesh
 } // namespace sigurdos

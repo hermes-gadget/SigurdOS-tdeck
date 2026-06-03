@@ -11,6 +11,7 @@
 #include "hal/gps.h"
 #include "hal/prefs.h"
 #include "sigurd_mesh_v2.h"
+#include "regions.h"
 #include "../diagnostics/debug_cfg.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 
@@ -21,6 +22,7 @@
 
 #include <SPIFFS.h>
 #include <Preferences.h>
+#include <mbedtls/base64.h>
 #include <time.h>
 #include <Mesh.h>
 #include <helpers/SimpleMeshTables.h>
@@ -1863,6 +1865,112 @@ bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz)
     if (!ch) return false;
     ::mesh::Utils::toHex(hex_out, ch->channel.secret, PUB_KEY_SIZE);
     return true;
+}
+
+// ── Regions (flood scope) ──────────────────────────
+
+int listRegions(SigurdRegion* out, int max) {
+    return loadRegions(out, max);
+}
+
+bool addRegion(const char* name, const char* key_b64_or_null) {
+    if (!name || !name[0]) return false;
+    int count = listRegions(nullptr, 0);
+    if (count < 0) count = 0;
+    if (count >= SIGURD_MAX_REGIONS) return false;
+
+    SigurdRegion list[SIGURD_MAX_REGIONS];
+    int n = listRegions(list, SIGURD_MAX_REGIONS);
+
+    SigurdRegion r;
+    memset(&r, 0, sizeof(r));
+    strncpy(r.name, name, sizeof(r.name) - 1);
+    r.name[sizeof(r.name) - 1] = '\0';
+
+    if (name[0] == '#') {
+        deriveRegionKey(name, r.key);
+    } else if (name[0] == '$' && key_b64_or_null) {
+        // Decode base64 key (16 bytes → 24 base64 chars)
+        size_t len = strlen(key_b64_or_null);
+        if (len < 24) return false;
+        // Simple base64 decode — use mbedtls
+        size_t olen = 0;
+        int ret = mbedtls_base64_decode(r.key, sizeof(r.key), &olen,
+                                         (const uint8_t*)key_b64_or_null, len);
+        if (ret != 0 || olen != 16) return false;
+    } else {
+        return false;  // $ regions require a key
+    }
+
+    // Append
+    memcpy(&list[n], &r, sizeof(SigurdRegion));
+    return saveRegions(list, n + 1);
+}
+
+bool removeRegion(const char* name) {
+    if (!name || !name[0]) return false;
+
+    SigurdRegion list[SIGURD_MAX_REGIONS];
+    int n = listRegions(list, SIGURD_MAX_REGIONS);
+
+    int found = -1;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(list[i].name, name) == 0) { found = i; break; }
+    }
+    if (found < 0) return false;
+
+    // Shift remaining entries down
+    for (int i = found; i < n - 1; i++) {
+        memcpy(&list[i], &list[i + 1], sizeof(SigurdRegion));
+    }
+    return saveRegions(list, n - 1);
+}
+
+bool setActiveRegion(const char* name) {
+    sigurdos::NodePrefs np = sigurdos::prefs_get();
+    if (name && name[0]) {
+        strncpy(np.active_region, name, sizeof(np.active_region) - 1);
+        np.active_region[sizeof(np.active_region) - 1] = '\0';
+    } else {
+        np.active_region[0] = '\0';
+    }
+    sigurdos::prefs_set(np);
+
+    // Propagate the scope to the mesh instance so outgoing floods
+    // are stamped with the matching transport code.
+    if (g_mesh) {
+        if (name && name[0]) {
+            SigurdRegion list[SIGURD_MAX_REGIONS];
+            int n = loadRegions(list, SIGURD_MAX_REGIONS);
+            bool found = false;
+            for (int i = 0; i < n; i++) {
+                if (strcmp(list[i].name, name) == 0) {
+                    g_mesh->setActiveScope(list[i].key);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                // Region name saved but key not yet in store —
+                // clear scope to avoid stale transport codes.
+                g_mesh->clearActiveScope();
+            }
+        } else {
+            g_mesh->clearActiveScope();
+        }
+    }
+    return true;
+}
+
+const char* getActiveRegion() {
+    const sigurdos::NodePrefs& np = sigurdos::prefs_get();
+    return np.active_region[0] ? np.active_region : "";
+}
+
+void setSendUnscopedOnce(bool v) {
+    if (g_mesh) {
+        g_mesh->setSendUnscopedOnce(v);
+    }
 }
 
 } // namespace mesh

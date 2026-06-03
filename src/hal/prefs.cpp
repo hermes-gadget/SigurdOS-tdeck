@@ -61,6 +61,9 @@ bool prefs_load(NodePrefs& p) {
     if (ssid_len == 0) p.wifi_ssid[0] = '\0';
     size_t pw_len = nvs.getString("wifi_pw", p.wifi_password, sizeof(p.wifi_password));
     if (pw_len == 0) p.wifi_password[0] = '\0';
+    // Region (flood scope)
+    size_t reg_len = nvs.getString("act_reg", p.active_region, sizeof(p.active_region));
+    if (reg_len == 0) p.active_region[0] = '\0';
 
     nvs.end();
     return true;
@@ -101,6 +104,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putULong("dev_pin", p.device_pin);
     nvs.putString("wifi_ssid", p.wifi_ssid);
     nvs.putString("wifi_pw", p.wifi_password);
+    nvs.putString("act_reg", p.active_region);
 
     nvs.end();
     return true;

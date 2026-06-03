@@ -44,6 +44,7 @@ struct NodePrefs {
     uint32_t device_pin;               // 4-6 digit device PIN (0 = disabled)
     char     wifi_ssid[33];            // WiFi STA SSID for GitHub OTA (empty = not set)
     char     wifi_password[64];        // WiFi STA password
+    char     active_region[31];        // active flood scope region name (empty = wildcard/unscoped)
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -79,6 +80,7 @@ struct NodePrefs {
         device_pin = 0;               // default: no PIN
         wifi_ssid[0] = '\0';          // default: no WiFi
         wifi_password[0] = '\0';
+        active_region[0] = '\0';       // default: wildcard (unscoped flood)
     }
 };
 

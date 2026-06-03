@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <helpers/BaseChatMesh.h>
+#include <helpers/TransportKeyStore.h>
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
 #include "hal/prefs.h"
@@ -1518,6 +1519,64 @@ public:
     // NOTE: airtime/packet-count stats (getTotalAirTime, getReceiveAirTime,
     // resetStats, getNumSent/RecvFlood/Direct) and getRemainingTxBudget are
     // inherited directly from mesh::Dispatcher — no overrides needed.
+
+    // ── Flood scope (regions) ─────────────────────────
+    // Override sendFloodScoped() to stamp transport codes
+    // when an active region scope is set.
+protected:
+    void sendFloodScoped(const ::ContactInfo& /*recipient*/,
+                         ::mesh::Packet* pkt, uint32_t delay_millis = 0) override {
+        sendScopedImpl(pkt, delay_millis);
+    }
+    void sendFloodScoped(const ::mesh::GroupChannel& /*channel*/,
+                         ::mesh::Packet* pkt, uint32_t delay_millis = 0) override {
+        sendScopedImpl(pkt, delay_millis);
+    }
+
+public:
+    /// Set active flood scope from a 16-byte TransportKey.
+    /// Pass nullptr to clear (unscoped floods).
+    void setActiveScope(const uint8_t* key16) {
+        if (key16) {
+            memcpy(_active_scope.key, key16, 16);
+            _send_unscoped = false;
+        } else {
+            clearActiveScope();
+        }
+    }
+
+    /// Clear the active flood scope — all floods become unscoped.
+    void clearActiveScope() {
+        memset(_active_scope.key, 0, sizeof(_active_scope.key));
+        _send_unscoped = false;
+    }
+
+    /// Temporarily send the next flood unscoped (resets after one use).
+    void setSendUnscopedOnce(bool v) {
+        _send_unscoped = v;
+    }
+
+    /// Returns true if no active scope is set.
+    bool isActiveScopeNull() const {
+        return _active_scope.isNull();
+    }
+
+private:
+    void sendScopedImpl(::mesh::Packet* pkt, uint32_t delay_millis) {
+        if (!pkt) return;
+        if (_send_unscoped || _active_scope.isNull()) {
+            _send_unscoped = false;  // one-shot: reset after use
+            sendFlood(pkt, delay_millis);
+            return;
+        }
+        uint16_t codes[2];
+        codes[0] = _active_scope.calcTransportCode(pkt);
+        codes[1] = 0;  // home/return region — REVISIT upstream
+        sendFlood(pkt, codes, delay_millis);
+    }
+
+    TransportKey _active_scope;
+    bool _send_unscoped = false;
 };
 
 } // namespace mesh
