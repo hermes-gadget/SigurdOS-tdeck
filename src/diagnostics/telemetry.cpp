@@ -92,6 +92,7 @@ static const char* screen_name_str(uint8_t scr) {
         case Screen::Telemetry:         return "Telemetry";
         case Screen::NodeStatus:        return "NodeStatus";
         case Screen::WiFiNetworks:      return "WiFiNetworks";
+        case Screen::Regions:          return "Regions";
         default:                        return "?";
     }
 }
