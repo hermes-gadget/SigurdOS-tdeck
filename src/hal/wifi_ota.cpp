@@ -14,7 +14,7 @@ namespace ota {
 
 static WebServer* server = nullptr;
 static bool active = false;
-static char ap_ip[16] = "";
+static char server_ip[16] = "";
 
 static const char OTA_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html><html><head><meta charset="utf-8">
@@ -67,16 +67,25 @@ xhr.send(file);
 bool start(const char* ssid, const char* password) {
     if (active) return true;
 
-    // Start WiFi in AP mode
-    WiFi.mode(WIFI_AP);
-    if (password && password[0]) {
-        WiFi.softAP(ssid, password);
+    IPAddress ip;
+    if (wifi_sta::isConnected()) {
+        // Already connected to a WiFi network — keep STA, bind on local IP
+        ip = WiFi.localIP();
+        snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        Serial.printf("[ota] Using STA IP: %s\n", server_ip);
     } else {
-        WiFi.softAP(ssid);
-    }
+        // Not connected — start AP mode
+        WiFi.mode(WIFI_AP);
+        if (password && password[0]) {
+            WiFi.softAP(ssid, password);
+        } else {
+            WiFi.softAP(ssid);
+        }
 
-    IPAddress ip = WiFi.softAPIP();
-    snprintf(ap_ip, sizeof(ap_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        ip = WiFi.softAPIP();
+        snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        Serial.printf("[ota] WiFi AP started: %s @ %s\n", ssid, server_ip);
+    }
 
     // Set up web server
     server = new WebServer(80);
@@ -96,7 +105,7 @@ bool start(const char* ssid, const char* password) {
                 server->send(500, "text/plain", Update.errorString());
             } else {
                 server->send(200, "text/plain", "OK");
-                delay(500);
+                delay(2000);
                 ESP.restart();
             }
         },
@@ -132,7 +141,6 @@ bool start(const char* ssid, const char* password) {
 
     server->begin();
     active = true;
-    Serial.printf("[ota] WiFi AP started: %s @ %s\n", ssid, ap_ip);
     return true;
 }
 
@@ -151,7 +159,7 @@ void stop() {
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_OFF);
     active = false;
-    ap_ip[0] = '\0';
+    server_ip[0] = '\0';
 }
 
 bool isActive() {
@@ -159,7 +167,7 @@ bool isActive() {
 }
 
 const char* getIP() {
-    return ap_ip;
+    return server_ip;
 }
 
 }  // namespace ota

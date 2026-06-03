@@ -34,6 +34,7 @@
 #include "../hal/keyboard.h"
 #include "../hal/display.h"
 #include "../mesh/mesh_wrapper.h"
+#include "../mesh/channel_validation.h"
 #include "../app/map_renderer.h"
 #include "../fonts/emoji_font.h"
 #include "../app/qr_show.h"
@@ -2986,6 +2987,41 @@ void signal_screen_show()
     show_screen(scr);
 }
 
+// ── Forward declarations for trackball handler ──
+static void render_map_with_contacts();
+
+// ════════════════════════════════════════════════════════
+// Map — trackball pan navigation
+// ════════════════════════════════════════════════════════
+
+bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
+    const int PAN_PX = 12;  // pixels per trackball tick
+    switch (event) {
+        case SigurdOSTrackballEvent::Up:
+            sigurdos_map_pan(0, -PAN_PX);
+            render_map_with_contacts();
+            return true;
+        case SigurdOSTrackballEvent::Down:
+            sigurdos_map_pan(0, PAN_PX);
+            render_map_with_contacts();
+            return true;
+        case SigurdOSTrackballEvent::Left:
+            sigurdos_map_pan(-PAN_PX, 0);
+            render_map_with_contacts();
+            return true;
+        case SigurdOSTrackballEvent::Right:
+            sigurdos_map_pan(PAN_PX, 0);
+            render_map_with_contacts();
+            return true;
+        case SigurdOSTrackballEvent::Click:
+            sigurdos_map_zoom_in();
+            render_map_with_contacts();
+            return true;
+        default:
+            return false;
+    }
+}
+
 // ════════════════════════════════════════════════════════
 // Map — offline tile maps
 // ════════════════════════════════════════════════════════
@@ -3002,10 +3038,7 @@ void map_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Map");
 
-    sigurdos_map_init();
-    sigurdos_map_reparent(scr);
-    render_map_with_contacts();
-
+    // Create the map overlay container before initializing contacts
     lv_obj_t* map = lv_obj_create(scr);
     lv_obj_set_size(map, DISPLAY_W, CONTENT_H);
     lv_obj_align(map, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
@@ -3013,9 +3046,17 @@ void map_screen_show()
     lv_obj_set_style_border_width(map, 0, 0);
     lv_obj_add_flag(map, LV_OBJ_FLAG_CLICKABLE);
 
-    // Pre-allocate contact marker dots on top of map
+    sigurdos_map_init();
+    sigurdos_map_reparent(scr);
+
+    // Discover tiles on first map visit (deferred from boot to avoid blocking)
+    sigurdos_map_discover_tiles();
+
+    // Pre-allocate contact marker dots on top of map BEFORE rendering
     sigurdos_map_contact_init(map);
     sigurdos_map_contact_set_tap_cb(contact_detail_screen_show);
+
+    render_map_with_contacts();
 
     static int drag_start_x = 0, drag_start_y = 0;
     static uint32_t map_last_render_ms = 0;
@@ -3629,8 +3670,8 @@ static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 
     lv_obj_add_event_cb(minus_btn, [](lv_event_t* e) {
         auto* c = (DisplayBrightnessCtx*)lv_event_get_user_data(e);
-        if (c->brightness >= 25) c->brightness -= 25;
-        else c->brightness = 0;
+        if (c->brightness > 20) c->brightness -= 25;
+        if (c->brightness < 20) c->brightness = 20;
         sigurdos_display_set_brightness(c->brightness);
         char b[24];
         snprintf(b, sizeof(b), "%d (%d%%)", c->brightness, c->brightness * 100 / 255);
@@ -3639,8 +3680,8 @@ static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 
     lv_obj_add_event_cb(plus_btn, [](lv_event_t* e) {
         auto* c = (DisplayBrightnessCtx*)lv_event_get_user_data(e);
-        if (c->brightness <= 230) c->brightness += 25;
-        else c->brightness = 255;
+        if (c->brightness < 240) c->brightness += 25;
+        if (c->brightness > 240) c->brightness = 240;
         sigurdos_display_set_brightness(c->brightness);
         char b[24];
         snprintf(b, sizeof(b), "%d (%d%%)", c->brightness, c->brightness * 100 / 255);
@@ -5599,6 +5640,13 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
         const char* name = name_in ? lv_textarea_get_text(name_in) : "";
 
         if (!name[0]) { if (fb) lv_label_set_text(fb, "Enter a hashtag"); return; }
+
+        // Validate channel name
+        const char* val_reason = nullptr;
+        if (!sigurdos::mesh::channel_name_valid(name, &val_reason)) {
+            if (fb) lv_label_set_text(fb, val_reason);
+            return;
+        }
 
         bool ok = sigurdos::mesh::addHashtagChannel(name);
         if (ok) {

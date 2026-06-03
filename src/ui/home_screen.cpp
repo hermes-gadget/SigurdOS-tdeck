@@ -84,6 +84,16 @@ static int selected_icon = 0;
 static int active_cols = 1;
 static int active_rows = 1;
 
+static void format_time_str(char* out, size_t sz) {
+    uint32_t epoch = sigurdos::mesh::getCurrentTime();
+    if (epoch == 0) {
+        snprintf(out, sz, "--:--");
+    } else {
+        uint32_t sec = epoch % 86400;
+        snprintf(out, sz, "%02d:%02d", (sec/3600)%24, (sec/60)%60);
+    }
+}
+
 static constexpr lv_obj_flag_t no_scroll_flags()
 {
     return (lv_obj_flag_t)(
@@ -214,7 +224,9 @@ static void create_top_bar()
 
     // Time (far right)
     time_label = lv_label_create(top_bar);
-    lv_label_set_text(time_label, "--:--");
+    char tbuf[8];
+    format_time_str(tbuf, sizeof(tbuf));
+    lv_label_set_text(time_label, tbuf);
     lv_obj_set_style_text_color(time_label, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(time_label, &lv_font_montserrat_12, 0);
     lv_obj_align(time_label, LV_ALIGN_RIGHT_MID, -4, 0);

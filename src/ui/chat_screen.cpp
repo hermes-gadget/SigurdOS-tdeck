@@ -25,6 +25,7 @@
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
 #include "../mesh/mesh_wrapper.h"
+#include "../mesh/channel_validation.h"
 #include "../hal/prefs.h"
 #include "../fonts/emoji_font.h"
 #include <lvgl.h>
@@ -1779,6 +1780,13 @@ static void show_add_channel_options(lv_obj_t* parent) {
 
         if (!nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter channel name"); return; }
 
+        // Validate channel name before passing to mesh
+        const char* val_reason = nullptr;
+        if (!sigurdos::mesh::channel_name_valid(nm, &val_reason)) {
+            if (feedback) lv_label_set_text(feedback, val_reason);
+            return;
+        }
+
         bool ok;
         if (psk[0]) {
             // PSK provided — add as encrypted channel
@@ -1824,6 +1832,12 @@ static void show_add_channel_options(lv_obj_t* parent) {
             lv_obj_t* sc = lv_obj_get_screen(d);
             const char* nm = lv_textarea_get_text(input);
             if (!nm || !nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter channel name"); return; }
+            // Validate channel name before passing to mesh
+            const char* val_reason2 = nullptr;
+            if (!sigurdos::mesh::channel_name_valid(nm, &val_reason2)) {
+                if (feedback) lv_label_set_text(feedback, val_reason2);
+                return;
+            }
             bool ok = sigurdos::mesh::addHashtagChannel(nm);
             if (ok) {
                 lv_obj_del_async(d);
@@ -1853,6 +1867,13 @@ static void show_add_channel_options(lv_obj_t* parent) {
         const char* nm  = inputs[0] ? lv_textarea_get_text(inputs[0]) : "";
         const char* psk = inputs[1] ? lv_textarea_get_text(inputs[1]) : "";
         if (!nm || !nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter channel name"); return; }
+
+        // Validate channel name before passing to mesh
+        const char* val_reason3 = nullptr;
+        if (!sigurdos::mesh::channel_name_valid(nm, &val_reason3)) {
+            if (feedback) lv_label_set_text(feedback, val_reason3);
+            return;
+        }
 
         bool ok;
         if (psk && psk[0]) {
@@ -1943,7 +1964,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
 
     append_channel_message(idx, sender, text, now, is_self);
 
-    bool visible = msg_list && idx == active_channel;
+    bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
     if (!is_self && !visible) ch_meta[idx].unread++;
     if (!visible) return;
 

@@ -20,6 +20,7 @@
 #include "ui.h"
 #include "home_screen.h"
 #include "chat_screen.h"
+#include "screens.h"
 #include "navigation.h"
 #include "theme.h"
 #include "responsive.h"
@@ -159,6 +160,11 @@ bool handle_trackball_event(SigurdOSTrackballEvent event)
         // Chat handles its own Left (channel list toggle); fall through
         // for non-messaging states where chat returns false
         if (chat_screen_handle_trackball(event)) return true;
+    }
+    if (current_screen() == Screen::Map) {
+        if (map_screen_handle_trackball(event)) return true;
+        // Allow Left to still work for back navigation
+        return handle_back_swipe(event);
     }
     // Universal back-swipe: two-swipe commit for all other screens
     return handle_back_swipe(event);

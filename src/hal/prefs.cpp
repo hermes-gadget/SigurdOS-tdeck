@@ -17,9 +17,11 @@ bool prefs_load(NodePrefs& p) {
     // if the NVS key is absent (defensive against library version differences)
     char name_tmp[sizeof(p.node_name)] = {0};
     size_t name_len = nvs.getString("name", name_tmp, sizeof(name_tmp));
-    if (name_len > 0 && name_len < sizeof(p.node_name)) {
-        memcpy(p.node_name, name_tmp, name_len);
-        p.node_name[name_len] = '\0';
+    // Accept any non-empty string that fits (Preferences may return
+    // length including terminator; also accept exactly-full 31-char names)
+    if (name_len > 0 && name_len <= sizeof(p.node_name)) {
+        memcpy(p.node_name, name_tmp, sizeof(p.node_name) - 1);
+        p.node_name[sizeof(p.node_name) - 1] = '\0';
     }
     p.freq         = nvs.getFloat("freq", 0.0f);
     p.bw           = nvs.getFloat("bw", 0.0f);
@@ -31,6 +33,9 @@ bool prefs_load(NodePrefs& p) {
     p.configured    = nvs.getBool("cfg", false);
     p.kbd_backlight = nvs.getUChar("kbd_bl", 127);
     p.display_brightness = nvs.getUChar("disp_bl", 200);
+    // Clamp recovered brightness to safe range (0 = dead screen, >240 may wrap)
+    if (p.display_brightness < 20) p.display_brightness = 20;
+    if (p.display_brightness > 240) p.display_brightness = 240;
     p.auto_off_timeout = nvs.getUShort("auto_off", 30);
     p.chat_msg_cap  = nvs.getUShort("chat_cap", 200);
     p.flood_max_hops = nvs.getUChar("flood_mh", 0);

@@ -451,7 +451,7 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
             if (x > c.max_x) c.max_x = x;
             if (mn_y < c.min_y) c.min_y = mn_y;
             if (mx_y > c.max_y) c.max_y = mx_y;
-            if ((++scanned % 16) == 0) delay(0);
+            if ((++scanned % 16) == 0) delay(1);  // feed ESP32 TWDT
             continue;
         }
 
@@ -622,12 +622,12 @@ void sigurdos_map_init() {
     }
     if (!canvas_pixels) return;
 
-    // Discover tiles and set initial center/zoom.
     // Canvas is created later in sigurdos_map_reparent() once we have a real
     // screen parent — lv_canvas_create(nullptr) in LVGL v9 makes a screen
     // object, not an orphan widget, so reparenting it silently fails.
-    load_metadata();
-
+    //
+    // Tile discovery is deferred to first map screen visit to avoid blocking
+    // boot with large SD card tile sets (30-120s on 2GB /tiles dir).
     initialized = true;
 }
 void sigurdos_map_reparent(lv_obj_t* new_parent) {
@@ -656,9 +656,18 @@ void sigurdos_map_reparent(lv_obj_t* new_parent) {
     }
 }
 
+void sigurdos_map_discover_tiles() {
+    load_metadata();
+}
+
 void sigurdos_map_deinit() {
     if (!initialized) return;
     delete_cb_registered = false;
+
+    // Clean up contact marker dots so dangling LVGL pointers don't
+    // cause a use-after-free crash on the next map visit.
+    sigurdos_map_contact_deinit();
+
     // Free LRU tile cache pixels
     for (int i = 0; i < TILE_CACHE_SIZE; i++) {
         if (tile_cache[i].pixels) {

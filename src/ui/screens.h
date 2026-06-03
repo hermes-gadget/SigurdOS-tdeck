@@ -19,6 +19,7 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <lvgl.h>
+#include "../hal/trackball.h"
 
 namespace sigurdos::ui {
 void heard_screen_show();
@@ -27,6 +28,7 @@ void contacts_screen_set_filter(int adv_type); // -1=all, else ADV_TYPE_*
 void contact_detail_screen_show(const char* contact_name);
 void signal_screen_show();
 void map_screen_show();
+bool map_screen_handle_trackball(SigurdOSTrackballEvent event);
 void settings_screen_show();
 void terminal_screen_show();
 void term_dump_log();

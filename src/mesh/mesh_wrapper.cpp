@@ -5,6 +5,7 @@
 // MeshCore is MIT licensed (meshcore-dev/MeshCore).
 
 #include "mesh_wrapper.h"
+#include "channel_validation.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
@@ -949,11 +950,15 @@ int exportChannels(char names[][32], int max) {
 }
 
 bool addChannel(const char* name, const char* psk) {
+    // Validate channel name
+    if (!channel_name_valid(name)) return false;
     // BaseChatMesh::addChannel returns ChannelDetails* — use the bool wrapper.
     return g_mesh ? g_mesh->addChannelBool(name, psk) : false;
 }
 
 bool addHashtagChannel(const char* name) {
+    // Validate channel name
+    if (!channel_name_valid(name)) return false;
     return g_mesh ? g_mesh->addHashtagChannel(name) : false;
 }
 

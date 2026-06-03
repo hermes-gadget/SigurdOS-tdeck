@@ -26,6 +26,9 @@
 // Call after LVGL is initialized and SD card is mounted
 void sigurdos_map_init();
 
+// Discover available tile zoom levels (deferred from boot)
+void sigurdos_map_discover_tiles();
+
 // Set the map viewport center (lat/lon) and zoom level
 void sigurdos_map_set_view(double lat, double lon, int zoom);
 
