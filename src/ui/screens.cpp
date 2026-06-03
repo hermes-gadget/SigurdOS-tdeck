@@ -6826,7 +6826,12 @@ struct PinEntryCtx {
 static void pin_entry_success(Screen target) {
     g_pin_last_unlock = sigurdos::mesh::getCurrentTime();
     if (g_pin_last_unlock == 0) g_pin_last_unlock = 1;
-    navigate_to(target);
+    // Direct load — bypass navigate_to's same-screen guard
+    if (target == Screen::Settings) {
+        settings_screen_show();
+    } else if (target == Screen::Terminal) {
+        terminal_screen_show();
+    }
 }
 
 static void pin_entry_show(Screen target_screen) {
@@ -6914,15 +6919,14 @@ static void pin_entry_show(Screen target_screen) {
         delete c;
     }, LV_EVENT_DELETE, nullptr);
 
-    // Focus the textarea
+    // Focus the textarea — add to default group without wiping existing objects
     lv_group_t* g = lv_group_get_default();
     if (g) {
-        lv_group_remove_all_objs(g);
         lv_group_add_obj(g, ta);
         lv_group_focus_obj(ta);
     }
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 }
 
 } // namespace sigurdos::ui
