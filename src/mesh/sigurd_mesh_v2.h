@@ -544,9 +544,6 @@ public:
 
             // Also push to mesh message queue so it appears in chat
             sigurdos::mesh::mesh_v2_queue_push(e.sender, e.channel, e.text, 0, 0.0f);
-            if (_message_cb) {
-                _message_cb(e.sender, e.channel, e.text);
-            }
         }
     }
 
@@ -642,9 +639,6 @@ public:
         float snr = pkt ? pkt->getSNR() : _radio->getLastSNR();
         updateSignalSample(contact.id.pub_key, rssi, snr);
         sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr);
-        if (_message_cb) {
-            _message_cb(contact.name, "", text);
-        }
     }
 
     void onCommandDataRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
@@ -673,9 +667,6 @@ public:
         snprintf(fallback, sizeof(fallback), "anon_%02x", sender.pub_key[0]);
 
         sigurdos::mesh::mesh_v2_queue_push(fallback, "", text, rssi, snr);
-        if (_message_cb) {
-            _message_cb(fallback, "", text);
-        }
     }
 
     void onSignedMessageRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
@@ -685,9 +676,6 @@ public:
         int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
         sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr);
-        if (_message_cb) {
-            _message_cb(contact.name, "", text);
-        }
     }
 
     uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override {
@@ -733,9 +721,6 @@ public:
             msg_text = colon + 2;
         }
         sigurdos::mesh::mesh_v2_queue_push(sender_name, chname, msg_text, rssi, snr);
-        if (_message_cb) {
-            _message_cb(sender_name, chname, msg_text);
-        }
     }
 
     uint8_t onContactRequest(const ::ContactInfo& contact, uint32_t sender_timestamp,
