@@ -52,6 +52,7 @@ void telemetry_screen_show();
 void node_stats_screen_show();
 void node_status_screen_show();
 void wifi_networks_screen_show();
+void regions_screen_show();
 void update_wifi_status();
 
 // Highlight the current screen's back button border for back-swipe visual feedback.

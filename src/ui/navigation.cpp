@@ -88,6 +88,7 @@ static void dispatch_screen(Screen screen) {
     case Screen::Telemetry:       telemetry_screen_show(); break;
     case Screen::NodeStatus:      node_status_screen_show(); break;
     case Screen::WiFiNetworks:    wifi_networks_screen_show(); break;
+    case Screen::Regions:        regions_screen_show();      break;
     default: break;
     }
 }
