@@ -7390,10 +7390,51 @@ void regions_screen_show()
     g_regions_rebuild = rebuild;
     rebuild();
 
+    // "Sync from channels" button — auto-creates #regions from #channels
+    lv_obj_t* sync_btn = lv_btn_create(scr);
+    lv_obj_set_size(sync_btn, 120, 28);
+    lv_obj_align(sync_btn, LV_ALIGN_BOTTOM_LEFT, 8, -(BOT_BAR_H + DIVIDER_H + 4));
+    lv_obj_set_style_bg_color(sync_btn, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_radius(sync_btn, 0, 0);
+    lv_obj_set_style_border_width(sync_btn, 2, 0);
+    lv_obj_set_style_border_color(sync_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_t* sl = lv_label_create(sync_btn);
+    lv_label_set_text(sl, LV_SYMBOL_REFRESH "  Sync");
+    lv_obj_set_style_text_font(sl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(sl, lv_color_hex(ACCENT), 0);
+    lv_obj_center(sl);
+
+    lv_obj_add_event_cb(sync_btn, [](lv_event_t* e) {
+        sigurdos::mesh::syncRegionsFromChannels();
+        if (g_regions_rebuild) g_regions_rebuild();
+        // Update active label
+        lv_obj_t* s2 = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
+        if (s2) {
+            const char* active3 = sigurdos::mesh::getActiveRegion();
+            uint32_t cnt = lv_obj_get_child_cnt(s2);
+            for (uint32_t i = 0; i < cnt; i++) {
+                lv_obj_t* ch = lv_obj_get_child(s2, i);
+                if (lv_obj_check_type(ch, &lv_label_class)) {
+                    const char* txt = lv_label_get_text(ch);
+                    if (txt && strncmp(txt, "Active:", 7) == 0) {
+                        char abuf[64];
+                        if (!active3 || active3[0] == '\0') {
+                            snprintf(abuf, sizeof(abuf), "Active: Public (unscoped)");
+                        } else {
+                            snprintf(abuf, sizeof(abuf), "Active: %s", active3);
+                        }
+                        lv_label_set_text(ch, abuf);
+                        break;
+                    }
+                }
+            }
+        }
+    }, LV_EVENT_CLICKED, nullptr);
+
     // "Add Region" button
     lv_obj_t* add_btn = lv_btn_create(scr);
-    lv_obj_set_size(add_btn, 160, 28);
-    lv_obj_align(add_btn, LV_ALIGN_BOTTOM_MID, 0, -(BOT_BAR_H + DIVIDER_H + 4));
+    lv_obj_set_size(add_btn, 120, 28);
+    lv_obj_align(add_btn, LV_ALIGN_BOTTOM_RIGHT, -8, -(BOT_BAR_H + DIVIDER_H + 4));
     lv_obj_set_style_bg_color(add_btn, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_radius(add_btn, 0, 0);
     lv_obj_t* al = lv_label_create(add_btn);

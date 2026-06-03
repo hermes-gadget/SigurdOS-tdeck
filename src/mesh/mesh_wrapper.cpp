@@ -765,6 +765,10 @@ bool init(bool spiffs_ok)
     }
 #endif
 
+    // Auto-sync #channel names as flood-scope regions (key = SHA256(name)).
+    // Must run after all channels are loaded so regions are seeded from NVS.
+    syncRegionsFromChannels();
+
     // Only broadcast advert if user has explicitly configured radio params.
     // Compile-time defaults may be illegal in some regions — transmit gating
     // prevents first-boot broadcasts until user opens Settings → Radio Setup.
@@ -955,17 +959,68 @@ bool addChannel(const char* name, const char* psk) {
     // Validate channel name
     if (!channel_name_valid(name)) return false;
     // BaseChatMesh::addChannel returns ChannelDetails* — use the bool wrapper.
-    return g_mesh ? g_mesh->addChannelBool(name, psk) : false;
+    bool ok = g_mesh ? g_mesh->addChannelBool(name, psk) : false;
+    if (ok) syncRegionsFromChannels();
+    return ok;
 }
 
 bool addHashtagChannel(const char* name) {
     // Validate channel name
     if (!channel_name_valid(name)) return false;
-    return g_mesh ? g_mesh->addHashtagChannel(name) : false;
+    bool ok = g_mesh ? g_mesh->addHashtagChannel(name) : false;
+    if (ok) syncRegionsFromChannels();
+    return ok;
 }
 
 bool joinPublicChannel() {
     return addChannel("Public", "izOH6cXN6mrJ5e26oRXNcg==");
+}
+
+// ── Region sync from channels ────────────────────
+// Auto-create #regions from #channels so the user doesn't need to
+// manually add each channel as a flood-scope region.
+
+void syncRegionsFromChannels() {
+    if (!g_mesh) return;
+
+    SigurdRegion regions[SIGURD_MAX_REGIONS];
+    int n = loadRegions(regions, SIGURD_MAX_REGIONS);
+
+    int ch_count = g_mesh->getChannelCount();
+    bool changed = false;
+
+    for (int i = 0; i < ch_count && n < SIGURD_MAX_REGIONS; i++) {
+        auto* ch = g_mesh->getChannel(i);
+        if (!ch || !ch->name || ch->name[0] == '\0') continue;
+
+        // Only auto-sync # public channels (regions key = SHA256(name))
+        if (ch->name[0] != '#') continue;
+
+        // Skip if this channel already has a matching region
+        bool found = false;
+        for (int j = 0; j < n; j++) {
+            if (strcmp(regions[j].name, ch->name) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (found) continue;
+
+        // Create region from channel name
+        SigurdRegion r;
+        memset(&r, 0, sizeof(r));
+        strncpy(r.name, ch->name, sizeof(r.name) - 1);
+        r.name[sizeof(r.name) - 1] = '\0';
+        deriveRegionKey(ch->name, r.key);
+
+        memcpy(&regions[n], &r, sizeof(SigurdRegion));
+        n++;
+        changed = true;
+    }
+
+    if (changed) {
+        saveRegions(regions, n);
+    }
 }
 
 // ── Identity ────────────────────────────────────

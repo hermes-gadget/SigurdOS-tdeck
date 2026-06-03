@@ -357,6 +357,10 @@ struct SigurdRegion;
 // List saved regions. Returns count (≤ max).
 int  listRegions(SigurdRegion* out, int max);
 
+// Auto-create #regions from #channels (key = SHA256(name)).
+// Skips channels without a # prefix and regions that already exist.
+void syncRegionsFromChannels();
+
 // Add a region. For #public names, key is auto-derived.
 // For $private names, key_b64_or_null must be a 16-byte base64 key.
 bool addRegion(const char* name, const char* key_b64_or_null);
