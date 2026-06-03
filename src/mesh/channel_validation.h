@@ -17,7 +17,7 @@ namespace mesh {
 //
 // Rules:
 //   - 1–31 characters after trimming whitespace
-//   - Letters (A-Z, a-z), digits (0-9), and single internal hyphens only
+//   - Letters (A-Z, a-z), digits (0-9), and hyphens only (no consecutive dashes)
 //   - Leading/trailing hyphens and empty strings are rejected
 //
 // `reason` (if non-null) receives a short description of the first failure.
