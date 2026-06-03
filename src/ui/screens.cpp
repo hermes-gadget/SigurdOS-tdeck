@@ -6009,7 +6009,19 @@ void custom_rf_screen_show()
         s_rf_bw   = bw;
         s_rf_cr   = cr;
         s_rf_pwr  = pwr;
-        go_back();
+
+        // Persist to NVS immediately so settings survive reboot
+        sigurdos::NodePrefs np = sigurdos::prefs_get();
+        np.freq         = freq;
+        np.bw           = bw;
+        np.sf           = (uint8_t)sf;
+        np.cr           = (uint8_t)cr;
+        np.tx_power_dbm = (int8_t)pwr;
+        np.configured   = true;
+        sigurdos::prefs_set(np);
+
+        // Reload Radio Setup screen with updated values
+        radio_setup_screen_show();
     }, LV_EVENT_CLICKED, nullptr);
 
     show_screen(scr);
