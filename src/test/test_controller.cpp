@@ -30,6 +30,7 @@
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
 #include "diagnostics/debug.h"
+#include "diagnostics/telemetry.h"
 #include "ui/screens.h"
 #include "ui/chat_screen.h"
 #include "fonts/emoji_font.h"
@@ -150,6 +151,10 @@ static void print_help() {
     Serial.println(F("║           Set radio params in NVS  ║"));
     Serial.println(F("║  reboot      Reboot the device     ║"));
     Serial.println(F("║  advert      Send self advert      ║"));
+    Serial.println(F("║  telemetry on|off|diff|hb N|full     ║"));
+    Serial.println(F("║  query state|heap|lvgl|mesh|screen|crash|drift|wifi|gps|radio|sd|nvs|temp|task|pktlog|hb-ring|full  ║"));
+    Serial.println(F("║  crash [report|clear|test]           ║"));
+    Serial.println(F("║  drift                               ║"));
     Serial.println(F("╚══════════════════════════════════════╝"));
     Serial.println();
 }
@@ -1108,6 +1113,14 @@ static bool dispatch(const char* line) {
         cmd_tree();
     } else if (strcmp(cmd, "widgets") == 0) {
         cmd_widgets();
+    } else if (strcmp(cmd, "telemetry") == 0) {
+        sigurdos::telemetry::cmd_telemetry(arg);
+    } else if (strcmp(cmd, "query") == 0) {
+        sigurdos::telemetry::cmd_query(arg);
+    } else if (strcmp(cmd, "crash") == 0) {
+        sigurdos::telemetry::cmd_crash(arg ? arg : "report");
+    } else if (strcmp(cmd, "drift") == 0) {
+        sigurdos::telemetry::cmd_drift(arg);
     } else if (strcmp(cmd, "scrolllist") == 0) {
         if (!arg) { Serial.println("[test] scrolllist: missing value (use positive = down, negative = up)"); return true; }
         cmd_scrolllist(arg);

@@ -21,6 +21,9 @@
 #if SIGURDOS_DEBUG_DIAG
 #include "diagnostics/debug.h"
 #endif
+#if SIGURDOS_TELEMETRY
+#include "diagnostics/telemetry.h"
+#endif
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
 #include "test/test_controller.h"
 #endif
@@ -125,10 +128,18 @@ void setup()
             sigurdos::wifi_sta::beginConnect(p.wifi_ssid, p.wifi_password);
         }
     }
+
+#if SIGURDOS_TELEMETRY
+    sigurdos::telemetry::init();
+#endif
 }
 
 void loop()
 {
+    // Loop timing — measure from start of loop
+#if SIGURDOS_TELEMETRY
+    uint32_t loop_start_us = micros();
+#endif
     // Low-battery auto-shutdown (matches MeshCore pattern)
     static uint32_t last_batt_check = 0;
     if (millis() - last_batt_check > 30000) {  // every 30s
@@ -166,6 +177,12 @@ void loop()
 #endif
     sigurdos::ui::loop();
 
+#if SIGURDOS_TELEMETRY
+    sigurdos::telemetry::loop();
+    // Report loop timing after telemetry processing
+    uint32_t loop_elapsed_us = micros() - loop_start_us;
+    sigurdos::telemetry::report_loop_timing(loop_elapsed_us);
+#endif
 #if SIGURDOS_DEBUG_DIAG
     sigurdos::debug::loop();
 #endif

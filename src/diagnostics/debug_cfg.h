@@ -9,9 +9,10 @@
 //   -DSIGURDOS_DEBUG_DISPLAY=1  — flush/invalidate/auto-off display debug
 //   -DSIGURDOS_DEBUG_MESH=1     — mesh message rx/tx, radio init, packet logging
 //   -DSIGURDOS_DEBUG_UI=1       — UI boot steps, screen transitions, layout
-//   -DSIGURDOS_DEBUG_MAP=1      — map tile loading, rendering diagnostics
 //   -DSIGURDOS_DEBUG_DIAG=1     — periodic stats & system dumps (debug.cpp)
+//   -DSIGURDOS_DEBUG_MAP=1      — map tile loading, rendering diagnostics
 //   -DSIGURDOS_TRACKBALL_DEBUG=1— trackball event/state debug
+//   -DSIGURDOS_TELEMETRY=1      — structured telemetry for AI agent (replaces debug above)
 //
 // When SIGURDOS_DEBUG=1 is set (no individual specifier), ALL per-feature
 // flags default to enabled for backward compatibility.
@@ -82,3 +83,16 @@ uint8_t feat_to_mask();
 
 } // namespace debug
 } // namespace sigurdos
+
+// ── Telemetry system flags ────────────────────────────
+// Set with -D SIGURDOS_TELEMETRY=1 for structured AI-agent telemetry.
+// This is mutually exclusive with SIGURDOS_DEBUG=1 (full printf debug).
+#ifndef SIGURDOS_TELEMETRY
+#define SIGURDOS_TELEMETRY 0
+#endif
+#ifndef SIGURDOS_TELEMETRY_HEARTBEAT_MS
+#define SIGURDOS_TELEMETRY_HEARTBEAT_MS 5000
+#endif
+#ifndef SIGURDOS_TELEMETRY_DIFF
+#define SIGURDOS_TELEMETRY_DIFF 0
+#endif

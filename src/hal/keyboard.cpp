@@ -22,6 +22,9 @@
 #include "prefs.h"
 #include <Arduino.h>
 #include <Wire.h>
+#if SIGURDOS_TELEMETRY
+#include "../diagnostics/telemetry.h"
+#endif
 
 // ════════════════════════════════════════════════════════
 // T-Deck Keyboard Protocol (ESP32-C3 I2C slave at 0x55)
@@ -161,6 +164,10 @@ void sigurdos_keyboard_scan()
         // Buffer full — advance tail to discard oldest entry
         key_tail = (key_tail + 1) % KEY_BUF_SIZE;
     }
+
+#if SIGURDOS_TELEMETRY
+    sigurdos::telemetry::report_key_event((uint8_t)keyValue);
+#endif
 
     // Track modifier state based on key codes where possible.
     // Note: The T-Deck keyboard MCU sends pre-processed ASCII key codes,

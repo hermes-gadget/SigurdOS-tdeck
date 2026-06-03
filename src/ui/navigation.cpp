@@ -23,6 +23,9 @@
 #include "screens.h"
 #include "onboarding_screen.h"
 #include <lvgl.h>
+#if SIGURDOS_TELEMETRY
+#include "../diagnostics/telemetry.h"
+#endif
 
 namespace sigurdos::ui {
 
@@ -97,10 +100,18 @@ void navigate_to(Screen screen)
     highlight_back_button(false);
 
     // Push current screen onto history before navigating away
+    Screen previous = current;
     push_history(current);
     current = screen;
 
     dispatch_screen(screen);
+
+#if SIGURDOS_TELEMETRY
+    sigurdos::telemetry::report_screen_transition(
+        static_cast<uint8_t>(previous),
+        static_cast<uint8_t>(screen),
+        lv_tick_get());
+#endif
 }
 
 void go_back()
@@ -112,9 +123,17 @@ void go_back()
 
     Screen target = pop_history();
     // Navigate directly without pushing current (we're going back, not forward)
+    Screen previous = current;
     current = target;
 
     dispatch_screen(target);
+
+#if SIGURDOS_TELEMETRY
+    sigurdos::telemetry::report_screen_transition(
+        static_cast<uint8_t>(previous),
+        static_cast<uint8_t>(target),
+        lv_tick_get());
+#endif
 }
 
 bool can_go_back()

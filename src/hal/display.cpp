@@ -29,6 +29,9 @@
 #include "../mesh/mesh_wrapper.h"
 #include "../diagnostics/debug_cfg.h"
 #include "../diagnostics/debug.h"
+#if SIGURDOS_TELEMETRY
+#include "../diagnostics/telemetry.h"
+#endif
 #include <lvgl.h>
 
 #define LGFX_USE_V1
@@ -161,6 +164,9 @@ static void dispatch_trackball_events()
 // ── LVGL flush callback ─────────────────────────────────
 static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map)
 {
+#if SIGURDOS_TELEMETRY
+    sigurdos::telemetry::report_render_flush();
+#endif
 #if SIGURDOS_DEBUG_DISPLAY
     dbg_last_flush_area = *area;
     dbg_flush_count++;
@@ -578,6 +584,9 @@ void sigurdos_display_loop()
         tft.setBrightness(0);
         sigurdos_keyboard_set_brightness(0);
         display_on = false;
+#if SIGURDOS_TELEMETRY
+        sigurdos::telemetry::report_display_sleep();
+#endif
     }
 #endif
 
@@ -597,6 +606,9 @@ void sigurdos_display_wake()
         sigurdos_keyboard_set_brightness(sigurdos::prefs_get().kbd_backlight);
         display_on = true;
         wake_refresh_pending = true;
+#if SIGURDOS_TELEMETRY
+        sigurdos::telemetry::report_display_wake();
+#endif
     }
     reset_auto_off();
 }

@@ -21,6 +21,9 @@
 #include "tdeck_pins.h"
 #include <Wire.h>
 #include <Arduino.h>
+#if SIGURDOS_TELEMETRY
+#include "../diagnostics/telemetry.h"
+#endif
 
 // ════════════════════════════════════════════════════════
 // GT911 Register Constants
@@ -267,6 +270,9 @@ void sigurdos_touch_loop()
         last_y = found_y;
         pressed = true;
         was_pressed = false;
+#if SIGURDOS_TELEMETRY
+        sigurdos::telemetry::report_touch_event((uint16_t)found_x, (uint16_t)found_y);
+#endif
     } else {
         // Buffer ready but no valid point — release
         if (pressed) {

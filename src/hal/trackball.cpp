@@ -4,6 +4,9 @@
 #include "trackball.h"
 #include "tdeck_pins.h"
 #include <Arduino.h>
+#if SIGURDOS_TELEMETRY
+#include "../diagnostics/telemetry.h"
+#endif
 
 static constexpr uint32_t CLICK_DEBOUNCE_MS = 20;
 static constexpr uint32_t DIRECTION_DEADTIME_MS = 150;
@@ -91,6 +94,10 @@ static void queue_event(SigurdOSTrackballEvent event)
     // Shadow debug mode: the debug print above fires, and we still queue the event
     // so trackball input is not silently dropped during shadow debugging.
 #endif
+#endif
+
+#if SIGURDOS_TELEMETRY
+    sigurdos::telemetry::report_trackball_event((uint8_t)event);
 #endif
 
     if (queue_count >= EVENT_QUEUE_SIZE) return;
