@@ -55,14 +55,15 @@ src/
 │   ├── responsive.h       # Display-size-agnostic layout helpers
 │   ├── home_screen.cpp/h  # 4x3 icon grid, top/bottom bars, battery/signal/time
 │   ├── chat_screen.cpp/h  # Channels, DM, message bubbles
-│   ├── screens.cpp/h      # Heard, Contacts, Contact Detail, Map, Settings, Trace, Terminal, Signal, Channels, Finder, Advertise, Radio Setup, Custom RF, Telemetry, Node Status, Node Stats
+│   ├── screens.cpp/h      # Contacts, Channels, Heard, Map, Signal, Advertise, Settings (Radio/GPS/Display/System), Trace, Terminal, Finder, Repeaters, Radio Setup, Custom RF, Telemetry, Node Status, Node Stats, WiFiNetworks, Contact Detail
 │   ├── onboarding_screen.cpp/h  # First-boot setup wizard
 │   ├── navigation.cpp/h   # Screen routing with slide transitions, universal back-swipe
 │   └── ui.cpp/h           # Splash→Home transition, main loop updates
 ├── app/
 │   ├── map_renderer.cpp/h # Offline map (PNG tiles via lodepng, PSRAM cache)
 │   ├── tile_cache.cpp/h   # Tile cache — LRU eviction (4 entries, uint64_t monotonic clock)
-│   └── lodepng_alloc.cpp  # lodepng allocator → PSRAM with DRAM fallback
+│   ├── lodepng_alloc.cpp  # lodepng allocator → PSRAM with DRAM fallback
+│   └── qr_show.cpp/h     # QR code display (ricmoo's QRCode lib, full-screen LVGL canvas)
 ├── diagnostics/
 │   ├── debug_cfg.h        # Per-feature debug flag selection (runtime toggle)
 │   └── debug.cpp/h        # Debug dumps (SIGURDOS_DEBUG=1 build)
@@ -82,8 +83,9 @@ src/
 - `meshcore/` — Git submodule → MeshCore
 - `lodepng/` — PNG decode library (zlib license, PSRAM allocators)
 - `base64/` — Base64 encode/decode header
-```
-```
+- `qrcode/` — QR code generation (ricmoo's QRCode, MIT license)
+
+---
 
 ---
 
