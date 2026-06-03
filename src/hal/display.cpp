@@ -571,15 +571,18 @@ void sigurdos_display_loop()
         restore_display_after_sleep();
     }
 
-    // Auto-off: turn off backlight after inactivity
-    // Disabled in display debug builds — the screen must stay on for observation
-#if !SIGURDOS_DEBUG_DISPLAY
+    // Auto-off: turn off backlight after inactivity.
+    // Always enabled regardless of debug flags — the display should
+    // time out in all builds. Any interaction resets the timer via
+    // sigurdos_display_wake() in the input callbacks.
     if (display_on && millis() > auto_off_at) {
+#if SIGURDOS_DEBUG_DISPLAY
+        Serial.printf("[auto-off] display off at uptime=%lu\n", (unsigned long)(millis()/1000));
+#endif
         tft.setBrightness(0);
         sigurdos_keyboard_set_brightness(0);
         display_on = false;
     }
-#endif
 
     uint32_t next = lv_timer_handler();
     delay(next > 5 ? 5 : next);
