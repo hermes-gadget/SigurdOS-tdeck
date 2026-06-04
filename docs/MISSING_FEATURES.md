@@ -177,6 +177,8 @@ struct SigurdRegion {
 
 **Goal:** let the T-Deck pair with and serve the **official MeshCore phone app** (Android/iOS) over Bluetooth LE, speaking the same companion frame protocol as a stock companion radio. The phone becomes a full client of the T-Deck's radio — sync contacts, read/send DMs and channel messages, configure the radio — *alongside* the built-in LVGL UI.
 
+> **The crux of this feature is clean two-way sync, not the transport.** The T-Deck must **keep its own message history (persisted to flash — see below)** and never lose it to app sync; messages and changes made on the T-Deck must show up in the app and vice-versa. The transport (BLE) is the easy part — the [State sync & message persistence](#state-sync--message-persistence--the-hard-part-read-this) section is the part that must be gotten right.
+
 > **Reframed from "not planned".** This doc previously listed BLE as a *different product* ("the T-Deck is already a companion"). The repo owner has now requested it. The value: the official app as a richer / backup client on SigurdOS hardware, and standard MeshCore companion interop for users who prefer their phone. The built-in UI stays; BLE is additive.
 
 ### Transport — reuse the library's ESP32 BLE interface
@@ -209,6 +211,34 @@ The protocol host (`MyMesh`) and SigurdOS's mesh (`SigurdMeshV2`) are **sibling 
 - **Offline queue:** port `OFFLINE_QUEUE` (16 frames) so messages received while the phone is disconnected are buffered and drained on `CMD_SYNC_NEXT_MESSAGE` after reconnect.
 - **Persistence:** `MyMesh` uses `DataStore`/`DataStoreHost` for contacts/channels/prefs/blobs. SigurdOS already persists these via `mesh_wrapper` (SPIFFS). **Map the mutating commands** (`CMD_ADD_UPDATE_CONTACT`, `REMOVE_CONTACT`, `SET_CHANNEL`, `IMPORT/EXPORT_PRIVATE_KEY`) onto SigurdOS's existing storage + identity store. Do **not** introduce a second `DataStore`.
 
+### State sync & message persistence — the hard part, read this
+
+The stock companion is a **stateless dumb modem**: the phone app is the *only* UI and the *only* message store, and the radio's offline queue is **drain-on-read** (`getFromOfflineQueue()` *removes* each message as the app syncs it — see [`MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/companion_radio/MyMesh.cpp) `getFromOfflineQueue`). SigurdOS breaks both assumptions: it has **its own UI and its own message history**. So this is not "radio + app" — it is **two stateful peers sharing one identity**, i.e. a reconciliation problem. Three hard requirements, and how to meet each:
+
+#### R1 — the T-Deck must NEVER lose its messages
+
+1. **Persist messages to flash (prerequisite — should already be standard).** Today SigurdOS messages are **RAM-only**: per-channel arrays in [`src/ui/chat_screen.cpp`](../src/ui/chat_screen.cpp) (`ch_msgs[]` / `ch_msg_count[]`, capped at `NodePrefs.chat_msg_cap`, default 200) — **lost on every reboot** (contacts and channels persist; messages do not). Add an **append-only message log in SPIFFS** (per-conversation file or a single ring file, size-capped/rotated), written on every send/receive and **loaded into the chat UI on boot**. This is independent of BLE and overdue on its own — treat it as a foundational step that lands first.
+2. **Keep the app-sync queue separate from the store.** The drain-on-read offline queue must be a **mirror for the phone**, never SigurdOS's store. On message arrival, **fan out to BOTH**: (i) the persistent log + chat UI, and (ii) the offline queue. Draining the queue to the app must never touch the log. → the T-Deck keeps its history regardless of what the app syncs or deletes.
+
+#### R2 — sent messages sync both directions
+
+- **App → T-Deck (clean, fully supported):** when the bridge handles `CMD_SEND_TXT_MSG`, after calling `sendMessage()` it must **also append the outgoing text to the persistent log + chat UI** (as a self/outgoing entry keyed by recipient + `msg_timestamp`). → messages composed on the phone show up on the T-Deck.
+- **T-Deck → app (the protocol gap — be explicit):** the companion protocol has **no "device-originated send" frame.** The app only learns of sends *it* initiated (`CMD_SEND_TXT_MSG` → `RESP_CODE_SENT`, later `PUSH_CODE_SEND_CONFIRMED`) and messages *received* (the offline queue). There is **no `RESP_CODE_*`/`PUSH_CODE_*` meaning "the device sent this on its own."** So with the **unmodified official app**, a message composed on the T-Deck's own keyboard cannot appear in the app's history. Options:
+  1. **Accept the limitation** (official-app compatible): T-Deck-composed messages still transmit fine over LoRa; they just aren't mirrored into the official app's thread.
+  2. **Protocol extension:** define a new `PUSH_CODE_*` ("device sent message") that **our own client** (`SlopOS-client`, the Flutter app) renders. The official app ignores unknown push codes → true two-way authored-message sync only with a cooperating client.
+  - **Recommendation:** ship R1 + the app→T-Deck direction now (works with the official app), and add the extension to `SlopOS-client` for full bidirectional authoring. **Dedup hazard:** do **not** echo a self-sent message back as a `RESP_CODE_CONTACT_MSG_RECV` — the app would mis-attribute it to the *recipient* as an incoming message.
+
+#### R3 — other changes reflect both ways
+
+- **Contacts:** use the built-in **incremental sync** — `CMD_GET_CONTACTS` carries an optional `since`; the radio replies only with contacts whose `contact.lastmod > since` and returns the new high-water mark in `RESP_CODE_END_OF_CONTACTS` (`_most_recent_lastmod`). SigurdOS shares `BaseChatMesh`'s contact table + `ContactsIterator`, so this works **provided SigurdOS bumps `contact.lastmod` (and calls `saveContacts()`) on every local change** — auto-add, favourite toggle, rename, manual add/remove — and applies app edits (`CMD_ADD_UPDATE_CONTACT` / `CMD_REMOVE_CONTACT`) to the *same* table + refreshes the UI. Emit `PUSH_CODE_CONTACT_DELETED` / `PUSH_CODE_CONTACTS_FULL` when the device evicts a contact.
+- **Channels:** `CMD_GET_CHANNEL` / `CMD_SET_CHANNEL` ↔ SigurdOS's channel store (NVS) + chat channel-list refresh, both directions.
+- **Clock:** `CMD_GET/SET_DEVICE_TIME` keeps clocks aligned — message timestamps are the ordering/dedup key, so drift causes mis-ordered or duplicated threads.
+- **Read / unread state:** the protocol does **not** sync per-message read state — each client tracks its own. Document as a known limitation.
+
+#### Cross-cutting: message identity & dedup
+
+Key every message by **(conversation, sender pubkey-prefix, `sender_timestamp`)**. The persistent log dedups on this key so a message that arrives over LoRa *and* via an app round-trip is stored once; the offline-queue mirror uses the same key so a reconnecting app isn't handed duplicates. Where it hooks in: the **dual-consumer event hook** (above) is the fan-out point — extend it so message-arrival writes to *(persistent log + UI)* **and** *(offline queue)*, and so app-initiated sends also write to *(persistent log + UI)*. The persistent log becomes the shared store that both the chat UI and the sync layer read.
+
 ### Concurrency
 
 BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queue (the library design already does this). **All mesh access stays on the main loop** via `bridge.loop()` → `_serial->checkRecvFrame()` → `handleCmdFrame()`. Never call mesh methods from a BLE callback. Per-loop work must be bounded (queues are 4 deep; LVGL must not starve).
@@ -227,23 +257,26 @@ BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queu
 
 ### Phased implementation
 
-- **Phase 1 — MVP (app connects + basic DMs):** wire `SerialBLEInterface`; handshake (`CMD_DEVICE_QUERY`, `CMD_APP_START`); `CMD_GET_CONTACTS`; `CMD_SYNC_NEXT_MESSAGE` + offline queue + `PUSH_CODE_MSG_WAITING`; `CMD_SEND_TXT_MSG` + `RESP_CODE_SENT` + `PUSH_CODE_SEND_CONFIRMED`; `CMD_GET/SET_DEVICE_TIME`; `CMD_GET_BATT_AND_STORAGE`. → app connects, lists contacts, reads & sends DMs.
+- **Phase 0 — foundational persistence (lands first, independent of BLE):** add the SPIFFS message log (R1.1) so chat history survives reboot, and make message arrival/send fan out through the dual-consumer hook into *(persistent log + UI)*. Without this, none of the sync requirements can hold.
+- **Phase 1 — MVP (app connects + basic DMs):** wire `SerialBLEInterface`; handshake (`CMD_DEVICE_QUERY`, `CMD_APP_START`); `CMD_GET_CONTACTS`; `CMD_SYNC_NEXT_MESSAGE` + offline queue **as a non-destructive mirror** of the persistent log (R1.2) + `PUSH_CODE_MSG_WAITING`; `CMD_SEND_TXT_MSG` + `RESP_CODE_SENT` + `PUSH_CODE_SEND_CONFIRMED`, **also appending the sent text to the log + UI** (R2 app→T-Deck); `CMD_GET/SET_DEVICE_TIME`; `CMD_GET_BATT_AND_STORAGE`. → app connects, lists contacts, reads & sends DMs, and the T-Deck keeps its own copy.
 - **Phase 2:** channels (`CMD_GET/SET_CHANNEL`, `CMD_SEND_CHANNEL_TXT_MSG`, channel sync); adverts (`CMD_SEND_SELF_ADVERT`, `SET_ADVERT_NAME/LATLON`, `PUSH_CODE_ADVERT/NEW_ADVERT`); radio params (`CMD_SET_RADIO_PARAMS/TX_POWER/TUNING_PARAMS`); contact CRUD (`add/update/remove/share/export/import`).
 - **Phase 3:** repeater login (`CMD_SEND_LOGIN`, `PUSH_CODE_LOGIN_*`), trace / path discovery (`CMD_SEND_TRACE_PATH`, `CMD_RESET_PATH`), telemetry, message signing (`CMD_SIGN_*`), private-key export/import, factory reset, and the flood-scope commands (`CMD_SET_DEFAULT_FLOOD_SCOPE` etc.) — which tie into the [Regions](#regions--companion-flood-scope-planned--m) feature.
 
 ### File-by-file plan
 
 1. **`platformio.ini`** — new `[env:SigurdOS_TDeck_ble]` (extends the release env) with `-D SIGURDOS_COMPANION_BLE=1` + BLE name/PIN defines; confirm partition headroom; ensure BT/BLE enabled. **S**
-2. **`src/comms/companion_bridge.{h,cpp}` (new)** — owns the `SerialBLEInterface` + a `SigurdMeshV2&`; ports `handleCmdFrame`, `writeOKFrame`/`writeErrFrame`/`writeContactRespFrame`, the offline queue, and the contacts/sync iterators. Driven by `loop()`. **L**
-3. **`src/mesh/sigurd_mesh_v2.h`** — add an event-listener hook (message/advert/ack/path-updated) so the bridge receives the same mesh events as the UI; expose any `BaseChatMesh` accessors the bridge needs. **M**
-4. **`src/mesh/mesh_wrapper.{h,cpp}`** — construct/init/loop the bridge; map the protocol's persistence + identity commands onto existing SigurdOS storage. **M**
-5. **`src/hal/prefs.{h,cpp}`** — surface `device_pin` as the BLE PIN; add `ble_enabled`. **S**
-6. **`src/main.cpp`** — bring up the bridge after mesh init; call `bridge.loop()` in the main loop. **S**
-7. **`src/ui/screens.cpp` (+ home/nav)** — a **Bluetooth / Phone App** screen: enable toggle, PIN display, connection status; a connected indicator on the top bar; optional connect buzzer. Follow screen conventions (`make_screen_full`, `apply_dark_bg`, `theme.h`). **M**
+2. **`src/mesh/message_store.{h,cpp}` (new — Phase 0)** — append-only SPIFFS chat log (per-conversation, size-capped/rotated), dedup-keyed on (conversation, sender prefix, `sender_timestamp`); load into the chat UI on boot. Becomes the shared store the chat UI **and** the BLE sync layer read; the offline queue is a non-destructive mirror of it. **M**
+3. **`src/comms/companion_bridge.{h,cpp}` (new)** — owns the `SerialBLEInterface` + a `SigurdMeshV2&`; ports `handleCmdFrame`, `writeOKFrame`/`writeErrFrame`/`writeContactRespFrame`, the offline queue, and the contacts/sync iterators. Driven by `loop()`. **L**
+4. **`src/mesh/sigurd_mesh_v2.h`** — add an event-listener hook (message/advert/ack/path-updated) so the **persistent log, the UI, and the bridge** all receive the same mesh events (the fan-out point for R1/R2); bump `contact.lastmod` + `saveContacts()` on local contact changes for R3; expose any `BaseChatMesh` accessors the bridge needs. **M**
+5. **`src/mesh/mesh_wrapper.{h,cpp}`** — construct/init/loop the bridge; map the protocol's persistence + identity commands onto existing SigurdOS storage; wire the message store into the existing message path. **M**
+6. **`src/hal/prefs.{h,cpp}`** — surface `device_pin` as the BLE PIN; add `ble_enabled`. **S**
+7. **`src/main.cpp`** — bring up the bridge after mesh init; call `bridge.loop()` in the main loop. **S**
+8. **`src/ui/screens.cpp` (+ home/nav)** — a **Bluetooth / Phone App** screen: enable toggle, PIN display, connection status; a connected indicator on the top bar; optional connect buzzer. Follow screen conventions (`make_screen_full`, `apply_dark_bg`, `theme.h`). **M**
 
 ### Testing
 
 - **Native (`pio test -e native_test`):** a `test_companion_protocol` module with a `MockSerialInterface` (implements `BaseSerialInterface` over in-memory buffers). Feed `CMD_DEVICE_QUERY` / `CMD_APP_START` frames and assert the `RESP_CODE_DEVICE_INFO` / `RESP_CODE_SELF_INFO` **byte layouts** match **golden frames captured from companion-radio v1.15.0** (this is what proves app compatibility). Round-trip `CMD_SEND_TXT_MSG` → assert `sendMessage` invoked + `RESP_CODE_SENT`. Cover offline-queue ordering and the `app_target_ver` branches. No BLE hardware needed.
+- **Native — sync & persistence (`test_message_store`):** assert messages survive a simulated reboot (write → reload → present); assert **draining the offline queue does NOT remove from the persistent log** (R1.2); assert an `app→T-Deck` `CMD_SEND_TXT_MSG` appends a self/outgoing entry to the log (R2); assert the (conversation, sender, timestamp) dedup so a message seen twice is stored once; assert a local contact change bumps `lastmod` so a subsequent `CMD_GET_CONTACTS since=<hwm>` returns it (R3). Mock SPIFFS via the existing filesystem stub.
 - **Device:** flash the BLE env, pair the official MeshCore Android/iOS app via PIN, verify handshake → contact sync → send/receive DM + channel message over the air. Declare **"Physical hardware test"** in the PR (remote-test mode cannot validate the BLE stack).
 
 ### MeshCore reference
