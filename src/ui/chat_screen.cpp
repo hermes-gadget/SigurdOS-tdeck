@@ -2161,6 +2161,14 @@ lv_obj_t* chat_screen_get_input_field()
     return input_field;
 }
 
+const char* chat_screen_get_active_channel_name()
+{
+    if (active_channel >= 0 && active_channel < dyn_count) {
+        return dyn_channels[active_channel];
+    }
+    return "";
+}
+
 // ════════════════════════════════════════════════════
 // Message persistence via SPIFFS
 // ════════════════════════════════════════════════════

@@ -1967,8 +1967,15 @@ bool addRegion(const char* name, const char* key_b64_or_null) {
         int ret = mbedtls_base64_decode(r.key, sizeof(r.key), &olen,
                                          (const uint8_t*)key_b64_or_null, len);
         if (ret != 0 || olen != 16) return false;
-    } else {
+    } else if (name[0] == '$') {
         return false;  // $ regions require a key
+    } else {
+        // Auto-prepend # for bare names like "eng-nw" → "#eng-nw"
+        char prefixed[sizeof(r.name)];
+        snprintf(prefixed, sizeof(prefixed), "#%s", name);
+        strncpy(r.name, prefixed, sizeof(r.name) - 1);
+        r.name[sizeof(r.name) - 1] = '\0';
+        deriveRegionKey(r.name, r.key);
     }
 
     // Append
