@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Ben
 
 #include "mesh/mesh_wrapper.h"
+#include "mesh/regions.h"
 #include <cstring>
 
 namespace sigurdos::mesh {
@@ -134,6 +135,76 @@ bool exportIdentity(char* hex_out, size_t hex_sz) {
 bool importIdentity(const char* hex_privkey) {
     (void)hex_privkey;
     return false; // mock: cannot import
+}
+
+// ── Regions stubs ────────────────────────────────
+
+static SigurdRegion    mock_regions[SIGURD_MAX_REGIONS];
+static int             mock_region_count = 0;
+static char            mock_active_region[31] = "";
+
+int listRegions(SigurdRegion* out, int max) {
+    if (!out || max <= 0) return 0;
+    int n = 0;
+    for (int i = 0; i < mock_region_count && n < max; i++) {
+        memcpy(&out[n], &mock_regions[i], sizeof(SigurdRegion));
+        n++;
+    }
+    return n;
+}
+
+bool addRegion(const char* name, const char* key_b64_or_null) {
+    (void)key_b64_or_null;
+    if (!name || !name[0] || mock_region_count >= SIGURD_MAX_REGIONS) return false;
+    SigurdRegion r;
+    memset(&r, 0, sizeof(r));
+    strncpy(r.name, name, sizeof(r.name) - 1);
+    memcpy(&mock_regions[mock_region_count++], &r, sizeof(SigurdRegion));
+    return true;
+}
+
+bool removeRegion(const char* name) {
+    if (!name || !name[0]) return false;
+    for (int i = 0; i < mock_region_count; i++) {
+        if (strcmp(mock_regions[i].name, name) == 0) {
+            for (int j = i; j < mock_region_count - 1; j++)
+                memcpy(&mock_regions[j], &mock_regions[j + 1], sizeof(SigurdRegion));
+            mock_region_count--;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool setActiveRegion(const char* name) {
+    if (name && name[0]) {
+        strncpy(mock_active_region, name, sizeof(mock_active_region) - 1);
+        mock_active_region[sizeof(mock_active_region) - 1] = '\0';
+    } else {
+        mock_active_region[0] = '\0';
+    }
+    return true;
+}
+
+const char* getActiveRegion() {
+    return mock_active_region[0] ? mock_active_region : "";
+}
+
+void setSendUnscopedOnce(bool v) { (void)v; }
+
+void syncRegionsFromChannels() {}
+
+// regions.h stubs
+int loadRegions(SigurdRegion* out, int max) {
+    return listRegions(out, max);
+}
+
+bool saveRegions(const SigurdRegion* list, int count) {
+    (void)list; (void)count; return true;
+}
+
+bool deriveRegionKey(const char* name, uint8_t* out_key16) {
+    (void)name; (void)out_key16; return false;
 }
 
 } // namespace sigurdos::mesh
