@@ -46,14 +46,22 @@ static char nmea_buf[128];
 static int  nmea_pos = 0;
 
 // ── Helpers ───────────────────────────────────────────────
-static float nmea_to_decimal(const char* coord, char dir) {
-    if (!coord || coord[0] == '\0') return 0.0f;
-    float val = strtof(coord, nullptr);
+static bool nmea_to_decimal(const char* coord, char dir, const char* valid_dirs, float* out) {
+    if (!coord || coord[0] == '\0' || !valid_dirs || !out) return false;
+    if (dir == '\0') return false;
+    if (!strchr(valid_dirs, dir)) return false;
+
+    char* end = nullptr;
+    float val = strtof(coord, &end);
+    if (end == coord) return false;
+    if (*end != '\0') return false;
+
     int degrees = (int)(val / 100.0f);
     float minutes = val - (degrees * 100.0f);
     float decimal = degrees + minutes / 60.0f;
     if (dir == 'S' || dir == 'W') decimal = -decimal;
-    return decimal;
+    *out = decimal;
+    return true;
 }
 
 static bool nmea_field(const char* sentence, int index, char* out, size_t out_size) {
@@ -97,18 +105,24 @@ static void parse_gga(const char* sentence) {
     // Latitude + N/S (fields 2-3)
     char lat_str[20];
     char ns[4];
+    bool lat_ok = false;
+    float parsed_lat = 0.0f;
     if (nmea_field(sentence, 2, lat_str, sizeof(lat_str)) &&
         nmea_field(sentence, 3, ns, sizeof(ns))) {
-        gps.latitude = nmea_to_decimal(lat_str, ns[0]);
+        lat_ok = nmea_to_decimal(lat_str, ns[0], "NS", &parsed_lat);
     }
+    gps.latitude = lat_ok ? parsed_lat : 0.0f;
 
     // Longitude + E/W (fields 4-5)
     char lon_str[20];
     char ew[4];
+    bool lon_ok = false;
+    float parsed_lon = 0.0f;
     if (nmea_field(sentence, 4, lon_str, sizeof(lon_str)) &&
         nmea_field(sentence, 5, ew, sizeof(ew))) {
-        gps.longitude = nmea_to_decimal(lon_str, ew[0]);
+        lon_ok = nmea_to_decimal(lon_str, ew[0], "EW", &parsed_lon);
     }
+    gps.longitude = lon_ok ? parsed_lon : 0.0f;
 
     // Fix quality (field 6)
     if (nmea_field(sentence, 6, field, sizeof(field))) gps.fix_quality = atoi(field);
@@ -119,7 +133,7 @@ static void parse_gga(const char* sentence) {
     // Altitude (field 9)
     if (nmea_field(sentence, 9, field, sizeof(field))) gps.altitude_m = strtof(field, nullptr);
 
-    gps.has_fix = (gps.fix_quality > 0);
+    gps.has_fix = (gps.fix_quality > 0 && lat_ok && lon_ok);
 }
 
 static void parse_rmc(const char* sentence) {

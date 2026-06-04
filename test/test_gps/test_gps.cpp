@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 
 namespace {
 
@@ -361,10 +362,31 @@ protected:
     }
 
     void feed(const char* sentence) {
+        Serial1.mock_clear_rx();
         Serial1.mock_queue_rx(sentence);
         sigurdos_gps_loop();
     }
+
+    void feed_body(const char* body) {
+        uint8_t checksum = 0;
+        for (const char* p = body; p && *p; p++) {
+            checksum ^= (uint8_t)(*p);
+        }
+
+        char sentence[160];
+        snprintf(sentence, sizeof(sentence), "$%s*%02X\n", body, checksum);
+        feed(sentence);
+    }
 };
+
+TEST_F(GPSIntegrationTest, ValidGGAReportsFixWithCoordinateDirections) {
+    feed_body("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+
+    EXPECT_TRUE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_fix_quality(), 1);
+    EXPECT_NEAR(sigurdos_gps_latitude(), 48.1173f, 0.01f);
+    EXPECT_NEAR(sigurdos_gps_longitude(), 11.5167f, 0.01f);
+}
 
 TEST_F(GPSIntegrationTest, GGAWithEmptyCoordinateFieldsDoesNotShiftLaterFields) {
     feed("$GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,*7E\n");
@@ -377,6 +399,33 @@ TEST_F(GPSIntegrationTest, GGAWithEmptyCoordinateFieldsDoesNotShiftLaterFields) 
     EXPECT_EQ(sigurdos_gps_fix_quality(), 1);
     EXPECT_EQ(sigurdos_gps_satellites(), 8);
     EXPECT_NEAR(sigurdos_gps_altitude_m(), 545.4f, 0.1f);
+}
+
+TEST_F(GPSIntegrationTest, GGAWithoutCoordinateDirectionsDoesNotReportFix) {
+    feed_body("GPGGA,123520,4807.038,,01131.000,,1,08,0.9,545.4,M,46.9,M,,");
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_fix_quality(), 1);
+    EXPECT_FLOAT_EQ(sigurdos_gps_latitude(), 0.0f);
+    EXPECT_FLOAT_EQ(sigurdos_gps_longitude(), 0.0f);
+}
+
+TEST_F(GPSIntegrationTest, GGAWithMalformedCoordinateDirectionsDoesNotReportFix) {
+    feed_body("GPGGA,123519,4807.038,X,01131.000,Q,1,08,0.9,545.4,M,46.9,M,,");
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_fix_quality(), 1);
+    EXPECT_FLOAT_EQ(sigurdos_gps_latitude(), 0.0f);
+    EXPECT_FLOAT_EQ(sigurdos_gps_longitude(), 0.0f);
+}
+
+TEST_F(GPSIntegrationTest, GGAWithMalformedCoordinateNumbersDoesNotReportFix) {
+    feed_body("GPGGA,123519,4807.x,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_fix_quality(), 1);
+    EXPECT_FLOAT_EQ(sigurdos_gps_latitude(), 0.0f);
+    EXPECT_NEAR(sigurdos_gps_longitude(), 11.5167f, 0.01f);
 }
 
 TEST_F(GPSIntegrationTest, RMCWithEmptySpeedKeepsHeadingInFieldEight) {
