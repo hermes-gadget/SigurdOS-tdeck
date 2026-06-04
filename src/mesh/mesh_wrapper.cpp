@@ -769,6 +769,22 @@ bool init(bool spiffs_ok)
     // Must run after all channels are loaded so regions are seeded from NVS.
     syncRegionsFromChannels();
 
+    // Restore the active flood-scope region after reboot so outgoing floods
+    // continue to be stamped with the correct transport code.
+    {
+        const sigurdos::NodePrefs& np = sigurdos::prefs_get();
+        if (np.active_region[0] && g_mesh) {
+            SigurdRegion list[SIGURD_MAX_REGIONS];
+            int n = loadRegions(list, SIGURD_MAX_REGIONS);
+            for (int i = 0; i < n; i++) {
+                if (strcmp(list[i].name, np.active_region) == 0) {
+                    g_mesh->setActiveScope(list[i].key);
+                    break;
+                }
+            }
+        }
+    }
+
     // Only broadcast advert if user has explicitly configured radio params.
     // Compile-time defaults may be illegal in some regions — transmit gating
     // prevents first-boot broadcasts until user opens Settings → Radio Setup.
@@ -1930,12 +1946,10 @@ int listRegions(SigurdRegion* out, int max) {
 
 bool addRegion(const char* name, const char* key_b64_or_null) {
     if (!name || !name[0]) return false;
-    int count = listRegions(nullptr, 0);
-    if (count < 0) count = 0;
-    if (count >= SIGURD_MAX_REGIONS) return false;
 
     SigurdRegion list[SIGURD_MAX_REGIONS];
     int n = listRegions(list, SIGURD_MAX_REGIONS);
+    if (n >= SIGURD_MAX_REGIONS) return false;
 
     SigurdRegion r;
     memset(&r, 0, sizeof(r));
@@ -1973,6 +1987,12 @@ bool removeRegion(const char* name) {
         if (strcmp(list[i].name, name) == 0) { found = i; break; }
     }
     if (found < 0) return false;
+
+    // If removing the active region, clear the scope
+    const char* active = getActiveRegion();
+    if (active && strcmp(active, name) == 0) {
+        setActiveRegion("");  // clears prefs + g_mesh scope
+    }
 
     // Shift remaining entries down
     for (int i = found; i < n - 1; i++) {

@@ -7013,6 +7013,12 @@ static void pin_entry_show(Screen target_screen) {
 // ════════════════════════════════════════════════════════
 static std::function<void()> g_regions_rebuild = nullptr;
 
+// Async wrapper — defers rebuild to next LVGL tick so callbacks
+// don't operate on deleted widgets (use-after-free guard).
+static void regions_rebuild_async(void*) {
+    if (g_regions_rebuild) g_regions_rebuild();
+}
+
 static void regions_add_dialog(lv_obj_t* parent_scr) {
     auto dlg_sz = dialog_size(280, 180);
     lv_obj_t* dlg = lv_obj_create(parent_scr);
@@ -7128,7 +7134,7 @@ static void regions_add_dialog(lv_obj_t* parent_scr) {
             return;
         }
         // Refresh the list
-        if (g_regions_rebuild) g_regions_rebuild();
+        lv_async_call(regions_rebuild_async, nullptr);
         // Re-read active region to update subtitle
         const char* active = sigurdos::mesh::getActiveRegion();
         lv_obj_t* scr = lv_obj_get_screen(c->dlg);
@@ -7152,8 +7158,13 @@ static void regions_add_dialog(lv_obj_t* parent_scr) {
             }
         }
         lv_obj_del_async(c->dlg);
-        delete c;
     }, LV_EVENT_CLICKED, ctx);
+
+    // Clean up dialog context when LVGL actually destroys the dialog
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        RegionDlgCtx* c = (RegionDlgCtx*)lv_event_get_user_data(e);
+        delete c;
+    }, LV_EVENT_DELETE, ctx);
 
     // Cancel button
     lv_obj_t* cancel_btn = lv_btn_create(dlg);
@@ -7166,8 +7177,7 @@ static void regions_add_dialog(lv_obj_t* parent_scr) {
     lv_obj_center(cl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
         RegionDlgCtx* c = (RegionDlgCtx*)lv_event_get_user_data(ce);
-        delete c;
-        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+        lv_obj_del_async(c->dlg);
     }, LV_EVENT_CLICKED, ctx);
 
     // Focus name field
@@ -7246,7 +7256,7 @@ void regions_screen_show()
 
             lv_obj_add_event_cb(row, [](lv_event_t* e) {
                 sigurdos::mesh::setActiveRegion("");
-                if (g_regions_rebuild) g_regions_rebuild();
+                lv_async_call(regions_rebuild_async, nullptr);
                 // Update active label on parent screen
                 lv_obj_t* r = (lv_obj_t*)lv_event_get_target(e);
                 lv_obj_t* s = lv_obj_get_screen(r);
@@ -7315,7 +7325,7 @@ void regions_screen_show()
 
                 sigurdos::mesh::setActiveRegion(rname);
 
-                if (g_regions_rebuild) g_regions_rebuild();
+                lv_async_call(regions_rebuild_async, nullptr);
 
                 // Update active label
                 lv_obj_t* s = lv_obj_get_screen(r);
@@ -7359,7 +7369,7 @@ void regions_screen_show()
                 if (!rname || !rname[0]) return;
 
                 sigurdos::mesh::removeRegion(rname);
-                if (g_regions_rebuild) g_regions_rebuild();
+                lv_async_call(regions_rebuild_async, nullptr);
 
                 // Update active label
                 const char* active2 = sigurdos::mesh::getActiveRegion();
@@ -7406,7 +7416,7 @@ void regions_screen_show()
 
     lv_obj_add_event_cb(sync_btn, [](lv_event_t* e) {
         sigurdos::mesh::syncRegionsFromChannels();
-        if (g_regions_rebuild) g_regions_rebuild();
+        lv_async_call(regions_rebuild_async, nullptr);
         // Update active label
         lv_obj_t* s2 = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
         if (s2) {
