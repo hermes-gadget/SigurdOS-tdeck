@@ -75,7 +75,9 @@ static void fillStoredPrefixForName(const char* name, uint8_t* out)
 }
 
 static void storeIncomingMessageForCompanion(const char* sender, const char* channel,
-                                             const char* text, int rssi, float snr)
+                                             const char* text, int rssi, float snr,
+                                             uint32_t sender_timestamp = 0,
+                                             uint8_t path_len = 0xFF)
 {
     sigurdos::mesh::StoredMessage msg{};
     const bool is_channel = channel && channel[0];
@@ -87,12 +89,18 @@ static void storeIncomingMessageForCompanion(const char* sender, const char* cha
         strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
     }
     strncpy(msg.sender, sender ? sender : "", sizeof(msg.sender) - 1);
-    msg.timestamp = rtc_clock.getCurrentTime();
+    // Use the originating packet's timestamp so the app shows the real send
+    // time. Fall back to the local clock only if the sender left it unset —
+    // otherwise an unset RTC would surface every message as "1970".
+    msg.timestamp = sender_timestamp ? sender_timestamp : rtc_clock.getCurrentTime();
     msg.is_self = false;
     msg.is_channel = is_channel;
     msg.acked = false;
     msg.rssi = (int16_t)rssi;
     msg.snr_quarters = (int8_t)(snr * 4.0f);
+    // Mesh path-length byte for the V3 frame (hop count + hash size). 0xFF from
+    // a direct/unknown route; the real pkt->path_len for flood-routed packets.
+    msg.path_len = path_len;
     fillStoredPrefixForName(sender, msg.sender_prefix);
     sigurdos::mesh::messageStoreAppend(msg);
     if (CompanionBridge* b = companionBridge()) b->enqueueMessage(msg);
@@ -111,6 +119,7 @@ static void storeOutgoingMessageForCompanion(const char* conversation, const cha
     msg.acked = false;
     msg.rssi = 0;
     msg.snr_quarters = 0;
+    msg.path_len = 0xFF;  // self-sent; never mirrored to the app, value unused
     if (g_mesh) memcpy(msg.sender_prefix, g_mesh->self_id.pub_key,
                        sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
     sigurdos::mesh::messageStoreAppend(msg);

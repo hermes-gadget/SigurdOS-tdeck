@@ -26,8 +26,18 @@ namespace sigurdos {
 namespace mesh {
 
 // Forward declarations from mesh_wrapper.cpp
+// sender_timestamp / path_len carry the originating packet's stamp and mesh
+// path-length byte through to the companion bridge so the phone app shows the
+// correct time and hop count. Defaults (0 / 0xFF) suit callers without a packet:
+// the timestamp falls back to the local clock and 0xFF means "direct/unknown".
 void mesh_v2_queue_push(const char* sender, const char* channel,
-                         const char* text, int rssi, float snr);
+                         const char* text, int rssi, float snr,
+                         uint32_t sender_timestamp = 0, uint8_t path_len = 0xFF);
+
+// Forwards a delivery ACK to the companion bridge so the phone app marks a
+// message it sent (via the device) as confirmed. ack is the 4-byte ACK hash the
+// app received in RESP_CODE_SENT; trip_time_ms is the round-trip time.
+void mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_time_ms);
 
 struct MeshMessage {
     char sender[32];

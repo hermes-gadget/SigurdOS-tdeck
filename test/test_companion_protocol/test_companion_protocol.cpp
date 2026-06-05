@@ -246,6 +246,74 @@ TEST_F(CompanionProtocolTest, EnqueuedMessageTicklesAndDrains) {
     EXPECT_EQ(serial.writes[1][0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
 }
 
+TEST_F(CompanionProtocolTest, ChannelFrameCarriesRealPathLenAndTimestamp) {
+    // Regression: the V3 channel frame used to hardcode the path-length byte to
+    // 0xFF, which the app decodes as 63 hops / 4-byte hashes, and dropped the
+    // sender timestamp, surfacing every message as "1970". The frame must now
+    // carry the stored path_len and the real timestamp.
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "Public", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "Alice: hi", sizeof(msg.text) - 1);
+    msg.timestamp = 0x11223344u;  // a real 2026-era epoch, not 0
+    msg.is_channel = true;
+    msg.path_len = 0x02;  // 2 hops, 1-byte hashes
+
+    ASSERT_TRUE(bridge.enqueueMessage(msg));
+    uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 2u);
+    const auto& out = serial.writes[1];
+    ASSERT_GE(out.size(), 11u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_CHANNEL_MSG_RECV_V3);
+    EXPECT_EQ(out[5], 0x02);  // path_len, not 0xFF
+    uint32_t ts = 0;
+    std::memcpy(&ts, &out[7], 4);
+    EXPECT_EQ(ts, 0x11223344u);
+}
+
+TEST_F(CompanionProtocolTest, ContactFrameCarriesRealPathLen) {
+    // The DM (contact) V3 frame must also forward the stored path_len rather
+    // than the old hardcoded 0xFF placeholder.
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Bob", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Bob", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "yo", sizeof(msg.text) - 1);
+    msg.timestamp = 0x0A0B0C0Du;
+    msg.is_channel = false;
+    msg.path_len = 0x00;  // received directly, zero hops
+    for (int i = 0; i < 6; i++) msg.sender_prefix[i] = (uint8_t)(0xC0 + i);
+
+    ASSERT_TRUE(bridge.enqueueMessage(msg));
+    uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 2u);
+    const auto& out = serial.writes[1];
+    ASSERT_GE(out.size(), 16u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+    // [4..9] sender_prefix, [10] path_len, [11] txt_type, [12..15] timestamp
+    EXPECT_EQ(out[10], 0x00);
+    uint32_t ts = 0;
+    std::memcpy(&ts, &out[12], 4);
+    EXPECT_EQ(ts, 0x0A0B0C0Du);
+}
+
+TEST_F(CompanionProtocolTest, NotifySendConfirmedEmitsPushFrame) {
+    // PUSH_CODE_SEND_CONFIRMED frame: [code][ack:4][trip_time_ms:4] = 9 bytes.
+    // Regression: this path existed but was never wired from the ACK handler,
+    // so messages the app sent through the device never showed as delivered.
+    EXPECT_TRUE(bridge.notifySendConfirmed(0xAABBCCDDu, 0x11223344u));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 9u);
+    EXPECT_EQ(out[0], sigurdos::comms::PUSH_CODE_SEND_CONFIRMED);
+    uint32_t ack = 0, trip = 0;
+    std::memcpy(&ack, &out[1], 4);
+    std::memcpy(&trip, &out[5], 4);
+    EXPECT_EQ(ack, 0xAABBCCDDu);
+    EXPECT_EQ(trip, 0x11223344u);
+}
+
 TEST_F(CompanionProtocolTest, SendTextDispatchesToHostAndReturnsSent) {
     uint8_t frame[32]{};
     int i = 0;

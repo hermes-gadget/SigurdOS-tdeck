@@ -619,8 +619,11 @@ public:
         for (int i = 0; i < MAX_PENDING_ACKS; i++) {
             if (_pending_acks[i].in_use && _pending_acks[i].expected_ack == ack_val) {
                 _pending_acks[i].in_use = false;
-                // Notify wrapper layer
+                uint32_t trip_ms = _ms->getMillis() - _pending_acks[i].sent_at_ms;
+                // Notify wrapper layer (local UI + persistent store)
                 sigurdos::mesh::registerAckedMessage(_pending_acks[i].dest_name, _pending_acks[i].timestamp);
+                // Notify the phone app so it marks the sent message delivered.
+                sigurdos::mesh::mesh_v2_notify_send_confirmed(ack_val, trip_ms);
                 // Return a valid ContactInfo for BaseChatMesh internal processing
                 for (int j = 0; j < getNumContacts(); j++) {
                     if (getContactByIdx((uint32_t)j, _contact_cache)) {
@@ -639,7 +642,10 @@ public:
         int rssi = (int)_radio->getLastRSSI();
         float snr = pkt ? pkt->getSNR() : _radio->getLastSNR();
         updateSignalSample(contact.id.pub_key, rssi, snr);
-        sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr);
+        uint8_t companion_path_len =
+            (pkt && pkt->isRouteFlood()) ? (uint8_t)pkt->path_len : 0xFF;
+        sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr,
+                                           sender_timestamp, companion_path_len);
     }
 
     void onCommandDataRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
@@ -676,7 +682,10 @@ public:
     {
         int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
-        sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr);
+        uint8_t companion_path_len =
+            (pkt && pkt->isRouteFlood()) ? (uint8_t)pkt->path_len : 0xFF;
+        sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr,
+                                           sender_timestamp, companion_path_len);
     }
 
     uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override {
@@ -721,7 +730,12 @@ public:
             sender_name = sender_buf;
             msg_text = colon + 2;
         }
-        sigurdos::mesh::mesh_v2_queue_push(sender_name, chname, msg_text, rssi, snr);
+        // Channel messages are flood-routed: forward the real hop path so the
+        // app shows the true hop count (0xFF only for a direct/unknown route).
+        uint8_t companion_path_len =
+            (pkt && pkt->isRouteFlood()) ? (uint8_t)pkt->path_len : 0xFF;
+        sigurdos::mesh::mesh_v2_queue_push(sender_name, chname, msg_text, rssi, snr,
+                                           timestamp, companion_path_len);
     }
 
     uint8_t onContactRequest(const ::ContactInfo& contact, uint32_t sender_timestamp,

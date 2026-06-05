@@ -206,7 +206,7 @@ bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg
             }
         }
         out[i++] = channel_idx;
-        out[i++] = 0xFF;
+        out[i++] = msg.path_len;
         out[i++] = COMPANION_TXT_PLAIN;
         std::memcpy(&out[i], &msg.timestamp, 4);
         i += 4;
@@ -221,7 +221,7 @@ bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg
         }
         std::memcpy(&out[i], msg.sender_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
         i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
-        out[i++] = 0xFF;
+        out[i++] = msg.path_len;
         out[i++] = COMPANION_TXT_PLAIN;
         std::memcpy(&out[i], &msg.timestamp, 4);
         i += 4;

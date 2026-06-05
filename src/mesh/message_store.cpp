@@ -117,6 +117,7 @@ static bool readRecordRaw(StoredMessage& msg, const uint8_t* rec, size_t len)
     pos += 2;
 
     msg.snr_quarters = (int8_t)rec[pos++];
+    msg.path_len = rec[pos++];
     applyFlags(msg, rec[pos++]);
     return true;
 }
@@ -175,6 +176,7 @@ static void writeRecordRaw(const StoredMessage& msg, uint8_t* rec, size_t len)
     pos += 2;
 
     rec[pos++] = (uint8_t)norm.snr_quarters;
+    rec[pos++] = norm.path_len;
     rec[pos++] = flagsFor(norm);
 }
 

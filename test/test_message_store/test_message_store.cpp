@@ -61,6 +61,17 @@ TEST_F(MessageStoreTest, AppendLoadAndDedup) {
     EXPECT_FALSE(out[0].is_self);
 }
 
+TEST_F(MessageStoreTest, PathLenRoundTrips) {
+    auto msg = makeMsg("Public", "Alice", "Alice: hi", 100, false, true);
+    msg.path_len = 0x83;  // distinct from the zero-init default
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+
+    sigurdos::mesh::StoredMessage out[2]{};
+    int n = sigurdos::mesh::messageStoreLoadAll(out, 2);
+    ASSERT_EQ(n, 1);
+    EXPECT_EQ(out[0].path_len, 0x83);
+}
+
 TEST_F(MessageStoreTest, LoadRecentFiltersAndPreservesOrder) {
     EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
         makeMsg("DM: Alice", "Alice", "one", 1, false, false)));

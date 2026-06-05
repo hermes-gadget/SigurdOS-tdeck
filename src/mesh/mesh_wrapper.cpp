@@ -88,7 +88,8 @@ static int           unread_count = 0;
 // Defined with its qualified name to match the declaration in mesh_wrapper.h
 // (sigurdos::mesh) — SigurdMeshV2 calls it as sigurdos::mesh::mesh_v2_queue_push().
 void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
-                         const char* text, int rssi, float snr) {
+                         const char* text, int rssi, float snr,
+                         uint32_t sender_timestamp, uint8_t path_len) {
     if (!sender || !text) return;
     if (msg_count >= MAX_QUEUED) {
         msg_drop_count++;
@@ -114,7 +115,8 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     msg_count++;
     const char* ptype = (channel && channel[0]) ? "CHANNEL" : "DM";
     sigurdos::mesh::pushPacketLog(sender, rssi, snr, ptype);
-    storeIncomingMessageForCompanion(sender, channel, text, rssi, snr);
+    storeIncomingMessageForCompanion(sender, channel, text, rssi, snr,
+                                     sender_timestamp, path_len);
 #if SIGURDOS_DEBUG_MESH
     SIGURDOS_RUNTIME_FEAT(mesh) {
     Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
@@ -122,6 +124,14 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
                   channel && channel[0] ? channel : "", text, rssi, snr);
     }
 #endif
+}
+
+void sigurdos::mesh::mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_time_ms) {
+    // Only forward if the bridge already exists — never allocate it here just to
+    // report an ACK (it is created lazily on the first incoming/companion path).
+    if (g_companion_bridge_ptr) {
+        g_companion_bridge_ptr->notifySendConfirmed(ack, trip_time_ms);
+    }
 }
 
 static void queue_push(const char* sender, const char* channel, const char* text) {
