@@ -301,6 +301,57 @@ public:
         return true;
     }
 
+    bool setRadioParams(uint32_t freq_khz,
+                        uint32_t bw_hz,
+                        uint8_t sf,
+                        uint8_t cr,
+                        uint8_t client_repeat) override {
+        if (freq_khz < 400000 || freq_khz > 1000000) return false;
+        if (bw_hz < 7800 || bw_hz > 500000) return false;
+        if (sf < 6 || sf > 12) return false;
+        if (cr < 5 || cr > 8) return false;
+        if (client_repeat > 1) return false;
+
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        const int tx_power = (p.tx_power_dbm >= 2 && p.tx_power_dbm <= 22)
+            ? p.tx_power_dbm
+            : LORA_TX_PWR;
+        const float freq = (float)freq_khz / 1000.0f;
+        const float bw = (float)bw_hz / 1000.0f;
+        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
+                                              tx_power, p.rx_boosted_gain)) {
+            return false;
+        }
+
+        p.configured = true;
+        p.freq = freq;
+        p.bw = bw;
+        p.sf = sf;
+        p.cr = cr;
+        p.tx_power_dbm = (int8_t)tx_power;
+        p.client_repeat = client_repeat;
+        sigurdos::prefs_set(p);
+        return true;
+    }
+
+    bool setRadioTxPower(int8_t tx_power_dbm) override {
+        if (tx_power_dbm < 2 || tx_power_dbm > 22) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+
+        const float freq = p.configured ? p.freq : LORA_FREQ;
+        const float bw = p.configured ? p.bw : LORA_BW;
+        const int sf = p.configured ? p.sf : LORA_SF;
+        const int cr = p.configured ? p.cr : LORA_CR;
+        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
+                                              tx_power_dbm, p.rx_boosted_gain)) {
+            return false;
+        }
+
+        p.tx_power_dbm = tx_power_dbm;
+        sigurdos::prefs_set(p);
+        return true;
+    }
+
     bool setBlePin(uint32_t pin) override {
         if (pin != 0 && (pin < 1000 || pin > 999999)) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();

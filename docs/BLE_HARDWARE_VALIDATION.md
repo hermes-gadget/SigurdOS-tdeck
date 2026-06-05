@@ -175,3 +175,54 @@ Interpretation:
 - No phone was paired during this follow-up bench run, so app-authenticated
   traffic counters remain `0`. A phone pairing run is still required to close
   the connection/auth/RX/TX criteria above.
+
+## 2026-06-05 COM8 Radio Command Follow-up
+
+Follow-up work added official companion radio setters:
+
+- `CMD_SET_RADIO_PARAMS` (`11`) accepts the official payload shape
+  `freq_khz`, `bw_hz`, `sf`, `cr`, and optional `client_repeat`.
+- `CMD_SET_RADIO_TX_POWER` (`12`) accepts one signed-byte TX power value.
+- Persisted values are constrained to the same T-Deck RF policy used by the
+  local UI and serial test controller: 400-1000 MHz, SF 6-12, 7.8-500 kHz
+  bandwidth, CR 5-8, and 2-22 dBm TX power.
+- Valid radio parameter changes are applied live through the mesh radio wrapper
+  before being saved to `NodePrefs`.
+
+Build and unit-test evidence after the radio command change:
+
+- `pio test -e native_test -f test_companion_protocol`: passed, 25/25.
+- `pio test -e native_test -f test_prefs_defaults`: passed, 5/5.
+- `pio run -e SigurdOS_TDeck_ble`: passed; RAM 39.7%, flash 38.4%.
+- `pio run -e SigurdOS_TDeck_ble_validation`: passed; RAM 39.7%, flash 38.4%.
+
+Hardware evidence after the radio command change:
+
+- Uploaded `SigurdOS_TDeck_ble_validation` to the T-Deck on `COM8`.
+- esptool identified the board as ESP32-S3 rev v0.2, MAC
+  `cc:8d:a2:0d:14:28`; every uploaded range reported
+  `Hash of data verified`.
+- After reset, SPIFFS was read back from `COM8` at offset `0xc90000`, size
+  `0x360000`, and unpacked successfully.
+- `/ble_hw.txt` was present with 9 validation records over a 43.4 s runtime
+  window.
+- The first record at 3410 ms showed:
+
+```text
+@ble_hw|ms=3410|begun=1|en=1|conn=0|adv=1|authok=0|authfail=0|connect=0|disconnect=0|mtu=0|rxw=0|rxd=0|rx=0|tx=0|txd=0|lrx=0|ltx=0
+```
+
+- The final record at 43427 ms still showed `begun=1`, `en=1`, `conn=0`,
+  `adv=1`, `authfail=0`, `rxd=0`, and `txd=0`.
+
+Interpretation:
+
+- The updated BLE validation firmware still boots, enables the MeshCore BLE
+  transport, and reaches the expected advertising state on real T-Deck
+  hardware.
+- The native protocol tests cover the new radio command payload parsing,
+  dispatch, and illegal-argument behavior.
+- No phone was paired during this follow-up bench run, so app-authenticated
+  radio-command execution remains covered by native protocol tests plus BLE
+  boot/advertising hardware proof. A phone pairing run is still required to
+  close the connection/auth/RX/TX criteria above.

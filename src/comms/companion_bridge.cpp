@@ -570,6 +570,36 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
+    if (cmd == CMD_SET_RADIO_PARAMS) {
+        if (len < 11) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        int i = 1;
+        uint32_t freq_khz = 0;
+        uint32_t bw_hz = 0;
+        std::memcpy(&freq_khz, &_cmd_frame[i], 4);
+        i += 4;
+        std::memcpy(&bw_hz, &_cmd_frame[i], 4);
+        i += 4;
+        uint8_t sf = _cmd_frame[i++];
+        uint8_t cr = _cmd_frame[i++];
+        uint8_t client_repeat = (len > (size_t)i) ? _cmd_frame[i] : 0;
+        if (_host->setRadioParams(freq_khz, bw_hz, sf, cr, client_repeat)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_SET_RADIO_TX_POWER) {
+        if (len < 2) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        if (_host->setRadioTxPower((int8_t)_cmd_frame[1])) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
     if (cmd == CMD_SEND_SELF_ADVERT) {
         bool flood = len >= 2 && _cmd_frame[1] == 1;
         if (_host->sendAdvert(flood)) writeOKFrame();

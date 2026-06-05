@@ -43,6 +43,14 @@ public:
     bool set_advert_latlon_called = false;
     int32_t advert_lat = 0;
     int32_t advert_lon = 0;
+    bool set_radio_params_called = false;
+    uint32_t radio_freq_khz = 0;
+    uint32_t radio_bw_hz = 0;
+    uint8_t radio_sf = 0;
+    uint8_t radio_cr = 0;
+    uint8_t radio_client_repeat = 0;
+    bool set_radio_tx_power_called = false;
+    int8_t radio_tx_power_dbm = 0;
     uint32_t now = 1234;
 
     uint32_t blePin() const override { return 123456; }
@@ -138,6 +146,25 @@ public:
         advert_lon = lon;
         return lat >= -90000000 && lat <= 90000000 &&
                lon >= -180000000 && lon <= 180000000;
+    }
+    bool setRadioParams(uint32_t freq_khz, uint32_t bw_hz, uint8_t sf,
+                        uint8_t cr, uint8_t client_repeat) override {
+        set_radio_params_called = true;
+        radio_freq_khz = freq_khz;
+        radio_bw_hz = bw_hz;
+        radio_sf = sf;
+        radio_cr = cr;
+        radio_client_repeat = client_repeat;
+        return freq_khz >= 400000 && freq_khz <= 1000000 &&
+               bw_hz >= 7800 && bw_hz <= 500000 &&
+               sf >= 6 && sf <= 12 &&
+               cr >= 5 && cr <= 8 &&
+               client_repeat <= 1;
+    }
+    bool setRadioTxPower(int8_t tx_power_dbm) override {
+        set_radio_tx_power_called = true;
+        radio_tx_power_dbm = tx_power_dbm;
+        return tx_power_dbm >= 2 && tx_power_dbm <= 22;
     }
     bool setBlePin(uint32_t) override { return true; }
     bool exportPrivateKey(uint8_t* out64) const override {
@@ -442,6 +469,91 @@ TEST_F(CompanionProtocolTest, SetAdvertLatLonRejectsShortPayload) {
 
     ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
     ASSERT_FALSE(host.set_advert_latlon_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioParamsDispatchesOfficialPayload) {
+    uint8_t frame[12]{};
+    int i = 0;
+    frame[i++] = sigurdos::comms::CMD_SET_RADIO_PARAMS;
+    uint32_t freq_khz = 869525;
+    uint32_t bw_hz = 250000;
+    std::memcpy(&frame[i], &freq_khz, 4);
+    i += 4;
+    std::memcpy(&frame[i], &bw_hz, 4);
+    i += 4;
+    frame[i++] = 10;
+    frame[i++] = 5;
+    frame[i++] = 1;
+
+    ASSERT_TRUE(bridge.handleFrame(frame, i));
+    ASSERT_TRUE(host.set_radio_params_called);
+    EXPECT_EQ(host.radio_freq_khz, freq_khz);
+    EXPECT_EQ(host.radio_bw_hz, bw_hz);
+    EXPECT_EQ(host.radio_sf, 10);
+    EXPECT_EQ(host.radio_cr, 5);
+    EXPECT_EQ(host.radio_client_repeat, 1);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioParamsRejectsShortPayload) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_RADIO_PARAMS, 0, 0, 0};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.set_radio_params_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioParamsRejectsInvalidRange) {
+    uint8_t frame[11]{};
+    int i = 0;
+    frame[i++] = sigurdos::comms::CMD_SET_RADIO_PARAMS;
+    uint32_t freq_khz = 399999;
+    uint32_t bw_hz = 250000;
+    std::memcpy(&frame[i], &freq_khz, 4);
+    i += 4;
+    std::memcpy(&frame[i], &bw_hz, 4);
+    i += 4;
+    frame[i++] = 10;
+    frame[i++] = 5;
+
+    ASSERT_TRUE(bridge.handleFrame(frame, i));
+    ASSERT_TRUE(host.set_radio_params_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioTxPowerDispatchesSignedByte) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_RADIO_TX_POWER, 22};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_radio_tx_power_called);
+    EXPECT_EQ(host.radio_tx_power_dbm, 22);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioTxPowerRejectsMissingPower) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_RADIO_TX_POWER};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.set_radio_tx_power_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioTxPowerRejectsInvalidPower) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_RADIO_TX_POWER, 23};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_radio_tx_power_called);
     ASSERT_EQ(serial.writes.size(), 1u);
     EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
     EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);

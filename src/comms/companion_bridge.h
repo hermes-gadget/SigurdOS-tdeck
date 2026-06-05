@@ -171,6 +171,12 @@ public:
     virtual bool sendAdvert(bool flood) = 0;
     virtual bool setAdvertName(const char* name) = 0;
     virtual bool setAdvertLatLon(int32_t lat, int32_t lon) = 0;
+    virtual bool setRadioParams(uint32_t freq_khz,
+                                uint32_t bw_hz,
+                                uint8_t sf,
+                                uint8_t cr,
+                                uint8_t client_repeat) = 0;
+    virtual bool setRadioTxPower(int8_t tx_power_dbm) = 0;
     virtual bool setBlePin(uint32_t pin) = 0;
     virtual bool exportPrivateKey(uint8_t* out64) const = 0;
     virtual bool importPrivateKey(const uint8_t* key64) = 0;
