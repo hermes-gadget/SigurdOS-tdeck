@@ -8,6 +8,7 @@
 #include "channel_validation.h"
 #include "message_store.h"
 #include "comms/companion_bridge.h"
+#include "comms/observed_ble_interface.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
@@ -33,9 +34,6 @@
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
-#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-#include <helpers/esp32/SerialBLEInterface.h>
-#endif
 
 using sigurdos::mesh::MeshMessage;
 
@@ -81,6 +79,62 @@ static uint32_t      msg_drop_count = 0;
 static int           unread_count = 0;
 
 #include "companion_adapter.inc"
+
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE && \
+    defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION
+static constexpr const char* BLE_VALIDATION_LOG_PATH = "/ble_hw.txt";
+static uint32_t ble_validation_last_log_ms = 0;
+
+static void bleValidationAppendLine(const char* line)
+{
+    if (!line) return;
+    File f = SPIFFS.open(BLE_VALIDATION_LOG_PATH, FILE_APPEND);
+    if (!f) return;
+    f.println(line);
+    f.close();
+}
+
+static void bleValidationEmit(bool force)
+{
+    uint32_t now = millis();
+    if (!force && (uint32_t)(now - ble_validation_last_log_ms) < 5000u) return;
+    ble_validation_last_log_ms = now;
+
+    const sigurdos::comms::BleSerialObserverStats s = g_ble_serial.stats();
+    char line[320];
+    snprintf(line, sizeof(line),
+             "@ble_hw|ms=%lu|begun=%u|en=%u|conn=%u|adv=%u|authok=%lu|authfail=%lu|connect=%lu|disconnect=%lu|mtu=%u|rxw=%lu|rxd=%lu|rx=%lu|tx=%lu|txd=%lu|lrx=%u|ltx=%u",
+             (unsigned long)now,
+             s.begun ? 1u : 0u,
+             s.enabled ? 1u : 0u,
+             s.connected ? 1u : 0u,
+             s.advertising_expected ? 1u : 0u,
+             (unsigned long)s.auth_success_count,
+             (unsigned long)s.auth_failure_count,
+             (unsigned long)s.connect_count,
+             (unsigned long)s.disconnect_count,
+             (unsigned int)s.last_mtu,
+             (unsigned long)s.ble_write_count,
+             (unsigned long)s.ble_write_drop_count,
+             (unsigned long)s.rx_frame_count,
+             (unsigned long)s.tx_frame_count,
+             (unsigned long)s.tx_drop_count,
+             (unsigned int)s.last_rx_code,
+             (unsigned int)s.last_tx_code);
+    Serial.println(line);
+    bleValidationAppendLine(line);
+}
+
+static void bleValidationStartLog()
+{
+    SPIFFS.remove(BLE_VALIDATION_LOG_PATH);
+    bleValidationAppendLine("[ble-validation] log-start");
+    bleValidationEmit(true);
+}
+#else
+static void bleValidationEmit(bool) {}
+static void bleValidationStartLog() {}
+#endif
 
 // Non-static overload for SigurdMeshV2 — takes RSSI/SNR from caller context
 // (SigurdMeshV2 has packet context when calling, while the static queue_push
@@ -834,6 +888,7 @@ bool init(bool spiffs_ok)
             } else {
                 Serial.println("[mesh] Companion BLE advertising disabled by prefs");
             }
+            bleValidationStartLog();
         }
     }
 #else
@@ -877,6 +932,7 @@ void loop()
     if (g_mesh) {
         g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
         if (g_companion_bridge_ptr) g_companion_bridge_ptr->loop();
+        bleValidationEmit(false);
     }
     rtc_clock.tick();
 
