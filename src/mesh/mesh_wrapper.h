@@ -7,6 +7,7 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <helpers/RegionMap.h>  // for RegionEntry (must be before namespace)
 
 // Node type identifiers from MeshCore adverts — kept local so UI code can filter.
 #define ADV_TYPE_NONE      0
@@ -393,17 +394,18 @@ bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz);
 bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz);
 
 // ── Regions (flood scope) ──────────────────────────
-struct SigurdRegion;
+struct RegionInfo;
 // List saved regions. Returns count (≤ max).
-int  listRegions(SigurdRegion* out, int max);
+int  listRegions(RegionInfo* out, int max);
 
-// Auto-create #regions from #channels (key = SHA256(name)).
+// Auto-create #regions from #channels.
 // Skips channels without a # prefix and regions that already exist.
 void syncRegionsFromChannels();
 
-// Add a region. For #public names, key is auto-derived.
-// For $private names, key_b64_or_null must be a 16-byte base64 key.
-bool addRegion(const char* name, const char* key_b64_or_null);
+// Add a region. For #public names, transport keys are auto-derived.
+// parent_name is optional for hierarchy placement.
+/// Returns the RegionEntry or nullptr on failure.
+RegionEntry* addRegion(const char* name, const char* parent_name);
 
 // Remove a saved region by name.
 bool removeRegion(const char* name);

@@ -7351,8 +7351,8 @@ void regions_screen_show()
         }
 
         // List saved regions
-        sigurdos::mesh::SigurdRegion regions[8];
-        int n = sigurdos::mesh::listRegions(regions, 8);
+        sigurdos::mesh::RegionInfo regions[32];
+        int n = sigurdos::mesh::listRegions(regions, 32);
         const char* active_rgn = sigurdos::mesh::getActiveRegion();
         if (!active_rgn) active_rgn = "";
 

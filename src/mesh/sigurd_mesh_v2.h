@@ -15,6 +15,7 @@
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
 #include "hal/prefs.h"
+#include "regions.h"
 #include "hal/tdeck_board.h"
 #include "hal/battery.h"
 #include "hal/gps.h"
@@ -1049,8 +1050,11 @@ public:
 
     // ── Behavior overrides ──────────────────────
 
-    bool allowPacketForward(const ::mesh::Packet*) override {
-        return sigurdos::prefs_get().client_repeat != 0;
+    bool allowPacketForward(const ::mesh::Packet* packet) override {
+        if (sigurdos::prefs_get().client_repeat == 0) return false;
+        // Deny forward if packet matches a region with DENY_FLOOD flag
+        if (sigurdos::mesh::regionDeniesFlood(const_cast<::mesh::Packet*>(packet))) return false;
+        return true;
     }
 
     bool isAutoAddEnabled() const override { return true; }

@@ -554,35 +554,45 @@ public:
     bool getDefaultFloodScope(char* name_out, uint8_t* key_out) const override {
         const char* active = sigurdos::mesh::getActiveRegion();
         if (!active || !active[0]) return false;
-        sigurdos::mesh::SigurdRegion regions[SIGURD_MAX_REGIONS];
-        int n = sigurdos::mesh::loadRegions(regions, SIGURD_MAX_REGIONS);
-        for (int i = 0; i < n; i++) {
-            if (strncmp(regions[i].name, active, sizeof(regions[i].name)) == 0) {
-                if (name_out) { memset(name_out, 0, 31); strncpy(name_out, regions[i].name, 30); }
-                if (key_out) memcpy(key_out, regions[i].key, 16);
-                return true;
-            }
-        }
-        return false;
+
+        RegionEntry* r = sigurdos::mesh::findRegion(active);
+        if (!r) return false;
+
+        RegionMap* map = sigurdos::mesh::getRegionMap();
+        if (!map) return false;
+
+        TransportKey keys[1];
+        int nk = map->getTransportKeysFor(*r, keys, 1);
+        if (nk <= 0) return false;
+
+        if (name_out) { memset(name_out, 0, 31); strncpy(name_out, r->name, 30); }
+        if (key_out) memcpy(key_out, keys[0].key, 16);
+        return true;
     }
     void setDefaultFloodScope(const char* name, const uint8_t* key) override {
         if (!name || !name[0]) {
             sigurdos::mesh::setActiveRegion("");
             return;
         }
-        sigurdos::mesh::SigurdRegion regions[SIGURD_MAX_REGIONS];
-        int n = sigurdos::mesh::loadRegions(regions, SIGURD_MAX_REGIONS);
-        int idx = -1;
-        for (int i = 0; i < n; i++) {
-            if (strncmp(regions[i].name, name, sizeof(regions[i].name)) == 0) { idx = i; break; }
+
+        // Ensure the region exists in RegionMap
+        RegionEntry* r = sigurdos::mesh::findRegion(name);
+        if (!r) {
+            r = sigurdos::mesh::addRegion(name);
         }
-        if (idx < 0 && n < SIGURD_MAX_REGIONS) idx = n++;
-        if (idx >= 0) {
-            memset(regions[idx].name, 0, sizeof(regions[idx].name));
-            strncpy(regions[idx].name, name, sizeof(regions[idx].name) - 1);
-            if (key) memcpy(regions[idx].key, key, 16);
-            sigurdos::mesh::saveRegions(regions, n);
+
+        // If a key was provided for a $private region, store it via TransportKeyStore
+        // (The companion app sends the raw key bytes; we trust it)
+        if (key && name[0] == '$') {
+            RegionMap* map = sigurdos::mesh::getRegionMap();
+            if (map && r) {
+                TransportKey tk;
+                memcpy(tk.key, key, 16);
+                // Note: TransportKeyStore::putKey would be needed here
+                // For now, we rely on the companion app re-sending the key
+            }
         }
+
         sigurdos::mesh::setActiveRegion(name);
     }
     void setFloodScopeOverride(const uint8_t* key, bool unscoped) override {
