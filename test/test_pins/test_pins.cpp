@@ -183,6 +183,14 @@ TEST_F(PinsTest, GPSBaudRateIsValid) {
     );
 }
 
+TEST_F(PinsTest, GPSUartMatchesLilyGoGpsShieldExample) {
+    EXPECT_EQ(PIN_GPS_RX, 44);
+    EXPECT_EQ(PIN_GPS_TX, 43);
+    EXPECT_EQ(GPS_PRIMARY_BAUD_RATE, 9600);
+    EXPECT_EQ(GPS_FALLBACK_BAUD_RATE, 38400);
+    EXPECT_EQ(GPS_BAUD_RATE, GPS_PRIMARY_BAUD_RATE);
+}
+
 // ── Battery voltage range ────────────────────────────────
 TEST_F(PinsTest, BatteryVoltageRangeIsSensible) {
     // LiPo: 3.0V min to 4.2V max

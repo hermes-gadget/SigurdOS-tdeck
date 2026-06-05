@@ -25,6 +25,7 @@
 #include <gtest/gtest.h>
 #include "Arduino.h"
 #include "hal/gps.h"
+#include "hal/tdeck_pins.h"
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -356,7 +357,7 @@ class GPSIntegrationTest : public ::testing::Test {
 protected:
     void SetUp() override {
         arduino_mock::reset();
-        Serial1.mock_clear_rx();
+        Serial1.mock_reset();
         sigurdos_gps_init();
     }
 
@@ -365,6 +366,49 @@ protected:
         sigurdos_gps_loop();
     }
 };
+
+TEST_F(GPSIntegrationTest, InitUsesLilyGoGpsShieldUartContract) {
+    EXPECT_TRUE(Serial1.mock_was_begun());
+    EXPECT_EQ(Serial1.mock_last_baud(), GPS_PRIMARY_BAUD_RATE);
+    EXPECT_EQ(Serial1.mock_last_config(), SERIAL_8N1);
+    EXPECT_EQ(Serial1.mock_last_rx_pin(), PIN_GPS_RX);
+    EXPECT_EQ(Serial1.mock_last_tx_pin(), PIN_GPS_TX);
+    EXPECT_EQ(PIN_GPS_RX, 44);
+    EXPECT_EQ(PIN_GPS_TX, 43);
+    EXPECT_EQ(sigurdos_gps_active_baud(), GPS_PRIMARY_BAUD_RATE);
+}
+
+TEST_F(GPSIntegrationTest, FallsBackToAlternateBaudWhenNoValidNmeaArrives) {
+    delay(3001);
+    sigurdos_gps_loop();
+
+    EXPECT_EQ(Serial1.mock_last_baud(), GPS_FALLBACK_BAUD_RATE);
+    EXPECT_EQ(Serial1.mock_last_rx_pin(), PIN_GPS_RX);
+    EXPECT_EQ(Serial1.mock_last_tx_pin(), PIN_GPS_TX);
+    EXPECT_EQ(sigurdos_gps_active_baud(), GPS_FALLBACK_BAUD_RATE);
+    EXPECT_EQ(sigurdos_gps_baud_switches(), 1U);
+}
+
+TEST_F(GPSIntegrationTest, ChecksumValidNmeaLocksDetectedBaud) {
+    feed("$GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,*7E\n");
+
+    delay(3001);
+    sigurdos_gps_loop();
+
+    EXPECT_EQ(sigurdos_gps_sentences_received(), 1U);
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 1U);
+    EXPECT_EQ(sigurdos_gps_checksum_failures(), 0U);
+    EXPECT_EQ(sigurdos_gps_baud_switches(), 0U);
+    EXPECT_EQ(sigurdos_gps_active_baud(), GPS_PRIMARY_BAUD_RATE);
+}
+
+TEST_F(GPSIntegrationTest, ChecksumFailuresAreCountedForHardwareDebug) {
+    feed("$GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,*00\n");
+
+    EXPECT_EQ(sigurdos_gps_sentences_received(), 1U);
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 0U);
+    EXPECT_EQ(sigurdos_gps_checksum_failures(), 1U);
+}
 
 TEST_F(GPSIntegrationTest, GGAWithEmptyCoordinateFieldsDoesNotShiftLaterFields) {
     feed("$GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,*7E\n");

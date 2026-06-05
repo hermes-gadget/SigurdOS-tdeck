@@ -28,6 +28,12 @@ struct GpsSnapshot {
     float    altitude_m;
     float    speed_kn;
     float    heading;
+    uint32_t active_baud;
+    uint32_t chars_processed;
+    uint32_t sentences_received;
+    uint32_t valid_sentences;
+    uint32_t checksum_failures;
+    uint32_t baud_switches;
 };
 
 struct SdCardSnapshot {

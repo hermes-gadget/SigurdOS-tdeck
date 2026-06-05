@@ -40,10 +40,50 @@ static struct GPSData {
     bool     has_fix;
     bool     initialized;
     bool     time_synced;
+    uint32_t active_baud;
+    uint32_t chars_processed;
+    uint32_t sentences_received;
+    uint32_t valid_sentences;
+    uint32_t checksum_failures;
+    uint32_t baud_switches;
+    uint32_t last_baud_switch_ms;
 } gps;
 
 static char nmea_buf[128];
 static int  nmea_pos = 0;
+static uint8_t gps_baud_index = 0;
+
+static constexpr uint32_t GPS_BAUD_PROBE_INTERVAL_MS = 3000;
+static constexpr uint8_t GPS_BAUD_CANDIDATE_COUNT =
+    (GPS_PRIMARY_BAUD_RATE == GPS_FALLBACK_BAUD_RATE) ? 1 : 2;
+
+static uint32_t gps_baud_for_index(uint8_t index)
+{
+    return (index % GPS_BAUD_CANDIDATE_COUNT) == 0
+        ? GPS_PRIMARY_BAUD_RATE
+        : GPS_FALLBACK_BAUD_RATE;
+}
+
+static void gps_begin_uart(uint8_t index, bool count_switch)
+{
+    gps_baud_index = (uint8_t)(index % GPS_BAUD_CANDIDATE_COUNT);
+    gps.active_baud = gps_baud_for_index(gps_baud_index);
+    Serial1.begin(gps.active_baud, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
+    gps.last_baud_switch_ms = millis();
+    nmea_pos = 0;
+    if (count_switch) gps.baud_switches++;
+}
+
+static void gps_maybe_cycle_baud()
+{
+    if (GPS_BAUD_CANDIDATE_COUNT < 2) return;
+    if (gps.valid_sentences > 0) return;
+
+    uint32_t now = millis();
+    if ((uint32_t)(now - gps.last_baud_switch_ms) < GPS_BAUD_PROBE_INTERVAL_MS) return;
+
+    gps_begin_uart((uint8_t)(gps_baud_index + 1), true);
+}
 
 // ── Helpers ───────────────────────────────────────────────
 static float nmea_to_decimal(const char* coord, char dir) {
@@ -183,7 +223,12 @@ static bool nmea_checksum_valid(const char* sentence) {
 
 static void process_nmea(const char* sentence) {
     // Validate checksum — reject corrupted sentences
-    if (!nmea_checksum_valid(sentence)) return;
+    if (!nmea_checksum_valid(sentence)) {
+        gps.checksum_failures++;
+        return;
+    }
+
+    gps.valid_sentences++;
     // Support both $GP (GPS-only) and $GN (multi-constellation) prefixes
     // L76K GNSS module on T-Deck outputs $GN by default
     if (strncmp(sentence, "$GPGGA,", 7) == 0 || strncmp(sentence, "$GNGGA,", 7) == 0) {
@@ -198,9 +243,10 @@ static void process_nmea(const char* sentence) {
 // ════════════════════════════════════════════════════════
 
 void sigurdos_gps_init() {
-    Serial1.begin(GPS_BAUD_RATE, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
     memset(&gps, 0, sizeof(gps));
     nmea_pos = 0;
+    gps_baud_index = 0;
+    gps_begin_uart(gps_baud_index, false);
     gps.initialized = true;
 }
 
@@ -208,12 +254,16 @@ void sigurdos_gps_loop() {
     if (!gps.initialized) return;
 
     while (Serial1.available()) {
-        char c = Serial1.read();
+        int raw = Serial1.read();
+        if (raw < 0) break;
+        char c = (char)raw;
+        gps.chars_processed++;
 
         if (c == '\n') {
             // End of NMEA sentence
             if (nmea_pos > 0) {
                 nmea_buf[nmea_pos] = '\0';
+                gps.sentences_received++;
                 process_nmea(nmea_buf);
                 nmea_pos = 0;
 
@@ -250,6 +300,8 @@ void sigurdos_gps_loop() {
             nmea_buf[nmea_pos++] = c;
         }
     }
+
+    gps_maybe_cycle_baud();
 }
 
 float    sigurdos_gps_latitude()     { return gps.latitude; }
@@ -264,3 +316,9 @@ uint8_t  sigurdos_gps_hour()         { return gps.hour; }
 uint8_t  sigurdos_gps_minute()       { return gps.minute; }
 uint8_t  sigurdos_gps_second()       { return gps.second; }
 bool     sigurdos_gps_time_synced()  { return gps.time_synced; }
+uint32_t sigurdos_gps_active_baud()  { return gps.active_baud; }
+uint32_t sigurdos_gps_chars_processed() { return gps.chars_processed; }
+uint32_t sigurdos_gps_sentences_received() { return gps.sentences_received; }
+uint32_t sigurdos_gps_valid_sentences() { return gps.valid_sentences; }
+uint32_t sigurdos_gps_checksum_failures() { return gps.checksum_failures; }
+uint32_t sigurdos_gps_baud_switches() { return gps.baud_switches; }

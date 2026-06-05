@@ -51,6 +51,12 @@ GpsSnapshot collect_gps() {
     snap.altitude_m  = sigurdos_gps_altitude_m();
     snap.speed_kn    = sigurdos_gps_speed_kn();
     snap.heading     = sigurdos_gps_heading();
+    snap.active_baud = sigurdos_gps_active_baud();
+    snap.chars_processed = sigurdos_gps_chars_processed();
+    snap.sentences_received = sigurdos_gps_sentences_received();
+    snap.valid_sentences = sigurdos_gps_valid_sentences();
+    snap.checksum_failures = sigurdos_gps_checksum_failures();
+    snap.baud_switches = sigurdos_gps_baud_switches();
     return snap;
 }
 
@@ -138,6 +144,18 @@ void collect_and_emit_gps() {
     emit_kv_u("qual", gps.fix_quality);
     emit_sep();
     emit_kv_u(key::GPS_SV, gps.satellites);
+    emit_sep();
+    emit_kv_u("baud", gps.active_baud);
+    emit_sep();
+    emit_kv_u("chars", gps.chars_processed);
+    emit_sep();
+    emit_kv_u("sent", gps.sentences_received);
+    emit_sep();
+    emit_kv_u("valid", gps.valid_sentences);
+    emit_sep();
+    emit_kv_u("csfail", gps.checksum_failures);
+    emit_sep();
+    emit_kv_u("sw", gps.baud_switches);
     if (gps.has_fix) {
         emit_sep();
         emit_kv_f(key::GPS_LAT, gps.latitude, 4);

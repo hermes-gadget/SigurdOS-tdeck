@@ -41,3 +41,11 @@ uint8_t sigurdos_gps_hour();
 uint8_t sigurdos_gps_minute();
 uint8_t sigurdos_gps_second();
 bool    sigurdos_gps_time_synced();
+
+// UART/parser diagnostics for hardware validation and telemetry.
+uint32_t sigurdos_gps_active_baud();
+uint32_t sigurdos_gps_chars_processed();
+uint32_t sigurdos_gps_sentences_received();
+uint32_t sigurdos_gps_valid_sentences();
+uint32_t sigurdos_gps_checksum_failures();
+uint32_t sigurdos_gps_baud_switches();

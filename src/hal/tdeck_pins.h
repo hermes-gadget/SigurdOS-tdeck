@@ -105,9 +105,11 @@ static inline uint64_t sigurdos_gpio_mask(int pin) {
 // ════════════════════════════════════════════════════════
 // GPS (Serial1)
 // ════════════════════════════════════════════════════════
-#define PIN_GPS_RX       43
-#define PIN_GPS_TX       44
-#define GPS_BAUD_RATE 38400
+#define PIN_GPS_RX       44  // ESP32-S3 RX; LILYGO GPSShield uses rx=44
+#define PIN_GPS_TX       43  // ESP32-S3 TX; LILYGO GPSShield uses tx=43
+#define GPS_PRIMARY_BAUD_RATE 9600
+#define GPS_FALLBACK_BAUD_RATE 38400
+#define GPS_BAUD_RATE GPS_PRIMARY_BAUD_RATE
 
 // ════════════════════════════════════════════════════════
 // SD Card (SPI mode, shared bus with LoRa/Display)

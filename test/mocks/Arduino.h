@@ -97,8 +97,22 @@ public:
 
 class HardwareSerial : public Stream {
 public:
-    void begin(unsigned long) {}
-    void begin(unsigned long, uint32_t, int8_t, int8_t) {}
+    void begin(unsigned long baud) {
+        _begun = true;
+        _begin_count++;
+        _last_baud = baud;
+        _last_config = 0;
+        _last_rx_pin = -1;
+        _last_tx_pin = -1;
+    }
+    void begin(unsigned long baud, uint32_t config, int8_t rx_pin, int8_t tx_pin) {
+        _begun = true;
+        _begin_count++;
+        _last_baud = baud;
+        _last_config = config;
+        _last_rx_pin = rx_pin;
+        _last_tx_pin = tx_pin;
+    }
     int available() override { return (int)(_rx_len - _rx_pos); }
     int read() override {
         if (_rx_pos < _rx_len) return _rx_buf[_rx_pos++];
@@ -152,6 +166,22 @@ public:
     }
     void mock_clear_tx() { _tx_buf.clear(); }
     const std::string& mock_tx_output() const { return _tx_buf; }
+    void mock_reset() {
+        mock_clear_rx();
+        mock_clear_tx();
+        _begun = false;
+        _begin_count = 0;
+        _last_baud = 0;
+        _last_config = 0;
+        _last_rx_pin = -1;
+        _last_tx_pin = -1;
+    }
+    bool mock_was_begun() const { return _begun; }
+    int mock_begin_count() const { return _begin_count; }
+    unsigned long mock_last_baud() const { return _last_baud; }
+    uint32_t mock_last_config() const { return _last_config; }
+    int8_t mock_last_rx_pin() const { return _last_rx_pin; }
+    int8_t mock_last_tx_pin() const { return _last_tx_pin; }
 
 private:
     template <typename T>
@@ -165,6 +195,12 @@ private:
     size_t _rx_pos = 0;
     size_t _rx_len = 0;
     std::string _tx_buf;
+    bool _begun = false;
+    int _begin_count = 0;
+    unsigned long _last_baud = 0;
+    uint32_t _last_config = 0;
+    int8_t _last_rx_pin = -1;
+    int8_t _last_tx_pin = -1;
 };
 extern HardwareSerial Serial;
 extern HardwareSerial Serial1;
