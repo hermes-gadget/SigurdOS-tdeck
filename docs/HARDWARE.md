@@ -53,8 +53,8 @@
 | 40  | SPI SCLK            | SPI       | Shared bus (all SPI peripherals)    |
 | 41  | SPI MOSI            | SPI       | Shared bus (LoRa + SD)              |
 | 42  | TFT Backlight       | PWM       | Backlight brightness control        |
-| 43  | GPS RX              | UART      | Serial1 RX                          |
-| 44  | GPS TX              | UART      | Serial1 TX                          |
+| 43  | GPS TX              | UART      | Serial1 TX                          |
+| 44  | GPS RX              | UART      | Serial1 RX                          |
 | 45  | LoRa DIO1           | GPIO      | Radio interrupt / wake source       |
 | 46  | Buzzer              | GPIO      | Active-low buzzer output            |
 
@@ -384,20 +384,22 @@ pct = ((mv - 3000) * 100) / (4200 - 3000);
 |--------------------|------------------------------|
 | Module             | L76K GNSS (multi-constellation) |
 | Interface          | **UART (Serial1)**           |
-| TX Pin (GPS→ESP)  | **43** (`PIN_GPS_RX`)        |
-| RX Pin (ESP→GPS)  | **44** (`PIN_GPS_TX`)        |
-| Baud Rate          | **38400** (`GPS_BAUD_RATE`)  |
+| TX Pin (GPS to ESP) | **44** (`PIN_GPS_RX`)       |
+| RX Pin (ESP to GPS) | **43** (`PIN_GPS_TX`)       |
+| Baud Rate          | Primary **9600**, fallback **38400** |
 | Data Format        | 8N1                          |
-| NMEA Sentences     | `$GPGGA`, `$GNGGA`, `$GPRMC`, `$GNRMC` |
-| Checksum           | XOR validation (backward-compatible) |
+| NMEA Sentences     | `$GxGGA`, `$GxRMC`, `$GxGSV`, `$GxGSA` |
+| Checksum           | Required XOR validation |
 
 ### NMEA Parsing
 
 - **$GxGGA**: latitude, longitude, fix quality, satellites, altitude
 - **$GxRMC**: speed (knots), heading (degrees)
+- **$GxGSV**: satellites in view and SNR/CN0 diagnostics
+- **$GxGSA**: fix type diagnostics
 - Both `$GP` (GPS-only) and `$GN` (multi-constellation) prefixes supported
 - Checksum validation: XOR of bytes between `$` and `*` must match 2-digit hex
-  after `*`. Sentences without checksum are accepted for backward compatibility.
+  after `*`. Sentences without checksum are rejected.
 
 ### Parsed Fields
 
@@ -415,7 +417,7 @@ pct = ((mv - 3000) * 100) / (4200 - 3000);
 
 ### Init Sequence
 
-1. `Serial1.begin(38400, SERIAL_8N1, 43, 44)`
+1. `Serial1.begin(active_baud, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX)`, starting at 9600 baud and cycling once to 38400 baud if no checksum-valid NMEA is seen
 2. Buffer NMEA characters in 128-byte line buffer
 3. On `\n` delimiter, validate checksum and dispatch parser
 
@@ -657,8 +659,8 @@ All hardware pin and configuration defines are in `src/hal/tdeck_pins.h`.
 | `PIN_TRACKBALL_RIGHT` | 2     | Trackball right             |
 | `PIN_BAT_ADC`         | 4     | Battery voltage ADC         |
 | `PIN_PERIPH_PWR`      | 10    | Peripheral power enable     |
-| `PIN_GPS_RX`          | 43    | GPS UART receive            |
-| `PIN_GPS_TX`          | 44    | GPS UART transmit           |
+| `PIN_GPS_RX`          | 44    | GPS UART receive            |
+| `PIN_GPS_TX`          | 43    | GPS UART transmit           |
 | `PIN_SD_CS`           | 39    | SD card chip select         |
 | `PIN_BUZZER`          | 46    | Buzzer output               |
 | `TFT_WIDTH`           | 320   | Display width (landscape)   |

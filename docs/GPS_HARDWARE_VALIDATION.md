@@ -136,6 +136,7 @@ Results:
 | GPS sky-view diagnostics | Partial; GSV reported satellites in view up to `siv=17`, but the latest persisted record still showed `ft=1` and `rmc=V` |
 | GPS SNR diagnostics | Passed; after the SNR diagnostic update, a 920.5-second SPIFFS log reached max `siv=17`, max `snr=31`, max `snrc=17`, `valid=12496`, and `csfail=0` |
 | GPS long SNR run | Passed as signal evidence but not lock proof; a 1815.5-second SPIFFS log reached max `siv=14`, max `snr=29`, max `snrc=14`, `valid=24434`, and all lock indicators stayed negative |
+| GPS follow-up readback | Passed as continued signal evidence but not lock proof; a later 700.6-second SPIFFS log reached max `siv=6`, max `snr=27`, max `snrc=6`, `valid=9338`, `csfail=0`, and all lock indicators stayed negative |
 | GPS fix proof | Not yet proven; after 1825.7 seconds in the enhanced run the final persisted record still showed `fix=0`, `qual=0`, `sv=0`, `ft=1`, `rmc=V`, and `loc=0` |
 
 Observed COM8 ROM output after opening the port:
@@ -275,6 +276,29 @@ max_csfail=80
 snr_positive_records=323
 snrc_positive_records=323
 final=@gps_hw|ms=1815529|fix=0|qual=0|sv=0|siv=1|ft=1|rmc=V|snr=10|snrc=1|baud=38400|chars=935222|sent=24514|valid=24434|gga=1811|rmc_s=1811|gsv=2205|gsa=7244|csfail=80|sw=1|loc=0
+```
+
+After the device was left running the validation harness again, a follow-up
+SPIFFS readback over COM8 captured another no-lock acquisition window:
+
+```text
+records=141
+fix_records=0
+active_rmc_records=0
+loc_records=0
+max_ms=700643
+max_siv=6
+max_snr=27
+max_snrc=6
+max_ft=1
+max_sv=0
+max_valid=9338
+max_gga=696
+max_rmc_s=696
+max_gsv=714
+max_gsa=2784
+max_csfail=0
+final=@gps_hw|ms=700643|fix=0|qual=0|sv=0|siv=0|ft=1|rmc=V|snr=0|snrc=0|baud=38400|chars=348937|sent=9338|valid=9338|gga=696|rmc_s=696|gsv=714|gsa=2784|csfail=0|sw=1|loc=0
 ```
 
 A final GPS lock is still required: continue with the watchdog reset flow,

@@ -20,7 +20,7 @@
 
 #include <cstdint>
 
-// Initialize GPS module on Serial1 at 38400 baud
+// Initialize GPS module on Serial1 with primary/fallback baud probing.
 void sigurdos_gps_init();
 
 // Call each frame to read and parse incoming NMEA data

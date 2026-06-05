@@ -167,7 +167,7 @@ Shows whether the microSD card is detected and mounted at boot. The SD card uses
 | **Tap action** | None (read-only status) |
 | **Symbol** | `LV_SYMBOL_GPS` (🛰) |
 
-Indicates whether the GPS module (UART, RX=43, TX=44, 38400 baud) has acquired a fix. "Fix acquired" means at least a basic GPS 2D/3D fix is available.
+Indicates whether the GPS module has acquired a fix. The firmware reads the module on Serial1 with `PIN_GPS_RX=44`, `PIN_GPS_TX=43`, primary 9600 baud, and fallback 38400 baud. "Fix acquired" means at least a basic GPS 2D/3D fix is available.
 
 ---
 
