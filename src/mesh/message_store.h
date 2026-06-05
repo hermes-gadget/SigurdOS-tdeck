@@ -29,13 +29,14 @@ struct StoredMessage {
     bool is_self;
     bool is_channel;
     bool acked;
+    bool companion_sent;
 };
 
 namespace detail {
 static constexpr uint32_t MESSAGE_STORE_MAGIC = 0x534d5347; // "SMSG"
 // v2 added the path_len byte. Old v1 records are rejected by readHeader (version
 // mismatch) and the store is rebuilt — acceptable for a persisted message cache.
-static constexpr uint8_t MESSAGE_STORE_VERSION = 2;
+static constexpr uint8_t MESSAGE_STORE_VERSION = 3;
 static constexpr size_t MESSAGE_STORE_RECORD_SIZE =
     SIGURDOS_MSG_CONVERSATION_LEN +
     SIGURDOS_MSG_SENDER_LEN +
@@ -57,6 +58,8 @@ bool messageStoreAppend(const StoredMessage& msg);
 int  messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max);
 int  messageStoreLoadAll(StoredMessage* out, int max);
 bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp);
+bool messageStoreMarkAllCompanionSent();
+int  messageStoreLoadUnsent(StoredMessage* out, int max);
 int  messageStoreCount();
 
 #if !defined(ESP32_PLATFORM)

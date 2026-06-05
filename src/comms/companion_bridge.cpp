@@ -248,17 +248,16 @@ bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg
     return true;
 }
 
-void CompanionBridge::seedOfflineQueueFromStore(uint32_t since)
+void CompanionBridge::seedOfflineQueueFromStore()
 {
     // Heap-allocate the snapshot rather than using a static array — keeping it
     // off the tight internal dram0_0_seg .bss region. Freed before returning.
     sigurdos::mesh::StoredMessage* recent = (sigurdos::mesh::StoredMessage*)
         std::malloc(sizeof(sigurdos::mesh::StoredMessage) * OFFLINE_QUEUE_SIZE);
     if (!recent) return;
-    int n = sigurdos::mesh::messageStoreLoadRecent(nullptr, recent, OFFLINE_QUEUE_SIZE);
+    int n = sigurdos::mesh::messageStoreLoadUnsent(recent, OFFLINE_QUEUE_SIZE);
     bool added_any = false;
     for (int idx = 0; idx < n; idx++) {
-        if (since != 0 && recent[idx].timestamp <= since) continue;
         // The offline queue is a mirror of *incoming* messages only. Never feed
         // the app a self/outgoing message: it already has the ones it sent (it
         // got RESP_CODE_SENT), and the companion protocol has no
@@ -272,6 +271,8 @@ void CompanionBridge::seedOfflineQueueFromStore(uint32_t since)
         }
     }
     std::free(recent);
+    // Mark all as sent so they're not re-queued on reboot/reconnect.
+    if (n > 0) sigurdos::mesh::messageStoreMarkAllCompanionSent();
     if (added_any && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
         _serial->writeFrame(&tickle, 1);
@@ -286,9 +287,14 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
     size_t len = 0;
     if (!buildMessageFrame(msg, frame, &len)) return false;
     bool added = addToOfflineQueue(frame, len);
-    if (added && isConnected()) {
-        uint8_t tickle = PUSH_CODE_MSG_WAITING;
-        _serial->writeFrame(&tickle, 1);
+    if (added) {
+        // Persistently mark the message as companion-sent so it never gets
+        // re-queued after a reboot or reconnect.
+        sigurdos::mesh::messageStoreMarkAllCompanionSent();
+        if (isConnected()) {
+            uint8_t tickle = PUSH_CODE_MSG_WAITING;
+            _serial->writeFrame(&tickle, 1);
+        }
     }
     return added;
 }
@@ -529,7 +535,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         std::memcpy(&_out_frame[i], si.node_name, nlen);
         i += (int)nlen;
         _serial->writeFrame(_out_frame, i);
-        seedOfflineQueueFromStore(_last_sync_time);
+        seedOfflineQueueFromStore();
         return true;
     }
 

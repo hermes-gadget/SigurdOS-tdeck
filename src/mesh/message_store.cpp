@@ -41,6 +41,7 @@ static uint8_t flagsFor(const StoredMessage& msg)
     if (msg.is_self) flags |= 0x01;
     if (msg.is_channel) flags |= 0x02;
     if (msg.acked) flags |= 0x04;
+    if (msg.companion_sent) flags |= 0x08;
     return flags;
 }
 
@@ -49,6 +50,7 @@ static void applyFlags(StoredMessage& msg, uint8_t flags)
     msg.is_self = (flags & 0x01) != 0;
     msg.is_channel = (flags & 0x02) != 0;
     msg.acked = (flags & 0x04) != 0;
+    msg.companion_sent = (flags & 0x08) != 0;
 }
 
 static bool readHeader(uint32_t* out_count);
@@ -451,6 +453,60 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
     }
     std::free(msgs);
     return ok;
+}
+
+bool messageStoreMarkAllCompanionSent()
+{
+    uint32_t count = 0;
+    if (!readHeader(&count)) return false;
+    if (count == 0) return true;
+    if (count > 256) return false;
+    StoredMessage* msgs = (StoredMessage*)std::malloc(sizeof(StoredMessage) * count);
+    if (!msgs) return false;
+    int n = messageStoreLoadAll(msgs, (int)count);
+    bool changed = false;
+    for (int i = 0; i < n; i++) {
+        if (!msgs[i].companion_sent) {
+            msgs[i].companion_sent = true;
+            changed = true;
+        }
+    }
+    if (!changed) {
+        std::free(msgs);
+        return true;
+    }
+    if (!messageStoreClear()) {
+        std::free(msgs);
+        return false;
+    }
+    bool ok = true;
+    for (int i = 0; i < n; i++) {
+        if (!messageStoreAppend(msgs[i])) ok = false;
+    }
+    std::free(msgs);
+    return ok;
+}
+
+int messageStoreLoadUnsent(StoredMessage* out, int max)
+{
+    if (!out || max <= 0) return 0;
+    uint32_t count = 0;
+    if (!readHeader(&count)) return 0;
+    int out_idx = 0;
+    for (int i = (int)count - 1; i >= 0 && out_idx < max; i--) {
+        StoredMessage msg;
+        if (!readRecordAt((uint32_t)i, msg)) continue;
+        if (!msg.companion_sent) {
+            out[out_idx++] = msg;
+        }
+    }
+    // Reverse to chronological order (we loaded newest-first)
+    for (int i = 0; i < out_idx / 2; i++) {
+        StoredMessage swap = out[i];
+        out[i] = out[out_idx - 1 - i];
+        out[out_idx - 1 - i] = swap;
+    }
+    return out_idx;
 }
 
 int messageStoreCount()

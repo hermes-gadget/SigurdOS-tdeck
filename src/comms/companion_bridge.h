@@ -384,7 +384,7 @@ private:
     void writeNoMoreMessages();
     bool offlineFrameExists(const uint8_t* frame, size_t len) const;
     bool addToOfflineQueue(const uint8_t* frame, size_t len);
-    void seedOfflineQueueFromStore(uint32_t since);
+    void seedOfflineQueueFromStore();
     int  getFromOfflineQueue(uint8_t* frame);
     bool buildMessageFrame(const sigurdos::mesh::StoredMessage& msg,
                            uint8_t* out, size_t* out_len);
