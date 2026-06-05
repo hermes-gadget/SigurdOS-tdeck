@@ -1203,21 +1203,29 @@ bool sendAdvert() {
         return false;
     }
 
+    const sigurdos::NodePrefs& p = sigurdos::prefs_get();
     bool has_fix = sigurdos_gps_has_fix();
+    bool use_live_location = has_fix && p.share_location;
+    bool use_manual_location = !use_live_location && p.share_location && p.advert_location_valid;
     last_advert_time = getCurrentTime();
-    last_advert_used_gps = has_fix;
+    last_advert_used_gps = use_live_location;
 
     if (!g_mesh) {
         last_advert_success = false;
         return false;
     }
 
-    if (has_fix && sigurdos::prefs_get().share_location) {
+    if (use_live_location) {
         g_mesh->broadcastAdvert(own_name,
             sigurdos_gps_latitude(), sigurdos_gps_longitude(),
-            sigurdos::prefs_get().advert_type);
+            p.advert_type);
+    } else if (use_manual_location) {
+        g_mesh->broadcastAdvert(own_name,
+            (float)p.advert_lat / 1000000.0f,
+            (float)p.advert_lon / 1000000.0f,
+            p.advert_type);
     } else {
-        g_mesh->broadcastAdvert(own_name, sigurdos::prefs_get().advert_type);
+        g_mesh->broadcastAdvert(own_name, p.advert_type);
     }
 
     last_advert_success = true;

@@ -142,9 +142,14 @@ public:
         out.advert_type = p.advert_type;
         out.tx_power_dbm = p.tx_power_dbm;
         out.max_tx_power_dbm = 22;
-        if (sigurdos_gps_has_fix() && p.share_location) {
-            out.lat = (int32_t)(sigurdos_gps_latitude() * 1000000.0f);
-            out.lon = (int32_t)(sigurdos_gps_longitude() * 1000000.0f);
+        if (p.share_location) {
+            if (sigurdos_gps_has_fix()) {
+                out.lat = (int32_t)(sigurdos_gps_latitude() * 1000000.0f);
+                out.lon = (int32_t)(sigurdos_gps_longitude() * 1000000.0f);
+            } else if (p.advert_location_valid) {
+                out.lat = p.advert_lat;
+                out.lon = p.advert_lon;
+            }
         }
         out.multi_acks = p.multi_acks;
         out.advert_loc_policy = p.share_location ? 1 : 0;
@@ -272,6 +277,28 @@ public:
     bool sendAdvert(bool flood) override {
         (void)flood;
         return sigurdos::mesh::sendAdvert();
+    }
+
+    bool setAdvertName(const char* name) override {
+        if (!name || !name[0]) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        strncpy(p.node_name, name, sizeof(p.node_name) - 1);
+        p.node_name[sizeof(p.node_name) - 1] = '\0';
+        sigurdos::prefs_set(p);
+        sigurdos::mesh::setOwnName(p.node_name);
+        return true;
+    }
+
+    bool setAdvertLatLon(int32_t lat, int32_t lon) override {
+        if (lat < -90000000 || lat > 90000000) return false;
+        if (lon < -180000000 || lon > 180000000) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.share_location = true;
+        p.advert_location_valid = true;
+        p.advert_lat = lat;
+        p.advert_lon = lon;
+        sigurdos::prefs_set(p);
+        return true;
     }
 
     bool setBlePin(uint32_t pin) override {

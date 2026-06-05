@@ -38,6 +38,11 @@ public:
     uint16_t last_channel_data_type = 0;
     std::vector<uint8_t> last_channel_data_path;
     std::vector<uint8_t> last_channel_data_payload;
+    bool set_advert_name_called = false;
+    char advert_name[32]{};
+    bool set_advert_latlon_called = false;
+    int32_t advert_lat = 0;
+    int32_t advert_lon = 0;
     uint32_t now = 1234;
 
     uint32_t blePin() const override { return 123456; }
@@ -120,6 +125,20 @@ public:
         return channel_index == 0;
     }
     bool sendAdvert(bool) override { return true; }
+    bool setAdvertName(const char* name) override {
+        set_advert_name_called = true;
+        if (!name || !name[0]) return false;
+        std::strncpy(advert_name, name, sizeof(advert_name) - 1);
+        advert_name[sizeof(advert_name) - 1] = '\0';
+        return true;
+    }
+    bool setAdvertLatLon(int32_t lat, int32_t lon) override {
+        set_advert_latlon_called = true;
+        advert_lat = lat;
+        advert_lon = lon;
+        return lat >= -90000000 && lat <= 90000000 &&
+               lon >= -180000000 && lon <= 180000000;
+    }
     bool setBlePin(uint32_t) override { return true; }
     bool exportPrivateKey(uint8_t* out64) const override {
         std::memset(out64, 0x42, 64);
@@ -378,6 +397,54 @@ TEST_F(CompanionProtocolTest, SendChannelDataFloodDispatchesToHostAndReturnsOk) 
     EXPECT_EQ(host.last_channel_data_payload[0], 0xA1);
     ASSERT_EQ(serial.writes.size(), 1u);
     EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetAdvertNameDispatchesUnterminatedPayload) {
+    uint8_t frame[16]{};
+    frame[0] = sigurdos::comms::CMD_SET_ADVERT_NAME;
+    std::memcpy(&frame[1], "TrailNode", 9);
+
+    ASSERT_TRUE(bridge.handleFrame(frame, 10));
+    ASSERT_TRUE(host.set_advert_name_called);
+    EXPECT_STREQ(host.advert_name, "TrailNode");
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetAdvertNameRejectsEmptyName) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_ADVERT_NAME, 0};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_advert_name_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetAdvertLatLonDispatchesFixedPointCoordinates) {
+    uint8_t frame[9]{};
+    frame[0] = sigurdos::comms::CMD_SET_ADVERT_LATLON;
+    int32_t lat = 45123456;
+    int32_t lon = -73543210;
+    std::memcpy(&frame[1], &lat, 4);
+    std::memcpy(&frame[5], &lon, 4);
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_advert_latlon_called);
+    EXPECT_EQ(host.advert_lat, lat);
+    EXPECT_EQ(host.advert_lon, lon);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetAdvertLatLonRejectsShortPayload) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_ADVERT_LATLON, 0, 0, 0};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.set_advert_latlon_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
 }
 
 TEST_F(CompanionProtocolTest, SendChannelDataDirectPathDispatchesToHost) {

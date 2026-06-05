@@ -46,6 +46,9 @@ bool prefs_load(NodePrefs& p) {
     p.chat_msg_cap  = nvs.getUShort("chat_cap", 200);
     p.flood_max_hops = nvs.getUChar("flood_mh", 0);
     p.share_location = nvs.getBool("sh_loc", false);
+    p.advert_location_valid = nvs.getBool("adv_loc", false);
+    p.advert_lat = nvs.getInt("adv_lat", 0);
+    p.advert_lon = nvs.getInt("adv_lon", 0);
     p.rx_delay_base  = nvs.getFloat("rx_del", 10.0f);
     p.tx_delay_factor = nvs.getFloat("tx_del", 1.0f);
     p.direct_tx_delay_factor = nvs.getFloat("dir_tx", 1.0f);
@@ -95,6 +98,9 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUShort("chat_cap", p.chat_msg_cap);
     nvs.putUChar("flood_mh", p.flood_max_hops);
     nvs.putBool("sh_loc", p.share_location);
+    nvs.putBool("adv_loc", p.advert_location_valid);
+    nvs.putInt("adv_lat", p.advert_lat);
+    nvs.putInt("adv_lon", p.advert_lon);
     nvs.putFloat("rx_del", p.rx_delay_base);
     nvs.putFloat("tx_del", p.tx_delay_factor);
     nvs.putFloat("dir_tx", p.direct_tx_delay_factor);

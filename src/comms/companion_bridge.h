@@ -26,9 +26,11 @@ enum CompanionCommand : uint8_t {
     CMD_GET_DEVICE_TIME = 5,
     CMD_SET_DEVICE_TIME = 6,
     CMD_SEND_SELF_ADVERT = 7,
+    CMD_SET_ADVERT_NAME = 8,
     CMD_SYNC_NEXT_MESSAGE = 10,
     CMD_SET_RADIO_PARAMS = 11,
     CMD_SET_RADIO_TX_POWER = 12,
+    CMD_SET_ADVERT_LATLON = 14,
     CMD_DEVICE_QUERY = 22,
     CMD_EXPORT_PRIVATE_KEY = 23,
     CMD_IMPORT_PRIVATE_KEY = 24,
@@ -167,6 +169,8 @@ public:
                                  const uint8_t* payload,
                                  size_t payload_len) = 0;
     virtual bool sendAdvert(bool flood) = 0;
+    virtual bool setAdvertName(const char* name) = 0;
+    virtual bool setAdvertLatLon(int32_t lat, int32_t lon) = 0;
     virtual bool setBlePin(uint32_t pin) = 0;
     virtual bool exportPrivateKey(uint8_t* out64) const = 0;
     virtual bool importPrivateKey(const uint8_t* key64) = 0;

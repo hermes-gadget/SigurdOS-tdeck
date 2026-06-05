@@ -546,6 +546,30 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
+    if (cmd == CMD_SET_ADVERT_NAME) {
+        if (len < 2) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        if (_host->setAdvertName((const char*)&_cmd_frame[1])) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_SET_ADVERT_LATLON) {
+        if (len < 9) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        int32_t lat = 0;
+        int32_t lon = 0;
+        std::memcpy(&lat, &_cmd_frame[1], 4);
+        std::memcpy(&lon, &_cmd_frame[5], 4);
+        if (_host->setAdvertLatLon(lat, lon)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
     if (cmd == CMD_SEND_SELF_ADVERT) {
         bool flood = len >= 2 && _cmd_frame[1] == 1;
         if (_host->sendAdvert(flood)) writeOKFrame();

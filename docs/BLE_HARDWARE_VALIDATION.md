@@ -127,3 +127,51 @@ Interpretation:
 - No phone was paired during this bench run, so `connect`, `authok`, `rx`, and
   `tx` remain `0`. A phone pairing run with the official MeshCore app is still
   required for a complete companion BLE pass.
+
+## 2026-06-05 COM8 Advert Command Follow-up
+
+Follow-up work added official companion advert setters:
+
+- `CMD_SET_ADVERT_NAME` (`8`) dispatches to the firmware node name, persists
+  `NodePrefs::node_name`, and updates the live mesh own-name.
+- `CMD_SET_ADVERT_LATLON` (`14`) accepts fixed-point latitude/longitude in
+  degrees times 1e6, validates legal coordinate ranges, persists a manual
+  advert-location fallback, and enables `share_location`. A live GPS fix still
+  takes precedence when present.
+
+Build and unit-test evidence after the advert command change:
+
+- `pio test -e native_test -f test_companion_protocol`: passed, 19/19.
+- `pio test -e native_test -f test_prefs_defaults`: passed, 5/5.
+- `pio run -e SigurdOS_TDeck_ble`: passed; RAM 39.7%, flash 38.4%.
+- `pio run -e SigurdOS_TDeck_ble_validation`: passed; RAM 39.7%, flash 38.4%.
+
+Hardware evidence after the advert command change:
+
+- Uploaded `SigurdOS_TDeck_ble_validation` to the T-Deck on `COM8`.
+- esptool identified the board as ESP32-S3 rev v0.2, MAC
+  `cc:8d:a2:0d:14:28`; every uploaded range reported
+  `Hash of data verified`.
+- After reset, SPIFFS was read back from `COM8` at offset `0xc90000`, size
+  `0x360000`, and unpacked successfully.
+- `/ble_hw.txt` was present with 9 validation records over a 43.4 s runtime
+  window.
+- The first record at 3415 ms showed:
+
+```text
+@ble_hw|ms=3415|begun=1|en=1|conn=0|adv=1|authok=0|authfail=0|connect=0|disconnect=0|mtu=0|rxw=0|rxd=0|rx=0|tx=0|txd=0|lrx=0|ltx=0
+```
+
+- The final record at 43432 ms still showed `begun=1`, `en=1`, `conn=0`,
+  `adv=1`, `authfail=0`, `rxd=0`, and `txd=0`.
+
+Interpretation:
+
+- The updated BLE validation firmware still boots, enables the MeshCore BLE
+  transport, and reaches the expected advertising state on real T-Deck
+  hardware.
+- The native protocol tests cover the new app command dispatch and payload
+  validation paths.
+- No phone was paired during this follow-up bench run, so app-authenticated
+  traffic counters remain `0`. A phone pairing run is still required to close
+  the connection/auth/RX/TX criteria above.
