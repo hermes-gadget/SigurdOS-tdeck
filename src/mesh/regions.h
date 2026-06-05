@@ -9,7 +9,6 @@
 
 #include <helpers/RegionMap.h>
 #include <helpers/TransportKeyStore.h>
-#include <Mesh.h>
 
 namespace sigurdos {
 namespace mesh {
