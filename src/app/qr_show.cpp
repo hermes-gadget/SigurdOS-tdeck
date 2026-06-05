@@ -13,6 +13,7 @@
 #include <lvgl.h>
 #include <cstdio>
 #include <cstring>
+#include <esp_heap_caps.h>
 
 using sigurdos::responsive::TOP_BAR_H;
 using sigurdos::responsive::BOT_BAR_H;
@@ -138,8 +139,23 @@ void qr_show(const char* title, const char* data)
     int canvas_size = qr_layout.canvas_size;
 
     // ── Create canvas for QR rendering ─────────────────────
-    // Static buffer in PSRAM-compatible memory. 180*180*2 = 64,800 bytes max.
-    static uint8_t cbuf[SIGURDOS_QR_CANVAS_MAX_PX * SIGURDOS_QR_CANVAS_MAX_PX * 2];
+    // 180*180*2 = 64,800 bytes — far too large to keep permanently in internal
+    // DRAM. Allocate once from PSRAM and reuse: only one QR screen exists at a
+    // time (screens auto-delete on navigation), so a persistent buffer is safe.
+    // Fall back to internal RAM only if PSRAM is unavailable.
+    static constexpr size_t kCanvasBytes =
+        (size_t)SIGURDOS_QR_CANVAS_MAX_PX * SIGURDOS_QR_CANVAS_MAX_PX * 2;
+    static uint8_t* cbuf = nullptr;
+    if (!cbuf) {
+        cbuf = (uint8_t*)heap_caps_malloc(kCanvasBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!cbuf) {
+            cbuf = (uint8_t*)heap_caps_malloc(kCanvasBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        }
+    }
+    if (!cbuf) {
+        qr_show_error(scr, "QR: out of memory");
+        return;
+    }
 
     lv_obj_t* canvas = lv_canvas_create(scr);
     lv_canvas_set_buffer(canvas, cbuf, canvas_size, canvas_size, LV_COLOR_FORMAT_RGB565);

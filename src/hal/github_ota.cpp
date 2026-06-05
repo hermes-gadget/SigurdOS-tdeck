@@ -11,6 +11,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Update.h>
+#include <esp_heap_caps.h>
 
 namespace sigurdos {
 namespace github_ota {
@@ -238,7 +239,14 @@ void loop() {
             size_t to_read = avail;
             if (to_read > DOWNLOAD_CHUNK) to_read = DOWNLOAD_CHUNK;
 
-            static uint8_t buf[DOWNLOAD_CHUNK];  // static to avoid 4KB stack allocation
+            // 4 KB transfer buffer — only needed while an OTA is downloading.
+            // Allocate once from PSRAM (DRAM fallback) instead of holding it
+            // permanently in internal DRAM as a static array.
+            static uint8_t* buf = (uint8_t*)heap_caps_malloc(
+                DOWNLOAD_CHUNK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!buf) buf = (uint8_t*)heap_caps_malloc(
+                DOWNLOAD_CHUNK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (!buf) { fail("Out of memory"); return; }
             size_t read = stream->readBytes(buf, to_read);
             if (read == 0) break;
 

@@ -406,11 +406,19 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
 
     // First pass: collect bounds + cache each x-column's scan_y_range result
     // so the second pass can reuse them without re-opening directories.
-    // Static storage to avoid stack overflow in ESP32-S3 loopTask (stack ~4KB).
-    // Increased from 512 to 2048 to accommodate larger offline map sets.
+    // 2048 entries × 20 bytes = 40 KB — too large for the ESP32-S3 loopTask
+    // stack (~4 KB) and wasteful to keep permanently in internal DRAM. Allocate
+    // once from PSRAM (DRAM fallback) and reuse across scans. Map rendering
+    // already depends on PSRAM, so this adds no new requirement.
     // Overflow detection below logs a warning if the cache is exhausted.
     static constexpr int MAX_XCOLS = 2048;
-    static XColCache xcache[MAX_XCOLS];
+    static XColCache* xcache = nullptr;
+    if (!xcache) xcache = (XColCache*)map_alloc(sizeof(XColCache) * MAX_XCOLS);
+    if (!xcache) {
+        MAP_DEBUG_PRINTLN("[map] scan: xcache alloc failed");
+        closedir(xd);
+        return false;
+    }
     int xcache_count = 0;
     bool cache_overflow = false;
 
