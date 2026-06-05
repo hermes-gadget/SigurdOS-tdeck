@@ -47,6 +47,13 @@ static struct GPSData {
     uint32_t checksum_failures;
     uint32_t baud_switches;
     uint32_t last_baud_switch_ms;
+    uint32_t gga_sentences;
+    uint32_t rmc_sentences;
+    uint32_t gsv_sentences;
+    uint32_t gsa_sentences;
+    uint8_t  satellites_in_view;
+    uint8_t  fix_type;
+    char     rmc_status;
 } gps;
 
 static char nmea_buf[128];
@@ -168,6 +175,7 @@ static void parse_rmc(const char* sentence) {
 
     // Field 2: status — 'A' = active (valid), 'V' = void (invalid)
     if (nmea_field(sentence, 2, field, sizeof(field))) {
+        gps.rmc_status = field[0];
         if (field[0] != 'A') {
             // Status is void ('V') or unknown — skip updating speed, heading, date
             return;
@@ -191,6 +199,23 @@ static void parse_rmc(const char* sentence) {
         gps.day   = atoi(d);
         gps.month = atoi(m);
         gps.year  = 2000 + atoi(y);
+    }
+}
+
+// Acquisition diagnostics used by the validation harness.
+static void parse_gsv(const char* sentence) {
+    // $GPGSV,total_msgs,msg_num,satellites_in_view,...
+    char field[20];
+    if (nmea_field(sentence, 3, field, sizeof(field))) {
+        gps.satellites_in_view = (uint8_t)atoi(field);
+    }
+}
+
+static void parse_gsa(const char* sentence) {
+    // $GPGSA,mode,fix_type,... where fix_type is 1 none, 2 2D, 3 3D.
+    char field[20];
+    if (nmea_field(sentence, 2, field, sizeof(field))) {
+        gps.fix_type = (uint8_t)atoi(field);
     }
 }
 
@@ -232,9 +257,17 @@ static void process_nmea(const char* sentence) {
     // Support both $GP (GPS-only) and $GN (multi-constellation) prefixes
     // L76K GNSS module on T-Deck outputs $GN by default
     if (strncmp(sentence, "$GPGGA,", 7) == 0 || strncmp(sentence, "$GNGGA,", 7) == 0) {
+        gps.gga_sentences++;
         parse_gga(sentence);
     } else if (strncmp(sentence, "$GPRMC,", 7) == 0 || strncmp(sentence, "$GNRMC,", 7) == 0) {
+        gps.rmc_sentences++;
         parse_rmc(sentence);
+    } else if (strncmp(sentence, "$GPGSV,", 7) == 0 || strncmp(sentence, "$GNGSV,", 7) == 0) {
+        gps.gsv_sentences++;
+        parse_gsv(sentence);
+    } else if (strncmp(sentence, "$GPGSA,", 7) == 0 || strncmp(sentence, "$GNGSA,", 7) == 0) {
+        gps.gsa_sentences++;
+        parse_gsa(sentence);
     }
 }
 
@@ -322,3 +355,10 @@ uint32_t sigurdos_gps_sentences_received() { return gps.sentences_received; }
 uint32_t sigurdos_gps_valid_sentences() { return gps.valid_sentences; }
 uint32_t sigurdos_gps_checksum_failures() { return gps.checksum_failures; }
 uint32_t sigurdos_gps_baud_switches() { return gps.baud_switches; }
+uint32_t sigurdos_gps_gga_sentences() { return gps.gga_sentences; }
+uint32_t sigurdos_gps_rmc_sentences() { return gps.rmc_sentences; }
+uint32_t sigurdos_gps_gsv_sentences() { return gps.gsv_sentences; }
+uint32_t sigurdos_gps_gsa_sentences() { return gps.gsa_sentences; }
+uint8_t  sigurdos_gps_satellites_in_view() { return gps.satellites_in_view; }
+uint8_t  sigurdos_gps_fix_type() { return gps.fix_type; }
+char     sigurdos_gps_rmc_status() { return gps.rmc_status; }

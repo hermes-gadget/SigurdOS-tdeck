@@ -49,3 +49,10 @@ uint32_t sigurdos_gps_sentences_received();
 uint32_t sigurdos_gps_valid_sentences();
 uint32_t sigurdos_gps_checksum_failures();
 uint32_t sigurdos_gps_baud_switches();
+uint32_t sigurdos_gps_gga_sentences();
+uint32_t sigurdos_gps_rmc_sentences();
+uint32_t sigurdos_gps_gsv_sentences();
+uint32_t sigurdos_gps_gsa_sentences();
+uint8_t  sigurdos_gps_satellites_in_view();
+uint8_t  sigurdos_gps_fix_type(); // GSA fix type: 1=none, 2=2D, 3=3D
+char     sigurdos_gps_rmc_status(); // 'A'=active, 'V'=void, 0=unknown

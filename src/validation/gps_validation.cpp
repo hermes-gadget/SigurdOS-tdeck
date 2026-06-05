@@ -59,15 +59,22 @@ static void build_status(char* out, size_t out_size)
 
     snprintf(out,
              out_size,
-             "@gps_hw|ms=%lu|fix=%u|qual=%u|sv=%u|baud=%lu|chars=%lu|sent=%lu|valid=%lu|csfail=%lu|sw=%lu|loc=%u",
+             "@gps_hw|ms=%lu|fix=%u|qual=%u|sv=%u|siv=%u|ft=%u|rmc=%c|baud=%lu|chars=%lu|sent=%lu|valid=%lu|gga=%lu|rmc_s=%lu|gsv=%lu|gsa=%lu|csfail=%lu|sw=%lu|loc=%u",
              (unsigned long)millis(),
              has_fix ? 1u : 0u,
              (unsigned)sigurdos_gps_fix_quality(),
              (unsigned)sigurdos_gps_satellites(),
+             (unsigned)sigurdos_gps_satellites_in_view(),
+             (unsigned)sigurdos_gps_fix_type(),
+             sigurdos_gps_rmc_status() ? sigurdos_gps_rmc_status() : '-',
              (unsigned long)sigurdos_gps_active_baud(),
              (unsigned long)sigurdos_gps_chars_processed(),
              (unsigned long)sigurdos_gps_sentences_received(),
              (unsigned long)sigurdos_gps_valid_sentences(),
+             (unsigned long)sigurdos_gps_gga_sentences(),
+             (unsigned long)sigurdos_gps_rmc_sentences(),
+             (unsigned long)sigurdos_gps_gsv_sentences(),
+             (unsigned long)sigurdos_gps_gsa_sentences(),
              (unsigned long)sigurdos_gps_checksum_failures(),
              (unsigned long)sigurdos_gps_baud_switches(),
              has_location ? 1u : 0u);
@@ -86,7 +93,7 @@ static void build_status(char* out, size_t out_size)
 
 static void emit_status(bool persist)
 {
-    char line[192];
+    char line[256];
     build_status(line, sizeof(line));
     Serial.println(line);
     if (persist) append_log_line(line);
