@@ -135,6 +135,7 @@ Results:
 | Enhanced GPS diagnostics | Passed; after the diagnostic harness update, NVS readback showed `boot_count_value=8` and the 1825.7-second SPIFFS log reached `chars=942351`, `sent=24864`, `valid=24864`, `gga=1821`, `rmc_s=1821`, `gsv=2057`, `gsa=7284`, `csfail=0`, and `baud=38400` |
 | GPS sky-view diagnostics | Partial; GSV reported satellites in view up to `siv=17`, but the latest persisted record still showed `ft=1` and `rmc=V` |
 | GPS SNR diagnostics | Passed; after the SNR diagnostic update, a 920.5-second SPIFFS log reached max `siv=17`, max `snr=31`, max `snrc=17`, `valid=12496`, and `csfail=0` |
+| GPS long SNR run | Passed as signal evidence but not lock proof; a 1815.5-second SPIFFS log reached max `siv=14`, max `snr=29`, max `snrc=14`, `valid=24434`, and all lock indicators stayed negative |
 | GPS fix proof | Not yet proven; after 1825.7 seconds in the enhanced run the final persisted record still showed `fix=0`, `qual=0`, `sv=0`, `ft=1`, `rmc=V`, and `loc=0` |
 
 Observed COM8 ROM output after opening the port:
@@ -243,13 +244,46 @@ snrc_positive_records=126
 final=@gps_hw|ms=920517|fix=0|qual=0|sv=0|siv=2|ft=1|rmc=V|snr=21|snrc=2|baud=38400|chars=473836|sent=12496|valid=12496|gga=916|rmc_s=916|gsv=1072|gsa=3664|csfail=0|sw=1|loc=0
 ```
 
+The validation app was restarted again through the COM8 watchdog-reset path,
+left closed for a full 30-minute acquisition window, and read back through
+SPIFFS before NVS. The NVS marker confirmed the app boot:
+
+```text
+.pio\gps_validation_readback\nvs-long-continuation.bin: namespace gpsval=present boot_count=present marker=present marker_value gps-validation=present boot_count_value=21 known_namespace sigurdos=present
+```
+
+The long continuation run still did not capture lock, but it continued to prove
+clean GPS traffic and non-zero GSV signal reports:
+
+```text
+records=364
+fix_records=0
+active_rmc_records=0
+loc_records=0
+max_ms=1815529
+max_siv=14
+max_snr=29
+max_snrc=14
+max_ft=1
+max_sv=0
+max_valid=24434
+max_gga=1811
+max_rmc_s=1811
+max_gsv=2205
+max_gsa=7244
+max_csfail=80
+snr_positive_records=323
+snrc_positive_records=323
+final=@gps_hw|ms=1815529|fix=0|qual=0|sv=0|siv=1|ft=1|rmc=V|snr=10|snrc=1|baud=38400|chars=935222|sent=24514|valid=24434|gga=1811|rmc_s=1811|gsv=2205|gsa=7244|csfail=80|sw=1|loc=0
+```
+
 A final GPS lock is still required: continue with the watchdog reset flow,
 longer sky-view runtime, antenna/placement checks, and another SPIFFS readback
 until a final record shows `fix=1`, `qual>0`, `sv>0`, and `loc=1`.
 
 The vendored MeshCore FAQ specifically calls out T-Deck Plus GPS modules that
 were installed upside down, with the GPS antenna facing down. Because this run
-proves `38400` baud, clean NMEA, GGA/RMC/GSV/GSA traffic, satellites in view,
-and non-zero SNR/CN0 without reaching GSA 2D/3D fix or RMC active status, the
-next physical check should be GPS antenna orientation and placement before more
-firmware changes.
+proves `38400` baud, mostly clean NMEA, GGA/RMC/GSV/GSA traffic, satellites in
+view, and non-zero SNR/CN0 without reaching GSA 2D/3D fix or RMC active status,
+the next physical check should be GPS antenna orientation and placement before
+more firmware changes.
