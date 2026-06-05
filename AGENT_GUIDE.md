@@ -51,7 +51,11 @@ src/
 │   ├── sigurd_mesh_v2.h         # MeshV2 (BaseChatMesh) — routing, channels, message handling, RSSI/SNR history, ACK tracking. V1 class removed (#290).
 │   ├── mesh_wrapper.cpp/h       # Public API for the UI layer
 │   ├── channel_validation.cpp/h # Channel name validation (charset, length, prefix rules)
-│   └── regions.cpp/h            # Region frequency preset management (SPIFFS persistence, key derivation)
+│   ├── regions.cpp/h            # Region frequency preset management (SPIFFS persistence, key derivation)
+│   ├── message_store.cpp/h      # Persistent message store (SPIFFS binary ring buffer, 32 conversations, 160-char text, timestamped)
+│   └── companion_adapter.inc    # Companion BLE bridge adapter — included into mesh_wrapper.cpp, PSRAM-allocated CompanionBridge (~3 KB)
+├── comms/
+│   └── companion_bridge.cpp/h   # Companion BLE bridge protocol (SerialInterface transport, command enum, channel/contact/self-info types)
 ├── ui/
 │   ├── theme.h            # Colors, pixel helpers (apply_pixel_*)
 │   ├── responsive.h       # Display-size-agnostic layout helpers
@@ -208,6 +212,7 @@ Use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 | 19 | WiFiNetworks (WiFi AP OTA firmware update + site survey, scan & display nearby access points, GitHub release OTA download) | `screens.cpp` | ✅ |
 | 20 | Node Stats (local node packet counters: sent/received flood+direct, TX/RX airtime, duty cycle budget, ACK counter) | `screens.cpp` | ✅ |
 | 21 | Regions (regional frequency preset management — active region selection, import/export, scope gating for flood scoping) | `screens.cpp` | ✅ |
+| 22 | Bluetooth (companion BLE bridge status — enable/disable toggle, PIN display, app connection state, last sync time, compile-time gated by `SIGURDOS_COMPANION_BLE`) | `screens.cpp` | ✅ |
 | — | Custom RF (sub-screen of Radio Setup — Freq, SF, BW, CR, Pwr text inputs with Apply) | `screens.cpp` | ✅ |
 | — | SettingsRadio (Radio/Mesh sub-screen — radio params, bandwidth/SF/tuning, duty cycle, RX gain) | `screens.cpp` | ✅ |
 | — | SettingsGPS (GPS/Location sub-screen — GPS enable toggle, read interval, location sharing) | `screens.cpp` | ✅ |
@@ -346,6 +351,18 @@ sigurdos::mesh::clearGroupDataRecv()            // Clear datagram buffer
 // ── Test helpers (SIGURDOS_REMOTE_TEST only) ──
 sigurdos::mesh::addTestRepeater(name)          // Inject fake repeater contact
 sigurdos::mesh::addTestRoomServer(name)        // Inject fake room server contact
+// ── Companion BLE bridge (Phase 5) ──
+sigurdos::mesh::companionBleAvailable()        // BLE compiled in? (SIGURDOS_COMPANION_BLE)
+sigurdos::mesh::companionBleEnabled()          // BLE advertising enabled?
+sigurdos::mesh::companionBleSetEnabled(on)     // Enable/disable BLE advertising
+sigurdos::mesh::companionBleConnected()        // App currently connected?
+sigurdos::mesh::companionBlePin()              // BLE pairing PIN (6 digits)
+sigurdos::mesh::companionBleLastSyncTime()     // Last sync epoch (0 = never)
+sigurdos::mesh::companionBleLoop()             // Call from main loop
+sigurdos::mesh::companionBleShutdown()         // Graceful BLE shutdown
+sigurdos::mesh::messageStoreBegin()            // Init persistent message store (SPIFFS)
+sigurdos::mesh::messageStoreAppend(msg)        // Write message to persistent store
+sigurdos::mesh::messageStoreLoadRecent(conv, out, max) // Load recent messages for a conversation
 ```
 
 **Messages arrive** via `chat_screen_add_msg(channel, sender, text, is_self)`. The chat screen maintains per-channel message caches (8 messages each, 16 channels max).
@@ -359,7 +376,7 @@ sigurdos::mesh::addTestRoomServer(name)        // Inject fake room server contac
 
 ## Testing
 
-**Current test count: 397** for native_test.
+**Current test count: 586** for native_test.
 
 ```bash
 pio test -e native_test -v       # All tests (no hardware)
@@ -383,13 +400,42 @@ Test modules:
 | `test_sdcard` | SD card VFS path helpers |
 | `test_build` | Compilation checks for all modules |
 | `test_navigation` | Screen navigation and history |
-| `test_map` | Map renderer PSRAM allocators |
+| `test_map_renderer` | Map renderer PSRAM allocators |
 | `test_emoji` | Emoji font data, glyph coverage, fallback registration, Discord-style autocomplete |
 | `test_chat_truncation` | UTF-8 safe message truncation (emoji-aware byte cutting) |
 | `test_home_screen` | Home screen 4x3 grid layout, icon grid, top/bottom bar rendering |
 | `test_terminal` | Terminal screen capped line output, command dispatch |
 | `test_channel_validation` | Channel name validation rules (character set, length limits) |
 | `test_regions` | Region persistence (SPIFFS load/save), key derivation |
+| `test_debug` | Debug infrastructure, feature toggle macros, runtime feat selection |
+| `test_buzzer` | Buzzer GPIO control and beep patterns |
+| `test_telemetry_hb_ring` | Heartbeat ring buffer operations |
+| `test_telemetry_packet_log` | Packet log ring buffer |
+| `test_telemetry_collectors` | Telemetry data collectors (heap, PSRAM, RSSI) |
+| `test_telemetry_input` | Input event telemetry (trackball, keyboard, touch) |
+| `test_telemetry_crash` | Crash telemetry (reboot reason, stack watermark) |
+| `test_telemetry_protocol` | Telemetry wire protocol (binary framing) |
+| `test_navigation_contract` | Navigation screen enum completeness and dispatch |
+| `test_github_ota_contract` | GitHub-release OTA public API contract |
+| `test_mesh_contract` | Mesh wrapper public API contract completeness |
+| `test_ui_contract` | UI screen public API contract |
+| `test_hal_contract` | HAL public API contract |
+| `test_input_contract` | Input event API contract |
+| `test_prefs_defaults` | NodePrefs default values |
+| `test_emoji_integrity` | Emoji font data integrity and short name ↔ codepoint mapping |
+| `test_emoji_fallback` | Emoji font fallback wiring |
+| `test_chat_config` | Chat configuration validation |
+| `test_companion_protocol` | Companion BLE wire protocol encoding/decoding |
+| `test_message_store` | Persistent message store (SPIFFS, binary ring buffer) |
+| `test_responsive` | Responsive layout helpers |
+| `test_ui_timing` | LVGL timing contract |
+| `test_controller` | Remote test controller command dispatch |
+| `test_map` | Map bounding-box helpers |
+| `test_lodepng_alloc` | lodepng PSRAM allocator fallback |
+| `test_wifi_scan` | WiFi AP OTA scan and network discovery |
+| `test_qr_show` | QR code display rendering |
+| `test_onboarding` | Onboarding wizard flow |
+| `test_tdeck_board` | T-Deck board power/sleep management |
 
 **Critical rules:**
 - Tests use `test/test_<name>/` dirs with `main.cpp` entry points. Wrong naming = not discovered.
@@ -443,6 +489,9 @@ pio run -e SigurdOS_TDeck_remote_test_radio_meshv2
 
 # Remote test with radio + prescribed frequency (e.g. 869.525 MHz / SF10 / 250 kHz)
 pio run -e SigurdOS_TDeck_remote_test_radio_testfreq
+
+# BLE companion bridge build (companion BLE enabled, full LoRa mesh)
+pio run -e SigurdOS_TDeck_ble
 ```
 
 ### Serial Debugging
@@ -557,7 +606,7 @@ If the issue involves physical input hardware (trackball, keyboard, touch, butto
 
 Single `dev` branch model:
 - `dev` — integration branch. All PRs merge here. There is no `main` branch; releases are tagged directly on `dev`.
-- Tags: `beta-0.1.XX` (zero-padded for correct sort: `beta-0.1.09` not `beta-0.1.9`). Current: `beta-0.1.38`
+- Tags: `beta-0.1.XX` (zero-padded for correct sort: `beta-0.1.09` not `beta-0.1.9`). Current: `beta-0.1.39`
 
 **Release flow (maintainer only):**
 1. Update `SIGURDOS_VERSION` in `tdeck_pins.h`
@@ -628,6 +677,11 @@ On "Apply", validated values are written to the shared state and `go_back()` is 
 | New: Chat input capped at 149 bytes | Chat textarea is limited to 149 bytes with a live byte counter display (#288, #291). Messages over 149 bytes are rejected before send. |
 | New: Channel deletion has confirmation dialog | The Channels screen now shows a confirmation dialog before deleting a channel (#287, #289). The `removeChannel()` API call is still immediate — the dialog only gates the UI path. |
 | New: V1 mesh class removed | `sigurd_mesh.h` (the original `SigurdMesh` V1 class) was deleted (#286, #290). Only `SigurdMeshV2` via `sigurd_mesh_v2.h` remains. Any code path still referencing the V1 class will fail to compile. |
+| New: Companion bridge PSRAM allocation | `companion_adapter.inc` allocates the `CompanionBridge` (~3 KB) via `heap_caps_malloc(SPIRAM)` with internal-DRAM fallback. The internal DRAM .bss is nearly full — manually allocating in PSRAM avoids linker placement issues. Must use placement new and explicit destructor call on shutdown. |
+| New: message_store SPIFFS binary format | `message_store.cpp` uses a raw binary ring buffer in SPIFFS (`/msg_store.bin`) with magic/version header (`MESSAGE_STORE_VERSION=1`). No cross-version compatibility — changing the `StoredMessage` struct layout silently corrupts the store. Must call `messageStoreClear()` on version mismatch. |
+| New: companion_adapter.inc inclusion model | `companion_adapter.inc` is `#include`-d from `mesh_wrapper.cpp` (not compiled standalone). It accesses `mesh_wrapper`'s private statics (`rtc_clock`, `msg_buf`, `msg_count`, etc.) without widening the public API. Cannot be tested in isolation — needs the full `mesh_wrapper.cpp` translation unit. |
+| New: BLE compile-time guard | `SIGURDOS_COMPANION_BLE` controls the entire BLE subsystem at compile time. When not defined, `companionBleAvailable()` returns false, the Bluetooth screen shows "Not built", and all BLE API calls are no-ops. The `SigurdOS_TDeck_ble` build env sets this flag. |
+| New: Bluetooth screen uses show_screen() | The Bluetooth screen uses `show_screen()` (like Custom RF), not `navigate_to()`. It does not enter the nav stack — `go_back()` returns to whatever screen was active before entry. No persistent state between visits. |
 
 ---
 
@@ -642,6 +696,7 @@ All known issues are documented in `docs/KNOWN_ISSUES.md`. Most previously track
 - **Previously synced:** Radio reception fix (SPI host moved to SPI2_HOST, channel hash full compare, auto-join Public), graceful shutdown from Settings, unread message badges on home screen, display brightness control, auto-backlight timeout, flood max hops setting, contact SNR display, TX/RX delay tuning in Settings, TX/RX airtime and packet statistics on Signal screen, GPS clock sync on first valid fix, Contact Detail screen (#180), Signal screen two-column layout (#183), iOS-style signal dots (#187), `setrf`/`reboot`/`advert` serial test commands (#189), channel deletion (#168/#169), NAV serial command (#35a7638), map canvas PSRAM allocation fix (#4a464f6), `SigurdOS_TDeck_remote_test_radio` env (#195), ROADMAP.md (#197), beta-0.1.36 release, V2/BaseChatMesh migration (Phase 0, #223/#224), per-contact RSSI/SNR history with sparkline chart (#236), message search in chat (#234), message delivery status (ACK ticks) in chat bubbles (#232), custom variables key-value store via terminal commands (Phase 2.6), auto-add contact type config (Phase 2.3), GPS enable/read-interval controls (Phase 2.5), `sendmessage` test controller command, `SigurdOS_TDeck_meshv2` and `SigurdOS_TDeck_remote_test_radio_meshv2` build envs
 - **Since last sync:** Settings organized into category sub-menus (Phase 2.7, #246), runtime theme system with 6 presets + NVS persistence (#244), PendingAck bugfix + 4 unpersisted NodePrefs fields (#249), beta-0.1.37 release, generic binary-request framework (Phase 4.1, #251), status request with UI — battery/uptime/airtime from remote node (Phase 4.2, #253), telemetry request with CayenneLPP parsing (Phase 4.3), path discovery with flood-force routing (Phase 4.4), repeater/room login with admin commands (Phase 4.5, #259), room server message fetch (Phase 4.6, #263), anonymous message send/receive (Phase 4.7, #260), group data datagrams (Phase 4.8, #265), dedicated repeater detail screen with login flow (#257/#258), repeater login with password save and compact UI, NAV serial entries for settings submenus and new screens, `SigurdOS_TDeck_remote_test_radio_testfreq` build env, `test_prefs` test module, regions screen with flood-scope management (#330), channel name validation module, QR code display screen, telemetry diagnostics subsystem, `test_channel_validation` and `test_regions` test modules
 - **Currently synced:** Home screen DMs/ROOMS filter icons (#269), admin command terminal with live response polling, fav-toggle fix for login view, repeater login UI improvements (#266), RX boost preference test (#267), Phase 4 complete (4.1-4.8), Claude Code review fixes (#273), factory reset from Settings System + `factoryreset`/`wipe` test commands (#274), beta-0.1.38 release, remaining SlopOS ref cleanup, namespace rebrand (`slopos` → `sigurdos`, file renames), orphaned strdup fix in contacts_screen_show, LoginEntry::in_use default fix, meshcore submodule remote sync, V1 mesh class removal (#290), chat 149-byte cap (#291), channel delete confirmation dialog (#289), NodeStats screen (#288), Multi-ACK toggle (#296), node type selector (#298), buzzer notifications (#300), Reboot button (#314), storage usage display (#315), hop count / advert-path display (#316/#324), message signing (#317), telemetry answer-side (#318), client-repeat (#319), identity backup (#320), contact map markers (#321), URI import (#322), device PIN (#326), QR generation (#328), WiFi AP OTA (#329), Node Discovery Protocol (#331), and GitHub-release OTA download from Settings System.
+- **Since last sync:** beta-0.1.39 release, companion BLE bridge (`comms/companion_bridge.cpp/h` — SerialInterface transport, command protocol, offline queue), persistent message store (`mesh/message_store.cpp/h` — SPIFFS binary ring buffer, 32 conversations, 160-char text), Bluetooth screen (#22 — enable/disable toggle, PIN display, connection state, last sync), companion adapter (`mesh/companion_adapter.inc` — PSRAM-allocated bridge, included into mesh_wrapper.cpp), `SigurdOS_TDeck_ble` build env, screen enum completeness audit, mesh public API contract tests, HAL public API contract tests, navigation screen inventory contract, input event API contract, prefs defaults contract, emoji integrity checks, companion protocol wire tests, responsive layout tests, UI timing tests, and 28 additional test modules bringing total to 586 test cases.
 
 ---
 
