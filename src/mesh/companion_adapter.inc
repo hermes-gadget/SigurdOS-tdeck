@@ -255,6 +255,20 @@ public:
         return result;
     }
 
+    bool sendChannelData(int channel_index,
+                         const uint8_t* path,
+                         uint8_t path_len,
+                         uint16_t data_type,
+                         const uint8_t* payload,
+                         size_t payload_len) override {
+        if (!g_mesh || payload_len > sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) {
+            return false;
+        }
+        if (payload_len > 0 && !payload) return false;
+        return g_mesh->sendGroupDataToChannel(channel_index, path, path_len,
+                                              data_type, payload, (int)payload_len);
+    }
+
     bool sendAdvert(bool flood) override {
         (void)flood;
         return sigurdos::mesh::sendAdvert();

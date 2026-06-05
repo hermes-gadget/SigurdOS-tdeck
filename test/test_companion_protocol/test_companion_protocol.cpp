@@ -31,7 +31,13 @@ public:
 class FakeHost final : public sigurdos::comms::CompanionBridgeHost {
 public:
     bool sent_dm = false;
+    bool sent_channel_data = false;
     uint8_t last_prefix[6]{};
+    int last_channel_data_index = -1;
+    uint8_t last_channel_data_path_len = 0;
+    uint16_t last_channel_data_type = 0;
+    std::vector<uint8_t> last_channel_data_path;
+    std::vector<uint8_t> last_channel_data_payload;
     uint32_t now = 1234;
 
     uint32_t blePin() const override { return 123456; }
@@ -94,6 +100,24 @@ public:
     }
     sigurdos::comms::CompanionSendResult sendChannelText(int, uint32_t, const char*) override {
         return {true, true, 0, 0};
+    }
+    bool sendChannelData(int channel_index, const uint8_t* path, uint8_t path_len,
+                         uint16_t data_type, const uint8_t* payload,
+                         size_t payload_len) override {
+        sent_channel_data = true;
+        last_channel_data_index = channel_index;
+        last_channel_data_path_len = path_len;
+        last_channel_data_type = data_type;
+        last_channel_data_path.clear();
+        last_channel_data_payload.clear();
+        if (path && path_len != 0xFF) {
+            size_t path_bytes = (size_t)(path_len & 63) * (size_t)((path_len >> 6) + 1);
+            last_channel_data_path.assign(path, path + path_bytes);
+        }
+        if (payload && payload_len > 0) {
+            last_channel_data_payload.assign(payload, payload + payload_len);
+        }
+        return channel_index == 0;
     }
     bool sendAdvert(bool) override { return true; }
     bool setBlePin(uint32_t) override { return true; }
@@ -334,6 +358,123 @@ TEST_F(CompanionProtocolTest, SendTextDispatchesToHostAndReturnsSent) {
     uint32_t ack = 0;
     std::memcpy(&ack, &serial.writes[0][2], 4);
     EXPECT_EQ(ack, 0x12345678u);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataFloodDispatchesToHostAndReturnsOk) {
+    uint8_t frame[] = {
+        sigurdos::comms::CMD_SEND_CHANNEL_DATA,
+        0,
+        0xFF,
+        0xFF, 0xFF,
+        0xA1, 0xB2, 0xC3,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.sent_channel_data);
+    EXPECT_EQ(host.last_channel_data_index, 0);
+    EXPECT_EQ(host.last_channel_data_path_len, 0xFF);
+    EXPECT_EQ(host.last_channel_data_type, 0xFFFF);
+    ASSERT_EQ(host.last_channel_data_payload.size(), 3u);
+    EXPECT_EQ(host.last_channel_data_payload[0], 0xA1);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataDirectPathDispatchesToHost) {
+    uint8_t frame[] = {
+        sigurdos::comms::CMD_SEND_CHANNEL_DATA,
+        0,
+        0x02,
+        0x11, 0x22,
+        0x34, 0x12,
+        0x99,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.sent_channel_data);
+    EXPECT_EQ(host.last_channel_data_path_len, 0x02);
+    ASSERT_EQ(host.last_channel_data_path.size(), 2u);
+    EXPECT_EQ(host.last_channel_data_path[0], 0x11);
+    EXPECT_EQ(host.last_channel_data_path[1], 0x22);
+    EXPECT_EQ(host.last_channel_data_type, 0x1234);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataRejectsReservedDataType) {
+    uint8_t frame[] = {
+        sigurdos::comms::CMD_SEND_CHANNEL_DATA,
+        0,
+        0xFF,
+        0x00, 0x00,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.sent_channel_data);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataRejectsInvalidPathEncoding) {
+    uint8_t frame[] = {
+        sigurdos::comms::CMD_SEND_CHANNEL_DATA,
+        0,
+        0xC1,
+        0xAA,
+        0xFF, 0xFF,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.sent_channel_data);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataRejectsOversizePayload) {
+    std::vector<uint8_t> frame;
+    frame.push_back(sigurdos::comms::CMD_SEND_CHANNEL_DATA);
+    frame.push_back(0);
+    frame.push_back(0xFF);
+    frame.push_back(0xFF);
+    frame.push_back(0xFF);
+    frame.resize(5 + sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD + 1, 0x55);
+
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    ASSERT_FALSE(host.sent_channel_data);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, EnqueuedChannelDataTicklesAndDrains) {
+    uint8_t payload[] = {0xDE, 0xAD};
+    ASSERT_TRUE(bridge.enqueueChannelData(1, -8, 0xFF, 0xBEEF, payload, sizeof(payload)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::PUSH_CODE_MSG_WAITING);
+
+    uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 2u);
+    const auto& out = serial.writes[1];
+    ASSERT_EQ(out.size(), 11u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_CHANNEL_DATA_RECV);
+    EXPECT_EQ((int8_t)out[1], -8);
+    EXPECT_EQ(out[4], 1);
+    EXPECT_EQ(out[5], 0xFF);
+    EXPECT_EQ(out[6], 0xEF);
+    EXPECT_EQ(out[7], 0xBE);
+    EXPECT_EQ(out[8], 2);
+    EXPECT_EQ(out[9], 0xDE);
+    EXPECT_EQ(out[10], 0xAD);
+}
+
+TEST_F(CompanionProtocolTest, EnqueuedChannelDataRejectsReservedTypeAndInvalidPath) {
+    uint8_t payload[] = {0x01};
+    EXPECT_FALSE(bridge.enqueueChannelData(1, 0, 0xFF, 0x0000, payload, sizeof(payload)));
+    EXPECT_FALSE(bridge.enqueueChannelData(1, 0, 0xC1, 0xBEEF, payload, sizeof(payload)));
+    EXPECT_TRUE(serial.writes.empty());
 }
 
 } // namespace

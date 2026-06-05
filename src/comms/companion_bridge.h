@@ -16,6 +16,7 @@ static constexpr uint8_t SIGURDOS_COMPANION_FIRMWARE_VER_CODE = 12;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_SIZE = 32;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE = 6;
 static constexpr size_t  SIGURDOS_COMPANION_PATH_SIZE = 64;
+static constexpr size_t  SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD = MAX_FRAME_SIZE - 9;
 
 enum CompanionCommand : uint8_t {
     CMD_APP_START = 1,
@@ -35,6 +36,7 @@ enum CompanionCommand : uint8_t {
     CMD_SET_CHANNEL = 32,
     CMD_SET_DEVICE_PIN = 37,
     CMD_GET_BATT_AND_STORAGE = 20,
+    CMD_SEND_CHANNEL_DATA = 62,
 };
 
 enum CompanionResponse : uint8_t {
@@ -56,6 +58,7 @@ enum CompanionResponse : uint8_t {
     RESP_CODE_CONTACT_MSG_RECV_V3 = 16,
     RESP_CODE_CHANNEL_MSG_RECV_V3 = 17,
     RESP_CODE_CHANNEL_INFO = 18,
+    RESP_CODE_CHANNEL_DATA_RECV = 27,
 };
 
 enum CompanionPush : uint8_t {
@@ -157,6 +160,12 @@ public:
     virtual CompanionSendResult sendChannelText(int channel_index,
                                                 uint32_t timestamp,
                                                 const char* text) = 0;
+    virtual bool sendChannelData(int channel_index,
+                                 const uint8_t* path,
+                                 uint8_t path_len,
+                                 uint16_t data_type,
+                                 const uint8_t* payload,
+                                 size_t payload_len) = 0;
     virtual bool sendAdvert(bool flood) = 0;
     virtual bool setBlePin(uint32_t pin) = 0;
     virtual bool exportPrivateKey(uint8_t* out64) const = 0;
@@ -176,6 +185,12 @@ public:
     uint8_t appTargetVersion() const { return _app_target_ver; }
 
     bool enqueueMessage(const sigurdos::mesh::StoredMessage& msg);
+    bool enqueueChannelData(uint8_t channel_index,
+                            int8_t snr_quarters,
+                            uint8_t path_len,
+                            uint16_t data_type,
+                            const uint8_t* payload,
+                            size_t payload_len);
     bool notifySendConfirmed(uint32_t ack, uint32_t trip_time_ms);
 
 private:

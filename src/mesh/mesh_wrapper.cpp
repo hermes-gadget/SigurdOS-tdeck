@@ -134,6 +134,18 @@ void sigurdos::mesh::mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_t
     }
 }
 
+void sigurdos::mesh::mesh_v2_group_data_push(uint8_t channel_index,
+                              uint8_t path_len,
+                              int8_t snr_quarters,
+                              uint16_t data_type,
+                              const uint8_t* data,
+                              size_t data_len) {
+    if (data_len > sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) return;
+    if (CompanionBridge* b = companionBridge()) {
+        b->enqueueChannelData(channel_index, snr_quarters, path_len, data_type, data, data_len);
+    }
+}
+
 static void queue_push(const char* sender, const char* channel, const char* text) {
     if (msg_count >= MAX_QUEUED) {
         msg_drop_count++;
@@ -816,7 +828,11 @@ bool init(bool spiffs_ok)
         if (CompanionBridge* b = companionBridge()) {
             b->begin(&g_ble_serial, &g_companion_host);
             if (sigurdos::prefs_get().ble_enabled) {
-                b->setEnabled(true);
+                bool enabled = b->setEnabled(true);
+                Serial.printf("[mesh] Companion BLE advertising %s as MeshCore-%s\n",
+                              enabled ? "enabled" : "failed", ble_name);
+            } else {
+                Serial.println("[mesh] Companion BLE advertising disabled by prefs");
             }
         }
     }

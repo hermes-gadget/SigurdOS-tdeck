@@ -38,6 +38,12 @@ void mesh_v2_queue_push(const char* sender, const char* channel,
 // message it sent (via the device) as confirmed. ack is the 4-byte ACK hash the
 // app received in RESP_CODE_SENT; trip_time_ms is the round-trip time.
 void mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_time_ms);
+void mesh_v2_group_data_push(uint8_t channel_index,
+                              uint8_t path_len,
+                              int8_t snr_quarters,
+                              uint16_t data_type,
+                              const uint8_t* data,
+                              size_t data_len);
 
 struct MeshMessage {
     char sender[32];

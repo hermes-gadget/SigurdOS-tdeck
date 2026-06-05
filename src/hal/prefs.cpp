@@ -9,6 +9,12 @@ namespace sigurdos {
 static constexpr const char* NVS_NS = "sigurdos";
 static NodePrefs g_prefs;
 
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+static constexpr bool DEFAULT_BLE_ENABLED = true;
+#else
+static constexpr bool DEFAULT_BLE_ENABLED = false;
+#endif
+
 bool prefs_load(NodePrefs& p) {
     Preferences nvs;
     if (!nvs.begin(NVS_NS, true)) return false;
@@ -55,7 +61,9 @@ bool prefs_load(NodePrefs& p) {
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
     p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
     p.client_repeat = nvs.getUChar("clirep", 0);
-    p.ble_enabled = nvs.getBool("ble_en", false);
+    // BLE-specific firmware should be discoverable on first boot, while a
+    // saved user preference still controls later boots.
+    p.ble_enabled = nvs.getBool("ble_en", DEFAULT_BLE_ENABLED);
     p.device_pin = nvs.getULong("dev_pin", 0);
     // WiFi credentials (GitHub OTA)
     size_t ssid_len = nvs.getString("wifi_ssid", p.wifi_ssid, sizeof(p.wifi_ssid));

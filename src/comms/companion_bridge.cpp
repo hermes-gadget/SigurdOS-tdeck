@@ -22,6 +22,7 @@ static constexpr const char* FIRMWARE_VERSION = SIGURDOS_VERSION;
 #else
 static constexpr const char* FIRMWARE_VERSION = "SigurdOS";
 #endif
+static constexpr uint8_t COMPANION_OUT_PATH_UNKNOWN = 0xFF;
 
 static void strzcpy(char* dest, const char* src, size_t dest_sz)
 {
@@ -35,6 +36,18 @@ static size_t boundedTextLen(const char* text, size_t max_len)
 {
     if (!text) return 0;
     return strnlen(text, max_len);
+}
+
+static bool pathByteLen(uint8_t path_len, size_t* out_len)
+{
+    if (out_len) *out_len = 0;
+    if (path_len == COMPANION_OUT_PATH_UNKNOWN) return true;
+    uint8_t hash_size = (path_len >> 6) + 1;
+    if (hash_size == 4) return false;
+    size_t n = (size_t)(path_len & 63) * (size_t)hash_size;
+    if (n > SIGURDOS_COMPANION_PATH_SIZE) return false;
+    if (out_len) *out_len = n;
+    return true;
 }
 
 } // namespace
@@ -280,6 +293,40 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
     return added;
 }
 
+bool CompanionBridge::enqueueChannelData(uint8_t channel_index,
+                                         int8_t snr_quarters,
+                                         uint8_t path_len,
+                                         uint16_t data_type,
+                                         const uint8_t* payload,
+                                         size_t payload_len)
+{
+    if (payload_len > SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) return false;
+    if (payload_len > 0 && !payload) return false;
+    if (data_type == 0 || !pathByteLen(path_len, nullptr)) return false;
+
+    int i = 0;
+    _out_frame[i++] = RESP_CODE_CHANNEL_DATA_RECV;
+    _out_frame[i++] = (uint8_t)snr_quarters;
+    _out_frame[i++] = 0;
+    _out_frame[i++] = 0;
+    _out_frame[i++] = channel_index;
+    _out_frame[i++] = path_len;
+    _out_frame[i++] = (uint8_t)(data_type & 0xFF);
+    _out_frame[i++] = (uint8_t)(data_type >> 8);
+    _out_frame[i++] = (uint8_t)payload_len;
+    if (payload_len > 0) {
+        std::memcpy(&_out_frame[i], payload, payload_len);
+        i += (int)payload_len;
+    }
+
+    bool added = addToOfflineQueue(_out_frame, (size_t)i);
+    if (added && isConnected()) {
+        uint8_t tickle = PUSH_CODE_MSG_WAITING;
+        _serial->writeFrame(&tickle, 1);
+    }
+    return added;
+}
+
 bool CompanionBridge::notifySendConfirmed(uint32_t ack, uint32_t trip_time_ms)
 {
     if (!_serial) return false;
@@ -427,6 +474,46 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
                                                             (const char*)&_cmd_frame[i]);
         if (result.ok) writeOKFrame();
         else writeErrFrame(ERR_CODE_NOT_FOUND);
+        return true;
+    }
+
+    if (cmd == CMD_SEND_CHANNEL_DATA) {
+        if (len < 5) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+
+        size_t i = 1;
+        uint8_t channel_idx = _cmd_frame[i++];
+        uint8_t path_len = _cmd_frame[i++];
+
+        size_t path_bytes = 0;
+        if (!pathByteLen(path_len, &path_bytes) || i + path_bytes + 2 > len) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+
+        const uint8_t* path = nullptr;
+        if (path_len != COMPANION_OUT_PATH_UNKNOWN) {
+            path = &_cmd_frame[i];
+            i += path_bytes;
+        }
+
+        uint16_t data_type = (uint16_t)_cmd_frame[i] | ((uint16_t)_cmd_frame[i + 1] << 8);
+        i += 2;
+        const uint8_t* payload = &_cmd_frame[i];
+        size_t payload_len = len - i;
+
+        if (data_type == 0 || payload_len > SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+
+        if (_host->sendChannelData(channel_idx, path, path_len, data_type, payload, payload_len)) {
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_NOT_FOUND);
+        }
         return true;
     }
 
