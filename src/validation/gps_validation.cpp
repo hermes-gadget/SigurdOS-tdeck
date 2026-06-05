@@ -7,6 +7,7 @@
 
 #include <Arduino.h>
 #include <FS.h>
+#include <Preferences.h>
 #include <SPIFFS.h>
 
 #include "hal/gps.h"
@@ -18,6 +19,26 @@ static bool spiffs_ready = false;
 static bool fix_recorded = false;
 
 static constexpr const char* GPS_LOG_PATH = "/gps_hw.txt";
+static constexpr const char* GPS_NVS_NS = "gpsval";
+static constexpr const char* GPS_NVS_MARKER = "gps-validation";
+
+static void mark_boot()
+{
+    Preferences prefs;
+    if (!prefs.begin(GPS_NVS_NS, false)) {
+        Serial.println("[gps-validation] nvs=0");
+        return;
+    }
+
+    uint32_t boot_count = prefs.getUInt("boot_count", 0);
+    if (boot_count < UINT32_MAX) boot_count++;
+    prefs.putUInt("boot_count", boot_count);
+    prefs.putString("marker", GPS_NVS_MARKER);
+    prefs.end();
+
+    Serial.printf("[gps-validation] nvs=1 boot_count=%lu\n",
+                  (unsigned long)boot_count);
+}
 
 static void append_log_line(const char* line)
 {
@@ -98,6 +119,7 @@ void setup()
                   (unsigned long)GPS_PRIMARY_BAUD_RATE,
                   (unsigned long)GPS_FALLBACK_BAUD_RATE);
 
+    mark_boot();
     init_log();
     sigurdos_gps_init();
     emit_status(true);

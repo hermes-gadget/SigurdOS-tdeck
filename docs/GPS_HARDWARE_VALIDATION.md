@@ -15,14 +15,16 @@ pio run -e SigurdOS_TDeck_gps_validation -t upload --upload-port COM8
 ```
 
 The harness links the same `src/hal/gps.cpp` implementation used by the full
-firmware. It emits one structured line per second over serial and also appends
-privacy-safe records to `/gps_hw.txt` in SPIFFS every five seconds and on the
-first fix. The SPIFFS copy is intended for COM8-only readback when the app-side
-USB CDC serial endpoint is not observable.
+firmware. It marks app startup in NVS namespace `gpsval`, emits one structured
+line per second over serial, and appends privacy-safe records to `/gps_hw.txt`
+in SPIFFS every five seconds and on the first fix. The NVS marker and SPIFFS
+copy are intended for COM8-only readback when the app-side USB CDC serial
+endpoint is not observable.
 
 ```text
 [gps-validation] SigurdOS T-Deck GPS validation firmware
 [gps-validation] uart rx=44 tx=43 primary=9600 fallback=38400
+[gps-validation] nvs=1 boot_count=1
 [gps-validation] spiffs=1 log=/gps_hw.txt
 @gps_hw|ms=1000|fix=0|qual=0|sv=0|baud=9600|chars=0|sent=0|valid=0|csfail=0|sw=0|loc=0
 ```
@@ -47,8 +49,18 @@ Exact coordinates are intentionally not emitted by default so PR logs do not
 publish the operator's physical location. To include coordinates for a private
 bench log, add `-D SIGURDOS_GPS_VALIDATION_COORDS=1` to the validation env.
 
-To retrieve the SPIFFS evidence log through the bootloader, read and unpack the
-SPIFFS partition from Arduino's `default_16MB.csv` layout:
+To verify that the validation app reached `setup()` through the bootloader, read
+the NVS partition from Arduino's `default_16MB.csv` layout and scan for the
+validation namespace/marker:
+
+```powershell
+New-Item -ItemType Directory -Force -Path .pio\gps_validation_readback | Out-Null
+python -m esptool --chip esp32s3 --port COM8 --baud 921600 read-flash 0x9000 0x5000 .pio\gps_validation_readback\nvs.bin
+python -c "from pathlib import Path; data=Path('.pio/gps_validation_readback/nvs.bin').read_bytes(); print(data.find(b'gpsval'), data.find(b'gps-validation'))"
+```
+
+Both offsets should be non-negative after the app starts. To retrieve the SPIFFS
+evidence log through the bootloader, read and unpack the SPIFFS partition:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path .pio\gps_validation_readback | Out-Null
@@ -62,6 +74,8 @@ Get-Content .pio\gps_validation_readback\unpacked\gps_hw.txt
 A hardware GPS pass requires all of the following:
 
 - Firmware uploads to the T-Deck over the approved hardware port.
+- The NVS readback contains `gpsval` and `gps-validation`, proving the app
+  reached validation `setup()`.
 - The validation harness banner is visible over serial, or `/gps_hw.txt` is
   present in a SPIFFS readback and starts with `[gps-validation] log-start`.
 - `chars`, `sent`, and `valid` increase in serial output or the persisted log
@@ -85,6 +99,8 @@ Results:
 | `pio run -e SigurdOS_TDeck_gps_validation -t upload --upload-port COM8` | Passed; all flashed segments hash-verified |
 | COM8 ROM serial visibility | Passed; ROM downloader banner is visible |
 | COM8 app serial visibility | Not proven; app banner and `@gps_hw` records were not visible |
+| COM8 NVS readback | Passed; NVS partition read succeeded over COM8 |
+| NVS boot marker | Not present after post-upload, bootloader `run`, no-stub `run`, DTR-low reset, and DTR-high reset windows |
 | COM8 SPIFFS readback | Passed; SPIFFS partition read and unpack succeeded over COM8 |
 | GPS validation app execution | Not proven; `/gps_hw.txt` was absent after post-upload, bootloader `run`, and explicit DTR/RTS app-reset windows |
 | GPS fix proof | Not proven because app serial output was not observable on COM8 |
@@ -106,10 +122,12 @@ Reset attempts kept to COM8:
 - esptool USB Serial/JTAG reset sequence
 - post-upload quiet run followed by SPIFFS readback
 - bootloader `run` quiet window followed by SPIFFS readback
+- bootloader `run` and no-stub `run` quiet windows followed by NVS readback
 - explicit DTR low / RTS app-reset pulse followed by SPIFFS readback
+- explicit DTR low and DTR high / RTS app-reset pulses followed by NVS readback
 
-None produced observable app serial output or a persisted `/gps_hw.txt` log on
-COM8 in this environment. The next validation attempt should either correct the
-COM8 reset/BOOT line state, physically reset the device while the validation
-firmware is flashed, or use the app-side USB CDC port after confirming it is
-allowed by the port safety policy.
+None produced observable app serial output, a validation NVS marker, or a
+persisted `/gps_hw.txt` log on COM8 in this environment. The next validation
+attempt should either correct the COM8 reset/BOOT line state, physically reset
+the device while the validation firmware is flashed, or use the app-side USB CDC
+port after confirming it is allowed by the port safety policy.
