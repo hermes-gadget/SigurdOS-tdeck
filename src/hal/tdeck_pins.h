@@ -27,11 +27,11 @@ static constexpr int SIGURDOS_GPIO_DISABLED = -1;
 static constexpr int SIGURDOS_ESP32S3_GPIO_MIN = 0;
 static constexpr int SIGURDOS_ESP32S3_GPIO_MAX = 48;
 
-static inline bool sigurdos_gpio_is_valid(int pin) {
+static constexpr bool sigurdos_gpio_is_valid(int pin) {
     return pin >= SIGURDOS_ESP32S3_GPIO_MIN && pin <= SIGURDOS_ESP32S3_GPIO_MAX;
 }
 
-static inline uint64_t sigurdos_gpio_mask(int pin) {
+static constexpr uint64_t sigurdos_gpio_mask(int pin) {
     return sigurdos_gpio_is_valid(pin) ? (uint64_t{1} << pin) : 0ULL;
 }
 
@@ -45,6 +45,9 @@ static inline uint64_t sigurdos_gpio_mask(int pin) {
 #define PIN_LORA_SCLK    40
 #define PIN_LORA_MISO    38
 #define PIN_LORA_MOSI    41
+
+static constexpr uint64_t SIGURDOS_LORA_DIO1_WAKE_MASK =
+    sigurdos_gpio_mask(PIN_LORA_DIO1);
 
 // ════════════════════════════════════════════════════════
 // Display ST7789 320x240 (shares SPI with LoRa)

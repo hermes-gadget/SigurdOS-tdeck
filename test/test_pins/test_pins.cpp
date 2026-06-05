@@ -76,6 +76,12 @@ TEST_F(PinsTest, GpioMaskUsesSixtyFourBitShiftForHighPins) {
     EXPECT_NE(dio1_mask, 0ULL);
 }
 
+TEST_F(PinsTest, LoraDio1WakeMaskUsesGpioHelper) {
+    EXPECT_EQ(SIGURDOS_LORA_DIO1_WAKE_MASK, sigurdos_gpio_mask(PIN_LORA_DIO1));
+    EXPECT_EQ(SIGURDOS_LORA_DIO1_WAKE_MASK, (1ULL << PIN_LORA_DIO1));
+    EXPECT_NE(SIGURDOS_LORA_DIO1_WAKE_MASK, 0ULL);
+}
+
 TEST_F(PinsTest, GpioMaskRejectsInvalidPins) {
     EXPECT_EQ(sigurdos_gpio_mask(SIGURDOS_GPIO_DISABLED), 0ULL);
     EXPECT_EQ(sigurdos_gpio_mask(SIGURDOS_ESP32S3_GPIO_MAX + 1), 0ULL);

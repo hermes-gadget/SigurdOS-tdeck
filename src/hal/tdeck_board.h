@@ -74,7 +74,7 @@ public:
         esp_reset_reason_t reason = esp_reset_reason();
         if (reason == ESP_RST_DEEPSLEEP) {
             uint64_t wakeup_source = esp_sleep_get_ext1_wakeup_status();
-            if (wakeup_source & (1ULL << PIN_LORA_DIO1)) {
+            if (wakeup_source & SIGURDOS_LORA_DIO1_WAKE_MASK) {
                 _startup_reason = BD_STARTUP_RX_PACKET;
             }
             rtc_gpio_hold_dis((gpio_num_t)PIN_LORA_NSS);
@@ -133,7 +133,7 @@ public:
         rtc_gpio_pulldown_en((gpio_num_t)PIN_LORA_DIO1);
         rtc_gpio_hold_en((gpio_num_t)PIN_LORA_NSS);
 
-        esp_sleep_enable_ext1_wakeup((1LL << PIN_LORA_DIO1), ESP_EXT1_WAKEUP_ANY_HIGH);
+        esp_sleep_enable_ext1_wakeup(SIGURDOS_LORA_DIO1_WAKE_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
         if (secs > 0) {
             esp_sleep_enable_timer_wakeup(secs * 1000000ULL);
         }
