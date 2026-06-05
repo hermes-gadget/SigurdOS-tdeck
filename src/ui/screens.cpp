@@ -1206,8 +1206,8 @@ void contact_detail_screen_show(const char* contact_name)
     lv_obj_t* scr = make_screen_full("Contact");
 
     // Look up the contact via exportContactsFull
-    sigurdos::mesh::ContactInfo contacts[64];
-    int total = sigurdos::mesh::exportContactsFull(contacts, 64);
+    sigurdos::mesh::ContactInfo* contacts = new sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    int total = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
     const sigurdos::mesh::ContactInfo* target = nullptr;
     for (int i = 0; i < total; i++) {
         if (strcmp(contacts[i].name, contact_name) == 0) {
@@ -1216,6 +1216,7 @@ void contact_detail_screen_show(const char* contact_name)
         }
     }
     if (!target) {
+        delete[] contacts;
         lv_obj_t* err = lv_label_create(scr);
         lv_label_set_text(err, "Contact not found");
         lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
@@ -1889,6 +1890,7 @@ void contact_detail_screen_show(const char* contact_name)
         }
     }
 
+    delete[] contacts;
     show_screen(scr);
 }
 // ════════════════════════════════════════════════════════
@@ -2332,8 +2334,8 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
     if (!contact_name || !contact_name[0]) return;
 
     // Look up the contact first (need type for screen title)
-    sigurdos::mesh::ContactInfo contacts[64];
-    int total = sigurdos::mesh::exportContactsFull(contacts, 64);
+    sigurdos::mesh::ContactInfo* contacts = new sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    int total = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
     const sigurdos::mesh::ContactInfo* target = nullptr;
     for (int i = 0; i < total; i++) {
         if (strcmp(contacts[i].name, contact_name) == 0) {
@@ -2355,6 +2357,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
     lv_obj_t* scr = make_screen_full(screen_title);
 
     if (!target) {
+        delete[] contacts;
         lv_obj_t* err = lv_label_create(scr);
         lv_label_set_text(err, "Contact not found");
         lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
@@ -2828,6 +2831,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         }
     }
 
+    delete[] contacts;
     show_screen(scr);
 }
 
@@ -3030,9 +3034,10 @@ bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
 // Helper: render map tiles then overlay contact markers
 static void render_map_with_contacts() {
     sigurdos_map_render();
-    sigurdos::mesh::ContactInfo contacts[64];
-    int n = sigurdos::mesh::exportContactsFull(contacts, 64);
+    sigurdos::mesh::ContactInfo* contacts = new sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    int n = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
     sigurdos_map_contact_render(contacts, n);
+    delete[] contacts;
 }
 
 void map_screen_show()

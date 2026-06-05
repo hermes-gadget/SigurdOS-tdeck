@@ -481,7 +481,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         int i = 0;
         _out_frame[i++] = RESP_CODE_DEVICE_INFO;
         _out_frame[i++] = SIGURDOS_COMPANION_FIRMWARE_VER_CODE;
-        _out_frame[i++] = 32;  // MAX_CONTACTS / 2 with current MAX_CONTACTS=64
+        _out_frame[i++] = MAX_CONTACTS / 2;
         _out_frame[i++] = 8;   // MAX_GROUP_CHANNELS
         uint32_t pin = _host->blePin();
         std::memcpy(&_out_frame[i], &pin, 4);
