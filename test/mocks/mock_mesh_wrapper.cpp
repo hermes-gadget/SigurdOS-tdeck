@@ -199,10 +199,18 @@ int listRegions(SigurdRegion* out, int max) {
 
 bool addRegion(const char* name, const char* key_b64_or_null) {
     (void)key_b64_or_null;
-    if (!name || !name[0] || mock_region_count >= SIGURD_MAX_REGIONS) return false;
+    char normalized_name[sizeof(SigurdRegion::name)] = {};
+    if (!detail::normalizeRegionName(name, normalized_name, sizeof(normalized_name))) {
+        return false;
+    }
+    if (mock_region_count >= SIGURD_MAX_REGIONS) return false;
+    if (detail::regionListContainsName(mock_regions, mock_region_count, normalized_name)) {
+        return false;
+    }
+
     SigurdRegion r;
     memset(&r, 0, sizeof(r));
-    strncpy(r.name, name, sizeof(r.name) - 1);
+    strncpy(r.name, normalized_name, sizeof(r.name) - 1);
     memcpy(&mock_regions[mock_region_count++], &r, sizeof(SigurdRegion));
     return true;
 }

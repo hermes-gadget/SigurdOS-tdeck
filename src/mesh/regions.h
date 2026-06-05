@@ -8,6 +8,7 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 
 namespace sigurdos {
 namespace mesh {
@@ -45,6 +46,33 @@ inline int regionFileLoadCount(uint32_t stored_count, size_t file_size, int max)
 
     const int stored_as_int = static_cast<int>(stored_count);
     return stored_as_int < max ? stored_as_int : max;
+}
+
+inline bool normalizeRegionName(const char* name, char* out_name, size_t out_size) {
+    if (!name || !out_name || out_size == 0) return false;
+    out_name[0] = '\0';
+    if (name[0] == '\0') return false;
+
+    const bool has_prefix = name[0] == '#' || name[0] == '$';
+    const size_t source_len = std::strlen(name);
+    const size_t normalized_len = source_len + (has_prefix ? 0u : 1u);
+    if (normalized_len >= out_size) return false;
+
+    if (!has_prefix) {
+        out_name[0] = '#';
+        std::memcpy(out_name + 1, name, source_len + 1);
+    } else {
+        std::memcpy(out_name, name, source_len + 1);
+    }
+    return true;
+}
+
+inline bool regionListContainsName(const SigurdRegion* list, int count, const char* name) {
+    if (!list || !name || count <= 0) return false;
+    for (int i = 0; i < count; i++) {
+        if (std::strcmp(list[i].name, name) == 0) return true;
+    }
+    return false;
 }
 
 } // namespace detail

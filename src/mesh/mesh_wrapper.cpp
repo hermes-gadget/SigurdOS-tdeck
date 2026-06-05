@@ -1939,19 +1939,23 @@ int listRegions(SigurdRegion* out, int max) {
 }
 
 bool addRegion(const char* name, const char* key_b64_or_null) {
-    if (!name || !name[0]) return false;
+    char normalized_name[sizeof(SigurdRegion::name)] = {};
+    if (!detail::normalizeRegionName(name, normalized_name, sizeof(normalized_name))) {
+        return false;
+    }
 
     SigurdRegion list[SIGURD_MAX_REGIONS];
     int n = listRegions(list, SIGURD_MAX_REGIONS);
+    if (detail::regionListContainsName(list, n, normalized_name)) return false;
     if (n >= SIGURD_MAX_REGIONS) return false;
 
     SigurdRegion r{};
-    strncpy(r.name, name, sizeof(r.name) - 1);
+    strncpy(r.name, normalized_name, sizeof(r.name) - 1);
     r.name[sizeof(r.name) - 1] = '\0';
 
-    if (name[0] == '#') {
-        deriveRegionKey(name, r.key);
-    } else if (name[0] == '$' && key_b64_or_null) {
+    if (r.name[0] == '#') {
+        if (!deriveRegionKey(r.name, r.key)) return false;
+    } else if (r.name[0] == '$' && key_b64_or_null) {
         // Decode base64 key (16 bytes → 24 base64 chars)
         size_t len = strlen(key_b64_or_null);
         if (len < 24) return false;
@@ -1960,15 +1964,8 @@ bool addRegion(const char* name, const char* key_b64_or_null) {
         int ret = mbedtls_base64_decode(r.key, sizeof(r.key), &olen,
                                          (const uint8_t*)key_b64_or_null, len);
         if (ret != 0 || olen != 16) return false;
-    } else if (name[0] == '$') {
+    } else if (r.name[0] == '$') {
         return false;  // $ regions require a key
-    } else {
-        // Auto-prepend # for bare names like "eng-nw" → "#eng-nw"
-        char prefixed[sizeof(r.name)];
-        snprintf(prefixed, sizeof(prefixed), "#%s", name);
-        strncpy(r.name, prefixed, sizeof(r.name) - 1);
-        r.name[sizeof(r.name) - 1] = '\0';
-        deriveRegionKey(r.name, r.key);
     }
 
     // Append

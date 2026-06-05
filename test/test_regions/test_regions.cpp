@@ -46,6 +46,12 @@ static const uint8_t GOLDEN_DERIVE_KEY_TEST[16] = {
     0x59, 0x1d, 0x96, 0xa2, 0xb8, 0x48, 0xb7, 0x3f
 };
 
+static void removeAllRegionEntriesNamed(const char* name) {
+    for (int i = 0; i <= SIGURD_MAX_REGIONS; i++) {
+        if (!sigurdos::mesh::removeRegion(name)) return;
+    }
+}
+
 // ── Constants ───────────────────────────────────────────
 
 TEST(RegionsTest, MaxRegionsIs8) {
@@ -85,6 +91,51 @@ TEST(RegionsTest, SigurdRegionNameFitsTerminator) {
 TEST(RegionsTest, SigurdRegionKeySize) {
     // key must be exactly 16 bytes
     EXPECT_EQ(sizeof(sigurdos::mesh::SigurdRegion::key), 16u);
+}
+
+TEST(RegionsTest, NormalizeRegionNameAutoPrefixesBarePublicNames) {
+    char out[sizeof(sigurdos::mesh::SigurdRegion::name)] = {};
+
+    ASSERT_TRUE(sigurdos::mesh::detail::normalizeRegionName("ops", out, sizeof(out)));
+    EXPECT_STREQ(out, "#ops");
+
+    ASSERT_TRUE(sigurdos::mesh::detail::normalizeRegionName("#ops", out, sizeof(out)));
+    EXPECT_STREQ(out, "#ops");
+
+    ASSERT_TRUE(sigurdos::mesh::detail::normalizeRegionName("$crew", out, sizeof(out)));
+    EXPECT_STREQ(out, "$crew");
+}
+
+TEST(RegionsTest, NormalizeRegionNameRejectsNamesThatWouldTruncate) {
+    char out[sizeof(sigurdos::mesh::SigurdRegion::name)] = {};
+
+    const char* bare29 = "abcdefghijklmnopqrstuvwxyz123";
+    ASSERT_EQ(strlen(bare29), 29u);
+    ASSERT_TRUE(sigurdos::mesh::detail::normalizeRegionName(bare29, out, sizeof(out)));
+    EXPECT_STREQ(out, "#abcdefghijklmnopqrstuvwxyz123");
+
+    const char* bare30 = "abcdefghijklmnopqrstuvwxyz1234";
+    ASSERT_EQ(strlen(bare30), 30u);
+    EXPECT_FALSE(sigurdos::mesh::detail::normalizeRegionName(bare30, out, sizeof(out)));
+    EXPECT_EQ(out[0], '\0');
+
+    const char* prefixed31 = "#abcdefghijklmnopqrstuvwxyz1234";
+    ASSERT_EQ(strlen(prefixed31), 31u);
+    EXPECT_FALSE(sigurdos::mesh::detail::normalizeRegionName(prefixed31, out, sizeof(out)));
+    EXPECT_EQ(out[0], '\0');
+}
+
+TEST(RegionsTest, RegionListContainsNameMatchesExactNormalizedName) {
+    sigurdos::mesh::SigurdRegion list[2];
+    memset(&list[0], 0, sizeof(list[0]));
+    memset(&list[1], 0, sizeof(list[1]));
+    strncpy(list[0].name, "#ops", sizeof(list[0].name) - 1);
+    strncpy(list[1].name, "$crew", sizeof(list[1].name) - 1);
+
+    EXPECT_TRUE(sigurdos::mesh::detail::regionListContainsName(list, 2, "#ops"));
+    EXPECT_TRUE(sigurdos::mesh::detail::regionListContainsName(list, 2, "$crew"));
+    EXPECT_FALSE(sigurdos::mesh::detail::regionListContainsName(list, 2, "ops"));
+    EXPECT_FALSE(sigurdos::mesh::detail::regionListContainsName(list, 1, "$crew"));
 }
 
 // ── SPIFFS binary format (manual construction) ─────────
@@ -301,6 +352,32 @@ TEST(RegionsTest, NullTerminatorPreservedInName) {
 
     EXPECT_STREQ(r.name, "#nyc");
     EXPECT_EQ(r.name[30], '\0');
+}
+
+TEST(RegionsTest, AddRegionRejectsDuplicateNormalizedNames) {
+    const char* normalized = "#codexdup";
+    removeAllRegionEntriesNamed(normalized);
+
+    ASSERT_TRUE(sigurdos::mesh::addRegion("codexdup", nullptr));
+    EXPECT_FALSE(sigurdos::mesh::addRegion("#codexdup", nullptr));
+
+    sigurdos::mesh::SigurdRegion list[SIGURD_MAX_REGIONS];
+    int n = sigurdos::mesh::listRegions(list, SIGURD_MAX_REGIONS);
+    int matches = 0;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(list[i].name, normalized) == 0) matches++;
+    }
+    EXPECT_EQ(matches, 1);
+
+    removeAllRegionEntriesNamed(normalized);
+}
+
+TEST(RegionsTest, AddRegionRejectsNamesThatWouldTruncate) {
+    const char* bare30 = "abcdefghijklmnopqrstuvwxyz1234";
+    const char* prefixed31 = "#abcdefghijklmnopqrstuvwxyz1234";
+
+    EXPECT_FALSE(sigurdos::mesh::addRegion(bare30, nullptr));
+    EXPECT_FALSE(sigurdos::mesh::addRegion(prefixed31, nullptr));
 }
 
 } // namespace
