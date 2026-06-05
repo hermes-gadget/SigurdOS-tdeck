@@ -183,6 +183,43 @@ TEST_F(CompanionProtocolTest, AppStartSeedsPersistedMessagesForSync) {
     EXPECT_EQ(serial.writes[2][0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
 }
 
+TEST_F(CompanionProtocolTest, AppStartDoesNotEchoSelfSentMessages) {
+    // A message the device sent itself (is_self) must never be mirrored back to
+    // the app: the app already has the ones it sent, and the protocol has no
+    // device-originated-send frame, so an echo arrives as a bogus *incoming*
+    // message. Regression test for the channel self-echo bug.
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "Public", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "SigurdOS T-Deck", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "my own channel message", sizeof(msg.text) - 1);
+    msg.timestamp = 88;
+    msg.is_channel = true;
+    msg.is_self = true;
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+
+    uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    // Only SELF_INFO — no PUSH_CODE_MSG_WAITING tickle for a self message.
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_SELF_INFO);
+
+    uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 2u);
+    EXPECT_EQ(serial.writes[1][0], sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
+}
+
+TEST_F(CompanionProtocolTest, EnqueueRejectsSelfSentMessage) {
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "SigurdOS T-Deck", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "outgoing dm", sizeof(msg.text) - 1);
+    msg.timestamp = 99;
+    msg.is_self = true;
+    EXPECT_FALSE(bridge.enqueueMessage(msg));
+    EXPECT_EQ(serial.writes.size(), 0u);
+}
+
 TEST_F(CompanionProtocolTest, EmptySyncReturnsNoMoreMessages) {
     uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));

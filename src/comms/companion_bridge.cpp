@@ -246,6 +246,12 @@ void CompanionBridge::seedOfflineQueueFromStore(uint32_t since)
     bool added_any = false;
     for (int idx = 0; idx < n; idx++) {
         if (since != 0 && recent[idx].timestamp <= since) continue;
+        // The offline queue is a mirror of *incoming* messages only. Never feed
+        // the app a self/outgoing message: it already has the ones it sent (it
+        // got RESP_CODE_SENT), and the companion protocol has no
+        // device-originated-send frame — echoing one back arrives as a bogus
+        // *incoming* message (mis-attributed sender, duplicate bubble).
+        if (recent[idx].is_self) continue;
         uint8_t frame[MAX_FRAME_SIZE];
         size_t len = 0;
         if (buildMessageFrame(recent[idx], frame, &len) && addToOfflineQueue(frame, len)) {
@@ -261,6 +267,8 @@ void CompanionBridge::seedOfflineQueueFromStore(uint32_t since)
 
 bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
 {
+    // Only incoming messages are mirrored to the app (see seedOfflineQueueFromStore).
+    if (msg.is_self) return false;
     uint8_t frame[MAX_FRAME_SIZE];
     size_t len = 0;
     if (!buildMessageFrame(msg, frame, &len)) return false;
