@@ -51,6 +51,7 @@ class NvsSummary:
     path: Path
     namespaces: dict[str, int]
     keys_by_namespace: dict[int, set[str]]
+    values_by_namespace: dict[int, dict[str, int]]
     raw: bytes
 
     def namespace_index(self, namespace: str) -> int | None:
@@ -61,6 +62,12 @@ class NvsSummary:
         if namespace_index is None:
             return False
         return key in self.keys_by_namespace.get(namespace_index, set())
+
+    def value(self, namespace: str, key: str) -> int | None:
+        namespace_index = self.namespace_index(namespace)
+        if namespace_index is None:
+            return None
+        return self.values_by_namespace.get(namespace_index, {}).get(key)
 
     def has_marker_value(self, marker_value: str) -> bool:
         return marker_value.encode("utf-8") in self.raw
@@ -128,10 +135,33 @@ def parse_entries(raw: bytes) -> list[NvsEntry]:
     return entries
 
 
+def decode_scalar_value(entry: NvsEntry) -> int | None:
+    sizes = {
+        0x01: 1,  # u8
+        0x02: 2,  # u16
+        0x04: 4,  # u32
+        0x08: 8,  # u64
+        0x11: 1,  # i8
+        0x12: 2,  # i16
+        0x14: 4,  # i32
+        0x18: 8,  # i64
+    }
+    signed_types = {0x11, 0x12, 0x14, 0x18}
+    size = sizes.get(entry.entry_type)
+    if size is None:
+        return None
+    return int.from_bytes(
+        entry.data[:size],
+        byteorder="little",
+        signed=entry.entry_type in signed_types,
+    )
+
+
 def summarize(path: Path) -> NvsSummary:
     raw = path.read_bytes()
     namespaces: dict[str, int] = {}
     keys_by_namespace: dict[int, set[str]] = {}
+    values_by_namespace: dict[int, dict[str, int]] = {}
 
     for entry in parse_entries(raw):
         if entry.namespace_index == 0 and entry.entry_type == NVS_TYPE_U8:
@@ -141,8 +171,17 @@ def summarize(path: Path) -> NvsSummary:
             continue
 
         keys_by_namespace.setdefault(entry.namespace_index, set()).add(entry.key)
+        value = decode_scalar_value(entry)
+        if value is not None:
+            values_by_namespace.setdefault(entry.namespace_index, {})[entry.key] = value
 
-    return NvsSummary(path=path, namespaces=namespaces, keys_by_namespace=keys_by_namespace, raw=raw)
+    return NvsSummary(
+        path=path,
+        namespaces=namespaces,
+        keys_by_namespace=keys_by_namespace,
+        values_by_namespace=values_by_namespace,
+        raw=raw,
+    )
 
 
 def presence(value: bool) -> str:
@@ -153,13 +192,16 @@ def print_summary(summary: NvsSummary, args: argparse.Namespace) -> bool:
     namespace_present = summary.namespace_index(args.namespace) is not None
     key_results = {key: summary.has_key(args.namespace, key) for key in args.key}
     marker_present = summary.has_marker_value(args.marker_value)
+    boot_count = summary.value(args.namespace, "boot_count")
 
     key_text = " ".join(f"{key}={presence(found)}" for key, found in key_results.items())
+    boot_count_text = f"boot_count_value={boot_count} " if boot_count is not None else ""
     print(
         f"{summary.path}: "
         f"namespace {args.namespace}={presence(namespace_present)} "
         f"{key_text} "
         f"marker_value {args.marker_value}={presence(marker_present)} "
+        f"{boot_count_text}"
         f"known_namespace sigurdos={presence(summary.namespace_index('sigurdos') is not None)}",
     )
 

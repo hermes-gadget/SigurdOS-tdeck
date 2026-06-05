@@ -37,7 +37,7 @@ Fields:
 | `fix` | `1` once the parser has a valid GPS fix |
 | `qual` | GGA fix quality (`0` none, `1` GPS, `2` DGPS, `4` RTK) |
 | `sv` | Satellites reported by GGA |
-| `baud` | Active UART baud, expected `9600` once valid NMEA is seen |
+| `baud` | Active UART baud; record whether valid NMEA is seen at the primary `9600` baud or fallback `38400` baud |
 | `chars` | GPS UART characters processed |
 | `sent` | Complete NMEA sentences received |
 | `valid` | Checksum-valid NMEA sentences |
@@ -61,8 +61,19 @@ python scripts\validation\nvs_boot_marker_check.py .pio\gps_validation_readback\
 
 The helper decodes NVS entry names and also scans for the marker string. It
 exits non-zero until the `gpsval` namespace, `boot_count` key, `marker` key, and
-`gps-validation` marker value are present. To retrieve the SPIFFS evidence log
-through the bootloader, read and unpack the SPIFFS partition:
+`gps-validation` marker value are present. When available, it also prints
+`boot_count_value=<n>` so reset attempts can be checked quickly.
+
+If the device is already in the ROM bootloader, the watchdog reset path starts
+the validation app without relying on the COM8 RTS/DTR boot-strapping state:
+
+```powershell
+python -m esptool --chip esp32s3 --port COM8 --baud 115200 --after watchdog-reset read-mac
+```
+
+After this command returns, leave COM8 closed for the intended GPS acquisition
+window. To retrieve the SPIFFS evidence log through the bootloader, read and
+unpack the SPIFFS partition:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path .pio\gps_validation_readback | Out-Null
@@ -82,7 +93,8 @@ A hardware GPS pass requires all of the following:
   present in a SPIFFS readback and starts with `[gps-validation] log-start`.
 - `chars`, `sent`, and `valid` increase in serial output or the persisted log
   while the device has sky view.
-- The active baud settles at `9600` after valid NMEA is received.
+- The active baud settles at either the primary `9600` baud or fallback `38400`
+  baud after valid NMEA is received, and the observed baud is recorded.
 - A final record shows `fix=1`, `qual>0`, `sv>0`, and `loc=1`.
 - Any published log redacts exact latitude and longitude.
 
@@ -102,10 +114,12 @@ Results:
 | COM8 ROM serial visibility | Passed; ROM downloader banner is visible |
 | COM8 app serial visibility | Not proven; app banner and `@gps_hw` records were not visible |
 | COM8 NVS readback | Passed; NVS partition read succeeded over COM8 |
-| NVS boot marker | Not present after post-upload, bootloader `run`, no-stub `run`, DTR-low reset, and DTR-high reset windows; `scripts/validation/nvs_boot_marker_check.py` parsed the existing `sigurdos` namespace but found no `gpsval`, `boot_count`, `marker`, or `gps-validation` entries |
+| Early NVS boot marker attempts | Not present after post-upload, bootloader `run`, no-stub `run`, DTR-low reset, and DTR-high reset windows; `scripts/validation/nvs_boot_marker_check.py` parsed the existing `sigurdos` namespace but found no `gpsval`, `boot_count`, `marker`, or `gps-validation` entries |
+| COM8 watchdog reset app start | Passed; `python -m esptool --chip esp32s3 --port COM8 --baud 115200 --after watchdog-reset read-mac` started the app and advanced `boot_count_value` from `2` to `3`, then `4` on the 10-minute run |
 | COM8 SPIFFS readback | Passed; SPIFFS partition read and unpack succeeded over COM8 |
-| GPS validation app execution | Not proven; `/gps_hw.txt` was absent after post-upload, bootloader `run`, and explicit DTR/RTS app-reset windows |
-| GPS fix proof | Not proven because app serial output was not observable on COM8 |
+| GPS validation app execution | Passed through NVS/SPIFFS evidence; `/gps_hw.txt` starts with `[gps-validation] log-start` after watchdog reset |
+| GPS UART/NMEA hardware path | Passed; 10-minute persisted log reached `chars=294169`, `sent=8286`, `valid=8286`, `csfail=0`, `baud=38400` |
+| GPS fix proof | Not yet proven; after 615.6 seconds the final persisted record still showed `fix=0`, `qual=0`, `sv=0`, and `loc=0` |
 
 Observed COM8 ROM output after opening the port:
 
@@ -127,10 +141,11 @@ Reset attempts kept to COM8:
 - bootloader `run` and no-stub `run` quiet windows followed by NVS readback
 - explicit DTR low / RTS app-reset pulse followed by SPIFFS readback
 - explicit DTR low and DTR high / RTS app-reset pulses followed by NVS readback
+- watchdog reset from ROM bootloader followed by NVS and SPIFFS readback
 
-None produced observable app serial output, a validation NVS marker, or a
-persisted `/gps_hw.txt` log on COM8 in this environment. The NVS helper output
-for the retained readbacks was:
+The first reset group produced no observable app serial output, validation NVS
+marker, or persisted `/gps_hw.txt` log on COM8 in this environment. The NVS
+helper output for the retained early readbacks was:
 
 ```text
 .pio\gps_validation_readback\nvs-before.bin: namespace gpsval=absent boot_count=absent marker=absent marker_value gps-validation=absent known_namespace sigurdos=present
@@ -139,7 +154,25 @@ for the retained readbacks was:
 .pio\gps_validation_readback\nvs-after-dtr1-reset.bin: namespace gpsval=absent boot_count=absent marker=absent marker_value gps-validation=absent known_namespace sigurdos=present
 ```
 
-The next validation attempt should either correct the COM8 reset/BOOT line
-state, physically reset the device while the validation firmware is flashed, or
-use the app-side USB CDC port after confirming it is allowed by the port safety
-policy.
+The watchdog reset path did start the validation app:
+
+```text
+.pio\gps_validation_readback\nvs-after-watchdog-reset.bin: namespace gpsval=present boot_count=present marker=present marker_value gps-validation=present boot_count_value=3 known_namespace sigurdos=present
+.pio\gps_validation_readback\nvs-watchdog-10min.bin: namespace gpsval=present boot_count=present marker=present marker_value gps-validation=present boot_count_value=4 known_namespace sigurdos=present
+```
+
+The 10-minute SPIFFS readback produced `/gps_hw.txt` with continuous valid NMEA
+traffic at fallback baud and no checksum failures:
+
+```text
+@gps_hw|ms=595588|fix=0|qual=0|sv=0|baud=38400|chars=284249|sent=8007|valid=8007|csfail=0|sw=1|loc=0
+@gps_hw|ms=600588|fix=0|qual=0|sv=0|baud=38400|chars=286582|sent=8075|valid=8075|csfail=0|sw=1|loc=0
+@gps_hw|ms=605588|fix=0|qual=0|sv=0|baud=38400|chars=289043|sent=8145|valid=8145|csfail=0|sw=1|loc=0
+@gps_hw|ms=610588|fix=0|qual=0|sv=0|baud=38400|chars=291628|sent=8216|valid=8216|csfail=0|sw=1|loc=0
+@gps_hw|ms=615588|fix=0|qual=0|sv=0|baud=38400|chars=294169|sent=8286|valid=8286|csfail=0|sw=1|loc=0
+```
+
+This proves the T-Deck GPS UART and NMEA parser path on COM8 using the approved
+hardware port. A final GPS lock is still required: continue with the watchdog
+reset flow, longer sky-view runtime, and another SPIFFS readback until a final
+record shows `fix=1`, `qual>0`, `sv>0`, and `loc=1`.
