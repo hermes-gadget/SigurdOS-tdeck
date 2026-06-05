@@ -600,6 +600,34 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
+    if (cmd == CMD_SET_TUNING_PARAMS) {
+        if (len < 9) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        uint32_t rx_delay_base_x1000 = 0;
+        uint32_t tx_delay_factor_x1000 = 0;
+        std::memcpy(&rx_delay_base_x1000, &_cmd_frame[1], 4);
+        std::memcpy(&tx_delay_factor_x1000, &_cmd_frame[5], 4);
+        if (_host->setTuningParams(rx_delay_base_x1000, tx_delay_factor_x1000)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_GET_TUNING_PARAMS) {
+        uint32_t rx_delay_base_x1000 = 0;
+        uint32_t tx_delay_factor_x1000 = 0;
+        _host->tuningParams(rx_delay_base_x1000, tx_delay_factor_x1000);
+        int i = 0;
+        _out_frame[i++] = RESP_CODE_TUNING_PARAMS;
+        std::memcpy(&_out_frame[i], &rx_delay_base_x1000, 4);
+        i += 4;
+        std::memcpy(&_out_frame[i], &tx_delay_factor_x1000, 4);
+        i += 4;
+        _serial->writeFrame(_out_frame, i);
+        return true;
+    }
+
     if (cmd == CMD_SEND_SELF_ADVERT) {
         bool flood = len >= 2 && _cmd_frame[1] == 1;
         if (_host->sendAdvert(flood)) writeOKFrame();

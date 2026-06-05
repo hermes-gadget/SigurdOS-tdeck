@@ -31,12 +31,14 @@ enum CompanionCommand : uint8_t {
     CMD_SET_RADIO_PARAMS = 11,
     CMD_SET_RADIO_TX_POWER = 12,
     CMD_SET_ADVERT_LATLON = 14,
+    CMD_SET_TUNING_PARAMS = 21,
     CMD_DEVICE_QUERY = 22,
     CMD_EXPORT_PRIVATE_KEY = 23,
     CMD_IMPORT_PRIVATE_KEY = 24,
     CMD_GET_CHANNEL = 31,
     CMD_SET_CHANNEL = 32,
     CMD_SET_DEVICE_PIN = 37,
+    CMD_GET_TUNING_PARAMS = 43,
     CMD_GET_BATT_AND_STORAGE = 20,
     CMD_SEND_CHANNEL_DATA = 62,
 };
@@ -60,6 +62,7 @@ enum CompanionResponse : uint8_t {
     RESP_CODE_CONTACT_MSG_RECV_V3 = 16,
     RESP_CODE_CHANNEL_MSG_RECV_V3 = 17,
     RESP_CODE_CHANNEL_INFO = 18,
+    RESP_CODE_TUNING_PARAMS = 23,
     RESP_CODE_CHANNEL_DATA_RECV = 27,
 };
 
@@ -177,6 +180,10 @@ public:
                                 uint8_t cr,
                                 uint8_t client_repeat) = 0;
     virtual bool setRadioTxPower(int8_t tx_power_dbm) = 0;
+    virtual void tuningParams(uint32_t& rx_delay_base_x1000,
+                              uint32_t& tx_delay_factor_x1000) const = 0;
+    virtual bool setTuningParams(uint32_t rx_delay_base_x1000,
+                                 uint32_t tx_delay_factor_x1000) = 0;
     virtual bool setBlePin(uint32_t pin) = 0;
     virtual bool exportPrivateKey(uint8_t* out64) const = 0;
     virtual bool importPrivateKey(const uint8_t* key64) = 0;

@@ -226,3 +226,56 @@ Interpretation:
   radio-command execution remains covered by native protocol tests plus BLE
   boot/advertising hardware proof. A phone pairing run is still required to
   close the connection/auth/RX/TX criteria above.
+
+## 2026-06-05 COM8 Tuning Command Follow-up
+
+Follow-up work added the official companion tuning command pair:
+
+- `CMD_SET_TUNING_PARAMS` (`21`) accepts two little-endian uint32 values in
+  thousandths, matching the companion-radio payload shape.
+- `CMD_GET_TUNING_PARAMS` (`43`) returns `RESP_CODE_TUNING_PARAMS` (`23`) plus
+  the same two little-endian uint32 values.
+- The first field maps to the existing T-Deck `rx_delay_base` preference with
+  the local UI-supported `0.0` to `20.0` range.
+- The second field maps to the existing T-Deck `tx_delay_factor` preference
+  with the local UI-supported `0.0` to `2.0` range. The separate local
+  `direct_tx_delay_factor` setting is intentionally left unchanged because the
+  official two-field companion command has no direct-TX field.
+
+Build and unit-test evidence after the tuning command change:
+
+- `pio test -e native_test -f test_companion_protocol`: passed, 32/32.
+- `pio test -e native_test -f test_prefs_defaults`: passed, 5/5.
+- `pio run -e SigurdOS_TDeck_ble`: passed; RAM 39.7%, flash 38.4%.
+- `pio run -e SigurdOS_TDeck_ble_validation`: passed; RAM 39.7%, flash 38.4%.
+
+Hardware evidence after the tuning command change:
+
+- Uploaded `SigurdOS_TDeck_ble_validation` to the T-Deck on `COM8`.
+- esptool identified the board as ESP32-S3 rev v0.2, MAC
+  `cc:8d:a2:0d:14:28`; every uploaded range reported
+  `Hash of data verified`.
+- After reset, SPIFFS was read back from `COM8` at offset `0xc90000`, size
+  `0x360000`, and unpacked successfully.
+- `/ble_hw.txt` was present with 15 validation records over a 74.1 s runtime
+  window.
+- The first record at 4040 ms showed:
+
+```text
+@ble_hw|ms=4040|begun=1|en=1|conn=0|adv=1|authok=0|authfail=0|connect=0|disconnect=0|mtu=0|rxw=0|rxd=0|rx=0|tx=0|txd=0|lrx=0|ltx=0
+```
+
+- The final record at 74060 ms still showed `begun=1`, `en=1`, `conn=0`,
+  `adv=1`, `authfail=0`, `rxd=0`, and `txd=0`.
+
+Interpretation:
+
+- The updated BLE validation firmware still boots, enables the MeshCore BLE
+  transport, and reaches the expected advertising state on real T-Deck
+  hardware.
+- The native protocol tests cover the new tuning command payload parsing,
+  response encoding, dispatch, and illegal-argument behavior.
+- No phone was paired during this follow-up bench run, so app-authenticated
+  tuning-command execution remains covered by native protocol tests plus BLE
+  boot/advertising hardware proof. A phone pairing run is still required to
+  close the connection/auth/RX/TX criteria above.

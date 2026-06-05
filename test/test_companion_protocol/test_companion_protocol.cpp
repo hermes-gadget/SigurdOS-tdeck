@@ -51,6 +51,9 @@ public:
     uint8_t radio_client_repeat = 0;
     bool set_radio_tx_power_called = false;
     int8_t radio_tx_power_dbm = 0;
+    bool set_tuning_params_called = false;
+    uint32_t tuning_rx_delay_base_x1000 = 10000;
+    uint32_t tuning_tx_delay_factor_x1000 = 1000;
     uint32_t now = 1234;
 
     uint32_t blePin() const override { return 123456; }
@@ -165,6 +168,18 @@ public:
         set_radio_tx_power_called = true;
         radio_tx_power_dbm = tx_power_dbm;
         return tx_power_dbm >= 2 && tx_power_dbm <= 22;
+    }
+    void tuningParams(uint32_t& rx_delay_base_x1000,
+                      uint32_t& tx_delay_factor_x1000) const override {
+        rx_delay_base_x1000 = tuning_rx_delay_base_x1000;
+        tx_delay_factor_x1000 = tuning_tx_delay_factor_x1000;
+    }
+    bool setTuningParams(uint32_t rx_delay_base_x1000,
+                         uint32_t tx_delay_factor_x1000) override {
+        set_tuning_params_called = true;
+        tuning_rx_delay_base_x1000 = rx_delay_base_x1000;
+        tuning_tx_delay_factor_x1000 = tx_delay_factor_x1000;
+        return rx_delay_base_x1000 <= 20000 && tx_delay_factor_x1000 <= 2000;
     }
     bool setBlePin(uint32_t) override { return true; }
     bool exportPrivateKey(uint8_t* out64) const override {
@@ -554,6 +569,65 @@ TEST_F(CompanionProtocolTest, SetRadioTxPowerRejectsInvalidPower) {
 
     ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
     ASSERT_TRUE(host.set_radio_tx_power_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, GetTuningParamsReturnsOfficialFrame) {
+    host.tuning_rx_delay_base_x1000 = 15000;
+    host.tuning_tx_delay_factor_x1000 = 1500;
+    uint8_t frame[] = {sigurdos::comms::CMD_GET_TUNING_PARAMS};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 9u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_TUNING_PARAMS);
+    uint32_t rx_delay_base_x1000 = 0;
+    uint32_t tx_delay_factor_x1000 = 0;
+    std::memcpy(&rx_delay_base_x1000, &out[1], 4);
+    std::memcpy(&tx_delay_factor_x1000, &out[5], 4);
+    EXPECT_EQ(rx_delay_base_x1000, 15000u);
+    EXPECT_EQ(tx_delay_factor_x1000, 1500u);
+}
+
+TEST_F(CompanionProtocolTest, SetTuningParamsDispatchesOfficialPayload) {
+    uint8_t frame[9]{};
+    frame[0] = sigurdos::comms::CMD_SET_TUNING_PARAMS;
+    uint32_t rx_delay_base_x1000 = 12000;
+    uint32_t tx_delay_factor_x1000 = 500;
+    std::memcpy(&frame[1], &rx_delay_base_x1000, 4);
+    std::memcpy(&frame[5], &tx_delay_factor_x1000, 4);
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_tuning_params_called);
+    EXPECT_EQ(host.tuning_rx_delay_base_x1000, rx_delay_base_x1000);
+    EXPECT_EQ(host.tuning_tx_delay_factor_x1000, tx_delay_factor_x1000);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetTuningParamsRejectsShortPayload) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_TUNING_PARAMS, 0, 0, 0};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.set_tuning_params_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetTuningParamsRejectsInvalidRange) {
+    uint8_t frame[9]{};
+    frame[0] = sigurdos::comms::CMD_SET_TUNING_PARAMS;
+    uint32_t rx_delay_base_x1000 = 20001;
+    uint32_t tx_delay_factor_x1000 = 1000;
+    std::memcpy(&frame[1], &rx_delay_base_x1000, 4);
+    std::memcpy(&frame[5], &tx_delay_factor_x1000, 4);
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_tuning_params_called);
     ASSERT_EQ(serial.writes.size(), 1u);
     EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
     EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);

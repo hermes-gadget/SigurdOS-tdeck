@@ -352,6 +352,24 @@ public:
         return true;
     }
 
+    void tuningParams(uint32_t& rx_delay_base_x1000,
+                      uint32_t& tx_delay_factor_x1000) const override {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        rx_delay_base_x1000 = prefFloatToX1000(p.rx_delay_base);
+        tx_delay_factor_x1000 = prefFloatToX1000(p.tx_delay_factor);
+    }
+
+    bool setTuningParams(uint32_t rx_delay_base_x1000,
+                         uint32_t tx_delay_factor_x1000) override {
+        if (rx_delay_base_x1000 > 20000) return false;
+        if (tx_delay_factor_x1000 > 2000) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.rx_delay_base = (float)rx_delay_base_x1000 / 1000.0f;
+        p.tx_delay_factor = (float)tx_delay_factor_x1000 / 1000.0f;
+        sigurdos::prefs_set(p);
+        return true;
+    }
+
     bool setBlePin(uint32_t pin) override {
         if (pin != 0 && (pin < 1000 || pin > 999999)) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
@@ -374,6 +392,11 @@ public:
     }
 
 private:
+    static uint32_t prefFloatToX1000(float value) {
+        if (value <= 0.0f) return 0;
+        return (uint32_t)(value * 1000.0f + 0.5f);
+    }
+
     static void copyContact(const ::ContactInfo& c, CompanionContact& out) {
         memset(&out, 0, sizeof(out));
         memcpy(out.pub_key, c.id.pub_key, sizeof(out.pub_key));
