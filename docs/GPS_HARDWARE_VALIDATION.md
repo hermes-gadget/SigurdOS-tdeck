@@ -128,9 +128,9 @@ Results:
 | COM8 SPIFFS readback | Passed; SPIFFS partition read and unpack succeeded over COM8 |
 | GPS validation app execution | Passed through NVS/SPIFFS evidence; `/gps_hw.txt` starts with `[gps-validation] log-start` after watchdog reset |
 | GPS UART/NMEA hardware path | Passed; 10-minute persisted log reached `chars=294169`, `sent=8286`, `valid=8286`, `csfail=0`, `baud=38400` |
-| Enhanced GPS diagnostics | Passed; after the diagnostic harness update, NVS readback showed `boot_count_value=7` and the 930.6-second SPIFFS log reached `chars=467784`, `sent=12689`, `valid=12688`, `gga=926`, `rmc_s=926`, `gsv=1065`, `gsa=3708`, `csfail=1`, and `baud=38400` |
-| GPS sky-view diagnostics | Partial; GSV reported satellites in view up to `siv=10`, but the latest persisted record still showed `ft=1` and `rmc=V` |
-| GPS fix proof | Not yet proven; after 930.6 seconds in the enhanced run the final persisted record still showed `fix=0`, `qual=0`, `sv=0`, `ft=1`, `rmc=V`, and `loc=0` |
+| Enhanced GPS diagnostics | Passed; after the diagnostic harness update, NVS readback showed `boot_count_value=8` and the 1825.7-second SPIFFS log reached `chars=942351`, `sent=24864`, `valid=24864`, `gga=1821`, `rmc_s=1821`, `gsv=2057`, `gsa=7284`, `csfail=0`, and `baud=38400` |
+| GPS sky-view diagnostics | Partial; GSV reported satellites in view up to `siv=17`, but the latest persisted record still showed `ft=1` and `rmc=V` |
+| GPS fix proof | Not yet proven; after 1825.7 seconds in the enhanced run the final persisted record still showed `fix=0`, `qual=0`, `sv=0`, `ft=1`, `rmc=V`, and `loc=0` |
 
 Observed COM8 ROM output after opening the port:
 
@@ -184,24 +184,23 @@ traffic at fallback baud and no checksum failures:
 ```
 
 The enhanced diagnostic harness was then flashed to COM8, started through the
-same watchdog reset flow, left closed for another 15-minute acquisition window,
-and read back through SPIFFS. The NVS marker confirmed the new app boot:
+same watchdog reset flow, left closed for a 30-minute acquisition window, and
+read back through SPIFFS. The NVS marker confirmed the new app boot:
 
 ```text
-.pio\gps_validation_readback\nvs-enhanced-15min.bin: namespace gpsval=present boot_count=present marker=present marker_value gps-validation=present boot_count_value=7 known_namespace sigurdos=present
+.pio\gps_validation_readback\nvs-long-30min.bin: namespace gpsval=present boot_count=present marker=present marker_value gps-validation=present boot_count_value=8 known_namespace sigurdos=present
 ```
 
 The latest diagnostic records prove GGA, RMC, GSV, and GSA processing, and show
 satellites in view without an acquired fix:
 
 ```text
-@gps_hw|ms=220602|fix=0|qual=0|sv=0|siv=10|ft=1|rmc=V|baud=38400|chars=108677|sent=2999|valid=2998|gga=216|rmc_s=216|gsv=268|gsa=868|csfail=1|sw=1|loc=0
-@gps_hw|ms=905602|fix=0|qual=0|sv=0|siv=5|ft=1|rmc=V|baud=38400|chars=453948|sent=12339|valid=12338|gga=901|rmc_s=901|gsv=1033|gsa=3608|csfail=1|sw=1|loc=0
-@gps_hw|ms=910602|fix=0|qual=0|sv=0|siv=5|ft=1|rmc=V|baud=38400|chars=456788|sent=12412|valid=12411|gga=906|rmc_s=906|gsv=1042|gsa=3628|csfail=1|sw=1|loc=0
-@gps_hw|ms=915602|fix=0|qual=0|sv=0|siv=4|ft=1|rmc=V|baud=38400|chars=459364|sent=12477|valid=12476|gga=911|rmc_s=911|gsv=1047|gsa=3648|csfail=1|sw=1|loc=0
-@gps_hw|ms=920602|fix=0|qual=0|sv=0|siv=5|ft=1|rmc=V|baud=38400|chars=462059|sent=12546|valid=12545|gga=916|rmc_s=916|gsv=1053|gsa=3668|csfail=1|sw=1|loc=0
-@gps_hw|ms=925602|fix=0|qual=0|sv=0|siv=4|ft=1|rmc=V|baud=38400|chars=464944|sent=12618|valid=12617|gga=921|rmc_s=921|gsv=1059|gsa=3688|csfail=1|sw=1|loc=0
-@gps_hw|ms=930602|fix=0|qual=0|sv=0|siv=5|ft=1|rmc=V|baud=38400|chars=467784|sent=12689|valid=12688|gga=926|rmc_s=926|gsv=1065|gsa=3708|csfail=1|sw=1|loc=0
+@gps_hw|ms=885664|fix=0|qual=0|sv=0|siv=17|ft=1|rmc=V|baud=38400|chars=453987|sent=11995|valid=11995|gga=881|rmc_s=881|gsv=978|gsa=3524|csfail=0|sw=1|loc=0
+@gps_hw|ms=1805664|fix=0|qual=0|sv=0|siv=2|ft=1|rmc=V|baud=38400|chars=931303|sent=24580|valid=24580|gga=1801|rmc_s=1801|gsv=2034|gsa=7204|csfail=0|sw=1|loc=0
+@gps_hw|ms=1810664|fix=0|qual=0|sv=0|siv=3|ft=1|rmc=V|baud=38400|chars=933963|sent=24650|valid=24650|gga=1806|rmc_s=1806|gsv=2039|gsa=7224|csfail=0|sw=1|loc=0
+@gps_hw|ms=1815664|fix=0|qual=0|sv=0|siv=2|ft=1|rmc=V|baud=38400|chars=936519|sent=24716|valid=24716|gga=1811|rmc_s=1811|gsv=2044|gsa=7244|csfail=0|sw=1|loc=0
+@gps_hw|ms=1820664|fix=0|qual=0|sv=0|siv=6|ft=1|rmc=V|baud=38400|chars=939419|sent=24790|valid=24790|gga=1816|rmc_s=1816|gsv=2051|gsa=7264|csfail=0|sw=1|loc=0
+@gps_hw|ms=1825664|fix=0|qual=0|sv=0|siv=1|ft=1|rmc=V|baud=38400|chars=942351|sent=24864|valid=24864|gga=1821|rmc_s=1821|gsv=2057|gsa=7284|csfail=0|sw=1|loc=0
 ```
 
 This proves the T-Deck GPS UART and NMEA parser path on COM8 using the approved
