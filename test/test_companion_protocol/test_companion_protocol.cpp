@@ -31,7 +31,29 @@ public:
 class FakeHost final : public sigurdos::comms::CompanionBridgeHost {
 public:
     bool sent_dm = false;
+    bool sent_channel_data = false;
     uint8_t last_prefix[6]{};
+    int last_channel_data_index = -1;
+    uint8_t last_channel_data_path_len = 0;
+    uint16_t last_channel_data_type = 0;
+    std::vector<uint8_t> last_channel_data_path;
+    std::vector<uint8_t> last_channel_data_payload;
+    bool set_advert_name_called = false;
+    char advert_name[32]{};
+    bool set_advert_latlon_called = false;
+    int32_t advert_lat = 0;
+    int32_t advert_lon = 0;
+    bool set_radio_params_called = false;
+    uint32_t radio_freq_khz = 0;
+    uint32_t radio_bw_hz = 0;
+    uint8_t radio_sf = 0;
+    uint8_t radio_cr = 0;
+    uint8_t radio_client_repeat = 0;
+    bool set_radio_tx_power_called = false;
+    int8_t radio_tx_power_dbm = 0;
+    bool set_tuning_params_called = false;
+    uint32_t tuning_rx_delay_base_x1000 = 10000;
+    uint32_t tuning_tx_delay_factor_x1000 = 1000;
     uint32_t now = 1234;
 
     uint32_t blePin() const override { return 123456; }
@@ -95,7 +117,83 @@ public:
     sigurdos::comms::CompanionSendResult sendChannelText(int, uint32_t, const char*) override {
         return {true, true, 0, 0};
     }
+    bool sendChannelData(int channel_index, const uint8_t* path, uint8_t path_len,
+                         uint16_t data_type, const uint8_t* payload,
+                         size_t payload_len) override {
+        sent_channel_data = true;
+        last_channel_data_index = channel_index;
+        last_channel_data_path_len = path_len;
+        last_channel_data_type = data_type;
+        last_channel_data_path.clear();
+        last_channel_data_payload.clear();
+        if (path && path_len != 0xFF) {
+            size_t path_bytes = (size_t)(path_len & 63) * (size_t)((path_len >> 6) + 1);
+            last_channel_data_path.assign(path, path + path_bytes);
+        }
+        if (payload && payload_len > 0) {
+            last_channel_data_payload.assign(payload, payload + payload_len);
+        }
+        return channel_index == 0;
+    }
     bool sendAdvert(bool) override { return true; }
+    bool setAdvertName(const char* name) override {
+        set_advert_name_called = true;
+        if (!name || !name[0]) return false;
+        std::strncpy(advert_name, name, sizeof(advert_name) - 1);
+        advert_name[sizeof(advert_name) - 1] = '\0';
+        std::strncpy(last_advert_name, name, sizeof(last_advert_name) - 1);
+        last_advert_name[sizeof(last_advert_name) - 1] = '\0';
+        return true;
+    }
+    bool setAdvertLatLon(int32_t lat, int32_t lon) override {
+        set_advert_latlon_called = true;
+        advert_lat = lat;
+        advert_lon = lon;
+        last_lat = lat;
+        last_lon = lon;
+        return lat >= -90000000 && lat <= 90000000 &&
+               lon >= -180000000 && lon <= 180000000;
+    }
+    bool setRadioParams(uint32_t freq_khz, uint32_t bw_hz, uint8_t sf,
+                        uint8_t cr, uint8_t client_repeat) override {
+        set_radio_params_called = true;
+        radio_freq_khz = freq_khz;
+        radio_bw_hz = bw_hz;
+        radio_sf = sf;
+        radio_cr = cr;
+        radio_client_repeat = client_repeat;
+        last_freq_khz = freq_khz;
+        last_bw_hz = bw_hz;
+        last_sf = sf;
+        last_cr = cr;
+        last_repeat = client_repeat;
+        return radio_params_ok &&
+               freq_khz >= 400000 && freq_khz <= 1000000 &&
+               bw_hz >= 7800 && bw_hz <= 500000 &&
+               sf >= 6 && sf <= 12 &&
+               cr >= 5 && cr <= 8 &&
+               client_repeat <= 1;
+    }
+    bool setRadioTxPower(int8_t tx_power_dbm) override {
+        set_radio_tx_power_called = true;
+        radio_tx_power_dbm = tx_power_dbm;
+        last_tx_power = tx_power_dbm;
+        return tx_power_dbm >= 2 && tx_power_dbm <= 22;
+    }
+    void tuningParams(uint32_t& rx_delay_base_x1000,
+                      uint32_t& tx_delay_factor_x1000) const override {
+        rx_delay_base_x1000 = tuning_rx_delay_base_x1000;
+        tx_delay_factor_x1000 = tuning_tx_delay_factor_x1000;
+    }
+    bool setTuningParams(uint32_t rx_delay_base_x1000,
+                         uint32_t tx_delay_factor_x1000) override {
+        set_tuning_params_called = true;
+        tuning_rx_delay_base_x1000 = rx_delay_base_x1000;
+        tuning_tx_delay_factor_x1000 = tx_delay_factor_x1000;
+        last_rx_base = rx_delay_base_x1000;
+        last_airtime = tx_delay_factor_x1000;
+        return rx_delay_base_x1000 <= 20000 && tx_delay_factor_x1000 <= 2000;
+    }
     bool setBlePin(uint32_t) override { return true; }
     bool exportPrivateKey(uint8_t* out64) const override {
         std::memset(out64, 0x42, 64);
@@ -125,16 +223,6 @@ public:
     uint32_t last_trace_tag = 0; uint8_t last_trace_path_len = 0;
     int      sign_len_seen = -1;
 
-    bool setRadioParams(uint32_t freq_khz, uint32_t bw_hz, uint8_t sf, uint8_t cr,
-                        uint8_t repeat) override {
-        last_freq_khz = freq_khz; last_bw_hz = bw_hz; last_sf = sf; last_cr = cr;
-        last_repeat = repeat; return radio_params_ok;
-    }
-    bool setRadioTxPower(int8_t dbm) override { last_tx_power = dbm; return true; }
-    void setTuningParams(uint32_t rx, uint32_t af) override { last_rx_base = rx; last_airtime = af; }
-    void getTuningParams(uint32_t* rx, uint32_t* af) const override {
-        if (rx) *rx = last_rx_base; if (af) *af = last_airtime;
-    }
     void setOtherParams(const sigurdos::comms::CompanionOtherParams& p) override { last_other = p; }
     bool setPathHashMode(uint8_t mode) override { return mode == 0; }
     void getAutoAddConfig(uint8_t* cfg, uint8_t* hops) const override {
@@ -142,11 +230,6 @@ public:
     }
     void setAutoAddConfig(uint8_t cfg, uint8_t hops) override { autoadd_cfg = cfg; autoadd_hops = hops; }
     int8_t maxTxPowerDbm() const override { return 22; }
-    bool setAdvertName(const char* name) override {
-        std::strncpy(last_advert_name, name ? name : "", sizeof(last_advert_name) - 1);
-        return name && name[0];
-    }
-    bool setAdvertLatLon(int32_t lat, int32_t lon) override { last_lat = lat; last_lon = lon; return true; }
     bool getContactByPubKey(const uint8_t* pub_key, sigurdos::comms::CompanionContact& out) const override {
         if (!contact_found) return false;
         std::memset(&out, 0, sizeof(out));
@@ -821,6 +904,315 @@ TEST_F(CompanionProtocolTest, PushLoginStatusTelemetryTrace) {
     // [4..7] tag, [8..11] auth, [12..13] hashes, [14..15] snrs, [16] final snr
     ASSERT_EQ(t.size(), 17u);
     EXPECT_EQ((int8_t)t[16], -8);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataFloodDispatchesToHostAndReturnsOk) {
+    uint8_t frame[] = {
+        sigurdos::comms::CMD_SEND_CHANNEL_DATA,
+        0,
+        0xFF,
+        0xFF, 0xFF,
+        0xA1, 0xB2, 0xC3,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.sent_channel_data);
+    EXPECT_EQ(host.last_channel_data_index, 0);
+    EXPECT_EQ(host.last_channel_data_path_len, 0xFF);
+    EXPECT_EQ(host.last_channel_data_type, 0xFFFF);
+    ASSERT_EQ(host.last_channel_data_payload.size(), 3u);
+    EXPECT_EQ(host.last_channel_data_payload[0], 0xA1);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetAdvertNameDispatchesUnterminatedPayload) {
+    uint8_t frame[16]{};
+    frame[0] = sigurdos::comms::CMD_SET_ADVERT_NAME;
+    std::memcpy(&frame[1], "TrailNode", 9);
+
+    ASSERT_TRUE(bridge.handleFrame(frame, 10));
+    ASSERT_TRUE(host.set_advert_name_called);
+    EXPECT_STREQ(host.advert_name, "TrailNode");
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetAdvertNameRejectsEmptyName) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_ADVERT_NAME, 0};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_advert_name_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetAdvertLatLonDispatchesFixedPointCoordinates) {
+    uint8_t frame[9]{};
+    frame[0] = sigurdos::comms::CMD_SET_ADVERT_LATLON;
+    int32_t lat = 45123456;
+    int32_t lon = -73543210;
+    std::memcpy(&frame[1], &lat, 4);
+    std::memcpy(&frame[5], &lon, 4);
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_advert_latlon_called);
+    EXPECT_EQ(host.advert_lat, lat);
+    EXPECT_EQ(host.advert_lon, lon);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetAdvertLatLonRejectsShortPayload) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_ADVERT_LATLON, 0, 0, 0};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.set_advert_latlon_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioParamsDispatchesOfficialPayload) {
+    uint8_t frame[12]{};
+    int i = 0;
+    frame[i++] = sigurdos::comms::CMD_SET_RADIO_PARAMS;
+    uint32_t freq_khz = 869525;
+    uint32_t bw_hz = 250000;
+    std::memcpy(&frame[i], &freq_khz, 4);
+    i += 4;
+    std::memcpy(&frame[i], &bw_hz, 4);
+    i += 4;
+    frame[i++] = 10;
+    frame[i++] = 5;
+    frame[i++] = 1;
+
+    ASSERT_TRUE(bridge.handleFrame(frame, i));
+    ASSERT_TRUE(host.set_radio_params_called);
+    EXPECT_EQ(host.radio_freq_khz, freq_khz);
+    EXPECT_EQ(host.radio_bw_hz, bw_hz);
+    EXPECT_EQ(host.radio_sf, 10);
+    EXPECT_EQ(host.radio_cr, 5);
+    EXPECT_EQ(host.radio_client_repeat, 1);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioParamsRejectsShortPayload) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_RADIO_PARAMS, 0, 0, 0};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.set_radio_params_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioParamsRejectsInvalidRange) {
+    uint8_t frame[11]{};
+    int i = 0;
+    frame[i++] = sigurdos::comms::CMD_SET_RADIO_PARAMS;
+    uint32_t freq_khz = 399999;
+    uint32_t bw_hz = 250000;
+    std::memcpy(&frame[i], &freq_khz, 4);
+    i += 4;
+    std::memcpy(&frame[i], &bw_hz, 4);
+    i += 4;
+    frame[i++] = 10;
+    frame[i++] = 5;
+
+    ASSERT_TRUE(bridge.handleFrame(frame, i));
+    ASSERT_TRUE(host.set_radio_params_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioTxPowerDispatchesSignedByte) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_RADIO_TX_POWER, 22};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_radio_tx_power_called);
+    EXPECT_EQ(host.radio_tx_power_dbm, 22);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioTxPowerRejectsMissingPower) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_RADIO_TX_POWER};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.set_radio_tx_power_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetRadioTxPowerRejectsInvalidPower) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_RADIO_TX_POWER, 23};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_radio_tx_power_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, GetTuningParamsReturnsOfficialFrame) {
+    host.tuning_rx_delay_base_x1000 = 15000;
+    host.tuning_tx_delay_factor_x1000 = 1500;
+    uint8_t frame[] = {sigurdos::comms::CMD_GET_TUNING_PARAMS};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 9u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_TUNING_PARAMS);
+    uint32_t rx_delay_base_x1000 = 0;
+    uint32_t tx_delay_factor_x1000 = 0;
+    std::memcpy(&rx_delay_base_x1000, &out[1], 4);
+    std::memcpy(&tx_delay_factor_x1000, &out[5], 4);
+    EXPECT_EQ(rx_delay_base_x1000, 15000u);
+    EXPECT_EQ(tx_delay_factor_x1000, 1500u);
+}
+
+TEST_F(CompanionProtocolTest, SetTuningParamsDispatchesOfficialPayload) {
+    uint8_t frame[9]{};
+    frame[0] = sigurdos::comms::CMD_SET_TUNING_PARAMS;
+    uint32_t rx_delay_base_x1000 = 12000;
+    uint32_t tx_delay_factor_x1000 = 500;
+    std::memcpy(&frame[1], &rx_delay_base_x1000, 4);
+    std::memcpy(&frame[5], &tx_delay_factor_x1000, 4);
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_tuning_params_called);
+    EXPECT_EQ(host.tuning_rx_delay_base_x1000, rx_delay_base_x1000);
+    EXPECT_EQ(host.tuning_tx_delay_factor_x1000, tx_delay_factor_x1000);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SetTuningParamsRejectsShortPayload) {
+    uint8_t frame[] = {sigurdos::comms::CMD_SET_TUNING_PARAMS, 0, 0, 0};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.set_tuning_params_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SetTuningParamsRejectsInvalidRange) {
+    uint8_t frame[9]{};
+    frame[0] = sigurdos::comms::CMD_SET_TUNING_PARAMS;
+    uint32_t rx_delay_base_x1000 = 20001;
+    uint32_t tx_delay_factor_x1000 = 1000;
+    std::memcpy(&frame[1], &rx_delay_base_x1000, 4);
+    std::memcpy(&frame[5], &tx_delay_factor_x1000, 4);
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.set_tuning_params_called);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataDirectPathDispatchesToHost) {
+    uint8_t frame[] = {
+        sigurdos::comms::CMD_SEND_CHANNEL_DATA,
+        0,
+        0x02,
+        0x11, 0x22,
+        0x34, 0x12,
+        0x99,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.sent_channel_data);
+    EXPECT_EQ(host.last_channel_data_path_len, 0x02);
+    ASSERT_EQ(host.last_channel_data_path.size(), 2u);
+    EXPECT_EQ(host.last_channel_data_path[0], 0x11);
+    EXPECT_EQ(host.last_channel_data_path[1], 0x22);
+    EXPECT_EQ(host.last_channel_data_type, 0x1234);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataRejectsReservedDataType) {
+    uint8_t frame[] = {
+        sigurdos::comms::CMD_SEND_CHANNEL_DATA,
+        0,
+        0xFF,
+        0x00, 0x00,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.sent_channel_data);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataRejectsInvalidPathEncoding) {
+    uint8_t frame[] = {
+        sigurdos::comms::CMD_SEND_CHANNEL_DATA,
+        0,
+        0xC1,
+        0xAA,
+        0xFF, 0xFF,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_FALSE(host.sent_channel_data);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SendChannelDataRejectsOversizePayload) {
+    std::vector<uint8_t> frame;
+    frame.push_back(sigurdos::comms::CMD_SEND_CHANNEL_DATA);
+    frame.push_back(0);
+    frame.push_back(0xFF);
+    frame.push_back(0xFF);
+    frame.push_back(0xFF);
+    frame.resize(5 + sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD + 1, 0x55);
+
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    ASSERT_FALSE(host.sent_channel_data);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, EnqueuedChannelDataTicklesAndDrains) {
+    uint8_t payload[] = {0xDE, 0xAD};
+    ASSERT_TRUE(bridge.enqueueChannelData(1, -8, 0xFF, 0xBEEF, payload, sizeof(payload)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::PUSH_CODE_MSG_WAITING);
+
+    uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 2u);
+    const auto& out = serial.writes[1];
+    ASSERT_EQ(out.size(), 11u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_CHANNEL_DATA_RECV);
+    EXPECT_EQ((int8_t)out[1], -8);
+    EXPECT_EQ(out[4], 1);
+    EXPECT_EQ(out[5], 0xFF);
+    EXPECT_EQ(out[6], 0xEF);
+    EXPECT_EQ(out[7], 0xBE);
+    EXPECT_EQ(out[8], 2);
+    EXPECT_EQ(out[9], 0xDE);
+    EXPECT_EQ(out[10], 0xAD);
+}
+
+TEST_F(CompanionProtocolTest, EnqueuedChannelDataRejectsReservedTypeAndInvalidPath) {
+    uint8_t payload[] = {0x01};
+    EXPECT_FALSE(bridge.enqueueChannelData(1, 0, 0xFF, 0x0000, payload, sizeof(payload)));
+    EXPECT_FALSE(bridge.enqueueChannelData(1, 0, 0xC1, 0xBEEF, payload, sizeof(payload)));
+    EXPECT_TRUE(serial.writes.empty());
 }
 
 } // namespace

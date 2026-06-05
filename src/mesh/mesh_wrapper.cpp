@@ -8,6 +8,7 @@
 #include "channel_validation.h"
 #include "message_store.h"
 #include "comms/companion_bridge.h"
+#include "comms/observed_ble_interface.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
@@ -33,9 +34,6 @@
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
-#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-#include <helpers/esp32/SerialBLEInterface.h>
-#endif
 
 using sigurdos::mesh::MeshMessage;
 
@@ -81,6 +79,62 @@ static uint32_t      msg_drop_count = 0;
 static int           unread_count = 0;
 
 #include "companion_adapter.inc"
+
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE && \
+    defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION
+static constexpr const char* BLE_VALIDATION_LOG_PATH = "/ble_hw.txt";
+static uint32_t ble_validation_last_log_ms = 0;
+
+static void bleValidationAppendLine(const char* line)
+{
+    if (!line) return;
+    File f = SPIFFS.open(BLE_VALIDATION_LOG_PATH, FILE_APPEND);
+    if (!f) return;
+    f.println(line);
+    f.close();
+}
+
+static void bleValidationEmit(bool force)
+{
+    uint32_t now = millis();
+    if (!force && (uint32_t)(now - ble_validation_last_log_ms) < 5000u) return;
+    ble_validation_last_log_ms = now;
+
+    const sigurdos::comms::BleSerialObserverStats s = g_ble_serial.stats();
+    char line[320];
+    snprintf(line, sizeof(line),
+             "@ble_hw|ms=%lu|begun=%u|en=%u|conn=%u|adv=%u|authok=%lu|authfail=%lu|connect=%lu|disconnect=%lu|mtu=%u|rxw=%lu|rxd=%lu|rx=%lu|tx=%lu|txd=%lu|lrx=%u|ltx=%u",
+             (unsigned long)now,
+             s.begun ? 1u : 0u,
+             s.enabled ? 1u : 0u,
+             s.connected ? 1u : 0u,
+             s.advertising_expected ? 1u : 0u,
+             (unsigned long)s.auth_success_count,
+             (unsigned long)s.auth_failure_count,
+             (unsigned long)s.connect_count,
+             (unsigned long)s.disconnect_count,
+             (unsigned int)s.last_mtu,
+             (unsigned long)s.ble_write_count,
+             (unsigned long)s.ble_write_drop_count,
+             (unsigned long)s.rx_frame_count,
+             (unsigned long)s.tx_frame_count,
+             (unsigned long)s.tx_drop_count,
+             (unsigned int)s.last_rx_code,
+             (unsigned int)s.last_tx_code);
+    Serial.println(line);
+    bleValidationAppendLine(line);
+}
+
+static void bleValidationStartLog()
+{
+    SPIFFS.remove(BLE_VALIDATION_LOG_PATH);
+    bleValidationAppendLine("[ble-validation] log-start");
+    bleValidationEmit(true);
+}
+#else
+static void bleValidationEmit(bool) {}
+static void bleValidationStartLog() {}
+#endif
 
 // Non-static overload for SigurdMeshV2 — takes RSSI/SNR from caller context
 // (SigurdMeshV2 has packet context when calling, while the static queue_push
@@ -131,6 +185,18 @@ void sigurdos::mesh::mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_t
     // report an ACK (it is created lazily on the first incoming/companion path).
     if (g_companion_bridge_ptr) {
         g_companion_bridge_ptr->notifySendConfirmed(ack, trip_time_ms);
+    }
+}
+
+void sigurdos::mesh::mesh_v2_group_data_push(uint8_t channel_index,
+                              uint8_t path_len,
+                              int8_t snr_quarters,
+                              uint16_t data_type,
+                              const uint8_t* data,
+                              size_t data_len) {
+    if (data_len > sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) return;
+    if (CompanionBridge* b = companionBridge()) {
+        b->enqueueChannelData(channel_index, snr_quarters, path_len, data_type, data, data_len);
     }
 }
 
@@ -816,8 +882,20 @@ bool init(bool spiffs_ok)
         if (CompanionBridge* b = companionBridge()) {
             b->begin(&g_ble_serial, &g_companion_host);
             if (sigurdos::prefs_get().ble_enabled) {
-                b->setEnabled(true);
+                bool enabled = b->setEnabled(true);
+#if defined(SIGURDOS_DEBUG) || \
+    (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
+                Serial.printf("[mesh] Companion BLE advertising %s as MeshCore-%s\n",
+                              enabled ? "enabled" : "failed", ble_name);
+#endif
+                (void)enabled;
+            } else {
+#if defined(SIGURDOS_DEBUG) || \
+    (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
+                Serial.println("[mesh] Companion BLE advertising disabled by prefs");
+#endif
             }
+            bleValidationStartLog();
         }
     }
 #else
@@ -861,6 +939,7 @@ void loop()
     if (g_mesh) {
         g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
         if (g_companion_bridge_ptr) g_companion_bridge_ptr->loop();
+        bleValidationEmit(false);
     }
     rtc_clock.tick();
 
@@ -1135,21 +1214,29 @@ bool sendAdvert() {
         return false;
     }
 
+    const sigurdos::NodePrefs& p = sigurdos::prefs_get();
     bool has_fix = sigurdos_gps_has_fix();
+    bool use_live_location = has_fix && p.share_location;
+    bool use_manual_location = !use_live_location && p.share_location && p.advert_location_valid;
     last_advert_time = getCurrentTime();
-    last_advert_used_gps = has_fix;
+    last_advert_used_gps = use_live_location;
 
     if (!g_mesh) {
         last_advert_success = false;
         return false;
     }
 
-    if (has_fix && sigurdos::prefs_get().share_location) {
+    if (use_live_location) {
         g_mesh->broadcastAdvert(own_name,
             sigurdos_gps_latitude(), sigurdos_gps_longitude(),
-            sigurdos::prefs_get().advert_type);
+            p.advert_type);
+    } else if (use_manual_location) {
+        g_mesh->broadcastAdvert(own_name,
+            (float)p.advert_lat / 1000000.0f,
+            (float)p.advert_lon / 1000000.0f,
+            p.advert_type);
     } else {
-        g_mesh->broadcastAdvert(own_name, sigurdos::prefs_get().advert_type);
+        g_mesh->broadcastAdvert(own_name, p.advert_type);
     }
 
     last_advert_success = true;

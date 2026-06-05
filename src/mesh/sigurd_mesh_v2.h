@@ -1423,32 +1423,57 @@ public:
     // Send a typed data datagram to a group channel.
     bool sendGroupDataToChannel(int idx, uint16_t data_type,
                                 const uint8_t* data, int data_len) {
+        return sendGroupDataToChannel(idx, nullptr, OUT_PATH_UNKNOWN,
+                                      data_type, data, data_len);
+    }
+
+    bool sendGroupDataToChannel(int idx, const uint8_t* path, uint8_t path_len,
+                                uint16_t data_type, const uint8_t* data, int data_len) {
         if (idx < 0 || idx >= getChannelCount()) return false;
         if (data_len > 0 && !data) return false;
+        if (path_len != OUT_PATH_UNKNOWN && !::mesh::Packet::isValidPathLen(path_len)) return false;
+        if (path_len != OUT_PATH_UNKNOWN && !path) return false;
         ChannelDetails cd;
         if (!BaseChatMesh::getChannel(idx, cd)) return false;
-        return BaseChatMesh::sendGroupData(cd.channel, nullptr, OUT_PATH_UNKNOWN,
-                                           data_type, data, data_len);
+        uint8_t* route_path = path_len == OUT_PATH_UNKNOWN ? nullptr : const_cast<uint8_t*>(path);
+        return BaseChatMesh::sendGroupData(cd.channel, route_path, path_len, data_type, data, data_len);
     }
 
     // Override to receive group data datagrams.
     void onChannelDataRecv(const ::mesh::GroupChannel& channel,
                            ::mesh::Packet* pkt, uint16_t data_type,
                            const uint8_t* data, size_t data_len) override {
+        // Resolve channel name/index once; the companion bridge should still
+        // receive the datagram even if the local debug buffer is full.
+        char chname[32] = "[group]";
+        int channel_idx = -1;
+        for (int i = 0; i < getChannelCount(); i++) {
+            ChannelDetails cd;
+            if (BaseChatMesh::getChannel(i, cd) &&
+                memcmp(cd.channel.hash, channel.hash, sizeof(channel.hash)) == 0) {
+                strncpy(chname, cd.name, sizeof(chname) - 1);
+                chname[sizeof(chname) - 1] = '\0';
+                channel_idx = i;
+                break;
+            }
+        }
+
+        uint8_t companion_path_len = OUT_PATH_UNKNOWN;
+        int8_t companion_snr = 0;
+        if (pkt) {
+            companion_path_len = pkt->isRouteFlood() ? (uint8_t)pkt->path_len : OUT_PATH_UNKNOWN;
+            companion_snr = pkt->_snr;
+        }
+        sigurdos::mesh::mesh_v2_group_data_push(
+            channel_idx >= 0 ? (uint8_t)channel_idx : 0xFF,
+            companion_path_len,
+            companion_snr,
+            data_type,
+            data,
+            data_len);
+
         // Store in receive buffer
         if (_n_grp_data_recv < MAX_GROUP_DATA_RECV) {
-            // Resolve channel name
-            char chname[32] = "[group]";
-            for (int i = 0; i < getChannelCount(); i++) {
-                ChannelDetails cd;
-                if (BaseChatMesh::getChannel(i, cd) &&
-                    memcmp(cd.channel.hash, channel.hash, sizeof(channel.hash)) == 0) {
-                    strncpy(chname, cd.name, sizeof(chname) - 1);
-                    chname[sizeof(chname) - 1] = '\0';
-                    break;
-                }
-            }
-
             GroupDataEntry& e = _grp_data_recv[_n_grp_data_recv++];
             e.data_type = data_type;
             e.data_len = (data_len < sizeof(e.data)) ? (uint8_t)data_len : sizeof(e.data);

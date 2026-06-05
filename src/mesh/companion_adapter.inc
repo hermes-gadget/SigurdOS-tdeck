@@ -38,7 +38,7 @@ static CompanionBridge* companionBridge()
 }
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-static SerialBLEInterface g_ble_serial;
+static sigurdos::comms::ObservedSerialBLEInterface g_ble_serial;
 #endif
 
 static constexpr uint32_t SIGURDOS_DEFAULT_BLE_PIN = 123456;
@@ -163,9 +163,14 @@ public:
         out.advert_type = p.advert_type;
         out.tx_power_dbm = p.tx_power_dbm;
         out.max_tx_power_dbm = 22;
-        if (sigurdos_gps_has_fix() && p.share_location) {
-            out.lat = (int32_t)(sigurdos_gps_latitude() * 1000000.0f);
-            out.lon = (int32_t)(sigurdos_gps_longitude() * 1000000.0f);
+        if (p.share_location) {
+            if (sigurdos_gps_has_fix()) {
+                out.lat = (int32_t)(sigurdos_gps_latitude() * 1000000.0f);
+                out.lon = (int32_t)(sigurdos_gps_longitude() * 1000000.0f);
+            } else if (p.advert_location_valid) {
+                out.lat = p.advert_lat;
+                out.lon = p.advert_lon;
+            }
         }
         out.multi_acks = p.multi_acks;
         out.advert_loc_policy = p.share_location ? 1 : 0;
@@ -276,9 +281,114 @@ public:
         return result;
     }
 
+    bool sendChannelData(int channel_index,
+                         const uint8_t* path,
+                         uint8_t path_len,
+                         uint16_t data_type,
+                         const uint8_t* payload,
+                         size_t payload_len) override {
+        if (!g_mesh || payload_len > sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) {
+            return false;
+        }
+        if (payload_len > 0 && !payload) return false;
+        return g_mesh->sendGroupDataToChannel(channel_index, path, path_len,
+                                              data_type, payload, (int)payload_len);
+    }
+
     bool sendAdvert(bool flood) override {
         (void)flood;
         return sigurdos::mesh::sendAdvert();
+    }
+
+    bool setAdvertName(const char* name) override {
+        if (!name || !name[0]) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        strncpy(p.node_name, name, sizeof(p.node_name) - 1);
+        p.node_name[sizeof(p.node_name) - 1] = '\0';
+        sigurdos::prefs_set(p);
+        sigurdos::mesh::setOwnName(p.node_name);
+        return true;
+    }
+
+    bool setAdvertLatLon(int32_t lat, int32_t lon) override {
+        if (lat < -90000000 || lat > 90000000) return false;
+        if (lon < -180000000 || lon > 180000000) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.share_location = true;
+        p.advert_location_valid = true;
+        p.advert_lat = lat;
+        p.advert_lon = lon;
+        sigurdos::prefs_set(p);
+        return true;
+    }
+
+    bool setRadioParams(uint32_t freq_khz,
+                        uint32_t bw_hz,
+                        uint8_t sf,
+                        uint8_t cr,
+                        uint8_t client_repeat) override {
+        if (freq_khz < 400000 || freq_khz > 1000000) return false;
+        if (bw_hz < 7800 || bw_hz > 500000) return false;
+        if (sf < 6 || sf > 12) return false;
+        if (cr < 5 || cr > 8) return false;
+        if (client_repeat > 1) return false;
+
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        const int tx_power = (p.tx_power_dbm >= 2 && p.tx_power_dbm <= 22)
+            ? p.tx_power_dbm
+            : LORA_TX_PWR;
+        const float freq = (float)freq_khz / 1000.0f;
+        const float bw = (float)bw_hz / 1000.0f;
+        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
+                                              tx_power, p.rx_boosted_gain)) {
+            return false;
+        }
+
+        p.configured = true;
+        p.freq = freq;
+        p.bw = bw;
+        p.sf = sf;
+        p.cr = cr;
+        p.tx_power_dbm = (int8_t)tx_power;
+        p.client_repeat = client_repeat;
+        sigurdos::prefs_set(p);
+        return true;
+    }
+
+    bool setRadioTxPower(int8_t tx_power_dbm) override {
+        if (tx_power_dbm < 2 || tx_power_dbm > 22) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+
+        const float freq = p.configured ? p.freq : LORA_FREQ;
+        const float bw = p.configured ? p.bw : LORA_BW;
+        const int sf = p.configured ? p.sf : LORA_SF;
+        const int cr = p.configured ? p.cr : LORA_CR;
+        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
+                                              tx_power_dbm, p.rx_boosted_gain)) {
+            return false;
+        }
+
+        p.tx_power_dbm = tx_power_dbm;
+        sigurdos::prefs_set(p);
+        return true;
+    }
+
+    void tuningParams(uint32_t& rx_delay_base_x1000,
+                      uint32_t& tx_delay_factor_x1000) const override {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        rx_delay_base_x1000 = prefFloatToX1000(p.rx_delay_base);
+        tx_delay_factor_x1000 = prefFloatToX1000(p.tx_delay_factor);
+    }
+
+    bool setTuningParams(uint32_t rx_delay_base_x1000,
+                         uint32_t tx_delay_factor_x1000) override {
+        if (rx_delay_base_x1000 > 20000) return false;
+        if (tx_delay_factor_x1000 > 2000) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.rx_delay_base = (float)rx_delay_base_x1000 / 1000.0f;
+        p.tx_delay_factor = (float)tx_delay_factor_x1000 / 1000.0f;
+        sigurdos::prefs_set(p);
+        return true;
     }
 
     bool setBlePin(uint32_t pin) override {
@@ -302,38 +412,6 @@ public:
         return true;
     }
 
-    // ── Radio / tuning / params ──────────────────────────────
-    bool setRadioParams(uint32_t freq_khz, uint32_t bw_hz,
-                        uint8_t sf, uint8_t cr, uint8_t client_repeat) override {
-        sigurdos::NodePrefs p = sigurdos::prefs_get();
-        p.freq = (float)freq_khz / 1000.0f;
-        p.bw = (float)bw_hz / 1000.0f;
-        p.sf = sf;
-        p.cr = cr;
-        p.client_repeat = client_repeat;
-        p.configured = true;
-        sigurdos::prefs_set(p);
-        if (radio_driver) radio_driver->setParams(p.freq, p.bw, p.sf, p.cr);
-        return true;
-    }
-    bool setRadioTxPower(int8_t dbm) override {
-        sigurdos::NodePrefs p = sigurdos::prefs_get();
-        p.tx_power_dbm = dbm;
-        sigurdos::prefs_set(p);
-        if (radio_driver) radio_driver->setTxPower(dbm);
-        return true;
-    }
-    void setTuningParams(uint32_t rx_base_x1000, uint32_t airtime_x1000) override {
-        sigurdos::NodePrefs p = sigurdos::prefs_get();
-        p.rx_delay_base = (float)rx_base_x1000 / 1000.0f;
-        p.tx_delay_factor = (float)airtime_x1000 / 1000.0f;
-        sigurdos::prefs_set(p);
-    }
-    void getTuningParams(uint32_t* rx_base_x1000, uint32_t* airtime_x1000) const override {
-        const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-        if (rx_base_x1000) *rx_base_x1000 = (uint32_t)(p.rx_delay_base * 1000.0f);
-        if (airtime_x1000) *airtime_x1000 = (uint32_t)(p.tx_delay_factor * 1000.0f);
-    }
     void setOtherParams(const CompanionOtherParams& op) override {
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         // SigurdOS has no manual_add_contacts / telemetry-mode store; only the
@@ -358,23 +436,6 @@ public:
         sigurdos::prefs_set(p);
     }
     int8_t maxTxPowerDbm() const override { return 22; }
-
-    // ── Advert metadata ──────────────────────────────────────
-    bool setAdvertName(const char* name) override {
-        if (!name || !name[0]) return false;
-        sigurdos::NodePrefs p = sigurdos::prefs_get();
-        strncpy(p.node_name, name, sizeof(p.node_name) - 1);
-        p.node_name[sizeof(p.node_name) - 1] = '\0';
-        sigurdos::prefs_set(p);
-        sigurdos::mesh::setOwnName(name);
-        return true;
-    }
-    bool setAdvertLatLon(int32_t lat_e6, int32_t lon_e6) override {
-        // SigurdOS advertises GPS-sourced location; there is no manual lat/lon
-        // store, so the call is accepted but only GPS-backed coordinates ship.
-        (void)lat_e6; (void)lon_e6;
-        return true;
-    }
 
     // ── Contact CRUD / connection ────────────────────────────
     bool getContactByPubKey(const uint8_t* pub_key, CompanionContact& out) const override {
@@ -576,6 +637,11 @@ public:
     }
 
 private:
+    static uint32_t prefFloatToX1000(float value) {
+        if (value <= 0.0f) return 0;
+        return (uint32_t)(value * 1000.0f + 0.5f);
+    }
+
     // Resolve a contact by pub key, fire a STATUS/TELEMETRY request via the
     // tested wrapper helpers, and read back the assigned tag for RESP_CODE_SENT.
     CompanionSendResult sendReqByPubKey(const uint8_t* pub_key, bool telemetry) {

@@ -22,6 +22,7 @@ static constexpr const char* FIRMWARE_VERSION = SIGURDOS_VERSION;
 #else
 static constexpr const char* FIRMWARE_VERSION = "SigurdOS";
 #endif
+static constexpr uint8_t COMPANION_OUT_PATH_UNKNOWN = 0xFF;
 
 static void strzcpy(char* dest, const char* src, size_t dest_sz)
 {
@@ -35,6 +36,18 @@ static size_t boundedTextLen(const char* text, size_t max_len)
 {
     if (!text) return 0;
     return strnlen(text, max_len);
+}
+
+static bool pathByteLen(uint8_t path_len, size_t* out_len)
+{
+    if (out_len) *out_len = 0;
+    if (path_len == COMPANION_OUT_PATH_UNKNOWN) return true;
+    uint8_t hash_size = (path_len >> 6) + 1;
+    if (hash_size == 4) return false;
+    size_t n = (size_t)(path_len & 63) * (size_t)hash_size;
+    if (n > SIGURDOS_COMPANION_PATH_SIZE) return false;
+    if (out_len) *out_len = n;
+    return true;
 }
 
 } // namespace
@@ -273,6 +286,40 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
     size_t len = 0;
     if (!buildMessageFrame(msg, frame, &len)) return false;
     bool added = addToOfflineQueue(frame, len);
+    if (added && isConnected()) {
+        uint8_t tickle = PUSH_CODE_MSG_WAITING;
+        _serial->writeFrame(&tickle, 1);
+    }
+    return added;
+}
+
+bool CompanionBridge::enqueueChannelData(uint8_t channel_index,
+                                         int8_t snr_quarters,
+                                         uint8_t path_len,
+                                         uint16_t data_type,
+                                         const uint8_t* payload,
+                                         size_t payload_len)
+{
+    if (payload_len > SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) return false;
+    if (payload_len > 0 && !payload) return false;
+    if (data_type == 0 || !pathByteLen(path_len, nullptr)) return false;
+
+    int i = 0;
+    _out_frame[i++] = RESP_CODE_CHANNEL_DATA_RECV;
+    _out_frame[i++] = (uint8_t)snr_quarters;
+    _out_frame[i++] = 0;
+    _out_frame[i++] = 0;
+    _out_frame[i++] = channel_index;
+    _out_frame[i++] = path_len;
+    _out_frame[i++] = (uint8_t)(data_type & 0xFF);
+    _out_frame[i++] = (uint8_t)(data_type >> 8);
+    _out_frame[i++] = (uint8_t)payload_len;
+    if (payload_len > 0) {
+        std::memcpy(&_out_frame[i], payload, payload_len);
+        i += (int)payload_len;
+    }
+
+    bool added = addToOfflineQueue(_out_frame, (size_t)i);
     if (added && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
         _serial->writeFrame(&tickle, 1);
@@ -559,6 +606,46 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
+    if (cmd == CMD_SEND_CHANNEL_DATA) {
+        if (len < 5) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+
+        size_t i = 1;
+        uint8_t channel_idx = _cmd_frame[i++];
+        uint8_t path_len = _cmd_frame[i++];
+
+        size_t path_bytes = 0;
+        if (!pathByteLen(path_len, &path_bytes) || i + path_bytes + 2 > len) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+
+        const uint8_t* path = nullptr;
+        if (path_len != COMPANION_OUT_PATH_UNKNOWN) {
+            path = &_cmd_frame[i];
+            i += path_bytes;
+        }
+
+        uint16_t data_type = (uint16_t)_cmd_frame[i] | ((uint16_t)_cmd_frame[i + 1] << 8);
+        i += 2;
+        const uint8_t* payload = &_cmd_frame[i];
+        size_t payload_len = len - i;
+
+        if (data_type == 0 || payload_len > SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+
+        if (_host->sendChannelData(channel_idx, path, path_len, data_type, payload, payload_len)) {
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_NOT_FOUND);
+        }
+        return true;
+    }
+
     if (cmd == CMD_GET_DEVICE_TIME) {
         _out_frame[0] = RESP_CODE_CURR_TIME;
         uint32_t now = _host->currentTime();
@@ -584,6 +671,88 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         std::memcpy(&_out_frame[i], &mv, 2); i += 2;
         std::memcpy(&_out_frame[i], &used, 4); i += 4;
         std::memcpy(&_out_frame[i], &total, 4); i += 4;
+        _serial->writeFrame(_out_frame, i);
+        return true;
+    }
+
+    if (cmd == CMD_SET_ADVERT_NAME) {
+        if (len < 2) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        if (_host->setAdvertName((const char*)&_cmd_frame[1])) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_SET_ADVERT_LATLON) {
+        if (len < 9) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        int32_t lat = 0;
+        int32_t lon = 0;
+        std::memcpy(&lat, &_cmd_frame[1], 4);
+        std::memcpy(&lon, &_cmd_frame[5], 4);
+        if (_host->setAdvertLatLon(lat, lon)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_SET_RADIO_PARAMS) {
+        if (len < 11) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        int i = 1;
+        uint32_t freq_khz = 0;
+        uint32_t bw_hz = 0;
+        std::memcpy(&freq_khz, &_cmd_frame[i], 4);
+        i += 4;
+        std::memcpy(&bw_hz, &_cmd_frame[i], 4);
+        i += 4;
+        uint8_t sf = _cmd_frame[i++];
+        uint8_t cr = _cmd_frame[i++];
+        uint8_t client_repeat = (len > (size_t)i) ? _cmd_frame[i] : 0;
+        if (_host->setRadioParams(freq_khz, bw_hz, sf, cr, client_repeat)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_SET_RADIO_TX_POWER) {
+        if (len < 2) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        if (_host->setRadioTxPower((int8_t)_cmd_frame[1])) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_SET_TUNING_PARAMS) {
+        if (len < 9) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        uint32_t rx_delay_base_x1000 = 0;
+        uint32_t tx_delay_factor_x1000 = 0;
+        std::memcpy(&rx_delay_base_x1000, &_cmd_frame[1], 4);
+        std::memcpy(&tx_delay_factor_x1000, &_cmd_frame[5], 4);
+        if (_host->setTuningParams(rx_delay_base_x1000, tx_delay_factor_x1000)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_GET_TUNING_PARAMS) {
+        uint32_t rx_delay_base_x1000 = 0;
+        uint32_t tx_delay_factor_x1000 = 0;
+        _host->tuningParams(rx_delay_base_x1000, tx_delay_factor_x1000);
+        int i = 0;
+        _out_frame[i++] = RESP_CODE_TUNING_PARAMS;
+        std::memcpy(&_out_frame[i], &rx_delay_base_x1000, 4);
+        i += 4;
+        std::memcpy(&_out_frame[i], &tx_delay_factor_x1000, 4);
+        i += 4;
         _serial->writeFrame(_out_frame, i);
         return true;
     }
@@ -654,55 +823,6 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
-    // ── Radio / tuning / params ──────────────────────────────
-    if (cmd == CMD_SET_RADIO_PARAMS && len >= 11) {
-        uint32_t freq = 0, bw = 0;
-        std::memcpy(&freq, &_cmd_frame[1], 4);
-        std::memcpy(&bw, &_cmd_frame[5], 4);
-        uint8_t sf = _cmd_frame[9];
-        uint8_t cr = _cmd_frame[10];
-        uint8_t repeat = (len > 11) ? _cmd_frame[11] : 0;
-        // Range check mirrors the official handler (freq in kHz, bw in Hz).
-        if (freq >= 150000 && freq <= 2500000 && sf >= 5 && sf <= 12 &&
-            cr >= 5 && cr <= 8 && bw >= 7000 && bw <= 500000 &&
-            _host->setRadioParams(freq, bw, sf, cr, repeat)) {
-            writeOKFrame();
-        } else {
-            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
-        }
-        return true;
-    }
-
-    if (cmd == CMD_SET_RADIO_TX_POWER && len >= 2) {
-        int8_t power = (int8_t)_cmd_frame[1];
-        if (power < -9 || power > _host->maxTxPowerDbm() || !_host->setRadioTxPower(power)) {
-            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
-        } else {
-            writeOKFrame();
-        }
-        return true;
-    }
-
-    if (cmd == CMD_SET_TUNING_PARAMS && len >= 9) {
-        uint32_t rx = 0, af = 0;
-        std::memcpy(&rx, &_cmd_frame[1], 4);
-        std::memcpy(&af, &_cmd_frame[5], 4);
-        _host->setTuningParams(rx, af);
-        writeOKFrame();
-        return true;
-    }
-
-    if (cmd == CMD_GET_TUNING_PARAMS) {
-        uint32_t rx = 0, af = 0;
-        _host->getTuningParams(&rx, &af);
-        int i = 0;
-        _out_frame[i++] = RESP_CODE_TUNING_PARAMS;
-        std::memcpy(&_out_frame[i], &rx, 4); i += 4;
-        std::memcpy(&_out_frame[i], &af, 4); i += 4;
-        _serial->writeFrame(_out_frame, i);
-        return true;
-    }
-
     if (cmd == CMD_SET_OTHER_PARAMS && len >= 2) {
         CompanionOtherParams p{};
         p.manual_add_contacts = _cmd_frame[1];
@@ -739,32 +859,6 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         _out_frame[i++] = cfg;
         _out_frame[i++] = max_hops;
         _serial->writeFrame(_out_frame, i);
-        return true;
-    }
-
-    // ── Advert metadata ──────────────────────────────────────
-    if (cmd == CMD_SET_ADVERT_NAME && len >= 2) {
-        char name[32];
-        size_t nlen = len - 1;
-        if (nlen > sizeof(name) - 1) nlen = sizeof(name) - 1;
-        std::memcpy(name, &_cmd_frame[1], nlen);
-        name[nlen] = '\0';
-        if (_host->setAdvertName(name)) writeOKFrame();
-        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
-        return true;
-    }
-
-    if (cmd == CMD_SET_ADVERT_LATLON && len >= 9) {
-        int32_t lat = 0, lon = 0;
-        std::memcpy(&lat, &_cmd_frame[1], 4);
-        std::memcpy(&lon, &_cmd_frame[5], 4);
-        if (lat <= 90 * 1000000 && lat >= -90 * 1000000 &&
-            lon <= 180 * 1000000 && lon >= -180 * 1000000 &&
-            _host->setAdvertLatLon(lat, lon)) {
-            writeOKFrame();
-        } else {
-            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
-        }
         return true;
     }
 

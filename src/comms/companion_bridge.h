@@ -16,6 +16,7 @@ static constexpr uint8_t SIGURDOS_COMPANION_FIRMWARE_VER_CODE = 12;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_SIZE = 32;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE = 6;
 static constexpr size_t  SIGURDOS_COMPANION_PATH_SIZE = 64;
+static constexpr size_t  SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD = MAX_FRAME_SIZE - 9;
 
 enum CompanionCommand : uint8_t {
     CMD_APP_START = 1,
@@ -66,6 +67,7 @@ enum CompanionCommand : uint8_t {
     CMD_GET_AUTOADD_CONFIG = 59,
     CMD_GET_ALLOWED_REPEAT_FREQ = 60,
     CMD_SET_PATH_HASH_MODE = 61,
+    CMD_SEND_CHANNEL_DATA = 62,
     CMD_SET_DEFAULT_FLOOD_SCOPE = 63,
     CMD_GET_DEFAULT_FLOOD_SCOPE = 64,
 };
@@ -105,6 +107,7 @@ enum CompanionResponse : uint8_t {
     RESP_CODE_STATS = 24,
     RESP_CODE_AUTOADD_CONFIG = 25,
     RESP_ALLOWED_REPEAT_FREQ = 26,
+    RESP_CODE_CHANNEL_DATA_RECV = 27,
     RESP_CODE_DEFAULT_FLOOD_SCOPE = 28,
 };
 
@@ -257,7 +260,15 @@ public:
     virtual CompanionSendResult sendChannelText(int channel_index,
                                                 uint32_t timestamp,
                                                 const char* text) = 0;
+    virtual bool sendChannelData(int channel_index,
+                                 const uint8_t* path,
+                                 uint8_t path_len,
+                                 uint16_t data_type,
+                                 const uint8_t* payload,
+                                 size_t payload_len) = 0;
     virtual bool sendAdvert(bool flood) = 0;
+    virtual bool setAdvertName(const char* name) = 0;
+    virtual bool setAdvertLatLon(int32_t lat, int32_t lon) = 0;
     virtual bool setBlePin(uint32_t pin) = 0;
     virtual bool exportPrivateKey(uint8_t* out64) const = 0;
     virtual bool importPrivateKey(const uint8_t* key64) = 0;
@@ -266,17 +277,13 @@ public:
     virtual bool setRadioParams(uint32_t freq_khz, uint32_t bw_hz,
                                 uint8_t sf, uint8_t cr, uint8_t client_repeat) = 0;
     virtual bool setRadioTxPower(int8_t dbm) = 0;
-    virtual void setTuningParams(uint32_t rx_base_x1000, uint32_t airtime_x1000) = 0;
-    virtual void getTuningParams(uint32_t* rx_base_x1000, uint32_t* airtime_x1000) const = 0;
+    virtual bool setTuningParams(uint32_t rx_base_x1000, uint32_t airtime_x1000) = 0;
+    virtual void tuningParams(uint32_t& rx_base_x1000, uint32_t& airtime_x1000) const = 0;
     virtual void setOtherParams(const CompanionOtherParams& p) = 0;
     virtual bool setPathHashMode(uint8_t mode) = 0;
     virtual void getAutoAddConfig(uint8_t* cfg, uint8_t* max_hops) const = 0;
     virtual void setAutoAddConfig(uint8_t cfg, uint8_t max_hops) = 0;
     virtual int8_t maxTxPowerDbm() const = 0;
-
-    // ── Advert metadata ──────────────────────────────────────
-    virtual bool setAdvertName(const char* name) = 0;
-    virtual bool setAdvertLatLon(int32_t lat_e6, int32_t lon_e6) = 0;
 
     // ── Contact CRUD / connection ────────────────────────────
     // Full 32-byte pub key. addOrUpdateContact takes a parsed contact.
@@ -337,6 +344,12 @@ public:
     uint8_t appTargetVersion() const { return _app_target_ver; }
 
     bool enqueueMessage(const sigurdos::mesh::StoredMessage& msg);
+    bool enqueueChannelData(uint8_t channel_index,
+                            int8_t snr_quarters,
+                            uint8_t path_len,
+                            uint16_t data_type,
+                            const uint8_t* payload,
+                            size_t payload_len);
     bool notifySendConfirmed(uint32_t ack, uint32_t trip_time_ms);
 
     // ── Async / live event pushes (called from the mesh fan-out) ──
