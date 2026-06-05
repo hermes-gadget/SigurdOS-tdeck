@@ -21,6 +21,7 @@
 #include "tdeck_pins.h"
 #include <Arduino.h>
 #include <sys/time.h>
+#include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
@@ -53,6 +54,10 @@ static struct GPSData {
     uint32_t gsa_sentences;
     uint8_t  satellites_in_view;
     uint8_t  fix_type;
+    uint8_t  gsv_snr_max;
+    uint8_t  gsv_snr_count;
+    uint8_t  gsv_cycle_snr_max;
+    uint8_t  gsv_cycle_snr_count;
     char     rmc_status;
 } gps;
 
@@ -204,11 +209,39 @@ static void parse_rmc(const char* sentence) {
 
 // Acquisition diagnostics used by the validation harness.
 static void parse_gsv(const char* sentence) {
-    // $GPGSV,total_msgs,msg_num,satellites_in_view,...
+    // $GPGSV,total_msgs,msg_num,satellites_in_view,sv,elev,az,snr,...
     char field[20];
+    uint8_t msg_num = 0;
+
+    if (nmea_field(sentence, 2, field, sizeof(field))) {
+        msg_num = (uint8_t)atoi(field);
+    }
+
+    if (msg_num <= 1) {
+        gps.gsv_cycle_snr_max = 0;
+        gps.gsv_cycle_snr_count = 0;
+    }
+
     if (nmea_field(sentence, 3, field, sizeof(field))) {
         gps.satellites_in_view = (uint8_t)atoi(field);
     }
+
+    static constexpr int kSnrFields[] = {7, 11, 15, 19};
+    for (int snr_field : kSnrFields) {
+        if (!nmea_field(sentence, snr_field, field, sizeof(field))) continue;
+        int snr = atoi(field);
+        if (snr <= 0) continue;
+        if (snr > 255) snr = 255;
+        if ((uint8_t)snr > gps.gsv_cycle_snr_max) {
+            gps.gsv_cycle_snr_max = (uint8_t)snr;
+        }
+        if (gps.gsv_cycle_snr_count < UINT8_MAX) {
+            gps.gsv_cycle_snr_count++;
+        }
+    }
+
+    gps.gsv_snr_max = gps.gsv_cycle_snr_max;
+    gps.gsv_snr_count = gps.gsv_cycle_snr_count;
 }
 
 static void parse_gsa(const char* sentence) {
@@ -361,4 +394,6 @@ uint32_t sigurdos_gps_gsv_sentences() { return gps.gsv_sentences; }
 uint32_t sigurdos_gps_gsa_sentences() { return gps.gsa_sentences; }
 uint8_t  sigurdos_gps_satellites_in_view() { return gps.satellites_in_view; }
 uint8_t  sigurdos_gps_fix_type() { return gps.fix_type; }
+uint8_t  sigurdos_gps_gsv_snr_max() { return gps.gsv_snr_max; }
+uint8_t  sigurdos_gps_gsv_snr_count() { return gps.gsv_snr_count; }
 char     sigurdos_gps_rmc_status() { return gps.rmc_status; }

@@ -442,7 +442,26 @@ TEST_F(GPSIntegrationTest, GsvAndGsaDiagnosticsTrackSkyViewBeforeFix) {
     EXPECT_EQ(sigurdos_gps_gsa_sentences(), 1U);
     EXPECT_EQ(sigurdos_gps_satellites_in_view(), 11);
     EXPECT_EQ(sigurdos_gps_fix_type(), 3);
+    EXPECT_EQ(sigurdos_gps_gsv_snr_max(), 0);
+    EXPECT_EQ(sigurdos_gps_gsv_snr_count(), 0);
     EXPECT_FALSE(sigurdos_gps_has_fix());
+}
+
+TEST_F(GPSIntegrationTest, GsvDiagnosticsAggregateNonZeroSnrAcrossMessageSet) {
+    feed("$GPGSV,2,1,08,03,03,111,22,04,15,270,00,06,01,010,17,13,06,292,35*7D\n");
+    feed("$GPGSV,2,2,08,16,45,123,42,19,10,050,,23,20,180,09,24,60,200,00*7C\n");
+
+    EXPECT_EQ(sigurdos_gps_gsv_sentences(), 2U);
+    EXPECT_EQ(sigurdos_gps_satellites_in_view(), 8);
+    EXPECT_EQ(sigurdos_gps_gsv_snr_max(), 42);
+    EXPECT_EQ(sigurdos_gps_gsv_snr_count(), 5);
+
+    feed("$GPGSV,1,1,04,01,02,003,00,02,04,120,00,03,07,250,00,05,09,210,00*74\n");
+
+    EXPECT_EQ(sigurdos_gps_gsv_sentences(), 3U);
+    EXPECT_EQ(sigurdos_gps_satellites_in_view(), 4);
+    EXPECT_EQ(sigurdos_gps_gsv_snr_max(), 0);
+    EXPECT_EQ(sigurdos_gps_gsv_snr_count(), 0);
 }
 
 TEST_F(GPSIntegrationTest, GNVariantsUpdateAcquisitionDiagnostics) {
@@ -453,6 +472,8 @@ TEST_F(GPSIntegrationTest, GNVariantsUpdateAcquisitionDiagnostics) {
     EXPECT_EQ(sigurdos_gps_gsa_sentences(), 1U);
     EXPECT_EQ(sigurdos_gps_satellites_in_view(), 3);
     EXPECT_EQ(sigurdos_gps_fix_type(), 1);
+    EXPECT_EQ(sigurdos_gps_gsv_snr_max(), 0);
+    EXPECT_EQ(sigurdos_gps_gsv_snr_count(), 0);
 }
 
 } // anonymous namespace

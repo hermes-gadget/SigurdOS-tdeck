@@ -55,4 +55,6 @@ uint32_t sigurdos_gps_gsv_sentences();
 uint32_t sigurdos_gps_gsa_sentences();
 uint8_t  sigurdos_gps_satellites_in_view();
 uint8_t  sigurdos_gps_fix_type(); // GSA fix type: 1=none, 2=2D, 3=3D
+uint8_t  sigurdos_gps_gsv_snr_max(); // Max non-zero GSV SNR/CN0 in latest GSV set
+uint8_t  sigurdos_gps_gsv_snr_count(); // Satellites with non-zero GSV SNR/CN0 in latest GSV set
 char     sigurdos_gps_rmc_status(); // 'A'=active, 'V'=void, 0=unknown

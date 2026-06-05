@@ -59,7 +59,7 @@ static void build_status(char* out, size_t out_size)
 
     snprintf(out,
              out_size,
-             "@gps_hw|ms=%lu|fix=%u|qual=%u|sv=%u|siv=%u|ft=%u|rmc=%c|baud=%lu|chars=%lu|sent=%lu|valid=%lu|gga=%lu|rmc_s=%lu|gsv=%lu|gsa=%lu|csfail=%lu|sw=%lu|loc=%u",
+             "@gps_hw|ms=%lu|fix=%u|qual=%u|sv=%u|siv=%u|ft=%u|rmc=%c|snr=%u|snrc=%u|baud=%lu|chars=%lu|sent=%lu|valid=%lu|gga=%lu|rmc_s=%lu|gsv=%lu|gsa=%lu|csfail=%lu|sw=%lu|loc=%u",
              (unsigned long)millis(),
              has_fix ? 1u : 0u,
              (unsigned)sigurdos_gps_fix_quality(),
@@ -67,6 +67,8 @@ static void build_status(char* out, size_t out_size)
              (unsigned)sigurdos_gps_satellites_in_view(),
              (unsigned)sigurdos_gps_fix_type(),
              sigurdos_gps_rmc_status() ? sigurdos_gps_rmc_status() : '-',
+             (unsigned)sigurdos_gps_gsv_snr_max(),
+             (unsigned)sigurdos_gps_gsv_snr_count(),
              (unsigned long)sigurdos_gps_active_baud(),
              (unsigned long)sigurdos_gps_chars_processed(),
              (unsigned long)sigurdos_gps_sentences_received(),
