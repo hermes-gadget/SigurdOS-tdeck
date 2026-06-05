@@ -188,46 +188,39 @@ bool importIdentity(const char* hex_privkey) {
     return false; // mock: cannot import
 }
 
-// ── Regions stubs ────────────────────────────────
+// ── Regions stubs (RegionMap API) ────────────────────
 
-static SigurdRegion    mock_regions[SIGURD_MAX_REGIONS];
-static int             mock_region_count = 0;
-static char            mock_active_region[31] = "";
+static RegionEntry  mock_region_entries[MAX_REGION_ENTRIES];
+static int          mock_region_count = 0;
+static uint16_t     mock_next_id = 1;
+static char         mock_active_region[31] = "";
 
-int listRegions(SigurdRegion* out, int max) {
-    if (!out || max <= 0) return 0;
-    int n = 0;
-    for (int i = 0; i < mock_region_count && n < max; i++) {
-        memcpy(&out[n], &mock_regions[i], sizeof(SigurdRegion));
-        n++;
+void regionsInit(TransportKeyStore&) {}
+bool regionsLoad() { return true; }
+bool regionsSave() { return true; }
+RegionMap* getRegionMap() { return nullptr; }
+
+::RegionEntry* addRegion(const char* name, const char* parent_name) {
+    (void)parent_name;
+    if (!name || !name[0] || mock_region_count >= MAX_REGION_ENTRIES) return nullptr;
+    // reject duplicates
+    for (int i = 0; i < mock_region_count; i++) {
+        if (strcmp(mock_region_entries[i].name, name) == 0) return nullptr;
     }
-    return n;
-}
-
-bool addRegion(const char* name, const char* key_b64_or_null) {
-    (void)key_b64_or_null;
-    char normalized_name[sizeof(SigurdRegion::name)] = {};
-    if (!detail::normalizeRegionName(name, normalized_name, sizeof(normalized_name))) {
-        return false;
-    }
-    if (mock_region_count >= SIGURD_MAX_REGIONS) return false;
-    if (detail::regionListContainsName(mock_regions, mock_region_count, normalized_name)) {
-        return false;
-    }
-
-    SigurdRegion r;
-    memset(&r, 0, sizeof(r));
-    strncpy(r.name, normalized_name, sizeof(r.name) - 1);
-    memcpy(&mock_regions[mock_region_count++], &r, sizeof(SigurdRegion));
-    return true;
+    RegionEntry* e = &mock_region_entries[mock_region_count++];
+    memset(e, 0, sizeof(RegionEntry));
+    strncpy(e->name, name, sizeof(e->name) - 1);
+    e->name[sizeof(e->name) - 1] = '\0';
+    e->id = mock_next_id++;
+    return e;
 }
 
 bool removeRegion(const char* name) {
     if (!name || !name[0]) return false;
     for (int i = 0; i < mock_region_count; i++) {
-        if (strcmp(mock_regions[i].name, name) == 0) {
-            for (int j = i; j < mock_region_count - 1; j++)
-                memcpy(&mock_regions[j], &mock_regions[j + 1], sizeof(SigurdRegion));
+        if (strcmp(mock_region_entries[i].name, name) == 0) {
+            memmove(&mock_region_entries[i], &mock_region_entries[i + 1],
+                    (mock_region_count - i - 1) * sizeof(RegionEntry));
             mock_region_count--;
             return true;
         }
@@ -235,7 +228,71 @@ bool removeRegion(const char* name) {
     return false;
 }
 
-bool setActiveRegion(const char* name) {
+::RegionEntry* findRegion(const char* name) {
+    if (!name || !name[0]) return nullptr;
+    for (int i = 0; i < mock_region_count; i++) {
+        if (strcmp(mock_region_entries[i].name, name) == 0)
+            return &mock_region_entries[i];
+    }
+    return nullptr;
+}
+
+::RegionEntry* findRegionPrefix(const char* prefix) {
+    if (!prefix || !prefix[0]) return nullptr;
+    size_t plen = strlen(prefix);
+    for (int i = 0; i < mock_region_count; i++) {
+        if (strncmp(mock_region_entries[i].name, prefix, plen) == 0)
+            return &mock_region_entries[i];
+    }
+    return nullptr;
+}
+
+int listRegionNames(char* dest, int max_len, uint8_t mask, bool invert) {
+    (void)mask; (void)invert;
+    if (!dest || max_len <= 0) return 0;
+    int pos = 0;
+    for (int i = 0; i < mock_region_count && pos < max_len - 1; i++) {
+        int need = strlen(mock_region_entries[i].name) + 2; // name + ", " or null
+        if (pos + need > max_len) break;
+        if (pos > 0) dest[pos++] = ',';
+        int n = 0;
+        while (mock_region_entries[i].name[n] && pos < max_len - 1)
+            dest[pos++] = mock_region_entries[i].name[n++];
+    }
+    dest[pos] = '\0';
+    return pos;
+}
+
+int getRegionCount() { return mock_region_count; }
+
+size_t exportRegions(char* dest, size_t max_len) {
+    if (!dest || max_len == 0) return 0;
+    dest[0] = '\0';
+    return 0;
+}
+
+bool regionAllowsFlood(const char* name) {
+    (void)name;
+    return true; // mock: default allow
+}
+
+bool setRegionFloodAllowed(const char* name, bool allowed) {
+    (void)name; (void)allowed;
+    return true;
+}
+
+::RegionEntry* regionDeniesFlood(::mesh::Packet*) { return nullptr; }
+
+const char* getHomeRegionName() { return nullptr; }
+bool setHomeRegion(const char* name) { (void)name; return true; }
+const char* getDefaultScopeName() { return nullptr; }
+bool setDefaultScope(const char* name) { (void)name; return true; }
+
+const char* getActiveRegion() {
+    return mock_active_region[0] ? mock_active_region : "";
+}
+
+bool setActiveRegionName(const char* name) {
     if (name && name[0]) {
         strncpy(mock_active_region, name, sizeof(mock_active_region) - 1);
         mock_active_region[sizeof(mock_active_region) - 1] = '\0';
@@ -245,25 +302,23 @@ bool setActiveRegion(const char* name) {
     return true;
 }
 
-const char* getActiveRegion() {
-    return mock_active_region[0] ? mock_active_region : "";
-}
-
-void setSendUnscopedOnce(bool v) { (void)v; }
-
 void syncRegionsFromChannels() {}
 
-// regions.h stubs
-int loadRegions(SigurdRegion* out, int max) {
-    return listRegions(out, max);
-}
-
-bool saveRegions(const SigurdRegion* list, int count) {
-    (void)list; (void)count; return true;
-}
-
-bool deriveRegionKey(const char* name, uint8_t* out_key16) {
-    (void)name; (void)out_key16; return false;
+int listRegions(RegionInfo* out, int max) {
+    if (!out || max <= 0) return 0;
+    int n = 0;
+    for (int i = 0; i < mock_region_count && n < max; i++) {
+        memset(&out[n], 0, sizeof(RegionInfo));
+        strncpy(out[n].name, mock_region_entries[i].name, sizeof(out[n].name) - 1);
+        out[n].name[sizeof(out[n].name) - 1] = '\0';
+        out[n].id = mock_region_entries[i].id;
+        out[n].parent_id = mock_region_entries[i].parent;
+        out[n].flags = mock_region_entries[i].flags;
+        out[n].is_home = false;
+        out[n].is_default = false;
+        n++;
+    }
+    return n;
 }
 
 } // namespace sigurdos::mesh

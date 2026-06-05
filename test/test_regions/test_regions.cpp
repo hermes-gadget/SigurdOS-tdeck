@@ -18,14 +18,13 @@
 
 
 /**
- * Unit tests for Regions companion flood-scope feature.
+ * Unit tests for RegionMap-based region API.
  *
- * Tests: struct layout, API signatures, SPIFFS binary format,
- *        golden-vector key derivation, and constant values.
+ * Tests: CRUD operations, RegionInfo listing, active/home/default scope,
+ *        region name constraints, flood-allow flag, and API signatures.
  *
- * Note: deriveRegionKey() uses mbedtls (ESP32-specific) and cannot be
- * linked in native tests. The golden vector is verified via hardcoded
- * expected output from sha256sum('#test').
+ * Note: Tests share global mock state (no fixtures). Each test should
+ * be self-contained and not depend on the order of other tests.
  */
 #include <gtest/gtest.h>
 #include <cstdint>
@@ -37,205 +36,213 @@
 
 namespace {
 
-// Golden vector: SHA256("#test")[0..15]
-// Verified via: echo -n '#test' | sha256sum
-// Full SHA256: 9cd8fcf22a47333b591d96a2b848b73f...
-// First 16 bytes (hex): 9c d8 fc f2 2a 47 33 3b 59 1d 96 a2 b8 48 b7 3f
-static const uint8_t GOLDEN_DERIVE_KEY_TEST[16] = {
-    0x9c, 0xd8, 0xfc, 0xf2, 0x2a, 0x47, 0x33, 0x3b,
-    0x59, 0x1d, 0x96, 0xa2, 0xb8, 0x48, 0xb7, 0x3f
-};
-
+// Helper: remove every occurrence of a region by name (handles duplicates)
 static void removeAllRegionEntriesNamed(const char* name) {
-    for (int i = 0; i <= SIGURD_MAX_REGIONS; i++) {
+    for (int i = 0; i < 32; i++) {
         if (!sigurdos::mesh::removeRegion(name)) return;
     }
 }
 
-// ── Constants ───────────────────────────────────────────
+// ── Lifecycle ───────────────────────────────────────────
 
-TEST(RegionsTest, MaxRegionsIs8) {
-    EXPECT_EQ(SIGURD_MAX_REGIONS, 8);
+TEST(RegionsTest, InitAndLoad) {
+    // Smoke test: init/load/save should not crash
+    sigurdos::mesh::regionsLoad();
+    sigurdos::mesh::regionsSave();
+    SUCCEED();
 }
 
-// ── Struct layout ───────────────────────────────────────
+// ── CRUD ────────────────────────────────────────────────
 
-TEST(RegionsTest, SigurdRegionSize) {
-    // name[31] + key[16] = 47 bytes; no padding expected (packed byte arrays)
-    EXPECT_EQ(sizeof(sigurdos::mesh::SigurdRegion), 47);
+TEST(RegionsTest, AddAndFindRegion) {
+    removeAllRegionEntriesNamed("#london");
+    auto* e = sigurdos::mesh::addRegion("#london", nullptr);
+    ASSERT_NE(e, nullptr);
+    EXPECT_STREQ(e->name, "#london");
+
+    auto* found = sigurdos::mesh::findRegion("#london");
+    EXPECT_EQ(found, e);
+    removeAllRegionEntriesNamed("#london");
 }
 
-TEST(RegionsTest, SigurdRegionFieldOffsets) {
-    auto offset_of_name = offsetof(sigurdos::mesh::SigurdRegion, name);
-    auto offset_of_key  = offsetof(sigurdos::mesh::SigurdRegion, key);
-
-    EXPECT_EQ(offset_of_name, 0u);
-    EXPECT_EQ(offset_of_key, 31u);
+TEST(RegionsTest, FindRegionReturnsNullForMissing) {
+    EXPECT_EQ(sigurdos::mesh::findRegion("#nonexistent9901"), nullptr);
 }
 
-TEST(RegionsTest, SigurdRegionNameFitsTerminator) {
-    // name[31] can store a 30-char name + null terminator
-    sigurdos::mesh::SigurdRegion r;
-    memset(&r, 0, sizeof(r));
+TEST(RegionsTest, RemoveRegion) {
+    removeAllRegionEntriesNamed("#paris");
+    auto* e = sigurdos::mesh::addRegion("#paris", nullptr);
+    ASSERT_NE(e, nullptr);
+
+    EXPECT_TRUE(sigurdos::mesh::removeRegion("#paris"));
+    EXPECT_EQ(sigurdos::mesh::findRegion("#paris"), nullptr);
+}
+
+TEST(RegionsTest, RemoveRegionReturnsFalseForMissing) {
+    EXPECT_FALSE(sigurdos::mesh::removeRegion("#_missing_"));
+}
+
+TEST(RegionsTest, RemoveRegionReturnsFalseForEmptyName) {
+    EXPECT_FALSE(sigurdos::mesh::removeRegion(""));
+    EXPECT_FALSE(sigurdos::mesh::removeRegion(nullptr));
+}
+
+TEST(RegionsTest, AddRegionRejectsDuplicates) {
+    removeAllRegionEntriesNamed("#codexdup");
+    ASSERT_NE(sigurdos::mesh::addRegion("#codexdup", nullptr), nullptr);
+    EXPECT_EQ(sigurdos::mesh::addRegion("#codexdup", nullptr), nullptr);
+    removeAllRegionEntriesNamed("#codexdup");
+}
+
+TEST(RegionsTest, AddRegionRejectsNullName) {
+    EXPECT_EQ(sigurdos::mesh::addRegion(nullptr, nullptr), nullptr);
+}
+
+TEST(RegionsTest, AddRegionRejectsEmptyName) {
+    EXPECT_EQ(sigurdos::mesh::addRegion("", nullptr), nullptr);
+}
+
+TEST(RegionsTest, FindRegionPrefix) {
+    removeAllRegionEntriesNamed("#london");
+    removeAllRegionEntriesNamed("#losangeles");
+    sigurdos::mesh::addRegion("#london", nullptr);
+    sigurdos::mesh::addRegion("#losangeles", nullptr);
+
+    auto* found = sigurdos::mesh::findRegionPrefix("#lo");
+    ASSERT_NE(found, nullptr);
+    EXPECT_STREQ(found->name, "#london");
+
+    EXPECT_EQ(sigurdos::mesh::findRegionPrefix("#z"), nullptr);
+    removeAllRegionEntriesNamed("#london");
+    removeAllRegionEntriesNamed("#losangeles");
+}
+
+// ── Region count ────────────────────────────────────────
+
+TEST(RegionsTest, RegionCountChangesOnAddRemove) {
+    int before = sigurdos::mesh::getRegionCount();
+    sigurdos::mesh::addRegion("#_cnt_test_", nullptr);
+    EXPECT_EQ(sigurdos::mesh::getRegionCount(), before + 1);
+    sigurdos::mesh::removeRegion("#_cnt_test_");
+    EXPECT_EQ(sigurdos::mesh::getRegionCount(), before);
+}
+
+// ── RegionInfo listing ──────────────────────────────────
+
+TEST(RegionsTest, ListRegionsReturnsAddedOnes) {
+    removeAllRegionEntriesNamed("#alpha");
+    removeAllRegionEntriesNamed("#beta");
+    sigurdos::mesh::addRegion("#alpha", nullptr);
+    sigurdos::mesh::addRegion("#beta", nullptr);
+
+    sigurdos::mesh::RegionInfo list[5];
+    int n = sigurdos::mesh::listRegions(list, 5);
+    EXPECT_GE(n, 2);
+    // Should contain both added names
+    bool found_alpha = false, found_beta = false;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(list[i].name, "#alpha") == 0) found_alpha = true;
+        if (strcmp(list[i].name, "#beta") == 0) found_beta = true;
+    }
+    EXPECT_TRUE(found_alpha);
+    EXPECT_TRUE(found_beta);
+    removeAllRegionEntriesNamed("#alpha");
+    removeAllRegionEntriesNamed("#beta");
+}
+
+TEST(RegionsTest, ListRegionsRespectsMax) {
+    sigurdos::mesh::RegionInfo list[1];
+    int n = sigurdos::mesh::listRegions(list, 0);
+    EXPECT_EQ(n, 0);
+}
+
+TEST(RegionsTest, ListRegionsNullPtrReturnsZero) {
+    EXPECT_EQ(sigurdos::mesh::listRegions(nullptr, 5), 0);
+}
+
+// ── RegionInfo struct layout ────────────────────────────
+
+TEST(RegionsTest, RegionInfoNameCanHold30CharsPlusNull) {
+    // RegionInfo::name is 31 bytes: 30 chars + null terminator
+    sigurdos::mesh::RegionInfo info;
+    memset(&info, 0, sizeof(info));
+    EXPECT_EQ(sizeof(info.name), 31u);
+
+    const char* name29 = "#abcdefghijklmnopqrstuvwxyz12"; // 29 chars + null fits
+    ASSERT_EQ(strlen(name29), 29u);
+    strncpy(info.name, name29, sizeof(info.name) - 1);
+    info.name[sizeof(info.name) - 1] = '\0';
+    EXPECT_STREQ(info.name, name29);
 
     const char* name30 = "#abcdefghijklmnopqrstuvwxyz123"; // 30 chars
-    EXPECT_EQ(strlen(name30), 30u);
-
-    strncpy(r.name, name30, sizeof(r.name) - 1);
-    r.name[sizeof(r.name) - 1] = '\0';
-
-    EXPECT_STREQ(r.name, name30);
-    EXPECT_EQ(r.name[30], '\0');
+    ASSERT_EQ(strlen(name30), 30u);
+    strncpy(info.name, name30, sizeof(info.name) - 1);
+    info.name[sizeof(info.name) - 1] = '\0';
+    EXPECT_STREQ(info.name, name30);
+    EXPECT_EQ(info.name[30], '\0');
 }
 
-TEST(RegionsTest, SigurdRegionKeySize) {
-    // key must be exactly 16 bytes
-    EXPECT_EQ(sizeof(sigurdos::mesh::SigurdRegion::key), 16u);
+// ── Active region ───────────────────────────────────────
+
+TEST(RegionsTest, ActiveRegionCanBeSetAndGet) {
+    sigurdos::mesh::setActiveRegionName("#london");
+    EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "#london");
+    sigurdos::mesh::setActiveRegionName("");
+    EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "");
 }
 
-TEST(RegionsTest, NormalizeRegionNameAutoPrefixesBarePublicNames) {
-    char out[sizeof(sigurdos::mesh::SigurdRegion::name)] = {};
+// ── Home region ─────────────────────────────────────────
 
-    ASSERT_TRUE(sigurdos::mesh::detail::normalizeRegionName("ops", out, sizeof(out)));
-    EXPECT_STREQ(out, "#ops");
-
-    ASSERT_TRUE(sigurdos::mesh::detail::normalizeRegionName("#ops", out, sizeof(out)));
-    EXPECT_STREQ(out, "#ops");
-
-    ASSERT_TRUE(sigurdos::mesh::detail::normalizeRegionName("$crew", out, sizeof(out)));
-    EXPECT_STREQ(out, "$crew");
+TEST(RegionsTest, HomeRegionSig) {
+    EXPECT_EQ(sigurdos::mesh::getHomeRegionName(), nullptr);
+    EXPECT_TRUE(sigurdos::mesh::setHomeRegion("#home"));
 }
 
-TEST(RegionsTest, NormalizeRegionNameRejectsNamesThatWouldTruncate) {
-    char out[sizeof(sigurdos::mesh::SigurdRegion::name)] = {};
+// ── Default scope ───────────────────────────────────────
 
-    const char* bare29 = "abcdefghijklmnopqrstuvwxyz123";
-    ASSERT_EQ(strlen(bare29), 29u);
-    ASSERT_TRUE(sigurdos::mesh::detail::normalizeRegionName(bare29, out, sizeof(out)));
-    EXPECT_STREQ(out, "#abcdefghijklmnopqrstuvwxyz123");
-
-    const char* bare30 = "abcdefghijklmnopqrstuvwxyz1234";
-    ASSERT_EQ(strlen(bare30), 30u);
-    EXPECT_FALSE(sigurdos::mesh::detail::normalizeRegionName(bare30, out, sizeof(out)));
-    EXPECT_EQ(out[0], '\0');
-
-    const char* prefixed31 = "#abcdefghijklmnopqrstuvwxyz1234";
-    ASSERT_EQ(strlen(prefixed31), 31u);
-    EXPECT_FALSE(sigurdos::mesh::detail::normalizeRegionName(prefixed31, out, sizeof(out)));
-    EXPECT_EQ(out[0], '\0');
+TEST(RegionsTest, DefaultScopeSig) {
+    EXPECT_EQ(sigurdos::mesh::getDefaultScopeName(), nullptr);
+    EXPECT_TRUE(sigurdos::mesh::setDefaultScope("#global"));
 }
 
-TEST(RegionsTest, RegionListContainsNameMatchesExactNormalizedName) {
-    sigurdos::mesh::SigurdRegion list[2];
-    memset(&list[0], 0, sizeof(list[0]));
-    memset(&list[1], 0, sizeof(list[1]));
-    strncpy(list[0].name, "#ops", sizeof(list[0].name) - 1);
-    strncpy(list[1].name, "$crew", sizeof(list[1].name) - 1);
+// ── Flood flags ─────────────────────────────────────────
 
-    EXPECT_TRUE(sigurdos::mesh::detail::regionListContainsName(list, 2, "#ops"));
-    EXPECT_TRUE(sigurdos::mesh::detail::regionListContainsName(list, 2, "$crew"));
-    EXPECT_FALSE(sigurdos::mesh::detail::regionListContainsName(list, 2, "ops"));
-    EXPECT_FALSE(sigurdos::mesh::detail::regionListContainsName(list, 1, "$crew"));
+TEST(RegionsTest, RegionAllowsFloodByDefault) {
+    EXPECT_TRUE(sigurdos::mesh::regionAllowsFlood("#nonexistent"));
 }
 
-// ── SPIFFS binary format (manual construction) ─────────
-
-TEST(RegionsTest, SpiffsHeaderSize) {
-    // regions.dat format: 4-byte count (uint32_t) + count * sizeof(SigurdRegion)
-    // Minimum file size with 0 regions: 4 bytes (count=0)
-    EXPECT_GE(sizeof(uint32_t), 4u);  // count field is 4 bytes
+TEST(RegionsTest, SetRegionFloodAllowed) {
+    EXPECT_TRUE(sigurdos::mesh::setRegionFloodAllowed("#any", false));
 }
 
-TEST(RegionsTest, SpiffsEmptyFileSize) {
-    // Empty regions file: 4 bytes (count=0)
-    size_t empty_file_sz = 4; // uint32_t count = 0
-    EXPECT_EQ(empty_file_sz, 4u);
+// ── Region name listing ─────────────────────────────────
+
+TEST(RegionsTest, ListRegionNamesCommaSeparated) {
+    removeAllRegionEntriesNamed("#p_alpha");
+    removeAllRegionEntriesNamed("#p_beta");
+    sigurdos::mesh::addRegion("#p_alpha", nullptr);
+    sigurdos::mesh::addRegion("#p_beta", nullptr);
+
+    char buf[64];
+    int n = sigurdos::mesh::listRegionNames(buf, sizeof(buf));
+    EXPECT_GT(n, 0);
+    EXPECT_NE(strstr(buf, "#p_alpha"), nullptr);
+    EXPECT_NE(strstr(buf, "#p_beta"), nullptr);
 }
 
-TEST(RegionsTest, SpiffsFileSizeWithOneRegion) {
-    // 4 (count) + 1 * 47 (SigurdRegion) = 51 bytes
-    size_t one_region_sz = 4 + sizeof(sigurdos::mesh::SigurdRegion);
-    EXPECT_EQ(one_region_sz, 51u);
-}
+// ── Export ──────────────────────────────────────────────
 
-TEST(RegionsTest, SpiffsFileSizeWithEightRegions) {
-    // 4 (count) + 8 * 47 = 380 bytes
-    size_t full_sz = 4 + 8 * sizeof(sigurdos::mesh::SigurdRegion);
-    EXPECT_EQ(full_sz, 380u);
-}
-
-TEST(RegionsTest, RegionFileLoadCountRejectsShortHeader) {
-    EXPECT_EQ(sigurdos::mesh::detail::regionFileLoadCount(1, 3, 1), 0);
-}
-
-TEST(RegionsTest, RegionFileLoadCountRejectsZeroStoredCount) {
-    EXPECT_EQ(sigurdos::mesh::detail::regionFileLoadCount(
-                  0, sigurdos::mesh::detail::REGION_FILE_HEADER_SIZE, 1),
-              0);
-}
-
-TEST(RegionsTest, RegionFileLoadCountRejectsTruncatedPayload) {
-    const size_t one_region_file =
-        sigurdos::mesh::detail::REGION_FILE_HEADER_SIZE +
-        sizeof(sigurdos::mesh::SigurdRegion);
-
-    EXPECT_EQ(sigurdos::mesh::detail::regionFileLoadCount(2, one_region_file, 2), 0);
-}
-
-TEST(RegionsTest, RegionFileLoadCountAllowsCallerLimitedCompleteFile) {
-    const size_t four_region_file =
-        sigurdos::mesh::detail::REGION_FILE_HEADER_SIZE +
-        4 * sizeof(sigurdos::mesh::SigurdRegion);
-
-    EXPECT_EQ(sigurdos::mesh::detail::regionFileLoadCount(4, four_region_file, 2), 2);
-}
-
-TEST(RegionsTest, RegionFileLoadCountRejectsStoredCountAboveProjectLimit) {
-    const size_t oversized_file =
-        sigurdos::mesh::detail::REGION_FILE_HEADER_SIZE +
-        (SIGURD_MAX_REGIONS + 1) * sizeof(sigurdos::mesh::SigurdRegion);
-
-    EXPECT_EQ(sigurdos::mesh::detail::regionFileLoadCount(
-                  SIGURD_MAX_REGIONS + 1, oversized_file, SIGURD_MAX_REGIONS),
-              0);
-}
-
-// ── Key derivation golden vector ───────────────────────
-
-TEST(RegionsTest, DeriveKeyGoldenVectorDocumented) {
-    // This test does NOT call deriveRegionKey() (requires mbedtls).
-    // It documents the expected output so hardware tests can validate.
-    // SHA256("#test") = 9cd8fcf22a47333b591d96a2b848b73f... (32 bytes)
-    // First 16 bytes = golden vector above.
-
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[0],  0x9c);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[1],  0xd8);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[2],  0xfc);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[3],  0xf2);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[4],  0x2a);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[5],  0x47);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[6],  0x33);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[7],  0x3b);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[8],  0x59);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[9],  0x1d);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[10], 0x96);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[11], 0xa2);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[12], 0xb8);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[13], 0x48);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[14], 0xb7);
-    EXPECT_EQ(GOLDEN_DERIVE_KEY_TEST[15], 0x3f);
+TEST(RegionsTest, ExportRegionsDoesNotCrash) {
+    char buf[128];
+    size_t n = sigurdos::mesh::exportRegions(buf, sizeof(buf));
+    (void)n;
+    SUCCEED();
 }
 
 // ── API function signatures (compile-time checks) ───────
 
-TEST(RegionsTest, ListRegionsSignature) {
-    using fn_t = int (*)(sigurdos::mesh::SigurdRegion*, int);
-    (void)static_cast<fn_t>(sigurdos::mesh::listRegions);
-    SUCCEED();
-}
-
 TEST(RegionsTest, AddRegionSignature) {
-    using fn_t = bool (*)(const char*, const char*);
+    using fn_t = ::RegionEntry* (*)(const char*, const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::addRegion);
     SUCCEED();
 }
@@ -246,9 +253,27 @@ TEST(RegionsTest, RemoveRegionSignature) {
     SUCCEED();
 }
 
-TEST(RegionsTest, SetActiveRegionSignature) {
-    using fn_t = bool (*)(const char*);
-    (void)static_cast<fn_t>(sigurdos::mesh::setActiveRegion);
+TEST(RegionsTest, FindRegionSignature) {
+    using fn_t = ::RegionEntry* (*)(const char*);
+    (void)static_cast<fn_t>(sigurdos::mesh::findRegion);
+    SUCCEED();
+}
+
+TEST(RegionsTest, FindRegionPrefixSignature) {
+    using fn_t = ::RegionEntry* (*)(const char*);
+    (void)static_cast<fn_t>(sigurdos::mesh::findRegionPrefix);
+    SUCCEED();
+}
+
+TEST(RegionsTest, ListRegionsSignature) {
+    using fn_t = int (*)(sigurdos::mesh::RegionInfo*, int);
+    (void)static_cast<fn_t>(sigurdos::mesh::listRegions);
+    SUCCEED();
+}
+
+TEST(RegionsTest, GetRegionCountSignature) {
+    using fn_t = int (*)();
+    (void)static_cast<fn_t>(sigurdos::mesh::getRegionCount);
     SUCCEED();
 }
 
@@ -258,9 +283,9 @@ TEST(RegionsTest, GetActiveRegionSignature) {
     SUCCEED();
 }
 
-TEST(RegionsTest, SetSendUnscopedOnceSignature) {
-    using fn_t = void (*)(bool);
-    (void)static_cast<fn_t>(sigurdos::mesh::setSendUnscopedOnce);
+TEST(RegionsTest, SetActiveRegionNameSignature) {
+    using fn_t = bool (*)(const char*);
+    (void)static_cast<fn_t>(sigurdos::mesh::setActiveRegionName);
     SUCCEED();
 }
 
@@ -270,114 +295,76 @@ TEST(RegionsTest, SyncRegionsFromChannelsSignature) {
     SUCCEED();
 }
 
-// regions.h API signatures
-TEST(RegionsTest, LoadRegionsSignature) {
-    using fn_t = int (*)(sigurdos::mesh::SigurdRegion*, int);
-    (void)static_cast<fn_t>(sigurdos::mesh::loadRegions);
+TEST(RegionsTest, RegionsLoadSignature) {
+    using fn_t = bool (*)();
+    (void)static_cast<fn_t>(sigurdos::mesh::regionsLoad);
     SUCCEED();
 }
 
-TEST(RegionsTest, SaveRegionsSignature) {
-    using fn_t = bool (*)(const sigurdos::mesh::SigurdRegion*, int);
-    (void)static_cast<fn_t>(sigurdos::mesh::saveRegions);
+TEST(RegionsTest, RegionsSaveSignature) {
+    using fn_t = bool (*)();
+    (void)static_cast<fn_t>(sigurdos::mesh::regionsSave);
     SUCCEED();
 }
 
-TEST(RegionsTest, DeriveRegionKeySignature) {
-    using fn_t = bool (*)(const char*, uint8_t*);
-    (void)static_cast<fn_t>(sigurdos::mesh::deriveRegionKey);
+TEST(RegionsTest, RegionAllowsFloodSignature) {
+    using fn_t = bool (*)(const char*);
+    (void)static_cast<fn_t>(sigurdos::mesh::regionAllowsFlood);
     SUCCEED();
 }
 
-// ── Binary format round-trip (manual buffer) ────────────
-
-TEST(RegionsTest, ManualBinaryRoundTrip) {
-    // Manually construct a regions.dat buffer with 2 regions,
-    // parse it back, and verify fields match.
-    sigurdos::mesh::SigurdRegion regions[2];
-    memset(&regions[0], 0, sizeof(regions[0]));
-    memset(&regions[1], 0, sizeof(regions[1]));
-
-    strncpy(regions[0].name, "#london", sizeof(regions[0].name) - 1);
-    memcpy(regions[0].key, GOLDEN_DERIVE_KEY_TEST, 16);
-
-    strncpy(regions[1].name, "$crew", sizeof(regions[1].name) - 1);
-    memset(regions[1].key, 0xAB, 16);
-
-    // Serialize to buffer (simulating SPIFFS file format)
-    uint8_t buf[4 + 2 * sizeof(sigurdos::mesh::SigurdRegion)];
-    uint32_t count = 2;
-    memcpy(buf, &count, 4);
-    memcpy(buf + 4, &regions[0], sizeof(sigurdos::mesh::SigurdRegion));
-    memcpy(buf + 4 + sizeof(sigurdos::mesh::SigurdRegion), &regions[1],
-           sizeof(sigurdos::mesh::SigurdRegion));
-
-    // Deserialize and verify
-    uint32_t loaded_count;
-    memcpy(&loaded_count, buf, 4);
-    EXPECT_EQ(loaded_count, 2u);
-
-    sigurdos::mesh::SigurdRegion loaded[2];
-    memcpy(&loaded[0], buf + 4, sizeof(sigurdos::mesh::SigurdRegion));
-    memcpy(&loaded[1], buf + 4 + sizeof(sigurdos::mesh::SigurdRegion),
-           sizeof(sigurdos::mesh::SigurdRegion));
-
-    EXPECT_STREQ(loaded[0].name, "#london");
-    EXPECT_EQ(memcmp(loaded[0].key, GOLDEN_DERIVE_KEY_TEST, 16), 0);
-    EXPECT_STREQ(loaded[1].name, "$crew");
-    EXPECT_EQ(loaded[1].key[0], 0xAB);
-    EXPECT_EQ(loaded[1].key[15], 0xAB);
+TEST(RegionsTest, SetRegionFloodAllowedSignature) {
+    using fn_t = bool (*)(const char*, bool);
+    (void)static_cast<fn_t>(sigurdos::mesh::setRegionFloodAllowed);
+    SUCCEED();
 }
 
-// ── Edge cases ──────────────────────────────────────────
-
-TEST(RegionsTest, EmptyRegionStructIsAllZeros) {
-    sigurdos::mesh::SigurdRegion r;
-    memset(&r, 0, sizeof(r));
-
-    EXPECT_EQ(r.name[0], '\0');
-    for (int i = 0; i < 16; i++) {
-        EXPECT_EQ(r.key[i], 0u);
-    }
+TEST(RegionsTest, GetHomeRegionNameSignature) {
+    using fn_t = const char* (*)();
+    (void)static_cast<fn_t>(sigurdos::mesh::getHomeRegionName);
+    SUCCEED();
 }
 
-TEST(RegionsTest, NullTerminatorPreservedInName) {
-    // verify that name is always null-terminated after strncpy
-    sigurdos::mesh::SigurdRegion r;
-    memset(&r, 0xFF, sizeof(r));  // fill with garbage
-
-    const char* short_name = "#nyc";
-    strncpy(r.name, short_name, sizeof(r.name) - 1);
-    r.name[sizeof(r.name) - 1] = '\0';
-
-    EXPECT_STREQ(r.name, "#nyc");
-    EXPECT_EQ(r.name[30], '\0');
+TEST(RegionsTest, SetHomeRegionSignature) {
+    using fn_t = bool (*)(const char*);
+    (void)static_cast<fn_t>(sigurdos::mesh::setHomeRegion);
+    SUCCEED();
 }
 
-TEST(RegionsTest, AddRegionRejectsDuplicateNormalizedNames) {
-    const char* normalized = "#codexdup";
-    removeAllRegionEntriesNamed(normalized);
-
-    ASSERT_TRUE(sigurdos::mesh::addRegion("codexdup", nullptr));
-    EXPECT_FALSE(sigurdos::mesh::addRegion("#codexdup", nullptr));
-
-    sigurdos::mesh::SigurdRegion list[SIGURD_MAX_REGIONS];
-    int n = sigurdos::mesh::listRegions(list, SIGURD_MAX_REGIONS);
-    int matches = 0;
-    for (int i = 0; i < n; i++) {
-        if (strcmp(list[i].name, normalized) == 0) matches++;
-    }
-    EXPECT_EQ(matches, 1);
-
-    removeAllRegionEntriesNamed(normalized);
+TEST(RegionsTest, GetDefaultScopeNameSignature) {
+    using fn_t = const char* (*)();
+    (void)static_cast<fn_t>(sigurdos::mesh::getDefaultScopeName);
+    SUCCEED();
 }
 
-TEST(RegionsTest, AddRegionRejectsNamesThatWouldTruncate) {
-    const char* bare30 = "abcdefghijklmnopqrstuvwxyz1234";
-    const char* prefixed31 = "#abcdefghijklmnopqrstuvwxyz1234";
+TEST(RegionsTest, SetDefaultScopeSignature) {
+    using fn_t = bool (*)(const char*);
+    (void)static_cast<fn_t>(sigurdos::mesh::setDefaultScope);
+    SUCCEED();
+}
 
-    EXPECT_FALSE(sigurdos::mesh::addRegion(bare30, nullptr));
-    EXPECT_FALSE(sigurdos::mesh::addRegion(prefixed31, nullptr));
+TEST(RegionsTest, RegionDeniesFloodSignature) {
+    using fn_t = ::RegionEntry* (*)(::mesh::Packet*);
+    (void)static_cast<fn_t>(sigurdos::mesh::regionDeniesFlood);
+    SUCCEED();
+}
+
+TEST(RegionsTest, GetRegionMapSignature) {
+    using fn_t = RegionMap* (*)();
+    (void)static_cast<fn_t>(sigurdos::mesh::getRegionMap);
+    SUCCEED();
+}
+
+TEST(RegionsTest, ListRegionNamesSignature) {
+    using fn_t = int (*)(char*, int, uint8_t, bool);
+    (void)static_cast<fn_t>(sigurdos::mesh::listRegionNames);
+    SUCCEED();
+}
+
+TEST(RegionsTest, ExportRegionsSignature) {
+    using fn_t = size_t (*)(char*, size_t);
+    (void)static_cast<fn_t>(sigurdos::mesh::exportRegions);
+    SUCCEED();
 }
 
 } // namespace
