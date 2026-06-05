@@ -508,7 +508,7 @@ void sigurdos_display_loop()
     // Serial screenshot/nav commands are disabled unless explicitly enabled.
     // In SIGURDOS_REMOTE_TEST builds the test controller's serial handler
     // owns all Serial reads; this block would steal characters from commands.
-#if SIGURDOS_SERIAL_DEBUG_COMMANDS && !defined(SIGURDOS_REMOTE_TEST)
+#if SIGURDOS_SERIAL_DEBUG_COMMANDS_ACTIVE
     if (Serial.available()) {
         static char cmd_buf[64];
         static uint8_t cmd_pos = 0;

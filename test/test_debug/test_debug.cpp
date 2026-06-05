@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include "diagnostics/debug.h"
+#include "diagnostics/debug_cfg.h"
 
 namespace {
 
@@ -51,6 +52,12 @@ TEST(DebugTest, NonDebugBuildStubsRemainDisabled) {
     EXPECT_FALSE(sigurdos::debug::feat_get_ui());
     EXPECT_FALSE(sigurdos::debug::feat_get_map());
     EXPECT_FALSE(sigurdos::debug::feat_get_diag());
+}
+
+TEST(DebugTest, SerialDebugCommandsDisabledByDefault) {
+    EXPECT_EQ(SIGURDOS_SERIAL_DEBUG_COMMANDS, 0);
+    EXPECT_EQ(SIGURDOS_REMOTE_TEST_ACTIVE, 0);
+    EXPECT_EQ(SIGURDOS_SERIAL_DEBUG_COMMANDS_ACTIVE, 0);
 }
 
 } // namespace

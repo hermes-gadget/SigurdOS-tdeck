@@ -52,6 +52,15 @@
 #define SIGURDOS_SERIAL_DEBUG_COMMANDS 0
 #endif
 
+#if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
+#define SIGURDOS_REMOTE_TEST_ACTIVE 1
+#else
+#define SIGURDOS_REMOTE_TEST_ACTIVE 0
+#endif
+
+#define SIGURDOS_SERIAL_DEBUG_COMMANDS_ACTIVE \
+  (SIGURDOS_SERIAL_DEBUG_COMMANDS && !SIGURDOS_REMOTE_TEST_ACTIVE)
+
 // Per-feature runtime state declarations.
 // These are always compiled so the test controller can call them
 // regardless of compile-time gating. In non-debug builds the stubs
