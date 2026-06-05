@@ -56,11 +56,13 @@ validation namespace/marker:
 ```powershell
 New-Item -ItemType Directory -Force -Path .pio\gps_validation_readback | Out-Null
 python -m esptool --chip esp32s3 --port COM8 --baud 921600 read-flash 0x9000 0x5000 .pio\gps_validation_readback\nvs.bin
-python -c "from pathlib import Path; data=Path('.pio/gps_validation_readback/nvs.bin').read_bytes(); print(data.find(b'gpsval'), data.find(b'gps-validation'))"
+python scripts\validation\nvs_boot_marker_check.py .pio\gps_validation_readback\nvs.bin --require
 ```
 
-Both offsets should be non-negative after the app starts. To retrieve the SPIFFS
-evidence log through the bootloader, read and unpack the SPIFFS partition:
+The helper decodes NVS entry names and also scans for the marker string. It
+exits non-zero until the `gpsval` namespace, `boot_count` key, `marker` key, and
+`gps-validation` marker value are present. To retrieve the SPIFFS evidence log
+through the bootloader, read and unpack the SPIFFS partition:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path .pio\gps_validation_readback | Out-Null
@@ -100,7 +102,7 @@ Results:
 | COM8 ROM serial visibility | Passed; ROM downloader banner is visible |
 | COM8 app serial visibility | Not proven; app banner and `@gps_hw` records were not visible |
 | COM8 NVS readback | Passed; NVS partition read succeeded over COM8 |
-| NVS boot marker | Not present after post-upload, bootloader `run`, no-stub `run`, DTR-low reset, and DTR-high reset windows |
+| NVS boot marker | Not present after post-upload, bootloader `run`, no-stub `run`, DTR-low reset, and DTR-high reset windows; `scripts/validation/nvs_boot_marker_check.py` parsed the existing `sigurdos` namespace but found no `gpsval`, `boot_count`, `marker`, or `gps-validation` entries |
 | COM8 SPIFFS readback | Passed; SPIFFS partition read and unpack succeeded over COM8 |
 | GPS validation app execution | Not proven; `/gps_hw.txt` was absent after post-upload, bootloader `run`, and explicit DTR/RTS app-reset windows |
 | GPS fix proof | Not proven because app serial output was not observable on COM8 |
@@ -127,7 +129,17 @@ Reset attempts kept to COM8:
 - explicit DTR low and DTR high / RTS app-reset pulses followed by NVS readback
 
 None produced observable app serial output, a validation NVS marker, or a
-persisted `/gps_hw.txt` log on COM8 in this environment. The next validation
-attempt should either correct the COM8 reset/BOOT line state, physically reset
-the device while the validation firmware is flashed, or use the app-side USB CDC
-port after confirming it is allowed by the port safety policy.
+persisted `/gps_hw.txt` log on COM8 in this environment. The NVS helper output
+for the retained readbacks was:
+
+```text
+.pio\gps_validation_readback\nvs-before.bin: namespace gpsval=absent boot_count=absent marker=absent marker_value gps-validation=absent known_namespace sigurdos=present
+.pio\gps_validation_readback\nvs-after-upload.bin: namespace gpsval=absent boot_count=absent marker=absent marker_value gps-validation=absent known_namespace sigurdos=present
+.pio\gps_validation_readback\nvs-after-nostub-run.bin: namespace gpsval=absent boot_count=absent marker=absent marker_value gps-validation=absent known_namespace sigurdos=present
+.pio\gps_validation_readback\nvs-after-dtr1-reset.bin: namespace gpsval=absent boot_count=absent marker=absent marker_value gps-validation=absent known_namespace sigurdos=present
+```
+
+The next validation attempt should either correct the COM8 reset/BOOT line
+state, physically reset the device while the validation firmware is flashed, or
+use the app-side USB CDC port after confirming it is allowed by the port safety
+policy.
