@@ -6,6 +6,8 @@
 
 #include "mesh_wrapper.h"
 #include "channel_validation.h"
+#include "message_store.h"
+#include "comms/companion_bridge.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
@@ -31,6 +33,9 @@
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+#include <helpers/esp32/SerialBLEInterface.h>
+#endif
 
 using sigurdos::mesh::MeshMessage;
 
@@ -75,6 +80,8 @@ static uint32_t      msg_drop_count = 0;
 // reset to 0 when the chat screen is opened. Used by the home screen badge.
 static int           unread_count = 0;
 
+#include "companion_adapter.inc"
+
 // Non-static overload for SigurdMeshV2 — takes RSSI/SNR from caller context
 // (SigurdMeshV2 has packet context when calling, while the static queue_push
 //  reads from radio_driver which may not reflect the correct packet.)
@@ -107,6 +114,7 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     msg_count++;
     const char* ptype = (channel && channel[0]) ? "CHANNEL" : "DM";
     sigurdos::mesh::pushPacketLog(sender, rssi, snr, ptype);
+    storeIncomingMessageForCompanion(sender, channel, text, rssi, snr);
 #if SIGURDOS_DEBUG_MESH
     SIGURDOS_RUNTIME_FEAT(mesh) {
     Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
@@ -308,6 +316,9 @@ void registerAckedMessage(const char* dest, uint32_t ts) {
     _acked_head = (_acked_head + 1) % MAX_ACKED;
     if (_acked_count < MAX_ACKED) _acked_count++;
     _ack_counter++;
+    char conversation[32];
+    snprintf(conversation, sizeof(conversation), "DM: %s", dest);
+    sigurdos::mesh::messageStoreMarkAcked(conversation, ts);
 #if SIGURDOS_DEBUG_MESH
     Serial.printf("[mesh] ACK for %s (ts=%lu) — %d total tracked\n", dest, (unsigned long)ts, _acked_count);
 #endif
@@ -784,6 +795,25 @@ bool init(bool spiffs_ok)
         }
     }
 
+    sigurdos::mesh::messageStoreBegin();
+
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    {
+        char ble_name[32];
+        strncpy(ble_name, own_name, sizeof(ble_name) - 1);
+        ble_name[sizeof(ble_name) - 1] = '\0';
+        g_ble_serial.begin("MeshCore-", ble_name, g_companion_host.blePin());
+        if (CompanionBridge* b = companionBridge()) {
+            b->begin(&g_ble_serial, &g_companion_host);
+            if (sigurdos::prefs_get().ble_enabled) {
+                b->setEnabled(true);
+            }
+        }
+    }
+#else
+    if (CompanionBridge* b = companionBridge()) b->begin(nullptr, &g_companion_host);
+#endif
+
     // Only broadcast advert if user has explicitly configured radio params.
     // Compile-time defaults may be illegal in some regions — transmit gating
     // prevents first-boot broadcasts until user opens Settings → Radio Setup.
@@ -820,6 +850,7 @@ void loop()
     if (!initialized) return;
     if (g_mesh) {
         g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
+        if (g_companion_bridge_ptr) g_companion_bridge_ptr->loop();
     }
     rtc_clock.tick();
 
@@ -858,7 +889,12 @@ uint32_t sendMessage(const char* dest, const char* text) {
     // sendTextTo now takes a fixed timestamp so the UI and mesh layer agree
     // (see slop_mesh_v2.h sendTextTo overload)
     bool ok = g_mesh->sendTextTo(dest, text, ts);
-    if (ok) pushPacketLog(own_name, 0, 0.0f, "TX_DM");
+    if (ok) {
+        char conversation[32];
+        snprintf(conversation, sizeof(conversation), "DM: %s", dest ? dest : "");
+        storeOutgoingMessageForCompanion(conversation, text, ts, false);
+        pushPacketLog(own_name, 0, 0.0f, "TX_DM");
+    }
     return ok ? ts : 0;
 }
 
@@ -868,7 +904,10 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
         auto* ch = g_mesh->getChannel(i);
         if (ch && strcmp(ch->name, channel_name) == 0) {
             bool ok = g_mesh->sendGroupText(i, text);
-            if (ok) pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
+            if (ok) {
+                storeOutgoingMessageForCompanion(channel_name, text, getCurrentTime(), true);
+                pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
+            }
             return ok;
         }
     }
@@ -1430,6 +1469,31 @@ void setDutyCycle(uint8_t percent) {
     if (!g_mesh) return;
     g_mesh->setDutyCycle(percent);
 }
+
+bool companionBleAvailable() {
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool companionBleSetEnabled(bool enabled) {
+    sigurdos::NodePrefs p = sigurdos::prefs_get();
+    p.ble_enabled = enabled;
+    sigurdos::prefs_set(p);
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    CompanionBridge* b = companionBridge();
+    return b && b->setEnabled(enabled);
+#else
+    return false;
+#endif
+}
+
+bool companionBleEnabled() { CompanionBridge* b = companionBridge(); return b && b->isEnabled(); }
+bool companionBleConnected() { CompanionBridge* b = companionBridge(); return b && b->isConnected(); }
+uint32_t companionBleLastSyncTime() { CompanionBridge* b = companionBridge(); return b ? b->lastSyncTime() : 0; }
+uint32_t companionBlePin() { return g_companion_host.blePin(); }
 
 // ── Contact management extensions ────────────
     bool removeContact(const char* name) {

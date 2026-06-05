@@ -74,6 +74,13 @@ float getLastSNR()  { return mock_snr; }
 bool sendAdvert() { return false; }
 void saveState() {}
 
+bool companionBleAvailable() { return false; }
+bool companionBleSetEnabled(bool enabled) { (void)enabled; return false; }
+bool companionBleEnabled() { return false; }
+bool companionBleConnected() { return false; }
+uint32_t companionBleLastSyncTime() { return 0; }
+uint32_t companionBlePin() { return 123456; }
+
 // ── Packet log ──────────────────────────────────
 
 static PacketLogEntry mock_pkt_log[8];

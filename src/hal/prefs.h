@@ -41,6 +41,7 @@ struct NodePrefs {
     bool     multi_acks;              // send extra redundant ACK transmissions for lossy links
     bool     buzzer_quiet;            // mute message-arrival buzzer
     uint8_t  client_repeat;           // 0=no forwarding, !=0=opportunistic relay (client-repeat mode)
+    bool     ble_enabled;             // BLE companion advertising enabled in BLE build
     uint32_t device_pin;               // 4-6 digit device PIN (0 = disabled)
     char     wifi_ssid[33];            // WiFi STA SSID for GitHub OTA (empty = not set)
     char     wifi_password[64];        // WiFi STA password
@@ -77,6 +78,7 @@ struct NodePrefs {
         multi_acks = false;           // default: send minimum ACKs
         buzzer_quiet = false;         // default: buzzer enabled
         client_repeat = 0;            // default: no forwarding
+        ble_enabled = false;          // default: BLE companion off
         device_pin = 0;               // default: no PIN
         wifi_ssid[0] = '\0';          // default: no WiFi
         wifi_password[0] = '\0';

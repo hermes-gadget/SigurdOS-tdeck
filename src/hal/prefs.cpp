@@ -55,6 +55,7 @@ bool prefs_load(NodePrefs& p) {
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
     p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
     p.client_repeat = nvs.getUChar("clirep", 0);
+    p.ble_enabled = nvs.getBool("ble_en", false);
     p.device_pin = nvs.getULong("dev_pin", 0);
     // WiFi credentials (GitHub OTA)
     size_t ssid_len = nvs.getString("wifi_ssid", p.wifi_ssid, sizeof(p.wifi_ssid));
@@ -101,6 +102,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("autoadd_cfg", p.autoadd_config);
     nvs.putUChar("autoadd_mh", p.autoadd_max_hops);
     nvs.putUChar("clirep", p.client_repeat);
+    nvs.putBool("ble_en", p.ble_enabled);
     nvs.putULong("dev_pin", p.device_pin);
     nvs.putString("wifi_ssid", p.wifi_ssid);
     nvs.putString("wifi_pw", p.wifi_password);

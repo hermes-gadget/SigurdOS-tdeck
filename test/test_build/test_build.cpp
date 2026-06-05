@@ -85,7 +85,7 @@ TEST_F(BuildIntegrationTest, DisplayAPIExists) {
 // ── Screen count matches between modules ────────────────
 TEST_F(BuildIntegrationTest, ScreenCountConsistent) {
     // navigation.h defines screens (Home + app screens)
-    EXPECT_EQ((int)sigurdos::ui::Screen::COUNT, 25);
+    EXPECT_EQ((int)sigurdos::ui::Screen::COUNT, 26);
 }
 
 // ── LVGL config sanity ──────────────────────────────────

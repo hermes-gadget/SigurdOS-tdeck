@@ -65,6 +65,7 @@ TEST(PrefsDefaultsTest, MeshBehaviorDefaultsMatchSafeCompanionSettings) {
     EXPECT_EQ(1, prefs.advert_type);
     EXPECT_FALSE(prefs.multi_acks);
     EXPECT_EQ(0, prefs.client_repeat);
+    EXPECT_FALSE(prefs.ble_enabled);
 }
 
 TEST(PrefsDefaultsTest, DelayAndRadioAssistDefaultsAreInitialized) {

@@ -48,6 +48,7 @@ enum class Screen {
     Telemetry,
     NodeStatus,
     WiFiNetworks,
+    Bluetooth,
     Regions,
     COUNT
 };

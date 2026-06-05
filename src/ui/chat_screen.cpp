@@ -26,6 +26,7 @@
 #include "../hal/battery.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../mesh/channel_validation.h"
+#include "../mesh/message_store.h"
 #include "../hal/prefs.h"
 #include "../fonts/emoji_font.h"
 #include <lvgl.h>
@@ -690,6 +691,103 @@ static void append_channel_message(int idx, const char* sender, const char* text
     msg.acked = false;
 
     update_channel_meta(idx, msg.text, timestamp);
+}
+
+static bool loaded_message_exists(int idx, const char* sender, const char* text,
+                                  uint32_t timestamp, bool is_self)
+{
+    if (idx < 0 || idx >= MAX_CHANNELS || !has_channel_buffer(idx)) return false;
+    const char* safe_sender = sender ? sender : "";
+    const char* safe_text = text ? text : "";
+    for (uint16_t i = 0; i < ch_msg_count[idx]; i++) {
+        const ChannelMessage& msg = ch_msgs[idx][i];
+        uint32_t delta = msg.timestamp > timestamp
+            ? msg.timestamp - timestamp
+            : timestamp - msg.timestamp;
+        if (msg.is_self == is_self && delta <= 2 &&
+            strcmp(msg.sender, safe_sender) == 0 &&
+            strcmp(msg.text, safe_text) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool append_loaded_channel_message(int idx, const char* sender, const char* text,
+                                          uint32_t timestamp, bool is_self, bool acked)
+{
+    if (idx < 0 || idx >= MAX_CHANNELS) return false;
+    ensure_channel_buffer(idx);
+    if (loaded_message_exists(idx, sender, text, timestamp, is_self)) {
+        if (acked && has_channel_buffer(idx)) {
+            for (uint16_t i = 0; i < ch_msg_count[idx]; i++) {
+                ChannelMessage& msg = ch_msgs[idx][i];
+                uint32_t delta = msg.timestamp > timestamp
+                    ? msg.timestamp - timestamp
+                    : timestamp - msg.timestamp;
+                if (msg.is_self == is_self && delta <= 2 &&
+                    strcmp(msg.sender, sender ? sender : "") == 0 &&
+                    strcmp(msg.text, text ? text : "") == 0) {
+                    msg.acked = true;
+                }
+            }
+        }
+        return false;
+    }
+
+    append_channel_message(idx, sender, text, timestamp, is_self);
+    if (acked && has_channel_buffer(idx) && ch_msg_count[idx] > 0) {
+        ch_msgs[idx][ch_msg_count[idx] - 1].acked = true;
+    }
+    return true;
+}
+
+static int ensure_loaded_conversation(const char* conversation)
+{
+    if (!conversation || !conversation[0]) return -1;
+    int idx = find_channel_idx(conversation);
+    if (idx < 0 && dyn_count < MAX_CHANNELS) {
+        idx = dyn_count;
+        strncpy(dyn_channels[idx], conversation, sizeof(dyn_channels[idx]) - 1);
+        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = 0;
+        dyn_count++;
+    }
+    return idx;
+}
+
+static void chat_load_companion_messages()
+{
+    // Scratch buffer for the persisted-message snapshot. Allocate from PSRAM
+    // (with internal-DRAM fallback) rather than a static array — at ~15 KB it
+    // would otherwise overflow the tight internal dram0_0_seg .bss region.
+    constexpr int kRecentCap = 64;
+    const size_t bytes = sizeof(sigurdos::mesh::StoredMessage) * kRecentCap;
+    sigurdos::mesh::StoredMessage* recent =
+        (sigurdos::mesh::StoredMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!recent) {
+        recent = (sigurdos::mesh::StoredMessage*)heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (!recent) return;
+
+    int n = sigurdos::mesh::messageStoreLoadRecent(nullptr, recent, kRecentCap);
+    for (int i = 0; i < n; i++) {
+        const sigurdos::mesh::StoredMessage& msg = recent[i];
+        int idx = ensure_loaded_conversation(msg.conversation);
+        if (idx < 0 || idx >= MAX_CHANNELS) continue;
+
+        const char* text = msg.text;
+        char prefix[40];
+        if (msg.is_channel && !msg.is_self && msg.sender[0]) {
+            snprintf(prefix, sizeof(prefix), "%s: ", msg.sender);
+            size_t plen = strnlen(prefix, sizeof(prefix));
+            if (strncmp(msg.text, prefix, plen) == 0) {
+                text = msg.text + plen;
+            }
+        }
+        append_loaded_channel_message(idx, msg.sender, text, msg.timestamp,
+                                      msg.is_self, msg.acked);
+    }
+    heap_caps_free(recent);
 }
 
 static lv_obj_t* make_chat_list_screen()
@@ -2240,8 +2338,14 @@ void chat_load_messages()
         }
     }
 
-    if (!SPIFFS.begin(false)) return;
-    if (!SPIFFS.exists("/msgs")) return;
+    if (!SPIFFS.begin(false)) {
+        chat_load_companion_messages();
+        return;
+    }
+    if (!SPIFFS.exists("/msgs")) {
+        chat_load_companion_messages();
+        return;
+    }
     File f = SPIFFS.open("/msgs", "r");
     if (!f) return;
 
@@ -2323,6 +2427,7 @@ void chat_load_messages()
         }
     }
     f.close();
+    chat_load_companion_messages();
 }
 
 uint16_t chat_screen_get_message_cap()

@@ -107,6 +107,14 @@ void loadChannels();
 void shutdown();
 void factoryReset();
 
+// Companion BLE bridge
+bool companionBleAvailable();
+bool companionBleSetEnabled(bool enabled);
+bool companionBleEnabled();
+bool companionBleConnected();
+uint32_t companionBleLastSyncTime();
+uint32_t companionBlePin();
+
 // ── Contact persistence ─────────────────────────
 void saveContacts();
 void loadContacts();
