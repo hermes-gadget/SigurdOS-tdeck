@@ -39,6 +39,22 @@ void mesh_v2_queue_push(const char* sender, const char* channel,
 // app received in RESP_CODE_SENT; trip_time_ms is the round-trip time.
 void mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_time_ms);
 
+// Live mesh-event fan-out to the companion bridge (no-ops when the bridge is
+// absent / no phone connected). Primitive args keep this header MeshCore-free.
+// contact_info is an opaque `const ::ContactInfo*` (kept void* so this header
+// stays free of MeshCore types); the adapter casts it back.
+void mesh_v2_companion_advert_push(const void* contact_info, bool is_new);
+void mesh_v2_companion_path_push(const uint8_t* pub_key);
+void mesh_v2_companion_contact_deleted_push(const uint8_t* pub_key);
+void mesh_v2_companion_contacts_full_push();
+void mesh_v2_companion_login_push(const uint8_t* pub_key, bool success,
+                                  uint8_t permission, bool is_admin);
+void mesh_v2_companion_status_push(const uint8_t* pub_key, const uint8_t* blob, size_t len);
+void mesh_v2_companion_telemetry_push(const uint8_t* pub_key, const uint8_t* blob, size_t len);
+void mesh_v2_companion_trace_push(uint32_t tag, uint32_t auth, uint8_t flags,
+                                  const uint8_t* path_hashes, const uint8_t* path_snrs,
+                                  uint8_t path_len, int8_t final_snr_quarters);
+
 struct MeshMessage {
     char sender[32];
     char channel[32];

@@ -25,16 +25,56 @@ enum CompanionCommand : uint8_t {
     CMD_GET_DEVICE_TIME = 5,
     CMD_SET_DEVICE_TIME = 6,
     CMD_SEND_SELF_ADVERT = 7,
+    CMD_SET_ADVERT_NAME = 8,
+    CMD_ADD_UPDATE_CONTACT = 9,
     CMD_SYNC_NEXT_MESSAGE = 10,
     CMD_SET_RADIO_PARAMS = 11,
     CMD_SET_RADIO_TX_POWER = 12,
+    CMD_RESET_PATH = 13,
+    CMD_SET_ADVERT_LATLON = 14,
+    CMD_REMOVE_CONTACT = 15,
+    CMD_SHARE_CONTACT = 16,
+    CMD_EXPORT_CONTACT = 17,
+    CMD_IMPORT_CONTACT = 18,
+    CMD_REBOOT = 19,
+    CMD_GET_BATT_AND_STORAGE = 20,
+    CMD_SET_TUNING_PARAMS = 21,
     CMD_DEVICE_QUERY = 22,
     CMD_EXPORT_PRIVATE_KEY = 23,
     CMD_IMPORT_PRIVATE_KEY = 24,
+    CMD_SEND_LOGIN = 26,
+    CMD_SEND_STATUS_REQ = 27,
+    CMD_HAS_CONNECTION = 28,
+    CMD_LOGOUT = 29,
+    CMD_GET_CONTACT_BY_KEY = 30,
     CMD_GET_CHANNEL = 31,
     CMD_SET_CHANNEL = 32,
+    CMD_SIGN_START = 33,
+    CMD_SIGN_DATA = 34,
+    CMD_SIGN_FINISH = 35,
+    CMD_SEND_TRACE_PATH = 36,
     CMD_SET_DEVICE_PIN = 37,
-    CMD_GET_BATT_AND_STORAGE = 20,
+    CMD_SET_OTHER_PARAMS = 38,
+    CMD_SEND_TELEMETRY_REQ = 39,
+    CMD_GET_CUSTOM_VARS = 40,
+    CMD_GET_ADVERT_PATH = 42,
+    CMD_GET_TUNING_PARAMS = 43,
+    CMD_FACTORY_RESET = 51,
+    CMD_SET_FLOOD_SCOPE_KEY = 54,
+    CMD_GET_STATS = 56,
+    CMD_SET_AUTOADD_CONFIG = 58,
+    CMD_GET_AUTOADD_CONFIG = 59,
+    CMD_GET_ALLOWED_REPEAT_FREQ = 60,
+    CMD_SET_PATH_HASH_MODE = 61,
+    CMD_SET_DEFAULT_FLOOD_SCOPE = 63,
+    CMD_GET_DEFAULT_FLOOD_SCOPE = 64,
+};
+
+// Sub-types for CMD_GET_STATS / RESP_CODE_STATS.
+enum CompanionStatsType : uint8_t {
+    STATS_TYPE_CORE = 0,
+    STATS_TYPE_RADIO = 1,
+    STATS_TYPE_PACKETS = 2,
 };
 
 enum CompanionResponse : uint8_t {
@@ -53,14 +93,34 @@ enum CompanionResponse : uint8_t {
     RESP_CODE_DEVICE_INFO = 13,
     RESP_CODE_PRIVATE_KEY = 14,
     RESP_CODE_DISABLED = 15,
+    RESP_CODE_EXPORT_CONTACT = 11,
     RESP_CODE_CONTACT_MSG_RECV_V3 = 16,
     RESP_CODE_CHANNEL_MSG_RECV_V3 = 17,
     RESP_CODE_CHANNEL_INFO = 18,
+    RESP_CODE_SIGN_START = 19,
+    RESP_CODE_SIGNATURE = 20,
+    RESP_CODE_CUSTOM_VARS = 21,
+    RESP_CODE_ADVERT_PATH = 22,
+    RESP_CODE_TUNING_PARAMS = 23,
+    RESP_CODE_STATS = 24,
+    RESP_CODE_AUTOADD_CONFIG = 25,
+    RESP_ALLOWED_REPEAT_FREQ = 26,
+    RESP_CODE_DEFAULT_FLOOD_SCOPE = 28,
 };
 
 enum CompanionPush : uint8_t {
+    PUSH_CODE_ADVERT = 0x80,
+    PUSH_CODE_PATH_UPDATED = 0x81,
     PUSH_CODE_SEND_CONFIRMED = 0x82,
     PUSH_CODE_MSG_WAITING = 0x83,
+    PUSH_CODE_LOGIN_SUCCESS = 0x85,
+    PUSH_CODE_LOGIN_FAIL = 0x86,
+    PUSH_CODE_STATUS_RESPONSE = 0x87,
+    PUSH_CODE_TRACE_DATA = 0x89,
+    PUSH_CODE_NEW_ADVERT = 0x8A,
+    PUSH_CODE_TELEMETRY_RESPONSE = 0x8B,
+    PUSH_CODE_CONTACT_DELETED = 0x8F,
+    PUSH_CODE_CONTACTS_FULL = 0x90,
 };
 
 enum CompanionError : uint8_t {
@@ -124,6 +184,46 @@ struct CompanionSelfInfo {
     uint8_t cr;
 };
 
+// Optional fields for CMD_SET_OTHER_PARAMS — each *_present flag mirrors the
+// official handler's length-gated parsing (later fields are optional).
+struct CompanionOtherParams {
+    uint8_t manual_add_contacts;
+    uint8_t telemetry_modes;
+    bool    telemetry_present;
+    uint8_t advert_loc_policy;
+    bool    loc_policy_present;
+    uint8_t multi_acks;
+    bool    multi_acks_present;
+};
+
+struct CompanionCoreStats {
+    uint16_t batt_mv;
+    uint32_t uptime_secs;
+    uint16_t err_flags;
+    uint8_t  queue_len;
+};
+
+struct CompanionRadioStats {
+    int16_t noise_floor;
+    int8_t  last_rssi;
+    int8_t  last_snr_quarters;
+    uint32_t tx_air_secs;
+    uint32_t rx_air_secs;
+};
+
+struct CompanionPacketStats {
+    uint32_t recv;
+    uint32_t sent;
+    uint32_t sent_flood;
+    uint32_t sent_direct;
+    uint32_t recv_flood;
+    uint32_t recv_direct;
+    uint32_t recv_errors;
+};
+
+static constexpr size_t SIGURDOS_COMPANION_SIGNATURE_SIZE = 64;
+static constexpr size_t SIGURDOS_COMPANION_MAX_SIGN_DATA = 1024;
+
 class CompanionBridgeHost {
 public:
     virtual ~CompanionBridgeHost() = default;
@@ -161,6 +261,67 @@ public:
     virtual bool setBlePin(uint32_t pin) = 0;
     virtual bool exportPrivateKey(uint8_t* out64) const = 0;
     virtual bool importPrivateKey(const uint8_t* key64) = 0;
+
+    // ── Radio / tuning / params ──────────────────────────────
+    virtual bool setRadioParams(uint32_t freq_khz, uint32_t bw_hz,
+                                uint8_t sf, uint8_t cr, uint8_t client_repeat) = 0;
+    virtual bool setRadioTxPower(int8_t dbm) = 0;
+    virtual void setTuningParams(uint32_t rx_base_x1000, uint32_t airtime_x1000) = 0;
+    virtual void getTuningParams(uint32_t* rx_base_x1000, uint32_t* airtime_x1000) const = 0;
+    virtual void setOtherParams(const CompanionOtherParams& p) = 0;
+    virtual bool setPathHashMode(uint8_t mode) = 0;
+    virtual void getAutoAddConfig(uint8_t* cfg, uint8_t* max_hops) const = 0;
+    virtual void setAutoAddConfig(uint8_t cfg, uint8_t max_hops) = 0;
+    virtual int8_t maxTxPowerDbm() const = 0;
+
+    // ── Advert metadata ──────────────────────────────────────
+    virtual bool setAdvertName(const char* name) = 0;
+    virtual bool setAdvertLatLon(int32_t lat_e6, int32_t lon_e6) = 0;
+
+    // ── Contact CRUD / connection ────────────────────────────
+    // Full 32-byte pub key. addOrUpdateContact takes a parsed contact.
+    virtual bool getContactByPubKey(const uint8_t* pub_key, CompanionContact& out) const = 0;
+    virtual bool addOrUpdateContact(const CompanionContact& c) = 0;
+    virtual bool removeContactByPubKey(const uint8_t* pub_key) = 0;
+    virtual bool resetPathByPubKey(const uint8_t* pub_key) = 0;
+    virtual bool shareContactByPubKey(const uint8_t* pub_key) = 0;
+    // exportContactByPubKey: pub_key==nullptr exports SELF. Returns bytes
+    // written to out (capacity out_cap), 0 on failure.
+    virtual int  exportContactByPubKey(const uint8_t* pub_key, uint8_t* out, size_t out_cap) = 0;
+    virtual bool importContact(const uint8_t* data, size_t len) = 0;
+    virtual bool hasConnectionTo(const uint8_t* pub_key) const = 0;
+    virtual void logout(const uint8_t* pub_key) = 0;
+
+    // ── System ───────────────────────────────────────────────
+    virtual void reboot() = 0;
+    virtual bool factoryReset() = 0;
+
+    // ── Stats ────────────────────────────────────────────────
+    virtual void coreStats(CompanionCoreStats& out) const = 0;
+    virtual void radioStats(CompanionRadioStats& out) const = 0;
+    virtual void packetStats(CompanionPacketStats& out) const = 0;
+    virtual size_t allowedRepeatFreqRanges(uint32_t* lower_upper_pairs, size_t max_pairs) const = 0;
+
+    // ── Flood scope (companion regions) ──────────────────────
+    // getDefaultFloodScope returns true and fills name(31)/key(16) if a default
+    // scope is set; false means "no default" (null name/key).
+    virtual bool getDefaultFloodScope(char* name_out, uint8_t* key_out) const = 0;
+    virtual void setDefaultFloodScope(const char* name, const uint8_t* key) = 0;
+    // setFloodScopeOverride: unscoped=true forces wildcard; else key==nullptr
+    // resets to default, non-null sets a transient scope key.
+    virtual void setFloodScopeOverride(const uint8_t* key, bool unscoped) = 0;
+
+    // ── Async requests (response arrives later as a PUSH_CODE_*) ──
+    virtual CompanionSendResult sendLogin(const uint8_t* pub_key, const char* password) = 0;
+    virtual CompanionSendResult sendStatusReq(const uint8_t* pub_key) = 0;
+    virtual CompanionSendResult sendTelemetryReq(const uint8_t* pub_key) = 0;
+    virtual CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
+                                              const uint8_t* path, uint8_t path_len) = 0;
+    // selfTelemetry fills a MeshCore telemetry blob (CayenneLPP-style). out_len
+    // is set to bytes written (0 if unsupported).
+    virtual void selfTelemetry(uint8_t* out, size_t* out_len) const = 0;
+    // signData signs len bytes with the node key; returns signature length.
+    virtual int signData(const uint8_t* data, size_t len, uint8_t* sig_out) = 0;
 };
 
 class CompanionBridge {
@@ -178,6 +339,22 @@ public:
     bool enqueueMessage(const sigurdos::mesh::StoredMessage& msg);
     bool notifySendConfirmed(uint32_t ack, uint32_t trip_time_ms);
 
+    // ── Async / live event pushes (called from the mesh fan-out) ──
+    // A heard advert / contact update → app. is_new picks NEW_ADVERT vs ADVERT.
+    bool pushAdvert(const CompanionContact& contact, bool is_new);
+    bool pushPathUpdated(const CompanionContact& contact);
+    bool pushContactDeleted(const uint8_t* pub_key);
+    bool pushContactsFull();
+    bool pushLoginResult(const uint8_t* pubkey_prefix, bool success,
+                         uint8_t permission, bool is_admin);
+    bool pushStatusResponse(const uint8_t* pubkey_prefix,
+                            const uint8_t* blob, size_t blob_len);
+    bool pushTelemetryResponse(const uint8_t* pubkey_prefix,
+                               const uint8_t* blob, size_t blob_len);
+    bool pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
+                       const uint8_t* path_hashes, const uint8_t* path_snrs,
+                       uint8_t path_len, int8_t final_snr_quarters);
+
 private:
     static constexpr int OFFLINE_QUEUE_SIZE = 16;
     struct Frame {
@@ -188,6 +365,8 @@ private:
     void writeOKFrame();
     void writeErrFrame(uint8_t err);
     void writeDisabledFrame();
+    // RESP_CODE_SENT (10 bytes) on success, else an error frame.
+    void writeSentOrErr(const CompanionSendResult& r);
     void writeContactFrame(uint8_t code, const CompanionContact& contact);
     void writeNoMoreMessages();
     bool offlineFrameExists(const uint8_t* frame, size_t len) const;
@@ -208,6 +387,13 @@ private:
     Frame _offline[OFFLINE_QUEUE_SIZE];
     uint8_t _cmd_frame[MAX_FRAME_SIZE + 1];
     uint8_t _out_frame[MAX_FRAME_SIZE + 1];
+
+    // CMD_SIGN_START/DATA/FINISH accumulate data here between frames.
+    uint8_t _sign_buf[SIGURDOS_COMPANION_MAX_SIGN_DATA];
+    size_t  _sign_len = 0;
+    bool    _sign_active = false;
+
+    bool pushContactFrame(uint8_t code, const CompanionContact& contact);
 };
 
 } // namespace comms

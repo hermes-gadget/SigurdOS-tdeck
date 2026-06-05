@@ -13,6 +13,10 @@ using sigurdos::comms::CompanionChannel;
 using sigurdos::comms::CompanionContact;
 using sigurdos::comms::CompanionSelfInfo;
 using sigurdos::comms::CompanionSendResult;
+using sigurdos::comms::CompanionOtherParams;
+using sigurdos::comms::CompanionCoreStats;
+using sigurdos::comms::CompanionRadioStats;
+using sigurdos::comms::CompanionPacketStats;
 
 // g_companion_bridge carries ~3 KB of frame and offline-queue buffers. The
 // internal dram0_0_seg .bss region is nearly full at baseline, so the instance
@@ -125,6 +129,23 @@ static void storeOutgoingMessageForCompanion(const char* conversation, const cha
     sigurdos::mesh::messageStoreAppend(msg);
 }
 
+// Shared ::ContactInfo → CompanionContact conversion, used by the host accessors
+// and by the live-advert/path push fan-out below.
+static void companionContactFromInfo(const ::ContactInfo& c, CompanionContact& out)
+{
+    memset(&out, 0, sizeof(out));
+    memcpy(out.pub_key, c.id.pub_key, sizeof(out.pub_key));
+    out.type = c.type;
+    out.flags = c.flags;
+    out.out_path_len = c.out_path_len;
+    memcpy(out.out_path, c.out_path, sizeof(out.out_path));
+    strncpy(out.name, c.name, sizeof(out.name) - 1);
+    out.last_advert_timestamp = c.last_advert_timestamp;
+    out.lastmod = c.lastmod;
+    out.gps_lat = c.gps_lat;
+    out.gps_lon = c.gps_lon;
+}
+
 class WrapperCompanionHost final : public CompanionBridgeHost {
 public:
     uint32_t blePin() const override {
@@ -167,7 +188,7 @@ public:
         if (!g_mesh) return false;
         ::ContactInfo c{};
         if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
-        copyContact(c, out);
+        companionContactFromInfo(c, out);
         return true;
     }
     bool getContactByPubKeyPrefix(const uint8_t* prefix, size_t prefix_len,
@@ -175,7 +196,7 @@ public:
         if (!g_mesh || !prefix) return false;
         ::ContactInfo* c = g_mesh->lookupContactByPubKey(prefix, (int)prefix_len);
         if (!c) return false;
-        copyContact(*c, out);
+        companionContactFromInfo(*c, out);
         return true;
     }
 
@@ -281,20 +302,371 @@ public:
         return true;
     }
 
+    // ── Radio / tuning / params ──────────────────────────────
+    bool setRadioParams(uint32_t freq_khz, uint32_t bw_hz,
+                        uint8_t sf, uint8_t cr, uint8_t client_repeat) override {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.freq = (float)freq_khz / 1000.0f;
+        p.bw = (float)bw_hz / 1000.0f;
+        p.sf = sf;
+        p.cr = cr;
+        p.client_repeat = client_repeat;
+        p.configured = true;
+        sigurdos::prefs_set(p);
+        if (radio_driver) radio_driver->setParams(p.freq, p.bw, p.sf, p.cr);
+        return true;
+    }
+    bool setRadioTxPower(int8_t dbm) override {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.tx_power_dbm = dbm;
+        sigurdos::prefs_set(p);
+        if (radio_driver) radio_driver->setTxPower(dbm);
+        return true;
+    }
+    void setTuningParams(uint32_t rx_base_x1000, uint32_t airtime_x1000) override {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.rx_delay_base = (float)rx_base_x1000 / 1000.0f;
+        p.tx_delay_factor = (float)airtime_x1000 / 1000.0f;
+        sigurdos::prefs_set(p);
+    }
+    void getTuningParams(uint32_t* rx_base_x1000, uint32_t* airtime_x1000) const override {
+        const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+        if (rx_base_x1000) *rx_base_x1000 = (uint32_t)(p.rx_delay_base * 1000.0f);
+        if (airtime_x1000) *airtime_x1000 = (uint32_t)(p.tx_delay_factor * 1000.0f);
+    }
+    void setOtherParams(const CompanionOtherParams& op) override {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        // SigurdOS has no manual_add_contacts / telemetry-mode store; only the
+        // fields with a backing pref are applied.
+        if (op.loc_policy_present) p.share_location = (op.advert_loc_policy != 0);
+        if (op.multi_acks_present) p.multi_acks = (op.multi_acks != 0);
+        sigurdos::prefs_set(p);
+    }
+    bool setPathHashMode(uint8_t mode) override {
+        // SigurdOS reports path_hash_mode 0 and does not vary it.
+        return mode == 0;
+    }
+    void getAutoAddConfig(uint8_t* cfg, uint8_t* max_hops) const override {
+        const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+        if (cfg) *cfg = p.autoadd_config;
+        if (max_hops) *max_hops = p.autoadd_max_hops;
+    }
+    void setAutoAddConfig(uint8_t cfg, uint8_t max_hops) override {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.autoadd_config = cfg;
+        p.autoadd_max_hops = max_hops;
+        sigurdos::prefs_set(p);
+    }
+    int8_t maxTxPowerDbm() const override { return 22; }
+
+    // ── Advert metadata ──────────────────────────────────────
+    bool setAdvertName(const char* name) override {
+        if (!name || !name[0]) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        strncpy(p.node_name, name, sizeof(p.node_name) - 1);
+        p.node_name[sizeof(p.node_name) - 1] = '\0';
+        sigurdos::prefs_set(p);
+        sigurdos::mesh::setOwnName(name);
+        return true;
+    }
+    bool setAdvertLatLon(int32_t lat_e6, int32_t lon_e6) override {
+        // SigurdOS advertises GPS-sourced location; there is no manual lat/lon
+        // store, so the call is accepted but only GPS-backed coordinates ship.
+        (void)lat_e6; (void)lon_e6;
+        return true;
+    }
+
+    // ── Contact CRUD / connection ────────────────────────────
+    bool getContactByPubKey(const uint8_t* pub_key, CompanionContact& out) const override {
+        if (!g_mesh || !pub_key) return false;
+        ::ContactInfo* c = g_mesh->lookupContactByPubKey(
+            pub_key, (int)sigurdos::comms::SIGURDOS_COMPANION_PUB_KEY_SIZE);
+        if (!c) return false;
+        companionContactFromInfo(*c, out);
+        return true;
+    }
+    bool addOrUpdateContact(const CompanionContact& c) override {
+        if (!g_mesh) return false;
+        ::ContactInfo* existing = g_mesh->lookupContactByPubKey((const uint8_t*)c.pub_key, 32);
+        ::ContactInfo ci{};
+        if (existing) ci = *existing;
+        memcpy(ci.id.pub_key, c.pub_key, 32);
+        ci.type = c.type;
+        ci.flags = c.flags;
+        ci.out_path_len = c.out_path_len;
+        memcpy(ci.out_path, c.out_path, sizeof(ci.out_path));
+        strncpy(ci.name, c.name, sizeof(ci.name) - 1);
+        ci.name[sizeof(ci.name) - 1] = '\0';
+        ci.last_advert_timestamp = c.last_advert_timestamp;
+        ci.gps_lat = c.gps_lat;
+        ci.gps_lon = c.gps_lon;
+        ci.lastmod = c.lastmod;
+        bool ok;
+        if (existing) { *existing = ci; ok = true; }
+        else ok = g_mesh->addContact(ci);
+        if (ok) sigurdos::mesh::saveContacts();
+        return ok;
+    }
+    bool removeContactByPubKey(const uint8_t* pub_key) override {
+        if (!g_mesh || !pub_key) return false;
+        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!c) return false;
+        bool ok = g_mesh->BaseChatMesh::removeContact(*c);
+        if (ok) sigurdos::mesh::saveContacts();
+        return ok;
+    }
+    bool resetPathByPubKey(const uint8_t* pub_key) override {
+        if (!g_mesh || !pub_key) return false;
+        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!c) return false;
+        g_mesh->BaseChatMesh::resetPathTo(*c);
+        sigurdos::mesh::saveContacts();
+        return true;
+    }
+    bool shareContactByPubKey(const uint8_t* pub_key) override {
+        if (!g_mesh || !pub_key) return false;
+        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!c) return false;
+        return g_mesh->shareContactZeroHop(*c);
+    }
+    int exportContactByPubKey(const uint8_t* pub_key, uint8_t* out, size_t out_cap) override {
+        if (!g_mesh || !out) return 0;
+        if (!pub_key) return g_mesh->exportSelfContact(own_name, out, out_cap);
+        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!c) return 0;
+        return (int)g_mesh->exportContact(*c, out);
+    }
+    bool importContact(const uint8_t* data, size_t len) override {
+        if (!g_mesh || !data) return false;
+        bool ok = g_mesh->importContact(data, (uint8_t)len);
+        if (ok) sigurdos::mesh::saveContacts();
+        return ok;
+    }
+    bool hasConnectionTo(const uint8_t* pub_key) const override {
+        return g_mesh && pub_key && g_mesh->companionHasConnection(pub_key);
+    }
+    void logout(const uint8_t* pub_key) override {
+        if (g_mesh && pub_key) g_mesh->companionStopConnection(pub_key);
+    }
+
+    // ── System ───────────────────────────────────────────────
+    void reboot() override {
+        sigurdos::mesh::saveState();
+        sigurdos::mesh::saveContacts();
+        sigurdos::mesh::saveChannels();
+        delay(200);
+        ESP.restart();
+    }
+    bool factoryReset() override {
+        sigurdos::mesh::factoryReset();  // formats + reboots; does not return
+        return true;
+    }
+
+    // ── Stats ────────────────────────────────────────────────
+    void coreStats(CompanionCoreStats& s) const override {
+        s.batt_mv = sigurdos_battery_mv();
+        s.uptime_secs = (uint32_t)(millis() / 1000);
+        s.err_flags = 0;
+        s.queue_len = 0;
+    }
+    void radioStats(CompanionRadioStats& s) const override {
+        s.noise_floor = (int16_t)sigurdos::mesh::getNoiseFloor();
+        s.last_rssi = (int8_t)(radio_driver ? radio_driver->getLastRSSI() : 0);
+        s.last_snr_quarters = (int8_t)((radio_driver ? radio_driver->getLastSNR() : 0.0f) * 4.0f);
+        s.tx_air_secs = (uint32_t)(sigurdos::mesh::getTotalTxAirtimeMs() / 1000);
+        s.rx_air_secs = (uint32_t)(sigurdos::mesh::getTotalRxAirtimeMs() / 1000);
+    }
+    void packetStats(CompanionPacketStats& s) const override {
+        s.recv = radio_driver ? radio_driver->getPacketsRecv() : 0;
+        s.sent = radio_driver ? radio_driver->getPacketsSent() : 0;
+        s.sent_flood = sigurdos::mesh::getNumSentFlood();
+        s.sent_direct = sigurdos::mesh::getNumSentDirect();
+        s.recv_flood = sigurdos::mesh::getNumRecvFlood();
+        s.recv_direct = sigurdos::mesh::getNumRecvDirect();
+        s.recv_errors = radio_driver ? radio_driver->getPacketsRecvErrors() : 0;
+    }
+    size_t allowedRepeatFreqRanges(uint32_t*, size_t) const override {
+        return 0;  // SigurdOS does not gate client-repeat by frequency
+    }
+
+    // ── Flood scope (companion regions) ──────────────────────
+    bool getDefaultFloodScope(char* name_out, uint8_t* key_out) const override {
+        const char* active = sigurdos::mesh::getActiveRegion();
+        if (!active || !active[0]) return false;
+        sigurdos::mesh::SigurdRegion regions[SIGURD_MAX_REGIONS];
+        int n = sigurdos::mesh::loadRegions(regions, SIGURD_MAX_REGIONS);
+        for (int i = 0; i < n; i++) {
+            if (strncmp(regions[i].name, active, sizeof(regions[i].name)) == 0) {
+                if (name_out) { memset(name_out, 0, 31); strncpy(name_out, regions[i].name, 30); }
+                if (key_out) memcpy(key_out, regions[i].key, 16);
+                return true;
+            }
+        }
+        return false;
+    }
+    void setDefaultFloodScope(const char* name, const uint8_t* key) override {
+        if (!name || !name[0]) {
+            sigurdos::mesh::setActiveRegion("");
+            return;
+        }
+        sigurdos::mesh::SigurdRegion regions[SIGURD_MAX_REGIONS];
+        int n = sigurdos::mesh::loadRegions(regions, SIGURD_MAX_REGIONS);
+        int idx = -1;
+        for (int i = 0; i < n; i++) {
+            if (strncmp(regions[i].name, name, sizeof(regions[i].name)) == 0) { idx = i; break; }
+        }
+        if (idx < 0 && n < SIGURD_MAX_REGIONS) idx = n++;
+        if (idx >= 0) {
+            memset(regions[idx].name, 0, sizeof(regions[idx].name));
+            strncpy(regions[idx].name, name, sizeof(regions[idx].name) - 1);
+            if (key) memcpy(regions[idx].key, key, 16);
+            sigurdos::mesh::saveRegions(regions, n);
+        }
+        sigurdos::mesh::setActiveRegion(name);
+    }
+    void setFloodScopeOverride(const uint8_t* key, bool unscoped) override {
+        if (!g_mesh) return;
+        if (unscoped) g_mesh->clearActiveScope();
+        else if (key) g_mesh->setActiveScope(key);
+        else g_mesh->clearActiveScope();
+    }
+
+    // ── Async requests ───────────────────────────────────────
+    CompanionSendResult sendLogin(const uint8_t* pub_key, const char* password) override {
+        CompanionSendResult r{};
+        if (!g_mesh || !pub_key) return r;
+        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!c) return r;
+        uint32_t est_timeout = 0;
+        int res = g_mesh->sendLoginCompanion(*c, password ? password : "", est_timeout);
+        if (res == MSG_SEND_FAILED) return r;
+        r.ok = true;
+        r.sent_flood = (res == MSG_SEND_SENT_FLOOD);
+        memcpy(&r.expected_ack, c->id.pub_key, 4);  // login is matched by pubkey prefix
+        r.est_timeout = est_timeout;
+        return r;
+    }
+    CompanionSendResult sendStatusReq(const uint8_t* pub_key) override {
+        return sendReqByPubKey(pub_key, /*telemetry=*/false);
+    }
+    CompanionSendResult sendTelemetryReq(const uint8_t* pub_key) override {
+        return sendReqByPubKey(pub_key, /*telemetry=*/true);
+    }
+    CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
+                                      const uint8_t* path, uint8_t path_len) override {
+        CompanionSendResult r{};
+        if (!g_mesh) return r;
+        uint32_t est_timeout = 0;
+        if (!g_mesh->sendTracePathRaw(tag, auth, flags, path, path_len, est_timeout)) return r;
+        r.ok = true;
+        r.sent_flood = false;
+        r.expected_ack = tag;
+        r.est_timeout = est_timeout;
+        return r;
+    }
+    void selfTelemetry(uint8_t* out, size_t* out_len) const override {
+        // SigurdOS has no companion telemetry-blob builder yet; report empty.
+        (void)out;
+        if (out_len) *out_len = 0;
+    }
+    int signData(const uint8_t* data, size_t len, uint8_t* sig_out) override {
+        if (!g_mesh || !sig_out) return 0;
+        g_mesh->self_id.sign(sig_out, data, len);
+        return (int)sigurdos::comms::SIGURDOS_COMPANION_SIGNATURE_SIZE;
+    }
+
 private:
-    static void copyContact(const ::ContactInfo& c, CompanionContact& out) {
-        memset(&out, 0, sizeof(out));
-        memcpy(out.pub_key, c.id.pub_key, sizeof(out.pub_key));
-        out.type = c.type;
-        out.flags = c.flags;
-        out.out_path_len = c.out_path_len;
-        memcpy(out.out_path, c.out_path, sizeof(out.out_path));
-        strncpy(out.name, c.name, sizeof(out.name) - 1);
-        out.last_advert_timestamp = c.last_advert_timestamp;
-        out.lastmod = c.lastmod;
-        out.gps_lat = c.gps_lat;
-        out.gps_lon = c.gps_lon;
+    // Resolve a contact by pub key, fire a STATUS/TELEMETRY request via the
+    // tested wrapper helpers, and read back the assigned tag for RESP_CODE_SENT.
+    CompanionSendResult sendReqByPubKey(const uint8_t* pub_key, bool telemetry) {
+        CompanionSendResult r{};
+        if (!g_mesh || !pub_key) return r;
+        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!c) return r;
+        char name[32];
+        strncpy(name, c->name, sizeof(name) - 1);
+        name[sizeof(name) - 1] = '\0';
+        bool ok = telemetry ? sigurdos::mesh::requestTelemetry(name)
+                            : sigurdos::mesh::requestStatus(name);
+        if (!ok) return r;
+        uint8_t want = telemetry ? (uint8_t)REQ_TYPE_GET_TELEMETRY_DATA
+                                 : (uint8_t)REQ_TYPE_GET_STATUS;
+        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
+            if (g_mesh->_pending_reqs[i].in_use &&
+                g_mesh->_pending_reqs[i].req_type == want &&
+                strcmp(g_mesh->_pending_reqs[i].dest_name, name) == 0) {
+                r.expected_ack = g_mesh->_pending_reqs[i].tag;
+                break;
+            }
+        }
+        r.ok = true;
+        r.sent_flood = (c->out_path_len == 0xFF);
+        r.est_timeout = 0;
+        return r;
     }
 };
 
 static WrapperCompanionHost g_companion_host;
+
+// ── Mesh → companion-bridge fan-out ──────────────────────────────────
+// These forward live mesh events to the phone app. They take primitive args
+// (so the declarations in mesh_wrapper.h stay free of MeshCore types) and look
+// up the full contact via g_mesh where the bridge needs a contact frame.
+
+void sigurdos::mesh::mesh_v2_companion_advert_push(const void* contact_info, bool is_new)
+{
+    if (!g_companion_bridge_ptr || !contact_info) return;
+    const ::ContactInfo* c = static_cast<const ::ContactInfo*>(contact_info);
+    CompanionContact cc{};
+    companionContactFromInfo(*c, cc);  // NEW_ADVERT carries the full contact;
+    g_companion_bridge_ptr->pushAdvert(cc, is_new);  // ADVERT uses only pub_key.
+}
+
+void sigurdos::mesh::mesh_v2_companion_path_push(const uint8_t* pub_key)
+{
+    if (!g_companion_bridge_ptr || !pub_key) return;
+    CompanionContact cc{};
+    memcpy(cc.pub_key, pub_key, sizeof(cc.pub_key));
+    g_companion_bridge_ptr->pushPathUpdated(cc);
+}
+
+void sigurdos::mesh::mesh_v2_companion_contact_deleted_push(const uint8_t* pub_key)
+{
+    if (g_companion_bridge_ptr) g_companion_bridge_ptr->pushContactDeleted(pub_key);
+}
+
+void sigurdos::mesh::mesh_v2_companion_contacts_full_push()
+{
+    if (g_companion_bridge_ptr) g_companion_bridge_ptr->pushContactsFull();
+}
+
+void sigurdos::mesh::mesh_v2_companion_login_push(const uint8_t* pub_key, bool success,
+                                                  uint8_t permission, bool is_admin)
+{
+    if (g_companion_bridge_ptr)
+        g_companion_bridge_ptr->pushLoginResult(pub_key, success, permission, is_admin);
+}
+
+void sigurdos::mesh::mesh_v2_companion_status_push(const uint8_t* pub_key,
+                                                   const uint8_t* blob, size_t len)
+{
+    if (g_companion_bridge_ptr)
+        g_companion_bridge_ptr->pushStatusResponse(pub_key, blob, len);
+}
+
+void sigurdos::mesh::mesh_v2_companion_telemetry_push(const uint8_t* pub_key,
+                                                      const uint8_t* blob, size_t len)
+{
+    if (g_companion_bridge_ptr)
+        g_companion_bridge_ptr->pushTelemetryResponse(pub_key, blob, len);
+}
+
+void sigurdos::mesh::mesh_v2_companion_trace_push(uint32_t tag, uint32_t auth, uint8_t flags,
+                                                  const uint8_t* path_hashes,
+                                                  const uint8_t* path_snrs,
+                                                  uint8_t path_len, int8_t final_snr_quarters)
+{
+    if (g_companion_bridge_ptr)
+        g_companion_bridge_ptr->pushTraceData(tag, auth, flags, path_hashes,
+                                              path_snrs, path_len, final_snr_quarters);
+}

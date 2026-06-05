@@ -1000,6 +1000,10 @@ void setContactFavourite(const char* name, bool favourite) {
         if (c && strcmp(c->name, name) == 0) {
             if (favourite) c->flags |= 0x01;
             else           c->flags &= ~0x01;
+            // Bump lastmod + persist so a companion app's incremental
+            // CMD_GET_CONTACTS(since=…) picks up the favourite change (R3).
+            c->lastmod = getCurrentTime();
+            saveContacts();
             return;
         }
     }

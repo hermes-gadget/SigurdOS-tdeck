@@ -293,6 +293,135 @@ bool CompanionBridge::notifySendConfirmed(uint32_t ack, uint32_t trip_time_ms)
     return _serial->writeFrame(frame, i) == (size_t)i;
 }
 
+void CompanionBridge::writeSentOrErr(const CompanionSendResult& r)
+{
+    if (!r.ok) {
+        writeErrFrame(ERR_CODE_NOT_FOUND);
+        return;
+    }
+    _out_frame[0] = RESP_CODE_SENT;
+    _out_frame[1] = r.sent_flood ? 1 : 0;
+    std::memcpy(&_out_frame[2], &r.expected_ack, 4);
+    std::memcpy(&_out_frame[6], &r.est_timeout, 4);
+    _serial->writeFrame(_out_frame, 10);
+}
+
+// Like writeContactFrame, but used for unsolicited pushes — same layout, only
+// emitted when a phone is actually connected (a push to nobody is wasted).
+bool CompanionBridge::pushContactFrame(uint8_t code, const CompanionContact& contact)
+{
+    if (!isConnected()) return false;
+    writeContactFrame(code, contact);
+    return true;
+}
+
+bool CompanionBridge::pushAdvert(const CompanionContact& contact, bool is_new)
+{
+    if (!isConnected()) return false;
+    if (is_new) {
+        writeContactFrame(PUSH_CODE_NEW_ADVERT, contact);
+    } else {
+        _out_frame[0] = PUSH_CODE_ADVERT;
+        std::memcpy(&_out_frame[1], contact.pub_key, SIGURDOS_COMPANION_PUB_KEY_SIZE);
+        _serial->writeFrame(_out_frame, 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE);
+    }
+    return true;
+}
+
+bool CompanionBridge::pushPathUpdated(const CompanionContact& contact)
+{
+    if (!isConnected()) return false;
+    _out_frame[0] = PUSH_CODE_PATH_UPDATED;
+    std::memcpy(&_out_frame[1], contact.pub_key, SIGURDOS_COMPANION_PUB_KEY_SIZE);
+    _serial->writeFrame(_out_frame, 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE);
+    return true;
+}
+
+bool CompanionBridge::pushContactDeleted(const uint8_t* pub_key)
+{
+    if (!isConnected() || !pub_key) return false;
+    _out_frame[0] = PUSH_CODE_CONTACT_DELETED;
+    std::memcpy(&_out_frame[1], pub_key, SIGURDOS_COMPANION_PUB_KEY_SIZE);
+    _serial->writeFrame(_out_frame, 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE);
+    return true;
+}
+
+bool CompanionBridge::pushContactsFull()
+{
+    if (!isConnected()) return false;
+    uint8_t b = PUSH_CODE_CONTACTS_FULL;
+    _serial->writeFrame(&b, 1);
+    return true;
+}
+
+bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success,
+                                      uint8_t permission, bool is_admin)
+{
+    if (!_serial || !pubkey_prefix) return false;
+    int i = 0;
+    _out_frame[i++] = success ? PUSH_CODE_LOGIN_SUCCESS : PUSH_CODE_LOGIN_FAIL;
+    _out_frame[i++] = success ? (is_admin ? 1 : permission) : 0;
+    std::memcpy(&_out_frame[i], pubkey_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
+    i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
+    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+}
+
+bool CompanionBridge::pushStatusResponse(const uint8_t* pubkey_prefix,
+                                         const uint8_t* blob, size_t blob_len)
+{
+    if (!_serial || !pubkey_prefix) return false;
+    int i = 0;
+    _out_frame[i++] = PUSH_CODE_STATUS_RESPONSE;
+    _out_frame[i++] = 0;  // reserved
+    std::memcpy(&_out_frame[i], pubkey_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
+    i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
+    if (blob && blob_len) {
+        if (i + blob_len > MAX_FRAME_SIZE) blob_len = MAX_FRAME_SIZE - i;
+        std::memcpy(&_out_frame[i], blob, blob_len);
+        i += (int)blob_len;
+    }
+    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+}
+
+bool CompanionBridge::pushTelemetryResponse(const uint8_t* pubkey_prefix,
+                                            const uint8_t* blob, size_t blob_len)
+{
+    if (!_serial || !pubkey_prefix) return false;
+    int i = 0;
+    _out_frame[i++] = PUSH_CODE_TELEMETRY_RESPONSE;
+    _out_frame[i++] = 0;  // reserved
+    std::memcpy(&_out_frame[i], pubkey_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
+    i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
+    if (blob && blob_len) {
+        if (i + blob_len > MAX_FRAME_SIZE) blob_len = MAX_FRAME_SIZE - i;
+        std::memcpy(&_out_frame[i], blob, blob_len);
+        i += (int)blob_len;
+    }
+    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+}
+
+bool CompanionBridge::pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
+                                    const uint8_t* path_hashes, const uint8_t* path_snrs,
+                                    uint8_t path_len, int8_t final_snr_quarters)
+{
+    if (!isConnected()) return false;
+    uint8_t path_sz = flags & 0x03;
+    size_t snr_count = (size_t)(path_len >> path_sz);
+    // [code][reserved][path_len][flags][tag:4][auth:4][hashes][snrs][final_snr]
+    if (12 + (size_t)path_len + snr_count + 1 > MAX_FRAME_SIZE) return false;
+    int i = 0;
+    _out_frame[i++] = PUSH_CODE_TRACE_DATA;
+    _out_frame[i++] = 0;  // reserved
+    _out_frame[i++] = path_len;
+    _out_frame[i++] = flags;
+    std::memcpy(&_out_frame[i], &tag, 4); i += 4;
+    std::memcpy(&_out_frame[i], &auth, 4); i += 4;
+    if (path_len && path_hashes) { std::memcpy(&_out_frame[i], path_hashes, path_len); i += path_len; }
+    if (snr_count && path_snrs) { std::memcpy(&_out_frame[i], path_snrs, snr_count); i += (int)snr_count; }
+    _out_frame[i++] = (uint8_t)final_snr_quarters;
+    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+}
+
 bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 {
     if (!_serial || !_host || !frame || len == 0 || len > MAX_FRAME_SIZE) return false;
@@ -522,6 +651,443 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     if (cmd == CMD_IMPORT_PRIVATE_KEY && len >= 65) {
         if (_host->importPrivateKey(&_cmd_frame[1])) writeOKFrame();
         else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    // ── Radio / tuning / params ──────────────────────────────
+    if (cmd == CMD_SET_RADIO_PARAMS && len >= 11) {
+        uint32_t freq = 0, bw = 0;
+        std::memcpy(&freq, &_cmd_frame[1], 4);
+        std::memcpy(&bw, &_cmd_frame[5], 4);
+        uint8_t sf = _cmd_frame[9];
+        uint8_t cr = _cmd_frame[10];
+        uint8_t repeat = (len > 11) ? _cmd_frame[11] : 0;
+        // Range check mirrors the official handler (freq in kHz, bw in Hz).
+        if (freq >= 150000 && freq <= 2500000 && sf >= 5 && sf <= 12 &&
+            cr >= 5 && cr <= 8 && bw >= 7000 && bw <= 500000 &&
+            _host->setRadioParams(freq, bw, sf, cr, repeat)) {
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        }
+        return true;
+    }
+
+    if (cmd == CMD_SET_RADIO_TX_POWER && len >= 2) {
+        int8_t power = (int8_t)_cmd_frame[1];
+        if (power < -9 || power > _host->maxTxPowerDbm() || !_host->setRadioTxPower(power)) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        } else {
+            writeOKFrame();
+        }
+        return true;
+    }
+
+    if (cmd == CMD_SET_TUNING_PARAMS && len >= 9) {
+        uint32_t rx = 0, af = 0;
+        std::memcpy(&rx, &_cmd_frame[1], 4);
+        std::memcpy(&af, &_cmd_frame[5], 4);
+        _host->setTuningParams(rx, af);
+        writeOKFrame();
+        return true;
+    }
+
+    if (cmd == CMD_GET_TUNING_PARAMS) {
+        uint32_t rx = 0, af = 0;
+        _host->getTuningParams(&rx, &af);
+        int i = 0;
+        _out_frame[i++] = RESP_CODE_TUNING_PARAMS;
+        std::memcpy(&_out_frame[i], &rx, 4); i += 4;
+        std::memcpy(&_out_frame[i], &af, 4); i += 4;
+        _serial->writeFrame(_out_frame, i);
+        return true;
+    }
+
+    if (cmd == CMD_SET_OTHER_PARAMS && len >= 2) {
+        CompanionOtherParams p{};
+        p.manual_add_contacts = _cmd_frame[1];
+        if (len >= 3) { p.telemetry_modes = _cmd_frame[2]; p.telemetry_present = true; }
+        if (len >= 4) { p.advert_loc_policy = _cmd_frame[3]; p.loc_policy_present = true; }
+        if (len >= 5) { p.multi_acks = _cmd_frame[4]; p.multi_acks_present = true; }
+        _host->setOtherParams(p);
+        writeOKFrame();
+        return true;
+    }
+
+    if (cmd == CMD_SET_PATH_HASH_MODE && len >= 3 && _cmd_frame[1] == 0) {
+        if (_cmd_frame[2] >= 3 || !_host->setPathHashMode(_cmd_frame[2])) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        } else {
+            writeOKFrame();
+        }
+        return true;
+    }
+
+    if (cmd == CMD_SET_AUTOADD_CONFIG && len >= 2) {
+        uint8_t max_hops = (len >= 3) ? _cmd_frame[2] : 0;
+        if (max_hops > 64) max_hops = 64;
+        _host->setAutoAddConfig(_cmd_frame[1], max_hops);
+        writeOKFrame();
+        return true;
+    }
+
+    if (cmd == CMD_GET_AUTOADD_CONFIG) {
+        uint8_t cfg = 0, max_hops = 0;
+        _host->getAutoAddConfig(&cfg, &max_hops);
+        int i = 0;
+        _out_frame[i++] = RESP_CODE_AUTOADD_CONFIG;
+        _out_frame[i++] = cfg;
+        _out_frame[i++] = max_hops;
+        _serial->writeFrame(_out_frame, i);
+        return true;
+    }
+
+    // ── Advert metadata ──────────────────────────────────────
+    if (cmd == CMD_SET_ADVERT_NAME && len >= 2) {
+        char name[32];
+        size_t nlen = len - 1;
+        if (nlen > sizeof(name) - 1) nlen = sizeof(name) - 1;
+        std::memcpy(name, &_cmd_frame[1], nlen);
+        name[nlen] = '\0';
+        if (_host->setAdvertName(name)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_SET_ADVERT_LATLON && len >= 9) {
+        int32_t lat = 0, lon = 0;
+        std::memcpy(&lat, &_cmd_frame[1], 4);
+        std::memcpy(&lon, &_cmd_frame[5], 4);
+        if (lat <= 90 * 1000000 && lat >= -90 * 1000000 &&
+            lon <= 180 * 1000000 && lon >= -180 * 1000000 &&
+            _host->setAdvertLatLon(lat, lon)) {
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        }
+        return true;
+    }
+
+    // ── Contacts CRUD / connection ───────────────────────────
+    if (cmd == CMD_GET_CONTACT_BY_KEY && len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        CompanionContact c{};
+        if (_host->getContactByPubKey(&_cmd_frame[1], c)) {
+            writeContactFrame(RESP_CODE_CONTACT, c);
+        } else {
+            writeErrFrame(ERR_CODE_NOT_FOUND);
+        }
+        return true;
+    }
+
+    if (cmd == CMD_RESET_PATH && len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        if (_host->resetPathByPubKey(&_cmd_frame[1])) writeOKFrame();
+        else writeErrFrame(ERR_CODE_NOT_FOUND);
+        return true;
+    }
+
+    if (cmd == CMD_REMOVE_CONTACT && len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        if (_host->removeContactByPubKey(&_cmd_frame[1])) writeOKFrame();
+        else writeErrFrame(ERR_CODE_NOT_FOUND);
+        return true;
+    }
+
+    if (cmd == CMD_SHARE_CONTACT && len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        if (_host->shareContactByPubKey(&_cmd_frame[1])) writeOKFrame();
+        else writeErrFrame(ERR_CODE_NOT_FOUND);
+        return true;
+    }
+
+    if (cmd == CMD_ADD_UPDATE_CONTACT &&
+        len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE + 2 + 1 + SIGURDOS_COMPANION_PATH_SIZE + 32 + 4) {
+        CompanionContact c{};
+        size_t i = 1;
+        std::memcpy(c.pub_key, &_cmd_frame[i], SIGURDOS_COMPANION_PUB_KEY_SIZE);
+        i += SIGURDOS_COMPANION_PUB_KEY_SIZE;
+        c.type = _cmd_frame[i++];
+        c.flags = _cmd_frame[i++];
+        c.out_path_len = _cmd_frame[i++];
+        std::memcpy(c.out_path, &_cmd_frame[i], SIGURDOS_COMPANION_PATH_SIZE);
+        i += SIGURDOS_COMPANION_PATH_SIZE;
+        std::memcpy(c.name, &_cmd_frame[i], 32);
+        c.name[sizeof(c.name) - 1] = '\0';
+        i += 32;
+        std::memcpy(&c.last_advert_timestamp, &_cmd_frame[i], 4);
+        i += 4;
+        c.lastmod = _host->currentTime();  // fallback if frame omits it
+        if (len >= i + 8) {
+            std::memcpy(&c.gps_lat, &_cmd_frame[i], 4); i += 4;
+            std::memcpy(&c.gps_lon, &_cmd_frame[i], 4); i += 4;
+            if (len >= i + 4) std::memcpy(&c.lastmod, &_cmd_frame[i], 4);
+        }
+        if (_host->addOrUpdateContact(c)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_TABLE_FULL);
+        return true;
+    }
+
+    if (cmd == CMD_EXPORT_CONTACT) {
+        const uint8_t* pub_key =
+            (len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) ? &_cmd_frame[1] : nullptr;
+        int out_len = _host->exportContactByPubKey(pub_key, &_out_frame[1], MAX_FRAME_SIZE - 1);
+        if (out_len > 0) {
+            _out_frame[0] = RESP_CODE_EXPORT_CONTACT;
+            _serial->writeFrame(_out_frame, (size_t)out_len + 1);
+        } else {
+            writeErrFrame(pub_key ? ERR_CODE_NOT_FOUND : ERR_CODE_TABLE_FULL);
+        }
+        return true;
+    }
+
+    if (cmd == CMD_IMPORT_CONTACT && len > 2 + 32 + 64) {
+        if (_host->importContact(&_cmd_frame[1], len - 1)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
+
+    if (cmd == CMD_HAS_CONNECTION && len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        if (_host->hasConnectionTo(&_cmd_frame[1])) writeOKFrame();
+        else writeErrFrame(ERR_CODE_NOT_FOUND);
+        return true;
+    }
+
+    if (cmd == CMD_LOGOUT && len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        _host->logout(&_cmd_frame[1]);
+        writeOKFrame();
+        return true;
+    }
+
+    // ── System ───────────────────────────────────────────────
+    if (cmd == CMD_REBOOT && len >= 7 && std::memcmp(&_cmd_frame[1], "reboot", 6) == 0) {
+        _host->reboot();  // does not return on device
+        return true;
+    }
+
+    if (cmd == CMD_FACTORY_RESET && len >= 6 && std::memcmp(&_cmd_frame[1], "reset", 5) == 0) {
+        if (_serial) _serial->disable();  // phone disconnects; prevents reconnect mid-wipe
+        if (_host->factoryReset()) {       // reboots on device; returns on native
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_FILE_IO_ERROR);
+        }
+        return true;
+    }
+
+    // ── Stats ────────────────────────────────────────────────
+    if (cmd == CMD_GET_STATS && len >= 2) {
+        uint8_t stats_type = _cmd_frame[1];
+        int i = 0;
+        if (stats_type == STATS_TYPE_CORE) {
+            CompanionCoreStats s{};
+            _host->coreStats(s);
+            _out_frame[i++] = RESP_CODE_STATS;
+            _out_frame[i++] = STATS_TYPE_CORE;
+            std::memcpy(&_out_frame[i], &s.batt_mv, 2); i += 2;
+            std::memcpy(&_out_frame[i], &s.uptime_secs, 4); i += 4;
+            std::memcpy(&_out_frame[i], &s.err_flags, 2); i += 2;
+            _out_frame[i++] = s.queue_len;
+            _serial->writeFrame(_out_frame, i);
+        } else if (stats_type == STATS_TYPE_RADIO) {
+            CompanionRadioStats s{};
+            _host->radioStats(s);
+            _out_frame[i++] = RESP_CODE_STATS;
+            _out_frame[i++] = STATS_TYPE_RADIO;
+            std::memcpy(&_out_frame[i], &s.noise_floor, 2); i += 2;
+            _out_frame[i++] = (uint8_t)s.last_rssi;
+            _out_frame[i++] = (uint8_t)s.last_snr_quarters;
+            std::memcpy(&_out_frame[i], &s.tx_air_secs, 4); i += 4;
+            std::memcpy(&_out_frame[i], &s.rx_air_secs, 4); i += 4;
+            _serial->writeFrame(_out_frame, i);
+        } else if (stats_type == STATS_TYPE_PACKETS) {
+            CompanionPacketStats s{};
+            _host->packetStats(s);
+            _out_frame[i++] = RESP_CODE_STATS;
+            _out_frame[i++] = STATS_TYPE_PACKETS;
+            std::memcpy(&_out_frame[i], &s.recv, 4); i += 4;
+            std::memcpy(&_out_frame[i], &s.sent, 4); i += 4;
+            std::memcpy(&_out_frame[i], &s.sent_flood, 4); i += 4;
+            std::memcpy(&_out_frame[i], &s.sent_direct, 4); i += 4;
+            std::memcpy(&_out_frame[i], &s.recv_flood, 4); i += 4;
+            std::memcpy(&_out_frame[i], &s.recv_direct, 4); i += 4;
+            std::memcpy(&_out_frame[i], &s.recv_errors, 4); i += 4;
+            _serial->writeFrame(_out_frame, i);
+        } else {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        }
+        return true;
+    }
+
+    if (cmd == CMD_GET_ALLOWED_REPEAT_FREQ) {
+        uint32_t pairs[16];
+        size_t n = _host->allowedRepeatFreqRanges(pairs, 8);
+        int i = 0;
+        _out_frame[i++] = RESP_ALLOWED_REPEAT_FREQ;
+        for (size_t k = 0; k < n * 2 && i + 4 <= MAX_FRAME_SIZE; k++) {
+            std::memcpy(&_out_frame[i], &pairs[k], 4); i += 4;
+        }
+        _serial->writeFrame(_out_frame, i);
+        return true;
+    }
+
+    if (cmd == CMD_GET_CUSTOM_VARS) {
+        // SigurdOS exposes no companion-settable sensor variables — reply with an
+        // empty (but well-formed) list so the app doesn't treat it as an error.
+        _out_frame[0] = RESP_CODE_CUSTOM_VARS;
+        _serial->writeFrame(_out_frame, 1);
+        return true;
+    }
+
+    if (cmd == CMD_GET_ADVERT_PATH && len >= 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        // No advert-path history table on SigurdOS yet.
+        writeErrFrame(ERR_CODE_NOT_FOUND);
+        return true;
+    }
+
+    // ── Flood scope (companion regions) ──────────────────────
+    if (cmd == CMD_GET_DEFAULT_FLOOD_SCOPE) {
+        char name[31];
+        uint8_t key[16];
+        _out_frame[0] = RESP_CODE_DEFAULT_FLOOD_SCOPE;
+        if (_host->getDefaultFloodScope(name, key)) {
+            std::memcpy(&_out_frame[1], name, 31);
+            std::memcpy(&_out_frame[1 + 31], key, 16);
+            _serial->writeFrame(_out_frame, 1 + 31 + 16);
+        } else {
+            _serial->writeFrame(_out_frame, 1);  // null scope
+        }
+        return true;
+    }
+
+    if (cmd == CMD_SET_DEFAULT_FLOOD_SCOPE && len >= 1) {
+        if (len >= 1 + 31 + 16) {
+            char name[32];
+            std::memcpy(name, &_cmd_frame[1], 31);
+            name[31] = '\0';
+            size_t nlen = strnlen(name, 31);
+            if (nlen > 0) {
+                _host->setDefaultFloodScope(name, &_cmd_frame[1 + 31]);
+                writeOKFrame();
+            } else {
+                writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            }
+        } else {
+            _host->setDefaultFloodScope(nullptr, nullptr);  // clear
+            writeOKFrame();
+        }
+        return true;
+    }
+
+    if (cmd == CMD_SET_FLOOD_SCOPE_KEY && len >= 2) {
+        if (_cmd_frame[1] == 1) {
+            _host->setFloodScopeOverride(nullptr, true);  // unscoped
+            writeOKFrame();
+        } else if (_cmd_frame[1] == 0) {
+            const uint8_t* key = (len >= 2 + 16) ? &_cmd_frame[2] : nullptr;
+            _host->setFloodScopeOverride(key, false);
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        }
+        return true;
+    }
+
+    // ── Message signing ──────────────────────────────────────
+    if (cmd == CMD_SIGN_START) {
+        _sign_active = true;
+        _sign_len = 0;
+        int i = 0;
+        _out_frame[i++] = RESP_CODE_SIGN_START;
+        _out_frame[i++] = 0;  // reserved
+        uint32_t maxlen = SIGURDOS_COMPANION_MAX_SIGN_DATA;
+        std::memcpy(&_out_frame[i], &maxlen, 4); i += 4;
+        _serial->writeFrame(_out_frame, i);
+        return true;
+    }
+
+    if (cmd == CMD_SIGN_DATA && len > 1) {
+        if (!_sign_active) {
+            writeErrFrame(ERR_CODE_BAD_STATE);
+        } else if (_sign_len + (len - 1) > SIGURDOS_COMPANION_MAX_SIGN_DATA) {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+        } else {
+            std::memcpy(&_sign_buf[_sign_len], &_cmd_frame[1], len - 1);
+            _sign_len += (len - 1);
+            writeOKFrame();
+        }
+        return true;
+    }
+
+    if (cmd == CMD_SIGN_FINISH) {
+        if (!_sign_active) {
+            writeErrFrame(ERR_CODE_BAD_STATE);
+            return true;
+        }
+        int sig_len = _host->signData(_sign_buf, _sign_len, &_out_frame[1]);
+        _sign_active = false;
+        _sign_len = 0;
+        if (sig_len > 0) {
+            _out_frame[0] = RESP_CODE_SIGNATURE;
+            _serial->writeFrame(_out_frame, 1 + (size_t)sig_len);
+        } else {
+            writeErrFrame(ERR_CODE_BAD_STATE);
+        }
+        return true;
+    }
+
+    // ── Async requests (result arrives later via a PUSH_CODE_*) ──
+    if (cmd == CMD_SEND_LOGIN && len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        _cmd_frame[len] = 0;  // null-terminate password
+        const char* password = (const char*)&_cmd_frame[1 + SIGURDOS_COMPANION_PUB_KEY_SIZE];
+        CompanionSendResult r = _host->sendLogin(&_cmd_frame[1], password);
+        writeSentOrErr(r);
+        return true;
+    }
+
+    if (cmd == CMD_SEND_STATUS_REQ && len >= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        CompanionSendResult r = _host->sendStatusReq(&_cmd_frame[1]);
+        writeSentOrErr(r);
+        return true;
+    }
+
+    if (cmd == CMD_SEND_TELEMETRY_REQ && len == 4) {
+        // Self telemetry — answered immediately with a PUSH_CODE_TELEMETRY_RESPONSE.
+        uint8_t blob[MAX_FRAME_SIZE];
+        size_t blob_len = 0;
+        _host->selfTelemetry(blob, &blob_len);
+        uint8_t prefix[SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE]{};
+        CompanionSelfInfo si{};
+        _host->selfInfo(si);
+        std::memcpy(prefix, si.pub_key, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
+        pushTelemetryResponse(prefix, blob, blob_len);
+        return true;
+    }
+
+    if (cmd == CMD_SEND_TELEMETRY_REQ && len >= 4 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        CompanionSendResult r = _host->sendTelemetryReq(&_cmd_frame[4]);
+        writeSentOrErr(r);
+        return true;
+    }
+
+    if (cmd == CMD_SEND_TRACE_PATH && len > 10) {
+        uint8_t path_len = (uint8_t)(len - 10);
+        uint8_t flags = _cmd_frame[9];
+        uint8_t path_sz = flags & 0x03;
+        if ((path_len >> path_sz) > SIGURDOS_COMPANION_PATH_SIZE ||
+            (path_len % (1 << path_sz)) != 0) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        uint32_t tag = 0, auth = 0;
+        std::memcpy(&tag, &_cmd_frame[1], 4);
+        std::memcpy(&auth, &_cmd_frame[5], 4);
+        CompanionSendResult r = _host->sendTracePath(tag, auth, flags, &_cmd_frame[10], path_len);
+        if (r.ok) {
+            _out_frame[0] = RESP_CODE_SENT;
+            _out_frame[1] = 0;
+            std::memcpy(&_out_frame[2], &tag, 4);
+            std::memcpy(&_out_frame[6], &r.est_timeout, 4);
+            _serial->writeFrame(_out_frame, 10);
+        } else {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+        }
         return true;
     }
 
