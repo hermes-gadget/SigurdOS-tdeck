@@ -53,6 +53,7 @@ static StdRNG                    fast_rng;
 static SimpleMeshTables          tables;
 static ArduinoMillis             millis_clock;
 static StaticPoolPacketManager   pkt_mgr(16);
+static TransportKeyStore        g_region_store;
 using sigurdos::mesh::SigurdMeshV2;
 using mesh_impl_t = sigurdos::mesh::SigurdMeshV2;
 static mesh_impl_t*   g_mesh = nullptr;
@@ -853,6 +854,8 @@ bool init(bool spiffs_ok)
 
     // Auto-sync #channel names as flood-scope regions.
     // Must run after all channels are loaded so regions are seeded from NVS.
+    regionsInit(g_region_store);
+    regionsLoad();
     syncRegionsFromChannels();
 
     // Restore the active flood-scope region after reboot so outgoing floods

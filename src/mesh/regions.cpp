@@ -84,6 +84,9 @@ bool regionsSave() {
     // behaviour since commit d131e8ae ("companion: RegionMap now used in Datastore")
     region->flags = 0;
 
+    // Persist
+    regionsSave();
+
     return region;
 }
 
@@ -101,6 +104,8 @@ bool removeRegion(const char* name) {
     bool ok = g_region_map->removeRegion(*region);
     if (!ok) return false;
 
+    // Persist
+    regionsSave();
     return true;
 }
 
@@ -147,6 +152,8 @@ bool setRegionFloodAllowed(const char* name, bool allowed) {
         r->flags |= REGION_DENY_FLOOD;
     }
 
+    // Persist
+    regionsSave();
     return true;
 }
 
@@ -174,6 +181,8 @@ bool setHomeRegion(const char* name) {
         g_region_map->setHomeRegion(r);
     }
 
+    // Persist
+    regionsSave();
     return true;
 }
 
@@ -201,6 +210,8 @@ bool setDefaultScope(const char* name) {
         g_region_map->setDefaultRegion(def);
     }
 
+    // Persist
+    regionsSave();
     return true;
 }
 
