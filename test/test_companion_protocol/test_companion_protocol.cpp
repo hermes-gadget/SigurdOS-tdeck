@@ -338,7 +338,7 @@ TEST_F(CompanionProtocolTest, DeviceQueryFrameMatchesOfficialShape) {
     ASSERT_EQ(out.size(), 82u);
     EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_DEVICE_INFO);
     EXPECT_EQ(out[1], sigurdos::comms::SIGURDOS_COMPANION_FIRMWARE_VER_CODE);
-    EXPECT_EQ(out[2], 32);
+    EXPECT_EQ(out[2], MAX_CONTACTS / 2);
     EXPECT_EQ(out[3], 8);
     uint32_t pin = 0;
     std::memcpy(&pin, &out[4], 4);
