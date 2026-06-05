@@ -16,7 +16,7 @@ def merge_bin_action(target, source, env):
 
     for f in [bootloader, partitions, firmware_bin]:
         if not _os.path.isfile(f):
-            print(f"SigurdOS: skipping merge — missing: {f}")
+            print(f"SigurdOS: skipping merge - missing: {f}")
             return
 
     flash_images = [
@@ -41,11 +41,11 @@ def merge_bin_action(target, source, env):
         *flash_images,
     ])
 
-    print(f"SigurdOS: merging firmware ({board_config.get('build.mcu', 'esp32s3')})…")
+    print(f"SigurdOS: merging firmware ({board_config.get('build.mcu', 'esp32s3')})...")
     env.Execute(merge_cmd)
 
     if _os.path.isfile(merged_bin):
-        print(f"SigurdOS: merged → firmware-merged.bin ({_os.path.getsize(merged_bin):,} bytes)")
+        print(f"SigurdOS: merged -> firmware-merged.bin ({_os.path.getsize(merged_bin):,} bytes)")
 
     # ── Web flasher manifest ──────────────────────────────
     import json as _json
@@ -120,7 +120,7 @@ def merge_bin_action(target, source, env):
             }
             print(f"SigurdOS webflasher: {dst_name} ({size:,} bytes)")
         else:
-            print(f"SigurdOS webflasher: SKIP {name} — not found")
+            print(f"SigurdOS webflasher: SKIP {name} - not found")
 
     manifest_path = _os.path.join(web_dir, "manifest.json")
     with open(manifest_path, "w") as f:
