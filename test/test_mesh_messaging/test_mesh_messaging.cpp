@@ -32,7 +32,7 @@ namespace {
 
 // ── Contact list (replicating SlopContact + LRU eviction logic) ──
 
-static constexpr int MAX_CONTACTS = 64;
+static constexpr int TEST_MAX_CONTACTS = 64;
 
 struct TestContact {
     char name[32];
@@ -45,12 +45,12 @@ struct TestContact {
 };
 
 struct ContactList {
-    TestContact contacts[MAX_CONTACTS];
+    TestContact contacts[TEST_MAX_CONTACTS];
     int n_contacts = 0;
 
     void init() {
         n_contacts = 0;
-        for (int i = 0; i < MAX_CONTACTS; i++) {
+        for (int i = 0; i < TEST_MAX_CONTACTS; i++) {
             contacts[i].valid = false;
             contacts[i].last_seen = 0;
             contacts[i].name[0] = '\0';
@@ -79,10 +79,10 @@ struct ContactList {
             }
         }
 
-        if (n_contacts >= MAX_CONTACTS) {
+        if (n_contacts >= TEST_MAX_CONTACTS) {
             // List full — LRU eviction
             int oldest = 0;
-            for (int i = 1; i < MAX_CONTACTS; i++) {
+            for (int i = 1; i < TEST_MAX_CONTACTS; i++) {
                 if (contacts[i].last_seen < contacts[oldest].last_seen)
                     oldest = i;
             }
@@ -512,26 +512,26 @@ TEST_F(ContactEvictionTest, ClearsAdvertLocationWhenMissingOnUpdate) {
 }
 
 TEST_F(ContactEvictionTest, FillsToMax) {
-    for (int i = 0; i < MAX_CONTACTS; i++) {
+    for (int i = 0; i < TEST_MAX_CONTACTS; i++) {
         char name[16];
         snprintf(name, sizeof(name), "Node_%d", i);
         EXPECT_TRUE(cl.on_advert(name, i * 10, -90));
     }
-    EXPECT_EQ(cl.count(), MAX_CONTACTS);
+    EXPECT_EQ(cl.count(), TEST_MAX_CONTACTS);
 }
 
 TEST_F(ContactEvictionTest, EvictsOldestWhenFull) {
     // Fill with 64 contacts at increasing timestamps
-    for (int i = 0; i < MAX_CONTACTS; i++) {
+    for (int i = 0; i < TEST_MAX_CONTACTS; i++) {
         char name[16];
         snprintf(name, sizeof(name), "Node_%d", i);
         EXPECT_TRUE(cl.on_advert(name, i * 100, -90));
     }
-    EXPECT_EQ(cl.count(), MAX_CONTACTS);
+    EXPECT_EQ(cl.count(), TEST_MAX_CONTACTS);
 
     // Node_0 has last_seen=0 (oldest). Adding a new contact should evict it.
     EXPECT_TRUE(cl.on_advert("NewNode", 99999, -70));
-    EXPECT_EQ(cl.count(), MAX_CONTACTS);
+    EXPECT_EQ(cl.count(), TEST_MAX_CONTACTS);
     EXPECT_LT(cl.find("Node_0"), 0) << "Node_0 should have been evicted";
     EXPECT_GE(cl.find("Node_1"), 0)  << "Node_1 should still be present";
     EXPECT_GE(cl.find("NewNode"), 0) << "NewNode should have been added";
@@ -539,7 +539,7 @@ TEST_F(ContactEvictionTest, EvictsOldestWhenFull) {
 
 TEST_F(ContactEvictionTest, EvictsCorrectOldest) {
     // Fill with timestamps
-    for (int i = 0; i < MAX_CONTACTS; i++) {
+    for (int i = 0; i < TEST_MAX_CONTACTS; i++) {
         char name[16];
         snprintf(name, sizeof(name), "Node_%d", i);
         cl.on_advert(name, i * 10, -90);
@@ -557,7 +557,7 @@ TEST_F(ContactEvictionTest, EvictsCorrectOldest) {
 
 TEST_F(ContactEvictionTest, EvictsToMakeRoomForManyNew) {
     // Fill to max
-    for (int i = 0; i < MAX_CONTACTS; i++) {
+    for (int i = 0; i < TEST_MAX_CONTACTS; i++) {
         char name[16];
         snprintf(name, sizeof(name), "Node_%d", i);
         cl.on_advert(name, 1000 + i * 10, -90);
@@ -570,7 +570,7 @@ TEST_F(ContactEvictionTest, EvictsToMakeRoomForManyNew) {
         EXPECT_TRUE(cl.on_advert(name, 2000 + i, -70));
     }
 
-    EXPECT_EQ(cl.count(), MAX_CONTACTS);
+    EXPECT_EQ(cl.count(), TEST_MAX_CONTACTS);
     // First 10 nodes should be gone (they were the oldest)
     for (int i = 0; i < 10; i++) {
         char name[16];
@@ -587,14 +587,14 @@ TEST_F(ContactEvictionTest, EvictsToMakeRoomForManyNew) {
 
 TEST_F(ContactEvictionTest, SameNameAfterEvictionWorks) {
     // Fill to max
-    for (int i = 0; i < MAX_CONTACTS - 1; i++) {
+    for (int i = 0; i < TEST_MAX_CONTACTS - 1; i++) {
         char name[16];
         snprintf(name, sizeof(name), "Node_%d", i);
         cl.on_advert(name, 1000 + i * 10, -90);
     }
     // Add "Target" with a very old timestamp so it gets evicted first
     cl.on_advert("Target", 0, -70);
-    EXPECT_EQ(cl.count(), MAX_CONTACTS);
+    EXPECT_EQ(cl.count(), TEST_MAX_CONTACTS);
 
     // Fill 5 more nodes — each evicts the oldest. Target (ts=0) is first to go.
     for (int i = 0; i < 5; i++) {
@@ -613,13 +613,13 @@ TEST_F(ContactEvictionTest, SameNameAfterEvictionWorks) {
 
 TEST_F(ContactEvictionTest, UnknownContactEvictedDoesNotAffectOthers) {
     // Fill to max
-    for (int i = 0; i < MAX_CONTACTS - 1; i++) {
+    for (int i = 0; i < TEST_MAX_CONTACTS - 1; i++) {
         char name[16];
         snprintf(name, sizeof(name), "Node_%d", i);
         cl.on_advert(name, 1000 + i, -90);
     }
     cl.on_advert("First", 0, -95); // oldest timestamp
-    EXPECT_EQ(cl.count(), MAX_CONTACTS);
+    EXPECT_EQ(cl.count(), TEST_MAX_CONTACTS);
 
     // Add a new contact — "First" with timestamp 0 should be evicted
     EXPECT_TRUE(cl.on_advert("Second", 9999, -80));
@@ -627,7 +627,7 @@ TEST_F(ContactEvictionTest, UnknownContactEvictedDoesNotAffectOthers) {
     EXPECT_GE(cl.find("Second"), 0);
 
     // All the nodes 0..62 should be intact
-    for (int i = 0; i < MAX_CONTACTS - 1; i++) {
+    for (int i = 0; i < TEST_MAX_CONTACTS - 1; i++) {
         char name[16];
         snprintf(name, sizeof(name), "Node_%d", i);
         EXPECT_GE(cl.find(name), 0) << name << " should survive";
