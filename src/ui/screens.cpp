@@ -4805,7 +4805,8 @@ void settings_system_show()
         lv_obj_set_style_bg_color(btn_branch, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
         lv_obj_set_style_bg_opa(btn_branch, LV_OPA_COVER, 0);
         lv_obj_set_style_text_color(btn_branch, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_add_event_cb(btn_branch, [](lv_event_t*) {
+        lv_obj_add_event_cb(btn_branch, [](lv_event_t* e) {
+            lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
             NodePrefs np = prefs_get();
             const char* branches[] = {"main", "dev", "latest"};
             int n_branches = 3;
@@ -4816,7 +4817,13 @@ void settings_system_show()
             strncpy(np.ota_branch, branches[current], sizeof(np.ota_branch) - 1);
             np.ota_branch[sizeof(np.ota_branch) - 1] = '\0';
             prefs_set(np);
-            settings_system_show();
+            // Update button label without rebuilding the screen
+            lv_obj_t* label = lv_obj_get_child(btn, 0);
+            if (label) {
+                char lbl[48];
+                snprintf(lbl, sizeof(lbl), "  OTA Branch: %s", branches[current]);
+                lv_label_set_text(label, lbl);
+            }
         }, LV_EVENT_CLICKED, nullptr);
         row++;
     }
@@ -4830,11 +4837,19 @@ void settings_system_show()
         lv_obj_set_style_bg_opa(btn_pre, LV_OPA_COVER, 0);
         lv_obj_set_style_text_color(btn_pre, lv_color_hex(
             p.ota_allow_prerelease ? ACCENT : TEXT_PRIMARY), 0);
-        lv_obj_add_event_cb(btn_pre, [](lv_event_t*) {
+        lv_obj_add_event_cb(btn_pre, [](lv_event_t* e) {
+            lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
             NodePrefs np = prefs_get();
             np.ota_allow_prerelease = !np.ota_allow_prerelease;
             prefs_set(np);
-            settings_system_show();
+            // Update button label without rebuilding the screen
+            lv_obj_t* label = lv_obj_get_child(btn, 0);
+            if (label) {
+                lv_label_set_text(label, np.ota_allow_prerelease
+                    ? "  Pre-releases: ON" : "  Pre-releases: OFF");
+                lv_obj_set_style_text_color(label, lv_color_hex(
+                    np.ota_allow_prerelease ? ACCENT : TEXT_PRIMARY), 0);
+            }
         }, LV_EVENT_CLICKED, nullptr);
         row++;
     }
