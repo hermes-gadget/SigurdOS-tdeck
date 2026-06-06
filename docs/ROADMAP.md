@@ -172,6 +172,9 @@ Priority tasks:
 
 - Treat the existing `CompanionBridge` and `SigurdOS_TDeck_ble` build as experimental until they pass official MeshCore app hardware validation.
 - Complete official app pairing, reconnect, message sync, channel sync, contact sync, app-start, and app-shutdown tests over BLE.
+- Land the ESP32 MeshCore BLE cached-bond reconnect fix in the actual
+  `lib/meshcore` transport source used by this firmware, then rerun the host
+  USB BLE command/reconnect smoke from a clean checkout.
 - Add a WiFi bridge or WebUI mode for local companion access where BLE is insufficient.
 - Define pairing, device PIN, key exposure, private-key export/import, and local-network security policy.
 - Support two-way sync for contacts, channels, DMs, channel messages, node config, telemetry history, time source, and map state.

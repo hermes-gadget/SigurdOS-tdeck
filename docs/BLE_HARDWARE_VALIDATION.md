@@ -117,11 +117,26 @@ The command smoke covers:
 - `CMD_SYNC_NEXT_MESSAGE`, accepting either `NO_MORE_MESSAGES` or queued
   message/data frames.
 
+For reconnect validation, run the command smoke with `--reconnects <count>`.
+The first session performs the full command smoke above. Each reconnect session
+opens a fresh BLE connection, subscribes to TX notifications, runs
+`CMD_DEVICE_QUERY`, `CMD_APP_START`, and `CMD_SYNC_NEXT_MESSAGE`, then closes
+the connection again:
+
+```powershell
+python scripts\validation\companion_ble_smoke.py --name-prefix "<bench-device-prefix>" --scan-timeout 20 --reconnects 2
+```
+
+Use the same `--winrt-pin-env` setup shown above when the Windows host requires
+an authenticated bond before command traffic. The reconnect smoke validates
+transport recovery and companion sync polling, not full official phone-app
+behavior.
+
 The script writes privacy-safe artifacts under
 `.pio/ble_companion_validation/<timestamp>/summary.json`. The artifact records
-command/response codes, frame lengths, and target metadata needed for PR
-evidence. It does not record the BLE PIN, WiFi credentials, message text, exact
-location, or private keys.
+per-session command/response codes, frame lengths, reconnect pass/fail state,
+and target metadata needed for PR evidence. It does not record the BLE PIN,
+WiFi credentials, message text, exact location, or private keys.
 
 Do not publish artifacts generated with `--include-frame-hex`; raw frames can
 contain private contact, message, or channel payloads.
@@ -157,6 +172,8 @@ Host USB BLE bench evidence may be added when available:
   discovery and authenticated pairing.
 - Command-smoke mode passes against the same flashed firmware when validating
   companion RX/TX responses through the host BLE stack.
+- Reconnect command-smoke mode passes with `--reconnects` when validating
+  repeated host reconnect, app-start, and sync-poll recovery.
 - `/ble_hw.txt` shows matching `connect` and `authok` activity for pair-only
   validation, and matching `rx` and `tx` activity for command-smoke validation.
 - The report identifies the local host radio used for the bench run without
@@ -443,3 +460,108 @@ Interpretation:
   tuning-command execution remains covered by native protocol tests plus BLE
   boot/advertising hardware proof. A phone pairing run is still required to
   close the connection/auth/RX/TX criteria above.
+
+## 2026-06-06 COM8 Host USB BLE Command/Reconnect Investigation
+
+This run used the local T-Deck attached to `COM8` and the host USB BLE radio.
+No `COM11` or `COM29` access was used. The host BLE PIN environment variable
+was unset, so the command-smoke attempts relied on the existing Windows cached
+bond and did not print or store a PIN.
+
+Top-level build and validation evidence:
+
+- `python -m py_compile scripts\validation\companion_ble_smoke.py`: passed.
+- `python scripts\validation\companion_ble_smoke.py --help`: showed
+  `--reconnects` and `--reconnect-settle`.
+- `git diff --check`: passed.
+- `pio test -e native_test -f test_companion_protocol -v`: passed, 53/53.
+- `pio run -e SigurdOS_TDeck_ble_validation`: passed; RAM 40.7%, flash 39.1%,
+  merged image `2,626,688` bytes from the clean `lib/meshcore` checkout.
+- Uploaded `SigurdOS_TDeck_ble_validation` to `COM8`; esptool identified
+  ESP32-S3 rev v0.2, MAC `cc:8d:a2:0d:14:28`; every written range reported
+  `Hash of data verified`.
+
+Initial host BLE command/reconnect smoke:
+
+- Command:
+
+```powershell
+python scripts\validation\companion_ble_smoke.py --name-prefix "MeshCore-SigurdOS" --scan-timeout 20 --reconnects 1
+```
+
+- The host found `MeshCore-SigurdOS T-Deck` at BLE address
+  `CC:8D:A2:0D:14:29` with the MeshCore UART service UUID.
+- Primary session failed before command traffic with
+  `Could not start notify on 0029: Unreachable`.
+- Reconnect session wrote `CMD_DEVICE_QUERY`, `CMD_APP_START`, and
+  `CMD_SYNC_NEXT_MESSAGE`, but received no notifications.
+- SPIFFS readback from `COM8` at `0xc90000` size `0x360000` showed
+  `/ble_hw.txt` receiving those commands but dropping all responses:
+
+```text
+@ble_hw|ms=103718|begun=1|en=1|conn=0|adv=1|authok=1|authfail=0|connect=2|disconnect=1|mtu=172|rxw=3|rxd=0|rx=3|tx=0|txd=3|lrx=10|ltx=0
+```
+
+Interpretation:
+
+- The Windows host could discover, connect, authenticate, negotiate MTU `172`,
+  and deliver secured RX writes to the firmware.
+- The firmware-side transport accepted companion commands but dropped notify
+  responses after a cached-bond reconnect because the ESP32 MeshCore BLE
+  transport only marked `deviceConnected=true` on an auth-complete callback.
+- A local one-line MeshCore transport patch was tested to confirm the failure
+  mode, but that patch is not present in this top-level branch.
+
+Local MeshCore-transport-patched validation:
+
+- Local patch under `lib/meshcore`: mark the ESP32 BLE transport connected
+  after a secured RX write arrives while the server still has a connected
+  central.
+- Rebuilt `SigurdOS_TDeck_ble_validation`: passed; RAM 40.7%, flash 39.1%,
+  merged image `2,626,704` bytes.
+- Uploaded the patched validation image to `COM8`; every written range reported
+  `Hash of data verified`.
+- A reconnect-smoke run with `--reconnects 3` had one successful reconnect
+  command session:
+
+```text
+session: PASS reconnect-1
+  PASS device query: cmd=22 resp=13 len=82
+  PASS app start: cmd=1 resp=5 len=73
+  PASS sync empty or queued: cmd=10 resp=10 len=1
+```
+
+- A later `--reconnects 1` run had a full primary command-smoke pass:
+
+```text
+session: PASS primary
+  PASS device query: cmd=22 resp=13 len=82
+  PASS app start: cmd=1 resp=5 len=73
+  PASS contacts start: cmd=4 resp=2 len=5
+  PASS current time: cmd=5 resp=9 len=5
+  PASS battery and storage: cmd=20 resp=12 len=11
+  PASS core stats: cmd=56 resp=24 len=11
+  PASS sync empty or queued: cmd=10 resp=10 len=1
+```
+
+- The same host USB BLE stack remained intermittent: other sessions failed at
+  `start_notify` with `Unreachable` or `Operation aborted`.
+- Post-fix SPIFFS readback showed successful firmware RX/TX and no response
+  drops:
+
+```text
+@ble_hw|ms=318706|begun=1|en=1|conn=0|adv=1|authok=2|authfail=0|connect=7|disconnect=7|mtu=172|rxw=10|rxd=0|rx=10|tx=11|txd=0|lrx=10|ltx=10
+```
+
+Interpretation:
+
+- The top-level validation tool can now record per-session command and
+  reconnect evidence while keeping artifacts privacy-safe.
+- With the local MeshCore transport patch, hardware proved companion RX/TX for
+  the full command-smoke sequence and for one reconnect sync sequence.
+- The host USB BLE adapter is still not stable enough to close the official
+  RC2 companion BLE gate by itself. Official phone-app validation is still
+  required for pairing, reconnect, sync, send/receive, and app shutdown.
+- The MeshCore transport fix must land in the actual `lib/meshcore` source used
+  by this firmware before this behavior is production-ready from a clean
+  checkout.

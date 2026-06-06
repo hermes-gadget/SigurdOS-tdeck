@@ -224,7 +224,7 @@ Warning observations:
 | Telemetry smoke | COM8 `SigurdOS_TDeck_telemetry` upload plus `remote_test_smoke.py --profile telemetry` pass, including `@build` identity | PASS on 2026-06-06 COM8 build-identity run: clean `git=9543e88a0996`, `dirty=0`, `env=SigurdOS_TDeck_telemetry` |
 | Non-radio remote UI | COM8 `SigurdOS_TDeck_remote_test` upload plus `remote_test_smoke.py --profile ui` pass | PASS on 2026-06-06 COM8 run |
 | GPS | COM8 SPIFFS/NVS evidence with fixed records and privacy-safe coordinates | PASS for hardware lock in PR #464: 84 fixed records, first fix `fix=1`, `qual=1`, `sv=7`, `ft=3`, `rmc=A`, `loc=1`; production power/time-sync UX remains |
-| Companion BLE | COM8 BLE validation boot/advertising plus official app pairing/auth/RX/TX | Local COM8 boot/advertising and USB BLE pair-only authenticated pairing PASS in PR #466; official phone-app RX/TX, reconnect, and sync still needed |
+| Companion BLE | COM8 BLE validation boot/advertising plus official app pairing/auth/RX/TX | Local COM8 boot/advertising and USB BLE pair-only authenticated pairing PASS in PR #466; host USB BLE command RX/TX and one reconnect sync sequence validated locally with an unmerged MeshCore transport patch; clean-checkout firmware still needs that `lib/meshcore` fix plus official phone-app RX/TX, reconnect, and sync |
 | RF interop | Named frequency/profile, peer node identity, TX/RX packet counters, packet log, and transcript | Not started for RC2; do not use `COM11` under current port constraint |
 | Repeater/room | Login, status, telemetry, CLI data, fetch, timeout/error mapping with a real server/repeater | Needed |
 | OTA | AP OTA and GitHub OTA positive and negative cases: no credentials, wrong credentials, TLS/404/interrupted download | Needed |

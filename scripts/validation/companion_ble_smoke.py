@@ -72,6 +72,12 @@ DEFAULT_STEPS = [
     ),
 ]
 
+RECONNECT_STEPS = (
+    DEFAULT_STEPS[0],
+    DEFAULT_STEPS[1],
+    DEFAULT_STEPS[-1],
+)
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -274,11 +280,7 @@ async def winrt_pin_pair(address: str, pin: str, unpair_first: bool) -> dict[str
 
 
 async def run_ble(args: argparse.Namespace) -> dict[str, Any]:
-    from bleak import BleakClient
-
     target, target_meta = await find_device(args)
-    notifications: asyncio.Queue[bytes] = asyncio.Queue()
-    all_notifications: list[dict[str, Any]] = []
     pair_info: dict[str, Any] = {"requested": args.pair}
 
     if args.winrt_pin_env:
@@ -303,76 +305,146 @@ async def run_ble(args: argparse.Namespace) -> dict[str, Any]:
             "passed": bool(winrt.get("paired") or winrt.get("pair_skipped")),
         }
 
+    client_kwargs: dict[str, Any] = {
+        "timeout": args.connect_timeout,
+        "pair": args.pair,
+    }
+    sessions = [
+        await run_command_session(
+            target,
+            args,
+            client_kwargs,
+            pair_info,
+            DEFAULT_STEPS,
+            "primary",
+            explicit_pair=args.pair,
+        )
+    ]
+    reconnect_kwargs: dict[str, Any] = {
+        "timeout": args.connect_timeout,
+        "pair": False,
+    }
+    for index in range(args.reconnects):
+        await asyncio.sleep(args.reconnect_settle)
+        sessions.append(
+            await run_command_session(
+                target,
+                args,
+                reconnect_kwargs,
+                pair_info,
+                RECONNECT_STEPS,
+                f"reconnect-{index + 1}",
+                explicit_pair=False,
+            )
+        )
+
+    all_notifications: list[dict[str, Any]] = []
+    for session in sessions:
+        all_notifications.extend(session.get("notifications", []))
+
+    return {
+        "target": target_meta,
+        "pairing": pair_info,
+        "steps": sessions[0].get("steps", []),
+        "sessions": sessions,
+        "reconnects_requested": args.reconnects,
+        "notifications": all_notifications,
+        "passed": all(session.get("passed") for session in sessions),
+    }
+
+
+async def run_command_session(
+    target: Any,
+    args: argparse.Namespace,
+    client_kwargs: dict[str, Any],
+    pair_info: dict[str, Any],
+    steps: list[BleStep] | tuple[BleStep, ...],
+    label: str,
+    explicit_pair: bool,
+) -> dict[str, Any]:
+    from bleak import BleakClient
+
+    notifications: asyncio.Queue[bytes] = asyncio.Queue()
+    all_notifications: list[dict[str, Any]] = []
+
     def on_notify(_sender: Any, data: bytearray) -> None:
         frame = bytes(data)
         all_notifications.append(frame_summary(frame, args.include_frame_hex))
         notifications.put_nowait(frame)
 
     steps_out: list[dict[str, Any]] = []
-    client_kwargs: dict[str, Any] = {
-        "timeout": args.connect_timeout,
-        "pair": args.pair,
-    }
-    async with BleakClient(target, **client_kwargs) as client:
-        if args.pair:
-            pair_info["explicit_attempted"] = True
-            try:
-                pair_result = await asyncio.wait_for(client.pair(), timeout=args.pair_timeout)
-                pair_info["explicit_result"] = pair_result
-            except Exception as exc:
-                pair_info["explicit_error"] = safe_error(exc)
-
-        await client.start_notify(TX_UUID, on_notify)
-        await asyncio.sleep(0.25)
-
-        for step in DEFAULT_STEPS:
-            while not notifications.empty():
-                notifications.get_nowait()
-
-            step_out: dict[str, Any] = {
-                "name": step.name,
-                "command_code": step.frame[0],
-                "expected_codes": list(step.expected_codes),
-                "passed": False,
-                "response_code": None,
-                "response_len": 0,
-            }
-            try:
-                await client.write_gatt_char(RX_UUID, step.frame, response=True)
-            except Exception as exc:
-                step_out["write_error"] = safe_error(exc)
-                steps_out.append(step_out)
-                continue
-
-            response: bytes | None = None
-            try:
-                deadline = asyncio.get_running_loop().time() + step.timeout_s
-                while asyncio.get_running_loop().time() < deadline:
-                    remaining = max(0.1, deadline - asyncio.get_running_loop().time())
-                    candidate = await asyncio.wait_for(notifications.get(), timeout=remaining)
-                    if candidate and candidate[0] in step.expected_codes:
-                        response = candidate
-                        break
-            except asyncio.TimeoutError:
-                response = None
-
-            ok = bool(response) and len(response) >= step.min_len
-            step_out["passed"] = ok
-            step_out["response_code"] = response[0] if response else None
-            step_out["response_len"] = len(response) if response else 0
-            if args.include_frame_hex:
-                step_out["response_hex"] = frame_hex(response) if response else ""
-            steps_out.append(step_out)
-
-        await client.stop_notify(TX_UUID)
-
-    return {
-        "target": target_meta,
-        "pairing": pair_info,
+    session_out: dict[str, Any] = {
+        "label": label,
         "steps": steps_out,
         "notifications": all_notifications,
-        "passed": all(step["passed"] for step in steps_out),
+        "passed": False,
     }
+    try:
+        async with BleakClient(target, **client_kwargs) as client:
+            session_out["connected"] = True
+            if explicit_pair:
+                pair_info["explicit_attempted"] = True
+                try:
+                    pair_result = await asyncio.wait_for(client.pair(), timeout=args.pair_timeout)
+                    pair_info["explicit_result"] = pair_result
+                except Exception as exc:
+                    pair_info["explicit_error"] = safe_error(exc)
+
+            await client.start_notify(TX_UUID, on_notify)
+            await asyncio.sleep(0.25)
+
+            for step in steps:
+                while not notifications.empty():
+                    notifications.get_nowait()
+
+                step_out: dict[str, Any] = {
+                    "name": step.name,
+                    "command_code": step.frame[0],
+                    "expected_codes": list(step.expected_codes),
+                    "passed": False,
+                    "response_code": None,
+                    "response_len": 0,
+                }
+                try:
+                    await client.write_gatt_char(RX_UUID, step.frame, response=True)
+                except Exception as exc:
+                    step_out["write_error"] = safe_error(exc)
+                    steps_out.append(step_out)
+                    continue
+
+                response: bytes | None = None
+                try:
+                    deadline = asyncio.get_running_loop().time() + step.timeout_s
+                    while asyncio.get_running_loop().time() < deadline:
+                        remaining = max(0.1, deadline - asyncio.get_running_loop().time())
+                        candidate = await asyncio.wait_for(notifications.get(), timeout=remaining)
+                        if candidate and candidate[0] in step.expected_codes:
+                            response = candidate
+                            break
+                except asyncio.TimeoutError:
+                    response = None
+
+                ok = bool(response) and len(response) >= step.min_len
+                step_out["passed"] = ok
+                step_out["response_code"] = response[0] if response else None
+                step_out["response_len"] = len(response) if response else 0
+                if args.include_frame_hex:
+                    step_out["response_hex"] = frame_hex(response) if response else ""
+                steps_out.append(step_out)
+
+            try:
+                await client.stop_notify(TX_UUID)
+            except Exception as exc:
+                session_out["stop_notify_error"] = safe_error(exc)
+    except Exception as exc:
+        session_out["error"] = safe_error(exc)
+
+    session_out["passed"] = (
+        "error" not in session_out
+        and len(steps_out) == len(steps)
+        and all(step["passed"] for step in steps_out)
+    )
+    return session_out
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -402,6 +474,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="stop after pairing; useful for authenticated-pair hardware evidence",
     )
+    parser.add_argument(
+        "--reconnects",
+        type=int,
+        default=0,
+        help="after the primary command smoke, repeat a minimal connect/app-start/sync smoke this many times",
+    )
+    parser.add_argument(
+        "--reconnect-settle",
+        type=float,
+        default=1.0,
+        help="seconds to wait between BLE sessions when --reconnects is used",
+    )
     parser.add_argument("--out-dir", default=str(default_out_dir()))
     parser.add_argument(
         "--include-frame-hex",
@@ -413,6 +497,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.reconnects < 0:
+        print("ERROR: --reconnects must be >= 0", file=sys.stderr)
+        return 2
+    if args.reconnect_settle < 0:
+        print("ERROR: --reconnect-settle must be >= 0", file=sys.stderr)
+        return 2
     if args.pair_only and not args.winrt_pin_env:
         print("ERROR: --pair-only requires --winrt-pin-env", file=sys.stderr)
         return 2
@@ -449,13 +539,28 @@ def main(argv: list[str] | None = None) -> int:
             f"status={pairing.get('pair_status') or pairing.get('pair_skipped')} "
             f"protection={pairing.get('protection_used')}"
         )
-    for step in summary.get("steps", []):
-        status = "PASS" if step.get("passed") else "FAIL"
-        print(
-            f"{status:4} {step['name']}: "
-            f"cmd={step['command_code']} resp={step.get('response_code')} "
-            f"len={step.get('response_len')}"
-        )
+    sessions = summary.get("sessions") or []
+    if sessions:
+        for session in sessions:
+            session_status = "PASS" if session.get("passed") else "FAIL"
+            print(f"session: {session_status} {session.get('label')}")
+            if session.get("error"):
+                print(f"  error: {session['error']}")
+            for step in session.get("steps", []):
+                status = "PASS" if step.get("passed") else "FAIL"
+                print(
+                    f"  {status:4} {step['name']}: "
+                    f"cmd={step['command_code']} resp={step.get('response_code')} "
+                    f"len={step.get('response_len')}"
+                )
+    else:
+        for step in summary.get("steps", []):
+            status = "PASS" if step.get("passed") else "FAIL"
+            print(
+                f"{status:4} {step['name']}: "
+                f"cmd={step['command_code']} resp={step.get('response_code')} "
+                f"len={step.get('response_len')}"
+            )
     if "error" in summary:
         print(f"error:   {summary['error']}")
     return 0 if summary.get("passed") else 1

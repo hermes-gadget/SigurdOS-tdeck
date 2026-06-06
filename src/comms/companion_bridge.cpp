@@ -556,9 +556,9 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     }
 
     if (cmd == CMD_SYNC_NEXT_MESSAGE) {
+        _last_sync_time = _host->currentTime();
         int out_len = getFromOfflineQueue(_out_frame);
         if (out_len > 0) {
-            _last_sync_time = _host->currentTime();
             _serial->writeFrame(_out_frame, out_len);
         } else {
             writeNoMoreMessages();
