@@ -169,9 +169,10 @@ TEST(ChannelMenuTest, ChooseScopeMarkReadAndNoneAreCallerHandled) {
 
 // ── scope_name_valid ────────────────────────────────────
 
-TEST(ChannelMenuTest, ScopeNameValidAcceptsPublicAndPrivate) {
-    EXPECT_TRUE(scope_name_valid("#london"));
-    EXPECT_TRUE(scope_name_valid("$ops-team"));
+TEST(ChannelMenuTest, ScopeNameValidAcceptsBareAndHashNames) {
+    EXPECT_TRUE(scope_name_valid("eng-sw"));   // bare name — the common case
+    EXPECT_TRUE(scope_name_valid("#eng-sw"));  // leading # is optional
+    EXPECT_TRUE(scope_name_valid("london"));
     EXPECT_TRUE(scope_name_valid("#a"));
     // Empty/null is the "Public (unscoped)" sentinel.
     EXPECT_TRUE(scope_name_valid(""));
@@ -180,19 +181,31 @@ TEST(ChannelMenuTest, ScopeNameValidAcceptsPublicAndPrivate) {
 
 TEST(ChannelMenuTest, ScopeNameValidRejectsBadNames) {
     const char* reason = nullptr;
-    EXPECT_FALSE(scope_name_valid("london", &reason));   // missing # / $
+    EXPECT_FALSE(scope_name_valid("#", &reason));         // empty body
     EXPECT_NE(reason, nullptr);
-    EXPECT_FALSE(scope_name_valid("#"));                  // prefix only
-    EXPECT_FALSE(scope_name_valid("$"));
-    EXPECT_FALSE(scope_name_valid("#bad name"));          // space in body
-    EXPECT_FALSE(scope_name_valid("#-lead"));             // leading hyphen
-    // 31 chars after the '#' exceeds the 30-char region name limit.
-    EXPECT_FALSE(scope_name_valid("#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    EXPECT_FALSE(scope_name_valid("eng sw"));             // space in body
+    EXPECT_FALSE(scope_name_valid("-lead"));              // leading hyphen
+    EXPECT_FALSE(scope_name_valid("$ops"));               // '$' is not a name char
+    // 30-char body exceeds the 29-char limit (stored as "#" + body in 31B).
+    EXPECT_FALSE(scope_name_valid("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
 }
 
 // ── channel_scope_apply ─────────────────────────────────
 
-TEST(ChannelMenuTest, ChannelScopeApplyCreatesAndActivatesCustomScope) {
+TEST(ChannelMenuTest, ChannelScopeApplyNormalisesBareNameToHash) {
+    removeAllRegionEntriesNamed("#eng-sw");
+    sigurdos::mesh::setActiveRegion("");
+
+    // User types a bare name; it becomes the "#eng-sw" scope.
+    EXPECT_TRUE(channel_scope_apply("eng-sw"));
+    EXPECT_NE(sigurdos::mesh::findRegion("#eng-sw"), nullptr);
+    EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "#eng-sw");
+
+    removeAllRegionEntriesNamed("#eng-sw");
+    sigurdos::mesh::setActiveRegion("");
+}
+
+TEST(ChannelMenuTest, ChannelScopeApplyAcceptsHashPrefixedName) {
     removeAllRegionEntriesNamed("#custom-scope");
     sigurdos::mesh::setActiveRegion("");
 
@@ -214,7 +227,7 @@ TEST(ChannelMenuTest, ChannelScopeApplyEmptyGoesPublic) {
 
 TEST(ChannelMenuTest, ChannelScopeApplyRejectsInvalidName) {
     sigurdos::mesh::setActiveRegion("");
-    EXPECT_FALSE(channel_scope_apply("nohash"));
+    EXPECT_FALSE(channel_scope_apply("bad name"));  // space
     // A rejected name must not change the active scope.
     EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "");
 }

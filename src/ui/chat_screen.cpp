@@ -2369,7 +2369,7 @@ static void show_scope_picker() {
     lv_obj_set_style_radius(ta, 0, 0);
     lv_textarea_set_one_line(ta, true);
     lv_textarea_set_max_length(ta, 30);
-    lv_textarea_set_placeholder_text(ta, "#scope or $private");
+    lv_textarea_set_placeholder_text(ta, "custom scope e.g. eng-sw");
     apply_focus_style(ta);
 
     lv_obj_t* set_btn = lv_btn_create(dlg);

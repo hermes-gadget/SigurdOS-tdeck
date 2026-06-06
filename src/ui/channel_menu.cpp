@@ -26,28 +26,33 @@
 
 namespace sigurdos::ui {
 
+// The body of a scope name, ignoring an optional leading '#'. A scope is
+// just a name: MeshCore derives its transport key from "#<body>" (SHA256),
+// so the user can type "eng-sw" or "#eng-sw" interchangeably.
+static const char* scope_body(const char* name)
+{
+    return (name && name[0] == '#') ? name + 1 : name;
+}
+
 bool scope_name_valid(const char* name, const char** reason)
 {
     // Empty/null is the "Public (unscoped)" sentinel — always allowed.
     if (!name || !name[0]) return true;
 
-    char prefix = name[0];
-    if (prefix != '#' && prefix != '$') {
-        if (reason) *reason = "Use #public or $private";
-        return false;
-    }
-    if (!name[1]) {
+    const char* body = scope_body(name);
+    if (!body[0]) {
         if (reason) *reason = "Name required";
         return false;
     }
-    if (strlen(name) > 30) {  // RegionEntry::name is 31 bytes (30 + null)
+    // Stored as "#<body>" in a 31-byte field (30 chars + null), so the body
+    // is capped at 29 characters.
+    if (strlen(body) > 29) {
         if (reason) *reason = "Name too long";
         return false;
     }
-    // The body (after the prefix) follows the same rules as a channel name:
-    // letters, digits and single hyphens. channel_name_valid strips a leading
-    // '#', which is harmless for the already-prefix-stripped body.
-    return sigurdos::mesh::channel_name_valid(name + 1, reason);
+    // The body follows the same rules as a channel name: letters, digits and
+    // single hyphens, no leading/trailing/double hyphens.
+    return sigurdos::mesh::channel_name_valid(body, reason);
 }
 
 bool channel_scope_apply(const char* scope_name)
@@ -59,10 +64,13 @@ bool channel_scope_apply(const char* scope_name)
     }
     if (!scope_name_valid(scope_name)) return false;
 
-    // Auto-create so the region (and, for #public names, its transport key)
-    // exists before we bind it; addRegion is a no-op if already present.
-    sigurdos::mesh::addRegion(scope_name, nullptr);
-    sigurdos::mesh::setActiveRegion(scope_name);
+    // Normalise to "#<body>" so the transport key auto-derives (SHA256 of the
+    // name) and the scope matches the same-named channel/region. addRegion is
+    // a no-op when the region already exists.
+    char norm[32];
+    snprintf(norm, sizeof(norm), "#%s", scope_body(scope_name));
+    sigurdos::mesh::addRegion(norm, nullptr);
+    sigurdos::mesh::setActiveRegion(norm);
     return true;
 }
 

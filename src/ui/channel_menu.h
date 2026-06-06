@@ -64,16 +64,18 @@ int channel_menu_build(const char* channel, ChannelMenuItem* out, int max);
 // caller handles.
 bool channel_menu_perform(ChannelAction action, const char* channel, int channel_idx);
 
-// Validate a custom scope (region) name against the MeshCore convention:
-// must start with '#' (public) or '$' (private), 2–30 chars total, with an
-// alphanumeric/hyphen body. `reason` (if non-null) gets a short failure
-// description. An empty/null name is valid and means "Public (unscoped)".
+// Validate a custom scope (region) name. A scope is just a name — the user
+// types e.g. "eng-sw" (an optional leading '#' is accepted). The body must
+// be 1–29 chars of letters, digits and single hyphens. `reason` (if
+// non-null) gets a short failure description. An empty/null name is valid
+// and means "Public (unscoped)".
 bool scope_name_valid(const char* name, const char** reason = nullptr);
 
-// Set the active send scope to an arbitrary region name. "" / null →
-// Public (unscoped). Otherwise the name must pass scope_name_valid(); the
-// region is auto-created (so #public names derive their transport key) and
-// made the active flood scope. Returns true on success, false on a bad name.
+// Set the active send scope to a named region. "" / null → Public
+// (unscoped). Otherwise the name must pass scope_name_valid(); it is
+// normalised to "#<body>" so MeshCore derives its transport key (SHA256 of
+// the name), the region is auto-created, and it becomes the active flood
+// scope. Returns true on success, false on a bad name.
 bool channel_scope_apply(const char* scope_name);
 
 } // namespace sigurdos::ui
