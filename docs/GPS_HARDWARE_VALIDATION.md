@@ -91,6 +91,52 @@ python -m esptool --chip esp32s3 --port COM8 --baud 921600 read-flash 0xc90000 0
 Get-Content .pio\gps_validation_readback\unpacked\gps_hw.txt
 ```
 
+## Optional Local WiFi Uplink
+
+If the T-Deck must be moved away from the workstation for real sky view, use
+the validation-only WiFi harness. This is not part of release firmware. It
+streams the same privacy-safe `@gps_hw` records to a local HTTP server while
+keeping the SPIFFS and NVS evidence paths as the source of truth.
+
+Do not commit WiFi credentials, LAN IPs, or exact coordinates. Provide network
+settings through environment variables or through the ignored local file
+`.pio/gps_validation_wifi_config.json`:
+
+```json
+{
+  "ssid": "YOUR_2G_WIFI",
+  "password": "YOUR_WIFI_PASSWORD",
+  "host": "YOUR_LOCAL_SERVER_IPV4",
+  "port": 8765,
+  "path": "/gps"
+}
+```
+
+Start the local capture server on the workstation or ethernet host:
+
+```powershell
+python scripts\validation\gps_validation_server.py --host 0.0.0.0 --port 8765 --out-dir .pio\gps_validation_wifi\outdoor-run
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8765/health
+```
+
+Build and upload the WiFi harness to the approved hardware port:
+
+```powershell
+pio run -e SigurdOS_TDeck_gps_validation_wifi
+pio run -e SigurdOS_TDeck_gps_validation_wifi -t upload --upload-port COM8
+python -m esptool --chip esp32s3 --port COM8 --baud 115200 --after watchdog-reset read-mac
+```
+
+When `/health` reports increasing `records=<n>`, unplug the T-Deck from COM8
+and move it to the sky-view location while keeping the device powered. The
+server writes streamed records to `gps_hw_stream.txt`; exact coordinates remain
+redacted unless the validation environment is deliberately built with
+`SIGURDOS_GPS_VALIDATION_COORDS=1` for a private, local-only log.
+
+After the run, plug the T-Deck back into COM8 and retrieve SPIFFS before NVS.
+The WiFi stream is useful for live progress, but the final PR evidence should
+still cite COM8 SPIFFS/NVS readbacks where possible.
+
 ## Pass Criteria
 
 A hardware GPS pass requires all of the following:
@@ -311,3 +357,136 @@ proves `38400` baud, mostly clean NMEA, GGA/RMC/GSV/GSA traffic, satellites in
 view, and non-zero SNR/CN0 without reaching GSA 2D/3D fix or RMC active status,
 the next physical check should be GPS antenna orientation and placement before
 more firmware changes.
+
+## 2026-06-06 Current Dev Follow-Up
+
+Port safety constraint: only `COM8` was opened. `COM11` and `COM29` were not
+opened or enumerated.
+
+Repository state:
+
+- Base: `origin/dev` at `8827b30` (`docs: sync AGENT_GUIDE.md with codebase state [auto]`).
+- Open upstream PRs: none at the start of this validation pass.
+- Merged companion BLE bridge work is present on `origin/dev`.
+
+Validation:
+
+| Check | Result |
+| --- | --- |
+| `pio run -e SigurdOS_TDeck_gps_validation` | Passed; RAM 6.0%, flash 5.2% |
+| `pio run -e SigurdOS_TDeck_gps_validation -t upload --upload-port COM8` | Passed; ESP32-S3 MAC `cc:8d:a2:0d:14:28`; all flashed segments hash-verified |
+| `pio test -e native_test -v` | Passed; 679 test cases, 678 succeeded, 1 skipped |
+| `pio run -e SigurdOS_TDeck_gps_validation_wifi` with placeholder config | Passed; RAM 13.8%, flash 11.7%; sensitive values were not printed |
+| `pio run -e SigurdOS_TDeck_gps_validation_wifi -t upload --upload-port COM8` with ignored local config | Passed; all flashed segments hash-verified |
+
+The first 2026-06-06 readback accidentally captured a short post-readback
+restart window because NVS was read before SPIFFS. It was not used as lock
+evidence, but it did confirm the validation app booted:
+
+```text
+.pio\gps_validation_readback\2026-06-06-5min\nvs.bin: namespace gpsval=present boot_count=present marker=present marker_value gps-validation=present boot_count_value=28 known_namespace sigurdos=present
+```
+
+The standing 15-minute run was then restarted through the COM8 watchdog-reset
+path, left closed for 900 seconds, and read back through SPIFFS before NVS. The
+SPIFFS log was preserved and produced:
+
+```text
+records=188
+fix_records=0
+active_rmc_records=0
+loc_records=0
+max_ms=935919
+max_siv=11
+max_snr=29
+max_snrc=11
+max_ft=1
+max_sv=0
+max_valid=12576
+max_gga=932
+max_rmc_s=931
+max_gsv=951
+max_gsa=3728
+max_csfail=1
+snr_positive_records=90
+snrc_positive_records=90
+final=@gps_hw|ms=935919|fix=0|qual=0|sv=0|siv=0|ft=1|rmc=V|snr=0|snrc=0|baud=38400|chars=475078|sent=12577|valid=12576|gga=932|rmc_s=931|gsv=951|gsa=3728|csfail=1|sw=1|loc=0
+```
+
+The NVS marker after that run confirmed the app boot and persistence path:
+
+```text
+.pio\gps_validation_readback\2026-06-06-15min-standing\nvs.bin: namespace gpsval=present boot_count=present marker=present marker_value gps-validation=present boot_count_value=32 known_namespace sigurdos=present
+```
+
+The standing placement still did not satisfy the final GPS pass criteria. The
+validation-only WiFi uplink was therefore flashed to COM8 with credentials from
+an ignored `.pio` config file, started through watchdog reset, and verified
+locally by the capture server:
+
+```text
+ok records=14 lock_seen=0
+@gps_hw|ms=55335|fix=0|qual=0|sv=0|siv=1|ft=1|rmc=V|snr=8|snrc=1|baud=38400|chars=28000|sent=726|valid=726|gga=50|rmc_s=50|gsv=50|gsa=200|csfail=0|sw=1|loc=0
+```
+
+The T-Deck was then moved outside for sky view. The local WiFi stream first
+produced privacy-safe GPS lock proof without publishing coordinates:
+
+```text
+records=67
+fix_records=15
+active_rmc_records=15
+loc_records=15
+max_ms=306335
+max_siv=7
+max_snr=28
+max_snrc=2
+max_ft=3
+max_sv=8
+max_valid=4112
+max_gga=302
+max_rmc_s=302
+max_gsv=620
+max_gsa=1208
+max_csfail=1
+first_fix=@gps_hw|ms=236335|fix=1|qual=1|sv=7|siv=5|ft=3|rmc=A|snr=0|snrc=0|baud=38400|chars=115509|sent=3062|valid=3062|gga=232|rmc_s=232|gsv=340|gsa=928|csfail=0|sw=1|loc=1
+final=@gps_hw|ms=306335|fix=1|qual=1|sv=8|siv=5|ft=3|rmc=A|snr=0|snrc=0|baud=38400|chars=168999|sent=4112|valid=4112|gga=302|rmc_s=302|gsv=620|gsa=1208|csfail=0|sw=1|loc=1
+```
+
+After the device returned to the workstation, SPIFFS was read before NVS on
+COM8. The on-device log confirmed the outdoor lock persisted in flash:
+
+```text
+records=152
+fix_records=84
+active_rmc_records=84
+loc_records=84
+max_ms=751335
+max_siv=12
+max_snr=28
+max_snrc=2
+max_ft=3
+max_sv=12
+max_valid=11398
+max_gga=747
+max_rmc_s=747
+max_gsv=2412
+max_gsa=2988
+max_csfail=0
+first_fix=@gps_hw|ms=236335|fix=1|qual=1|sv=7|siv=5|ft=3|rmc=A|snr=0|snrc=0|baud=38400|chars=115509|sent=3062|valid=3062|gga=232|rmc_s=232|gsv=340|gsa=928|csfail=0|sw=1|loc=1
+final=@gps_hw|ms=751335|fix=0|qual=0|sv=0|siv=11|ft=1|rmc=V|snr=0|snrc=0|baud=38400|chars=534706|sent=11398|valid=11398|gga=747|rmc_s=747|gsv=2412|gsa=2988|csfail=0|sw=1|loc=0
+```
+
+The final record lost fix after the device was moved back indoors, but the same
+SPIFFS image contains 84 fixed records and the first fixed record satisfies the
+hardware lock criteria: `fix=1`, `qual=1`, `sv=7`, `ft=3`, `rmc=A`, and
+`loc=1`. Coordinate publishing remained disabled (`coords=0`), and the WiFi
+SSID, password, and local server address stayed in an ignored `.pio` config file
+instead of project files.
+
+The final NVS marker after the return readback confirmed the validation app boot
+and marker persistence path:
+
+```text
+.pio\gps_validation_readback\2026-06-06-outdoor-return\nvs.bin: namespace gpsval=present boot_count=present marker=present marker_value gps-validation=present boot_count_value=36 known_namespace sigurdos=present
+```

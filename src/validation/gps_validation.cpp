@@ -12,6 +12,9 @@
 
 #include "hal/gps.h"
 #include "hal/tdeck_pins.h"
+#if defined(SIGURDOS_GPS_VALIDATION_WIFI) && SIGURDOS_GPS_VALIDATION_WIFI
+#include "validation/gps_validation_wifi.h"
+#endif
 
 static uint32_t last_status_ms = 0;
 static uint32_t last_persist_ms = 0;
@@ -98,7 +101,12 @@ static void emit_status(bool persist)
     char line[256];
     build_status(line, sizeof(line));
     Serial.println(line);
-    if (persist) append_log_line(line);
+    if (persist) {
+        append_log_line(line);
+#if defined(SIGURDOS_GPS_VALIDATION_WIFI) && SIGURDOS_GPS_VALIDATION_WIFI
+        sigurdos_gps_validation_wifi_post_status(line);
+#endif
+    }
 }
 
 static void init_log()
@@ -131,11 +139,17 @@ void setup()
     mark_boot();
     init_log();
     sigurdos_gps_init();
+#if defined(SIGURDOS_GPS_VALIDATION_WIFI) && SIGURDOS_GPS_VALIDATION_WIFI
+    sigurdos_gps_validation_wifi_init();
+#endif
     emit_status(true);
 }
 
 void loop()
 {
+#if defined(SIGURDOS_GPS_VALIDATION_WIFI) && SIGURDOS_GPS_VALIDATION_WIFI
+    sigurdos_gps_validation_wifi_service();
+#endif
     sigurdos_gps_loop();
 
     const uint32_t now = millis();
