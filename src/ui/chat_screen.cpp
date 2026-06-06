@@ -18,6 +18,7 @@
 
 
 #include "chat_screen.h"
+#include "channel_menu.h"
 #include "navigation.h"
 #include "screens.h"
 #include "theme.h"
@@ -73,6 +74,9 @@ static lv_obj_t* msg_list       = nullptr;
 static lv_obj_t* input_bar      = nullptr;
 static lv_obj_t* input_field    = nullptr;
 static lv_obj_t* byte_counter   = nullptr;
+// Alt+Space channel menu overlay (null when closed). While open, trackball
+// events fall through to the LVGL group so its buttons stay navigable.
+static lv_obj_t* channel_menu   = nullptr;
 
 // ── Search state ───────────────────────────────────────
 static bool     search_active        = false;
@@ -1984,6 +1988,209 @@ static void show_add_channel_options(lv_obj_t* parent) {
     }, LV_EVENT_ALL, (void*)fb);
 }
 
+// ── Channel quick-action menu (Alt+Space) ──────────────────
+// A small popup over the messaging view exposing per-channel region
+// controls (scope, home, default) plus channel actions (mark read,
+// leave). The action logic lives in channel_menu.{h,cpp}; this just
+// renders it and reports the outcome inline.
+
+static const char* channel_action_icon(ChannelAction a) {
+    switch (a) {
+    case ChannelAction::SetActiveRegion:   return LV_SYMBOL_GPS;
+    case ChannelAction::ClearActiveRegion: return LV_SYMBOL_LIST;
+    case ChannelAction::SetHomeRegion:     return LV_SYMBOL_HOME;
+    case ChannelAction::SetDefaultScope:   return LV_SYMBOL_OK;
+    case ChannelAction::MarkRead:          return LV_SYMBOL_EYE_OPEN;
+    case ChannelAction::LeaveChannel:      return LV_SYMBOL_TRASH;
+    default:                               return LV_SYMBOL_RIGHT;
+    }
+}
+
+static void channel_menu_action_cb(lv_event_t* e) {
+    ChannelAction action = (ChannelAction)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_t* btn  = (lv_obj_t*)lv_event_get_target(e);
+    lv_obj_t* list = lv_obj_get_parent(btn);
+    lv_obj_t* dlg  = list ? lv_obj_get_parent(list) : nullptr;
+    lv_obj_t* feedback = list ? (lv_obj_t*)lv_obj_get_user_data(list) : nullptr;
+
+    if (active_channel < 0 || active_channel >= dyn_count) {
+        if (dlg) lv_obj_del_async(dlg);
+        return;
+    }
+    const char* channel = dyn_channels[active_channel];
+    const int   idx     = active_channel;
+
+    // UI-only: clear this channel's unread badge.
+    if (action == ChannelAction::MarkRead) {
+        ch_meta[idx].unread = 0;
+        rebuild_channel_ribbon();
+        if (feedback) {
+            lv_label_set_text(feedback, "Marked all read");
+            lv_obj_set_style_text_color(feedback, lv_color_hex(ACCENT_GREEN), 0);
+        }
+        return;
+    }
+
+    // Leaving the channel invalidates this messaging view — return to the
+    // channel list, which loads a fresh screen and disposes this dialog.
+    if (action == ChannelAction::LeaveChannel) {
+        channel_menu_perform(action, channel, idx);
+        show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        return;
+    }
+
+    bool ok = channel_menu_perform(action, channel, idx);
+    if (!feedback) return;
+
+    char buf[64];
+    switch (action) {
+    case ChannelAction::SetActiveRegion:
+        if (ok) snprintf(buf, sizeof(buf), "Scoping sends to %s", channel);
+        else    snprintf(buf, sizeof(buf), "Could not scope");
+        break;
+    case ChannelAction::ClearActiveRegion:
+        snprintf(buf, sizeof(buf), "Now sending Public");
+        break;
+    case ChannelAction::SetHomeRegion:
+        snprintf(buf, sizeof(buf), ok ? "Home region set" : "Failed");
+        break;
+    case ChannelAction::SetDefaultScope:
+        snprintf(buf, sizeof(buf), ok ? "Default scope set" : "Failed");
+        break;
+    default:
+        buf[0] = '\0';
+        break;
+    }
+    lv_label_set_text(feedback, buf);
+    lv_obj_set_style_text_color(feedback, lv_color_hex(ok ? ACCENT_GREEN : ACCENT_RED), 0);
+}
+
+void chat_screen_show_channel_menu()
+{
+    // Only meaningful from the messaging view of a real channel.
+    if (!input_field || !lv_obj_is_valid(input_field)) return;
+    if (active_channel < 0 || active_channel >= dyn_count) return;
+
+    const char* channel = dyn_channels[active_channel];
+    if (!channel || !channel[0]) return;
+
+    ChannelMenuItem items[8];
+    int n = channel_menu_build(channel, items, 8);
+    if (n <= 0) return;
+
+    lv_obj_t* parent = lv_scr_act();
+
+    auto dlg_sz = dialog_size(240, 214);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 2, 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+    disable_scroll(dlg);
+
+    channel_menu = dlg;
+    lv_obj_add_event_cb(dlg, [](lv_event_t*) { channel_menu = nullptr; },
+                        LV_EVENT_DELETE, nullptr);
+
+    // Title = channel name.
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, channel);
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    // Subtitle = the scope outgoing messages currently use (region actions
+    // only, so leave it blank for DMs which aren't region-scoped).
+    lv_obj_t* scope_lbl = lv_label_create(dlg);
+    char scope_buf[48];
+    if (channel_supports_regions(channel)) {
+        const char* active = sigurdos::mesh::getActiveRegion();
+        if (active && active[0]) snprintf(scope_buf, sizeof(scope_buf), "Scope: %s", active);
+        else                     snprintf(scope_buf, sizeof(scope_buf), "Scope: Public");
+    } else {
+        scope_buf[0] = '\0';
+    }
+    lv_label_set_text(scope_lbl, scope_buf);
+    lv_obj_set_style_text_color(scope_lbl, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(scope_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(scope_lbl, LV_ALIGN_TOP_MID, 0, 16);
+
+    // Scrollable list of action buttons (sits between the subtitle and the
+    // feedback/close row at the bottom).
+    lv_obj_t* list = lv_obj_create(dlg);
+    lv_obj_set_size(list, dlg_sz.w - 16, dlg_sz.h - 96);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 32);
+    lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(list, 0, 0);
+    lv_obj_set_style_pad_all(list, 0, 0);
+    lv_obj_set_style_pad_row(list, 4, 0);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
+
+    // Feedback line for action outcomes.
+    lv_obj_t* feedback = lv_label_create(dlg);
+    lv_label_set_text(feedback, "");
+    lv_obj_set_style_text_color(feedback, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(feedback, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(feedback, LV_ALIGN_BOTTOM_MID, 0, -30);
+    // The action callback locates the feedback label via the list's user_data.
+    lv_obj_set_user_data(list, feedback);
+
+    lv_group_t* g = lv_group_get_default();
+
+    for (int i = 0; i < n; i++) {
+        lv_obj_t* btn = lv_btn_create(list);
+        lv_obj_set_width(btn, LV_PCT(100));
+        lv_obj_set_height(btn, 28);
+        bool destructive = items[i].action == ChannelAction::LeaveChannel;
+        lv_obj_set_style_bg_color(btn,
+            lv_color_hex(destructive ? ACCENT_RED : BG_INPUT), 0);
+        lv_obj_set_style_radius(btn, 0, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_pad_left(btn, 6, 0);
+
+        lv_obj_t* lbl = lv_label_create(btn);
+        char row[64];
+        snprintf(row, sizeof(row), "%s  %s",
+                 channel_action_icon(items[i].action), items[i].label);
+        lv_label_set_text(lbl, row);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_10, 0);
+        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+        lv_obj_add_event_cb(btn, channel_menu_action_cb, LV_EVENT_CLICKED,
+                            (void*)(intptr_t)items[i].action);
+        if (g) {
+            lv_group_add_obj(g, btn);
+            if (i == 0) lv_group_focus_obj(btn);
+        }
+    }
+
+    // Close button.
+    lv_obj_t* close = lv_btn_create(dlg);
+    lv_obj_set_size(close, 80, 26);
+    lv_obj_align(close, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(close, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_radius(close, 0, 0);
+    lv_obj_set_style_border_width(close, 0, 0);
+    lv_obj_t* cl = lv_label_create(close);
+    lv_label_set_text(cl, "Close");
+    lv_obj_set_style_text_font(cl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(cl);
+    lv_obj_add_event_cb(close, [](lv_event_t* e) {
+        lv_obj_t* b = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_del_async(lv_obj_get_parent(b));
+        // Hand keyboard focus back to the message input.
+        if (input_field && lv_obj_is_valid(input_field) && lv_group_get_default())
+            lv_group_focus_obj(input_field);
+    }, LV_EVENT_CLICKED, nullptr);
+    if (g) lv_group_add_obj(g, close);
+}
+
 void chat_screen_set_filter(int mode) {
     chat_filter_mode = mode;
 }
@@ -2097,6 +2304,10 @@ void chat_screen_refresh_acks()
 // ════════════════════════════════════════════════════
 bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
 {
+    // While the channel menu overlay is open, let trackball events fall
+    // through to the LVGL group so its buttons stay focus-navigable.
+    if (channel_menu && lv_obj_is_valid(channel_menu)) return false;
+
     if (msg_list) {
         // ── Search mode: Up/Down cycles through matches, Left dismisses search ──
         if (search_active && search_query[0] && search_match_count > 0) {

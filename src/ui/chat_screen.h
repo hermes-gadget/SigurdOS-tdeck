@@ -59,6 +59,11 @@ lv_obj_t* chat_screen_get_input_field();
 // Return the name of the currently active channel (e.g. "#eng-nw"), or "" if none.
 const char* chat_screen_get_active_channel_name();
 
+// Open the per-channel quick-action menu (Alt+Space) over the messaging
+// view: region scope/home/default controls plus channel actions. No-op
+// unless the messaging view of a real channel is currently shown.
+void chat_screen_show_channel_menu();
+
 // Chat message history cap (per-channel): get/set and persistence-backed config.
 uint16_t chat_screen_get_message_cap();
 void     chat_screen_set_message_cap(uint16_t cap);

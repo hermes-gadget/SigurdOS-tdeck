@@ -61,6 +61,7 @@ int exportContactsFull(ContactInfo* out, int max) { (void)out; return 0; }
 int getChannelCount() { return 0; }
 int exportChannels(char names[][32], int max) { return 0; }
 bool addChannel(const char* name, const char* psk) { return false; }
+bool removeChannel(int idx) { (void)idx; return true; }
 
 bool removeContact(const char* name) { (void)name; return false; }
 bool resetPathTo(const char* name) { (void)name; return false; }
@@ -301,6 +302,12 @@ bool setActiveRegionName(const char* name) {
     }
     return true;
 }
+
+// mesh_wrapper-level setter: mirrors setActiveRegionName for the cache so
+// getActiveRegion() reflects the change (real build also propagates to g_mesh).
+bool setActiveRegion(const char* name) { return setActiveRegionName(name); }
+
+void setSendUnscopedOnce(bool v) { (void)v; }
 
 void syncRegionsFromChannels() {}
 
