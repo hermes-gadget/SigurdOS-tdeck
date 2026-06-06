@@ -418,10 +418,12 @@ TEST_F(CompanionProtocolTest, EnqueueRejectsSelfSentMessage) {
 }
 
 TEST_F(CompanionProtocolTest, EmptySyncReturnsNoMoreMessages) {
+    host.now = 4242;
     uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
     ASSERT_EQ(serial.writes.size(), 1u);
     EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
+    EXPECT_EQ(bridge.lastSyncTime(), 4242u);
 }
 
 TEST_F(CompanionProtocolTest, EnqueuedMessageTicklesAndDrains) {
@@ -437,10 +439,12 @@ TEST_F(CompanionProtocolTest, EnqueuedMessageTicklesAndDrains) {
     ASSERT_EQ(serial.writes.size(), 1u);
     EXPECT_EQ(serial.writes[0][0], sigurdos::comms::PUSH_CODE_MSG_WAITING);
 
+    host.now = 4343;
     uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
     ASSERT_EQ(serial.writes.size(), 2u);
     EXPECT_EQ(serial.writes[1][0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+    EXPECT_EQ(bridge.lastSyncTime(), 4343u);
 }
 
 TEST_F(CompanionProtocolTest, ChannelFrameCarriesRealPathLenAndTimestamp) {
