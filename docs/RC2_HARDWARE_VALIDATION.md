@@ -76,6 +76,43 @@ python scripts\validation\remote_test_smoke.py --port COM8 --profile ui --forbid
 
 ## Current Hardware Evidence
 
+### 2026-06-06 COM8 Build Identity Telemetry Smoke
+
+Branch and commit: `codex/rc2-build-identity` at `9543e88a0996`.
+
+Commands:
+
+```powershell
+pio test -e native_test -f test_build_info -f test_telemetry_protocol -v
+pio run -e SigurdOS_TDeck_telemetry -t upload --upload-port COM8
+python scripts\validation\remote_test_smoke.py --port COM8 --profile telemetry --forbid-port COM11 --forbid-port COM29 --startup-timeout 8 --command-timeout 10
+```
+
+Result:
+
+| Check | Evidence |
+| --- | --- |
+| Native focused tests | PASS, 8/8 cases across `test_build_info` and `test_telemetry_protocol` |
+| Upload/build | PASS on manually specified `COM8`, 00:15:50.059; all esptool flash hashes verified |
+| Size | RAM 110,228/327,680 bytes; flash 1,870,317/6,553,600 bytes; merged image 1,936,320 bytes |
+| Serial smoke | PASS, 9/9 telemetry checks including `query build` |
+| Artifacts | `.pio/rc2_hardware_validation/2026-06-06-173033/summary.json`, `.pio/rc2_hardware_validation/2026-06-06-173033/serial.log` |
+
+Build identity evidence:
+
+```text
+@build|fw=beta-0.1.39|git=9543e88a0996|dirty=0|mcore=9a888541efaf|env=SigurdOS_TDeck_telemetry|part=default_16MB.csv|board=t-deck|mcu=esp32s3
+```
+
+Telemetry observations:
+
+- `@heap`, `@lvgl`, `@mesh`, `@screen`, `@radio`, `@gps`, and `@nvs`
+  records were returned by the firmware.
+- GPS UART data path was active during the smoke run:
+  `@gps|fix=0|qual=0|sv=0|baud=38400|chars=14967|sent=444|valid=442|csfail=2|sw=1`.
+- The passing smoke used only `COM8`; `COM11` and `COM29` were explicitly
+  forbidden by the harness.
+
 ### 2026-06-06 COM8 Telemetry Smoke
 
 Branch: `codex/rc2-hardware-validation`
@@ -184,7 +221,7 @@ Warning observations:
 | --- | --- | --- |
 | Native tests | `pio test -e native_test -v` passes | PASS on 2026-06-06 current-dev run: 683 cases, 682 succeeded, 1 skipped |
 | Release build | `pio run -e SigurdOS_TDeck` passes with size and warning summary recorded | PASS on 2026-06-06 current-dev run; local release warnings cleaned in this branch; third-party/upstream warning debt remains |
-| Telemetry smoke | COM8 `SigurdOS_TDeck_telemetry` upload plus `remote_test_smoke.py --profile telemetry` pass, including `@build` identity | PASS on 2026-06-06 COM8 run, before `@build` identity became a required RC2 field |
+| Telemetry smoke | COM8 `SigurdOS_TDeck_telemetry` upload plus `remote_test_smoke.py --profile telemetry` pass, including `@build` identity | PASS on 2026-06-06 COM8 build-identity run: clean `git=9543e88a0996`, `dirty=0`, `env=SigurdOS_TDeck_telemetry` |
 | Non-radio remote UI | COM8 `SigurdOS_TDeck_remote_test` upload plus `remote_test_smoke.py --profile ui` pass | PASS on 2026-06-06 COM8 run |
 | GPS | COM8 SPIFFS/NVS evidence with fixed records and privacy-safe coordinates | PASS for hardware lock in PR #464: 84 fixed records, first fix `fix=1`, `qual=1`, `sv=7`, `ft=3`, `rmc=A`, `loc=1`; production power/time-sync UX remains |
 | Companion BLE | COM8 BLE validation boot/advertising plus official app pairing/auth/RX/TX | Local COM8 boot/advertising and USB BLE pair-only authenticated pairing PASS in PR #466; official phone-app RX/TX, reconnect, and sync still needed |
