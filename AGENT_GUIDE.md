@@ -547,9 +547,9 @@ The release build (`SigurdOS_TDeck`) suppresses all of these via `NDEBUG` and th
 
 ### Remote Test Controller
 
-**⚠️ CRITICAL: Do NOT use this mode without explicit user consent.** This disables the LoRa radio and makes the device a serial-controlled input simulator. Only the user decides when to use this mode. Never switch to `SigurdOS_TDeck_remote_test` build env unless the user asks you to or explicitly approves it.
+**⚠️ CRITICAL: Do NOT use this mode without explicit user consent.** This makes the device a serial-controlled input simulator and keeps LoRa transmit disabled in `SigurdOS_TDeck_remote_test`. Only the user decides when to use this mode. Never switch to `SigurdOS_TDeck_remote_test` build env unless the user asks you to or explicitly approves it.
 
-Enables automated and manual testing over serial (USB CDC). No LoRa radio is initialised — all mesh messages are simulated via injection. The radio hardware is never touched.
+Enables automated and manual testing over serial (USB CDC). `mesh::init()` still runs so shared board state, clock setup, and the SPI bus are available for dependent peripherals, but without `SIGURDOS_REMOTE_TEST_RADIO` it does not create the LoRa driver or transmit. All mesh messages are simulated via injection.
 
 Build with:
 ```bash
@@ -592,7 +592,8 @@ Once connected, the T-Deck shows a test controller banner. Type commands directl
 | `loginstat <name>` | `loginstat Repeater1` | Show login status for a repeater |
 
 Safety guarantees for `SigurdOS_TDeck_remote_test`:
-- No LoRa radio initialised — `sigurdos::mesh::init()` is never called
+- `sigurdos::mesh::init()` runs only far enough to set up shared board/clock/SPI state
+- No LoRa radio driver object is created unless `SIGURDOS_REMOTE_TEST_RADIO=1`
 - All `sendMessage`, `sendChannelMessage`, `sendAdvert` return false (g_mesh is null)
 - Radio accessors (`getLastRSSI`, `getLastSNR`, `getNoiseFloor`) return dummy values
 - No SPI transactions ever reach the SX1262 hardware

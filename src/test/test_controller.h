@@ -6,8 +6,10 @@
 // Remote test controller — allows controlling the T-Deck over serial for
 // automated and manual testing. Enabled by SIGURDOS_REMOTE_TEST=1 build flag.
 //
-// SAFETY: This module NEVER initializes the LoRa radio. No RF transmission
-// occurs in remote test mode. All mesh messages are simulated via injection.
+// SAFETY: SIGURDOS_REMOTE_TEST without SIGURDOS_REMOTE_TEST_RADIO initializes
+// the shared SPI bus but does not create the LoRa radio driver. RF transmission
+// is only available in radio-enabled test profiles such as
+// SigurdOS_TDeck_remote_test_radio.
 
 #include <cstdint>
 #include <cstdio>
