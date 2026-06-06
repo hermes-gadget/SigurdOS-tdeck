@@ -22,6 +22,7 @@
 #include "prefs.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include <cstring>
 #if SIGURDOS_TELEMETRY
 #include "../diagnostics/telemetry.h"
 #endif
@@ -64,23 +65,271 @@ static constexpr uint8_t  CMD_MODE_RAW              = 0x03;  // raw bitmask mode
 static constexpr uint8_t  CMD_MODE_KEY              = 0x04;  // ASCII key mode
 static constexpr uint32_t KB_POLL_INTERVAL_MS       = 5;    // faster polling for responsive typing (was 10)
 static constexpr uint8_t  KB_BACKLIGHT_DEFAULT      = 127;  // mid brightness
+static constexpr uint8_t  KB_RAW_COLS               = 5;
+static constexpr uint8_t  KB_RAW_ROWS               = 7;
+static constexpr uint8_t  KB_RAW_ROW_MASK           = 0x7F;
+
+enum class RawKeyKind : uint8_t {
+    Printable,
+    Sym,
+    Alt,
+    Mic,
+    Shift,
+    Enter,
+    Backspace,
+    None,
+};
+
+struct RawKeyDef {
+    uint32_t normal;
+    uint32_t sym;
+    uint32_t sym_shift;
+    RawKeyKind kind;
+};
+
+static constexpr RawKeyDef RAW_KEYS[KB_RAW_COLS][KB_RAW_ROWS] = {
+    {
+        {'q', '#', '#', RawKeyKind::Printable},
+        {'w', '1', '!', RawKeyKind::Printable},
+        {0, 0, 0, RawKeyKind::Sym},
+        {'a', '*', '*', RawKeyKind::Printable},
+        {0, 0, 0, RawKeyKind::Alt},
+        {' ', 0, 0, RawKeyKind::Printable},
+        {0, '0', ')', RawKeyKind::Mic},
+    },
+    {
+        {'e', '2', '@', RawKeyKind::Printable},
+        {'s', '4', '$', RawKeyKind::Printable},
+        {'d', '5', '%', RawKeyKind::Printable},
+        {'p', '@', '@', RawKeyKind::Printable},
+        {'x', '8', '*', RawKeyKind::Printable},
+        {'z', '7', '&', RawKeyKind::Printable},
+        {0, 0, 0, RawKeyKind::Shift},
+    },
+    {
+        {'r', '3', '#', RawKeyKind::Printable},
+        {'g', '/', '\\', RawKeyKind::Printable},
+        {'t', '(', '[', RawKeyKind::Printable},
+        {0, 0, 0, RawKeyKind::Shift},
+        {'v', '?', '{', RawKeyKind::Printable},
+        {'c', '9', '(', RawKeyKind::Printable},
+        {'f', '6', '^', RawKeyKind::Printable},
+    },
+    {
+        {'u', '_', '~', RawKeyKind::Printable},
+        {'h', ':', '`', RawKeyKind::Printable},
+        {'y', ')', ']', RawKeyKind::Printable},
+        {0x0D, 0, 0, RawKeyKind::Enter},
+        {'b', '!', '|', RawKeyKind::Printable},
+        {'n', ',', '<', RawKeyKind::Printable},
+        {'j', ';', '}', RawKeyKind::Printable},
+    },
+    {
+        {'o', '+', '=', RawKeyKind::Printable},
+        {'l', '"', '"', RawKeyKind::Printable},
+        {'i', '-', '_', RawKeyKind::Printable},
+        {0x08, 0, 0, RawKeyKind::Backspace},
+        {'$', 0, 0, RawKeyKind::Printable},
+        {'m', '.', '>', RawKeyKind::Printable},
+        {'k', '\'', '?', RawKeyKind::Printable},
+    },
+};
 
 static bool     initialized     = false;
 static uint32_t last_poll_ms    = 0;
 static bool     shift_held      = false;
 static bool     ctrl_held       = false;
 static bool     alt_held        = false;
+static bool     raw_mode_active = true;
+static uint8_t  raw_prev[KB_RAW_COLS] = {0};
+static bool     sym_one_shot    = false;
+static bool     mic_one_shot    = false;
+static bool     sym_combo_used  = false;
+static bool     mic_combo_used  = false;
 
 // ── Ring buffer for key events ─────────────────────────────
 // Fixes single-slot latch that dropped fast key presses:
 // sigurdos_keyboard_scan() now pushes every valid key into the buffer,
 // and the LVGL indev callback dequeues one key at a time.
 static constexpr int KEY_BUF_SIZE = 16;
-static uint8_t  key_buf[KEY_BUF_SIZE] = {0};
+static uint32_t key_buf[KEY_BUF_SIZE] = {0};
 static int      key_head  = 0;   // next write position
 static int      key_tail  = 0;   // next read position
 static int      key_count = 0;   // number of entries in buffer
-static int      last_consumed_key = 0; // key returned by most recent consume_event()
+static uint32_t last_consumed_key = 0; // key returned by most recent consume_event()
+
+static bool raw_key_down(const uint8_t matrix[KB_RAW_COLS], uint8_t col, uint8_t row)
+{
+    if (col >= KB_RAW_COLS || row >= KB_RAW_ROWS) return false;
+    return (matrix[col] & (uint8_t)(1u << row)) != 0;
+}
+
+static bool is_modifier_kind(RawKeyKind kind)
+{
+    return kind == RawKeyKind::Sym ||
+           kind == RawKeyKind::Alt ||
+           kind == RawKeyKind::Mic ||
+           kind == RawKeyKind::Shift;
+}
+
+static uint32_t shifted_codepoint(uint32_t codepoint)
+{
+    if (codepoint >= 'a' && codepoint <= 'z') {
+        return codepoint - ('a' - 'A');
+    }
+    return codepoint;
+}
+
+static uint32_t extended_codepoint(uint32_t base, bool shift)
+{
+    switch (base) {
+    case 'a': return shift ? 0x00C4 : 0x00E4; // A/a diaeresis
+    case 'q': return shift ? 0x00C0 : 0x00E0; // A/a grave
+    case 'w': return shift ? 0x00C1 : 0x00E1; // A/a acute
+    case 'x': return shift ? 0x00C2 : 0x00E2; // A/a circumflex
+    case 'e': return shift ? 0x00C9 : 0x00E9; // E/e acute
+    case 'r': return shift ? 0x00C8 : 0x00E8; // E/e grave
+    case 't': return shift ? 0x00CA : 0x00EA; // E/e circumflex
+    case 'd': return shift ? 0x00CB : 0x00EB; // E/e diaeresis
+    case 'i': return shift ? 0x00CE : 0x00EE; // I/i circumflex
+    case 'o': return shift ? 0x00D6 : 0x00F6; // O/o diaeresis
+    case 'u': return shift ? 0x00DC : 0x00FC; // U/u diaeresis
+    case 'c': return shift ? 0x00C7 : 0x00E7; // C/c cedilla
+    case 'n': return shift ? 0x00D1 : 0x00F1; // N/n tilde
+    case 's': return 0x00DF;                  // sharp s
+    case 'l': return shift ? 0x00D8 : 0x00F8; // O/o stroke
+    case 'y': return shift ? 0x00C6 : 0x00E6; // AE/ae
+    case 'h': return shift ? 0x00C5 : 0x00E5; // A/a ring
+    case 'j': return shift ? 0x0152 : 0x0153; // OE/oe
+    case '$': return 0x20AC;                  // euro sign
+    default:  return 0;
+    }
+}
+
+static void enqueue_key(uint32_t key_code)
+{
+    if (key_code == 0 || key_code == 0xFF) {
+        return;
+    }
+
+#if defined(SIGURDOS_DEBUG)
+    {
+        char c = (key_code >= 0x20 && key_code < 0x7F) ? (char)key_code : '.';
+        Serial.printf("[kbd] key: U+%04lX (%lu) '%c'\n",
+                      (unsigned long)key_code,
+                      (unsigned long)key_code,
+                      c);
+    }
+#endif
+
+    key_buf[key_head] = key_code;
+    key_head = (key_head + 1) % KEY_BUF_SIZE;
+    if (key_count < KEY_BUF_SIZE) {
+        key_count++;
+    } else {
+        key_tail = (key_tail + 1) % KEY_BUF_SIZE;
+    }
+
+#if SIGURDOS_TELEMETRY
+    sigurdos::telemetry::report_key_event(
+        (uint8_t)(key_code <= 0xFF ? key_code : 0x1A));
+#endif
+
+    if (key_code >= 'A' && key_code <= 'Z') {
+        shift_held = true;
+    } else if (key_code >= 'a' && key_code <= 'z') {
+        shift_held = false;
+    }
+    if (key_code == 0x0C) {
+        alt_held = !alt_held;
+    }
+}
+
+static void process_legacy_key(int keyValue)
+{
+    if (keyValue <= 0 || keyValue == 0xFF) {
+        return;
+    }
+    enqueue_key((uint32_t)keyValue);
+}
+
+static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
+{
+    const bool sym_down = raw_key_down(matrix, 0, 2);
+    const bool alt_down = raw_key_down(matrix, 0, 4);
+    const bool mic_down = raw_key_down(matrix, 0, 6);
+    const bool shift_down = raw_key_down(matrix, 1, 6) || raw_key_down(matrix, 2, 3);
+    const bool sym_was_down = raw_key_down(raw_prev, 0, 2);
+    const bool mic_was_down = raw_key_down(raw_prev, 0, 6);
+
+    if (sym_down && !sym_was_down) {
+        sym_combo_used = false;
+    }
+    if (mic_down && !mic_was_down) {
+        mic_combo_used = false;
+    }
+
+    shift_held = shift_down;
+    alt_held = alt_down || mic_down || mic_one_shot;
+
+    for (uint8_t row = 0; row < KB_RAW_ROWS; row++) {
+        for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
+            const bool is_down = raw_key_down(matrix, col, row);
+            const bool was_down = raw_key_down(raw_prev, col, row);
+            if (!is_down || was_down) {
+                continue;
+            }
+
+            const RawKeyDef& key = RAW_KEYS[col][row];
+            const bool sym_layer = sym_down || sym_one_shot;
+            if (is_modifier_kind(key.kind) &&
+                !(key.kind == RawKeyKind::Mic && sym_layer)) {
+                continue;
+            }
+
+            const bool mic_layer = mic_down || mic_one_shot;
+            uint32_t out = 0;
+
+            if (key.kind == RawKeyKind::Enter || key.kind == RawKeyKind::Backspace) {
+                out = key.normal;
+            } else if (key.kind == RawKeyKind::Mic && sym_layer) {
+                out = (shift_down && key.sym_shift) ? key.sym_shift : key.sym;
+            } else if (alt_down && key.normal == 'c') {
+                out = 0x0C; // Preserve the existing Alt+C channel-menu shortcut.
+            } else if (alt_down && key.normal == 'b') {
+                out = 0;    // The keyboard MCU owns Alt+B backlight toggling.
+            } else if (mic_layer) {
+                out = extended_codepoint(key.normal, shift_down);
+                if (out == 0) {
+                    out = sym_layer
+                        ? (shift_down && key.sym_shift ? key.sym_shift : key.sym)
+                        : (shift_down ? shifted_codepoint(key.normal) : key.normal);
+                }
+            } else if (sym_layer) {
+                out = (shift_down && key.sym_shift) ? key.sym_shift : key.sym;
+            } else {
+                out = shift_down ? shifted_codepoint(key.normal) : key.normal;
+            }
+
+            if (sym_down) sym_combo_used = true;
+            if (mic_down) mic_combo_used = true;
+            if (sym_one_shot) sym_one_shot = false;
+            if (mic_one_shot) mic_one_shot = false;
+            enqueue_key(out);
+        }
+    }
+
+    if (!sym_down && sym_was_down && !sym_combo_used) {
+        sym_one_shot = true;
+    }
+    if (!mic_down && mic_was_down && !mic_combo_used) {
+        mic_one_shot = true;
+    }
+
+    for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
+        raw_prev[col] = matrix[col] & KB_RAW_ROW_MASK;
+    }
+}
 
 // ════════════════════════════════════════════════════════
 // PUBLIC API
@@ -118,16 +367,17 @@ bool sigurdos_keyboard_init()
         return false;
     }
 
-    // Switch to key mode (ASCII chars). The keyboard MCU defaults to key
-    // mode on power-up, but this guards against it being in raw mode from
-    // a prior session that didn't power-cycle the keyboard MCU.
+    // Switch to raw matrix mode when available. Raw mode exposes Sym, Shift,
+    // Mic, and the unlabeled/Alt matrix key so the host can provide a full
+    // T-Deck keyboard wrapper instead of relying on the C3's ASCII-only map.
     Wire.beginTransmission(KB_I2C_ADDR);
-    Wire.write(CMD_MODE_KEY);
+    Wire.write(CMD_MODE_RAW);
     if (Wire.endTransmission() != 0) {
         initialized = false;
         return false;
     }
 
+    raw_mode_active = true;
     initialized = true;
     return true;
 }
@@ -143,7 +393,29 @@ void sigurdos_keyboard_scan()
     // Ensure I2C clock is 100kHz for keyboard MCU (touch may have set it to 400kHz)
     Wire.setClock(100000);
 
-    // Read 1 byte from keyboard MCU
+    if (raw_mode_active) {
+        uint8_t matrix[KB_RAW_COLS] = {0};
+        Wire.requestFrom(KB_I2C_ADDR, (uint8_t)KB_RAW_COLS);
+        uint8_t got = 0;
+        while (Wire.available() > 0 && got < KB_RAW_COLS) {
+            int v = Wire.read();
+            if (v < 0) break;
+            matrix[got++] = (uint8_t)v;
+        }
+
+        if (got == KB_RAW_COLS) {
+            process_raw_matrix(matrix);
+            return;
+        }
+
+        raw_mode_active = false;
+        if (got > 0) {
+            process_legacy_key(matrix[0]);
+        }
+        return;
+    }
+
+    // Legacy C3 firmware only returns one pre-mapped ASCII byte.
     Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
     int keyValue = 0;
     if (Wire.available() > 0) {
@@ -167,43 +439,7 @@ void sigurdos_keyboard_scan()
     }
 #endif
 
-    if (keyValue <= 0 || keyValue == 0xFF) {
-        // MCU returned 0 or invalid — nothing to enqueue.
-        return;
-    }
-
-    // Push key into ring buffer (if full, overwrite oldest)
-    key_buf[key_head] = (uint8_t)keyValue;
-    key_head = (key_head + 1) % KEY_BUF_SIZE;
-    if (key_count < KEY_BUF_SIZE) {
-        key_count++;
-    } else {
-        // Buffer full — advance tail to discard oldest entry
-        key_tail = (key_tail + 1) % KEY_BUF_SIZE;
-    }
-
-#if SIGURDOS_TELEMETRY
-    sigurdos::telemetry::report_key_event((uint8_t)keyValue);
-#endif
-
-    // Track modifier state based on key codes where possible.
-    // Note: The T-Deck keyboard MCU sends pre-processed ASCII key codes,
-    // not raw modifier+scancode, so modifier tracking is limited.
-    // Shift state is best-effort — uppercase ASCII implies shift.
-    int k = keyValue;
-    if (k >= 'A' && k <= 'Z') {
-        shift_held = true;
-    } else if (k >= 'a' && k <= 'z') {
-        shift_held = false;
-    }
-    // Alt and Ctrl are harder to detect from ASCII output alone.
-    // Track via special key codes the MCU may send.
-    switch (k) {
-    case 0x0C: alt_held = !alt_held; break;   // Alt+C toggle sent by MCU
-    case 0x0D: break;  // Enter — no modifier change
-    case 0x08: break;  // Backspace — no modifier change
-    default:   break;
-    }
+    process_legacy_key(keyValue);
 }
 
 int sigurdos_keyboard_get_key()
@@ -278,6 +514,12 @@ void sigurdos_keyboard_reset_scan_state()
     shift_held      = false;
     ctrl_held       = false;
     alt_held        = false;
+    raw_mode_active = true;
+    sym_one_shot    = false;
+    mic_one_shot    = false;
+    sym_combo_used  = false;
+    mic_combo_used  = false;
+    memset(raw_prev, 0, sizeof(raw_prev));
 }
 
 void sigurdos_keyboard_consume_key()
@@ -290,27 +532,10 @@ void sigurdos_keyboard_consume_key()
 
 void sigurdos_keyboard_inject(uint8_t key_code)
 {
-    if (key_code == 0 || key_code == 0xFF) {
-        return;
-    }
+    enqueue_key(key_code);
+}
 
-    // Push into ring buffer (if full, overwrite oldest)
-    key_buf[key_head] = key_code;
-    key_head = (key_head + 1) % KEY_BUF_SIZE;
-    if (key_count < KEY_BUF_SIZE) {
-        key_count++;
-    } else {
-        key_tail = (key_tail + 1) % KEY_BUF_SIZE;
-    }
-
-    // Track modifier state based on key code
-    if (key_code >= 'A' && key_code <= 'Z') {
-        shift_held = true;
-    } else if (key_code >= 'a' && key_code <= 'z') {
-        shift_held = false;
-    }
-    switch (key_code) {
-    case 0x0C: alt_held = !alt_held; break;
-    default:   break;
-    }
+void sigurdos_keyboard_inject_codepoint(uint32_t key_code)
+{
+    enqueue_key(key_code);
 }

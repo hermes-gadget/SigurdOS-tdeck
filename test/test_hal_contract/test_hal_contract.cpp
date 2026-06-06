@@ -46,12 +46,25 @@ TEST(HalContractTest, DisplayDebugCaptureApisStayStable) {
     using buffer_fn = void* (*)();
     using dimension_fn = uint32_t (*)();
     using void_fn = void (*)();
+    using encode_fn = uint32_t (*)(uint32_t);
 
     (void)static_cast<buffer_fn>(sigurdos_display_get_buffer);
     (void)static_cast<dimension_fn>(sigurdos_display_get_width);
     (void)static_cast<dimension_fn>(sigurdos_display_get_height);
+    (void)static_cast<encode_fn>(sigurdos_display_encode_text_key);
     (void)static_cast<void_fn>(sigurdos_display_capture_framebuffer);
     SUCCEED();
+}
+
+TEST(HalContractTest, DisplayTextKeyEncoderMatchesLvglUtf8Payloads) {
+    EXPECT_EQ(sigurdos_display_encode_text_key('A'), 0x41u);
+    EXPECT_EQ(sigurdos_display_encode_text_key(0x00FC), 0x0000BCC3u);     // u diaeresis
+    EXPECT_EQ(sigurdos_display_encode_text_key(0x00E7), 0x0000A7C3u);     // c cedilla
+    EXPECT_EQ(sigurdos_display_encode_text_key(0x00EA), 0x0000AAC3u);     // e circumflex
+    EXPECT_EQ(sigurdos_display_encode_text_key(0x20AC), 0x00AC82E2u);     // euro sign
+    EXPECT_EQ(sigurdos_display_encode_text_key(0x1F642), 0x82999FF0u);    // slight smile
+    EXPECT_EQ(sigurdos_display_encode_text_key(0xD800), (uint32_t)'?');   // surrogate
+    EXPECT_EQ(sigurdos_display_encode_text_key(0x110000), (uint32_t)'?'); // out of Unicode range
 }
 
 TEST(HalContractTest, GpsLifecycleAndFixApisStayStable) {

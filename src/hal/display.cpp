@@ -117,6 +117,17 @@ static uint8_t trackball_fallback_head = 0;
 static uint8_t trackball_fallback_tail = 0;
 static uint8_t trackball_fallback_count = 0;
 
+static uint32_t keyboard_key_to_lvgl_key(int key)
+{
+    if (key == 0x08) return LV_KEY_BACKSPACE;
+    if (key == 0x0D) return LV_KEY_ENTER;
+    if (key == 0x09) return LV_KEY_NEXT;
+    if (key > 0x20 && key != 0x7F) {
+        return sigurdos_display_encode_text_key((uint32_t)key);
+    }
+    return (uint32_t)key;
+}
+
 static void reset_auto_off() {
     uint16_t sec = sigurdos::prefs_get().auto_off_timeout;
     auto_off_at = (sec > 0) ? (millis() + (uint32_t)sec * 1000) : UINT32_MAX;
@@ -292,10 +303,7 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
         // refocus heuristics below lets the scope picker's custom-scope field
         // actually receive typing instead of the message box stealing it.
         if (sigurdos::ui::chat_screen_overlay_active()) {
-            if (key == 0x08)      data->key = LV_KEY_BACKSPACE;
-            else if (key == 0x0D) data->key = LV_KEY_ENTER;
-            else if (key == 0x09) data->key = LV_KEY_NEXT;
-            else                  data->key = (uint32_t)key;
+            data->key = keyboard_key_to_lvgl_key(key);
             data->state = LV_INDEV_STATE_PRESSED;
             sigurdos_display_wake();
             sigurdos_keyboard_consume_key();
@@ -315,11 +323,11 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
             }
         }
 
-        // For printable characters, ensure focus is on a textarea.
+        // For printable codepoints, ensure focus is on a textarea.
         // The trackball (ENCODER indev) can accidentally move group
         // focus to a button — if focus isn't a textarea, find one
         // on the active screen and refocus it so keystrokes land.
-        if (key > 0x20 && key != 0x7F) {  // printable ASCII
+        if (key > 0x20 && key != 0x7F) {
             lv_group_t* g = lv_group_get_default();
             lv_obj_t* focused = g ? lv_group_get_focused(g) : nullptr;
             if (!focused || !lv_obj_check_type(focused, &lv_textarea_class)) {
@@ -358,10 +366,7 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
             }
         }
 
-        if (key == 0x08) data->key = LV_KEY_BACKSPACE;
-        else if (key == 0x0D) data->key = LV_KEY_ENTER;
-        else if (key == 0x09) data->key = LV_KEY_NEXT;
-        else data->key = (uint32_t)key;
+        data->key = keyboard_key_to_lvgl_key(key);
         data->state = LV_INDEV_STATE_PRESSED;
         sigurdos_display_wake();
 

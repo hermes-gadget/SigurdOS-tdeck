@@ -35,6 +35,8 @@
 #include "hal/keyboard.h"
 #include "Arduino.h"
 #include <cstdint>
+#include <initializer_list>
+#include <utility>
 
 namespace {
 
@@ -58,6 +60,28 @@ protected:
         // Advance clock past the 10ms poll interval
         arduino_mock::current_millis = 11;
     }
+
+    void queue_raw(std::initializer_list<std::pair<uint8_t, uint8_t>> pressed) {
+        uint8_t cols[5] = {0};
+        for (auto key : pressed) {
+            if (key.first < 5 && key.second < 7) {
+                cols[key.first] |= (uint8_t)(1u << key.second);
+            }
+        }
+        for (uint8_t col = 0; col < 5; col++) {
+            Wire.mock_queue_rx_byte(cols[col]);
+        }
+    }
+
+    void scan_raw(std::initializer_list<std::pair<uint8_t, uint8_t>> pressed) {
+        arduino_mock::current_millis += 6;
+        queue_raw(pressed);
+        sigurdos_keyboard_scan();
+    }
+
+    void release_raw() {
+        scan_raw({});
+    }
 };
 
 // ════════════════════════════════════════════════════════
@@ -73,12 +97,13 @@ TEST_F(KeyboardTest, InitSendsDefaultBrightnessOnFirstSuccess) {
     EXPECT_TRUE(sigurdos_keyboard_init());
 
     // Init sends two commands:
-    //   1. Default brightness (0x02 + 127)
-    //   2. Key mode switch   (0x04)
+    //   1. Brightness        (0x01 + prefs value)
+    //   2. Default brightness (0x02 + prefs value)
+    //   3. Raw mode switch   (0x03)
     // The mock only records the LAST transmission.
     EXPECT_EQ(Wire.mock_last_tx_addr(), 0x55u);
-    // Last transmission should be key-mode command
-    EXPECT_EQ(Wire.mock_last_tx_data(0), 0x04u);
+    // Last transmission should be raw-mode command
+    EXPECT_EQ(Wire.mock_last_tx_data(0), 0x03u);
 }
 
 TEST_F(KeyboardTest, InitProbesKeyboardAtCorrectAddress) {
@@ -282,6 +307,152 @@ TEST_F(KeyboardTest, InjectedInvalidBytesDoNotDisruptValidOrdering) {
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
     sigurdos_keyboard_consume_key();
     EXPECT_FALSE(sigurdos_keyboard_consume_event());
+}
+
+// ════════════════════════════════════════════════════════
+// RAW MATRIX WRAPPER TESTS
+// ════════════════════════════════════════════════════════
+
+TEST_F(KeyboardTest, RawMatrixMapsNormalLetters) {
+    init_with_ack();
+    scan_raw({{0, 0}}); // q
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'q');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixMapsShiftedLetters) {
+    init_with_ack();
+    scan_raw({{1, 6}, {3, 0}}); // left shift + u
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'U');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixMapsSymLayerCharacters) {
+    init_with_ack();
+    scan_raw({{0, 2}, {1, 0}}); // sym + e
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), '2');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixMapsShiftSymLayerCharacters) {
+    init_with_ack();
+    scan_raw({{0, 2}, {1, 6}, {2, 6}}); // sym + shift + f
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), '^');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixKeepsMicKeyUsableAsZeroOnSymLayer) {
+    init_with_ack();
+    scan_raw({{0, 2}, {0, 6}}); // sym + mic
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), '0');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixPreservesAltCChannelShortcut) {
+    init_with_ack();
+    scan_raw({{0, 4}, {2, 5}}); // alt + c
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x0C);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixLeavesAltBForKeyboardBacklight) {
+    init_with_ack();
+    scan_raw({{0, 4}, {3, 4}}); // alt + b
+
+    EXPECT_FALSE(sigurdos_keyboard_has_event());
+    EXPECT_FALSE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixMapsEnterAndBackspace) {
+    init_with_ack();
+    scan_raw({{3, 3}}); // enter
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x0D);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+    sigurdos_keyboard_consume_key();
+    release_raw();
+
+    scan_raw({{4, 3}}); // backspace
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x08);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixMapsDedicatedDollarKey) {
+    init_with_ack();
+    scan_raw({{4, 4}}); // $
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), '$');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixMapsMicLayerToAccentedLatin) {
+    init_with_ack();
+    scan_raw({{0, 6}, {3, 0}}); // mic + u
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00FC); // u diaeresis
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixMapsShiftMicLayerToUpperAccentedLatin) {
+    init_with_ack();
+    scan_raw({{0, 6}, {1, 6}, {3, 0}}); // mic + shift + u
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00DC); // U diaeresis
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixCoversFrenchAccentExamples) {
+    init_with_ack();
+    scan_raw({{0, 6}, {2, 2}}); // mic + t = e circumflex
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00EA);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+    sigurdos_keyboard_consume_key();
+    release_raw();
+
+    scan_raw({{0, 6}, {2, 5}}); // mic + c = c cedilla
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00E7);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+    sigurdos_keyboard_consume_key();
+    release_raw();
+
+    scan_raw({{0, 6}, {0, 0}}); // mic + q = a grave
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00E0);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixSupportsOneShotMicLayer) {
+    init_with_ack();
+    scan_raw({{0, 6}}); // tap mic
+    EXPECT_FALSE(sigurdos_keyboard_has_event());
+    release_raw();
+
+    scan_raw({{3, 0}}); // next u uses one-shot mic layer
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00FC);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixSupportsOneShotSymLayer) {
+    init_with_ack();
+    scan_raw({{0, 2}}); // tap sym
+    EXPECT_FALSE(sigurdos_keyboard_has_event());
+    release_raw();
+
+    scan_raw({{1, 0}}); // next e uses one-shot sym layer
+    EXPECT_EQ(sigurdos_keyboard_get_key(), '2');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, InjectCodepointQueuesUnicodeValue) {
+    init_with_ack();
+    sigurdos_keyboard_inject_codepoint(0x20AC);
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x20AC);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
 }
 
 } // anonymous namespace

@@ -30,11 +30,11 @@
 // Returns true if keyboard is detected
 bool sigurdos_keyboard_init();
 
-// Poll the keyboard for new keypresses (call each frame)
-// Reads 1 byte from I2C — non-zero means a key was pressed
+// Poll the keyboard for new keypresses (call each frame).
+// Uses raw matrix mode when available, with legacy one-byte ASCII fallback.
 void sigurdos_keyboard_scan();
 
-// Get the key code of the last keypress (ASCII char, 0 if none, -1 on error)
+// Get the key code of the last keypress (ASCII/LVGL Unicode codepoint, 0 if none)
 int sigurdos_keyboard_get_key();
 
 // Returns true if a new key event is available (one-shot, consumed on read)
@@ -72,3 +72,7 @@ void sigurdos_keyboard_consume_key();
 // Inject a simulated keypress (for remote test mode).
 // key_code: ASCII character or special code (0x0D=Enter, 0x08=Backspace, 0x1B=Esc).
 void sigurdos_keyboard_inject(uint8_t key_code);
+
+// Inject a simulated Unicode codepoint (for tests and future remote input).
+// The display input bridge encodes non-ASCII values for LVGL textareas.
+void sigurdos_keyboard_inject_codepoint(uint32_t key_code);

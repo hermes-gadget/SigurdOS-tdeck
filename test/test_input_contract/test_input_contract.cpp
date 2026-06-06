@@ -48,6 +48,7 @@ TEST(InputContractTest, KeyboardRemoteHookSignaturesStayStable) {
     using brightness_fn = void (*)(uint8_t);
     using state_fn = bool (*)();
     using inject_fn = void (*)(uint8_t);
+    using inject_codepoint_fn = void (*)(uint32_t);
 
     (void)static_cast<init_fn>(sigurdos_keyboard_init);
     (void)static_cast<scan_fn>(sigurdos_keyboard_scan);
@@ -62,6 +63,7 @@ TEST(InputContractTest, KeyboardRemoteHookSignaturesStayStable) {
     (void)static_cast<scan_fn>(sigurdos_keyboard_reset_scan_state);
     (void)static_cast<scan_fn>(sigurdos_keyboard_consume_key);
     (void)static_cast<inject_fn>(sigurdos_keyboard_inject);
+    (void)static_cast<inject_codepoint_fn>(sigurdos_keyboard_inject_codepoint);
     SUCCEED();
 }
 
