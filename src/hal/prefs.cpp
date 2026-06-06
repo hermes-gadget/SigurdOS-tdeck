@@ -76,6 +76,13 @@ bool prefs_load(NodePrefs& p) {
     // Region (flood scope)
     size_t reg_len = nvs.getString("act_reg", p.active_region, sizeof(p.active_region));
     if (reg_len == 0) p.active_region[0] = '\0';
+    // OTA release channel
+    size_t ota_br_len = nvs.getString("ota_br", p.ota_branch, sizeof(p.ota_branch));
+    if (ota_br_len == 0) {
+        strncpy(p.ota_branch, "main", sizeof(p.ota_branch) - 1);
+        p.ota_branch[sizeof(p.ota_branch) - 1] = '\0';
+    }
+    p.ota_allow_prerelease = nvs.getBool("ota_pre", false);
 
     nvs.end();
     return true;
@@ -121,6 +128,8 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putString("wifi_ssid", p.wifi_ssid);
     nvs.putString("wifi_pw", p.wifi_password);
     nvs.putString("act_reg", p.active_region);
+    nvs.putString("ota_br", p.ota_branch);
+    nvs.putBool("ota_pre", p.ota_allow_prerelease);
 
     nvs.end();
     return true;

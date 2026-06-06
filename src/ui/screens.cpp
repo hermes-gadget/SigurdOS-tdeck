@@ -4791,6 +4791,54 @@ void settings_system_show()
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 
+    // OTA release channel — cycling through main → dev → latest
+    {
+        const char* branches[] = {"main", "dev", "latest"};
+        int n_branches = 3;
+        int current = 0;
+        const char* br = p.ota_branch;
+        for (int i = 0; i < n_branches; i++) {
+            if (strcmp(br, branches[i]) == 0) { current = i; break; }
+        }
+        snprintf(buf, sizeof(buf), "  OTA Branch: %s", branches[current]);
+        lv_obj_t* btn_branch = lv_list_add_btn(list, LV_SYMBOL_REFRESH, buf);
+        lv_obj_set_style_bg_color(btn_branch, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_branch, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_branch, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_branch, [](lv_event_t*) {
+            NodePrefs np = prefs_get();
+            const char* branches[] = {"main", "dev", "latest"};
+            int n_branches = 3;
+            int current = 0;
+            for (int i = 0; i < n_branches; i++) {
+                if (strcmp(np.ota_branch, branches[i]) == 0) { current = (i + 1) % n_branches; break; }
+            }
+            strncpy(np.ota_branch, branches[current], sizeof(np.ota_branch) - 1);
+            np.ota_branch[sizeof(np.ota_branch) - 1] = '\0';
+            prefs_set(np);
+            settings_system_show();
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
+    // Pre-release toggle
+    {
+        snprintf(buf, sizeof(buf), "  Pre-releases: %s",
+                 p.ota_allow_prerelease ? "ON" : "OFF");
+        lv_obj_t* btn_pre = lv_list_add_btn(list, LV_SYMBOL_EDIT, buf);
+        lv_obj_set_style_bg_color(btn_pre, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_pre, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_pre, lv_color_hex(
+            p.ota_allow_prerelease ? ACCENT : TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(btn_pre, [](lv_event_t*) {
+            NodePrefs np = prefs_get();
+            np.ota_allow_prerelease = !np.ota_allow_prerelease;
+            prefs_set(np);
+            settings_system_show();
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
     // OTA from GitHub (WiFi STA + download)
     lv_obj_t* btn_gh_ota = lv_list_add_btn(list, LV_SYMBOL_DOWNLOAD, "  OTA from GitHub");
     lv_obj_set_style_bg_color(btn_gh_ota, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
@@ -4809,7 +4857,7 @@ void settings_system_show()
         lv_obj_set_style_pad_all(dlg, 8, 0);
 
         lv_obj_t* title = lv_label_create(dlg);
-        lv_label_set_text(title, "GitHub OTA Update");
+        lv_label_set_text(title, sigurdos::github_ota::getDownloadLabel());
         lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
         lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);

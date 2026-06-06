@@ -49,6 +49,8 @@ struct NodePrefs {
     char     wifi_ssid[33];            // WiFi STA SSID for GitHub OTA (empty = not set)
     char     wifi_password[64];        // WiFi STA password
     char     active_region[31];        // active flood scope region name (empty = wildcard/unscoped)
+    char     ota_branch[16];            // GitHub OTA release channel: "dev" or "main" (or "latest")
+    bool     ota_allow_prerelease;      // include pre-release tags when searching for OTA updates
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -89,6 +91,9 @@ struct NodePrefs {
         wifi_ssid[0] = '\0';          // default: no WiFi
         wifi_password[0] = '\0';
         active_region[0] = '\0';       // default: wildcard (unscoped flood)
+        strncpy(ota_branch, "main", sizeof(ota_branch) - 1);
+        ota_branch[sizeof(ota_branch) - 1] = '\0';
+        ota_allow_prerelease = false;
     }
 };
 

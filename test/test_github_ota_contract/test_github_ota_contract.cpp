@@ -28,10 +28,11 @@ using sigurdos::github_ota::GitHubOTAStatus;
 TEST(GitHubOTAContractTest, StateValuesStayStableForUiProgress) {
     EXPECT_EQ(static_cast<int>(GitHubOTAState::Idle), 0);
     EXPECT_EQ(static_cast<int>(GitHubOTAState::Connecting), 1);
-    EXPECT_EQ(static_cast<int>(GitHubOTAState::Downloading), 2);
-    EXPECT_EQ(static_cast<int>(GitHubOTAState::Writing), 3);
-    EXPECT_EQ(static_cast<int>(GitHubOTAState::Success), 4);
-    EXPECT_EQ(static_cast<int>(GitHubOTAState::Failed), 5);
+    EXPECT_EQ(static_cast<int>(GitHubOTAState::FetchingRelease), 2);
+    EXPECT_EQ(static_cast<int>(GitHubOTAState::Downloading), 3);
+    EXPECT_EQ(static_cast<int>(GitHubOTAState::Writing), 4);
+    EXPECT_EQ(static_cast<int>(GitHubOTAState::Success), 5);
+    EXPECT_EQ(static_cast<int>(GitHubOTAState::Failed), 6);
 }
 
 TEST(GitHubOTAContractTest, StatusDefaultsToIdleAndEmptyMessages) {
@@ -52,12 +53,14 @@ TEST(GitHubOTAContractTest, PublicApiSignaturesStayStable) {
     using bool_fn = bool (*)();
     using void_fn = void (*)();
     using status_fn = const GitHubOTAStatus& (*)();
+    using label_fn = const char* (*)();
 
     (void)static_cast<bool_fn>(sigurdos::github_ota::startGitHubUpdate);
     (void)static_cast<void_fn>(sigurdos::github_ota::loop);
     (void)static_cast<bool_fn>(sigurdos::github_ota::isActive);
     (void)static_cast<status_fn>(sigurdos::github_ota::getStatus);
     (void)static_cast<void_fn>(sigurdos::github_ota::cancel);
+    (void)static_cast<label_fn>(sigurdos::github_ota::getDownloadLabel);
     SUCCEED();
 }
 
