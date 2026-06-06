@@ -9,6 +9,7 @@
 #include "telemetry.h"
 #include "telemetry_protocol.h"
 #include "telemetry_crash.h"
+#include "build_info.h"
 #include "../hal/battery.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../ui/navigation.h"  // for Screen enum and screen name mapping
@@ -31,7 +32,6 @@ static bool     s_diff_enabled     = SIGURDOS_TELEMETRY_DIFF ? true : false;
 static uint8_t  s_full_sync_every  = 12;   // every N ticks, send full @hb
 static uint32_t s_last_tick_ms     = 0;
 static uint32_t s_tick_count       = 0;
-static uint32_t s_last_diff_tick   = 0;
 
 // ── Previous snapshot for diff ────────────────────────
 static struct {
@@ -146,7 +146,7 @@ static uint16_t count_lvgl_widgets() {
     lv_obj_t* act = lv_scr_act();
     if (!act) return 0;
     // Count all children recursively (shallow enough for embedded)
-    uint16_t count = 1;  // screen itself
+    uint32_t count = 1;  // screen itself
     uint32_t child_cnt = lv_obj_get_child_count(act);
     count += child_cnt;
     for (uint32_t i = 0; i < child_cnt && i < 100; i++) {
@@ -154,11 +154,26 @@ static uint16_t count_lvgl_widgets() {
         if (child) count += lv_obj_get_child_count(child);
     }
     // Cap to avoid counting too deep in pathological cases
-    return count > 65535 ? 65535 : count;
+    return count > 65535U ? 65535U : static_cast<uint16_t>(count);
 }
 
 static uint16_t count_tasks() {
     return (uint16_t)uxTaskGetNumberOfTasks();
+}
+
+static void emit_build_info() {
+    const auto& build = sigurdos::build::info();
+
+    emit_tag(tag::BUILD);
+    emit_sep(); emit_kv_s(key::FW, build.firmware_version);
+    emit_sep(); emit_kv_s(key::GIT, build.git_sha);
+    emit_sep(); emit_kv_u(key::DIRTY, build.git_dirty ? 1U : 0U);
+    emit_sep(); emit_kv_s(key::MESHCORE, build.meshcore_sha);
+    emit_sep(); emit_kv_s(key::ENV, build.build_env);
+    emit_sep(); emit_kv_s(key::PART, build.partitions);
+    emit_sep(); emit_kv_s(key::BOARD, build.board);
+    emit_sep(); emit_kv_s(key::MCU, build.mcu);
+    emit_end();
 }
 
 // ── Mesh packet content log (64-entry ring buffer) ─────
@@ -498,6 +513,7 @@ void init() {
 
     // Announce telemetry active
     emit_record1_u(tag::OK, (char*)"init", 0);
+    emit_build_info();
     // Initial full heartbeat
     emit_full_heartbeat();
 }
@@ -639,7 +655,7 @@ void cmd_telemetry(const char* arg) {
 
 void cmd_query(const char* arg) {
     if (!arg || !arg[0]) {
-        emit_err("query", "Missing subcommand (state|heap|lvgl|mesh|crash|drift|screen|wifi|gps|radio|sd|nvs|temp|task|hb-ring|pktlog|full)");
+        emit_err("query", "Missing subcommand (build|state|heap|lvgl|mesh|crash|drift|screen|wifi|gps|radio|sd|nvs|temp|task|hb-ring|pktlog|full)");
         return;
     }
 
@@ -650,6 +666,9 @@ void cmd_query(const char* arg) {
 
     // ── query full: emit ALL state in one shot ────────────
     if (strcmp(arg, "full") == 0) {
+        emit_build_info();
+        n++;
+
         // @heap (existing heap/lvgl/mesh state)
         emit_tag(tag::HEAP);
         emit_sep(); emit_kv_u(key::H, ESP.getFreeHeap());
@@ -737,6 +756,11 @@ void cmd_query(const char* arg) {
         emit_end();
         emit_ok(arg, cost);
         return;
+    }
+
+    if (strcmp(arg, "build") == 0) {
+        emit_build_info();
+        n = 1;
     }
 
     if (strcmp(arg, "state") == 0 || strcmp(arg, "heap") == 0) {

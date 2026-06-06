@@ -33,6 +33,7 @@ namespace tag {
     extern const char ERR[];      // @err  — query error
     extern const char END[];      // @end  — multi-line response end
     extern const char SCREEN[];   // @screen — screen telemetry
+    extern const char BUILD[];    // @build — firmware build identity
 
     // Phase 2+3+4 tags
     extern const char WIFI[];      // @wifi — WiFi STA state
@@ -114,6 +115,14 @@ namespace key {
     extern const char SRC[];              // src     — source node
     extern const char TEXT[];             // text    — message text
     extern const char TYPE[];             // type    — event type
+    extern const char FW[];               // fw      — firmware version
+    extern const char GIT[];              // git     — firmware git SHA
+    extern const char DIRTY[];            // dirty   — git tree dirty 0/1
+    extern const char MESHCORE[];         // mcore   — MeshCore submodule SHA
+    extern const char ENV[];              // env     — PlatformIO environment
+    extern const char PART[];             // part    — partition table
+    extern const char BOARD[];            // board   — PlatformIO board
+    extern const char MCU[];              // mcu     — target MCU
 }
 
 // ── Serial emission helpers ───────────────────────────

@@ -28,6 +28,7 @@ namespace tag {
     const char ERR[]     = "err";
     const char END[]     = "end";
     const char SCREEN[]  = "screen";
+    const char BUILD[]   = "build";
 
     // Phase 2+3+4 tags
     const char WIFI[]      = "wifi";
@@ -109,6 +110,14 @@ namespace key {
     const char SRC[]              = "src";
     const char TEXT[]             = "text";
     const char TYPE[]             = "type";
+    const char FW[]               = "fw";
+    const char GIT[]              = "git";
+    const char DIRTY[]            = "dirty";
+    const char MESHCORE[]         = "mcore";
+    const char ENV[]              = "env";
+    const char PART[]             = "part";
+    const char BOARD[]            = "board";
+    const char MCU[]              = "mcu";
 }
 
 // ── Helpers ───────────────────────────────────────────

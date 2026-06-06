@@ -50,6 +50,7 @@ PROFILES: dict[str, list[SmokeStep]] = {
     "telemetry": [
         SmokeStep("screen starts readable", "screen", (r"\[test\] current screen:",)),
         SmokeStep("heap status", "status", (r"\[test\] heap=\d+ psram=\d+",)),
+        SmokeStep("query build", "query build", (r"@build\|", r"fw=", r"git=", r"dirty=", r"mcore=", r"env=", r"part=")),
         SmokeStep("query state", "query state", (r"@heap\|", r"@lvgl\|", r"@mesh\|")),
         SmokeStep("query screen", "query screen", (r"@screen\|",)),
         SmokeStep("query radio", "query radio", (r"@radio\|",)),

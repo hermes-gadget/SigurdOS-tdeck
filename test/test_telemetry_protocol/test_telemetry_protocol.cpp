@@ -92,6 +92,29 @@ TEST_F(TelemetryProtocolTest, EmitsManualMultiFieldRecord) {
     expect_output("@mesh|rssi=-88|snr=9\n");
 }
 
+TEST_F(TelemetryProtocolTest, EmitsBuildIdentityRecordFields) {
+    emit_tag(tag::BUILD);
+    emit_sep();
+    emit_kv_s(key::FW, "beta-0.1.39");
+    emit_sep();
+    emit_kv_s(key::GIT, "abc123def456");
+    emit_sep();
+    emit_kv_u(key::DIRTY, 1);
+    emit_sep();
+    emit_kv_s(key::MESHCORE, "9a888541efaf");
+    emit_sep();
+    emit_kv_s(key::ENV, "SigurdOS_TDeck_telemetry");
+    emit_sep();
+    emit_kv_s(key::PART, "default_16MB.csv");
+    emit_sep();
+    emit_kv_s(key::BOARD, "t-deck");
+    emit_sep();
+    emit_kv_s(key::MCU, "esp32s3");
+    emit_end();
+
+    expect_output("@build|fw=beta-0.1.39|git=abc123def456|dirty=1|mcore=9a888541efaf|env=SigurdOS_TDeck_telemetry|part=default_16MB.csv|board=t-deck|mcu=esp32s3\n");
+}
+
 TEST_F(TelemetryProtocolTest, EmitsFloatRecordsWithPrecision) {
     emit_tag(tag::TEMP);
     emit_sep();

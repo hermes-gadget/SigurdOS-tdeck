@@ -29,7 +29,7 @@ void loop();
 // "telemetry on|off|diff on|off|level N|hb N|full" — control telemetry
 void cmd_telemetry(const char* arg);
 
-// "query state|heap|lvgl|mesh|crash|drift|hb-ring|full" — on-demand queries
+// "query build|state|heap|lvgl|mesh|crash|drift|hb-ring|full" — on-demand queries
 void cmd_query(const char* arg);
 
 // "crash report|clear|test" — crash log operations

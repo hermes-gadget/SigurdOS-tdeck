@@ -46,6 +46,10 @@ Run the RC2 telemetry smoke:
 python scripts\validation\remote_test_smoke.py --port COM8 --profile telemetry --forbid-port COM11 --forbid-port COM29
 ```
 
+The telemetry profile includes `query build`. A passing release-candidate run
+must capture the `@build` record with firmware version, git SHA, dirty flag,
+MeshCore SHA, PlatformIO environment, partition table, board, and MCU.
+
 Expected artifacts:
 
 | Artifact | Meaning |
@@ -180,7 +184,7 @@ Warning observations:
 | --- | --- | --- |
 | Native tests | `pio test -e native_test -v` passes | PASS on 2026-06-06 current-dev run: 683 cases, 682 succeeded, 1 skipped |
 | Release build | `pio run -e SigurdOS_TDeck` passes with size and warning summary recorded | PASS on 2026-06-06 current-dev run; local release warnings cleaned in this branch; third-party/upstream warning debt remains |
-| Telemetry smoke | COM8 `SigurdOS_TDeck_telemetry` upload plus `remote_test_smoke.py --profile telemetry` pass | PASS on 2026-06-06 COM8 run |
+| Telemetry smoke | COM8 `SigurdOS_TDeck_telemetry` upload plus `remote_test_smoke.py --profile telemetry` pass, including `@build` identity | PASS on 2026-06-06 COM8 run, before `@build` identity became a required RC2 field |
 | Non-radio remote UI | COM8 `SigurdOS_TDeck_remote_test` upload plus `remote_test_smoke.py --profile ui` pass | PASS on 2026-06-06 COM8 run |
 | GPS | COM8 SPIFFS/NVS evidence with fixed records and privacy-safe coordinates | PASS for hardware lock in PR #464: 84 fixed records, first fix `fix=1`, `qual=1`, `sv=7`, `ft=3`, `rmc=A`, `loc=1`; production power/time-sync UX remains |
 | Companion BLE | COM8 BLE validation boot/advertising plus official app pairing/auth/RX/TX | Local COM8 boot/advertising and USB BLE pair-only authenticated pairing PASS in PR #466; official phone-app RX/TX, reconnect, and sync still needed |

@@ -48,7 +48,9 @@ def merge_bin_action(target, source, env):
         print(f"SigurdOS: merged -> firmware-merged.bin ({_os.path.getsize(merged_bin):,} bytes)")
 
     # ── Web flasher manifest ──────────────────────────────
+    import hashlib as _hashlib
     import json as _json
+    import subprocess as _subprocess
     from datetime import datetime, timezone as _timezone
 
     proj_dir = env.subst("$PROJECT_DIR")
@@ -82,22 +84,67 @@ def merge_bin_action(target, source, env):
         "full":      merged_bin,
     }
 
+    def _git(args, cwd):
+        try:
+            completed = _subprocess.run(
+                ["git", *args],
+                cwd=cwd,
+                check=True,
+                stdout=_subprocess.PIPE,
+                stderr=_subprocess.DEVNULL,
+                text=True,
+            )
+        except (OSError, _subprocess.CalledProcessError):
+            return "unknown"
+        value = completed.stdout.strip()
+        return value if value else "unknown"
+
+    def _git_dirty(cwd):
+        try:
+            completed = _subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=cwd,
+                check=True,
+                stdout=_subprocess.PIPE,
+                stderr=_subprocess.DEVNULL,
+                text=True,
+            )
+        except (OSError, _subprocess.CalledProcessError):
+            return True
+        return bool(completed.stdout.strip())
+
+    def _sha256(path):
+        digest = _hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     # Read version from tdeck_pins.h
     pins_h = _os.path.join(proj_dir, "src", "hal", "tdeck_pins.h")
     version = "unknown"
     try:
-        with open(pins_h) as f:
+        with open(pins_h, encoding="utf-8", errors="replace") as f:
             for line in f:
                 if "SIGURDOS_VERSION" in line and '"' in line:
                     version = line.split('"')[1]
                     break
     except: pass
 
+    git_sha = _git(["rev-parse", "--short=12", "HEAD"], proj_dir)
+    meshcore_sha = _git(["rev-parse", "--short=12", "HEAD"], _os.path.join(proj_dir, "lib", "meshcore"))
+
     manifest = {
         "name": "SigurdOS T-Deck",
         "board": "LilyGo T-Deck",
+        "platformio_board": env.subst("$BOARD"),
         "mcu": mcu,
         "firmware_version": version,
+        "git_sha": git_sha,
+        "git_dirty": _git_dirty(proj_dir),
+        "meshcore_sha": meshcore_sha,
+        "build_environment": env.subst("$PIOENV"),
+        "partition_table": env.GetProjectOption("board_build.partitions", "unknown"),
         "built_at_utc": datetime.now(_timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "chip_family": "ESP32-S3",
         "flash_mode": flash_mode,
@@ -116,6 +163,7 @@ def merge_bin_action(target, source, env):
             size = _os.path.getsize(dst)
             manifest["artifacts"][name] = {
                 "file": dst_name, "size": size,
+                "sha256": _sha256(dst),
                 "offset": offsets.get(name, "0x0")
             }
             print(f"SigurdOS webflasher: {dst_name} ({size:,} bytes)")
