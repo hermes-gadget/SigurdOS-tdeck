@@ -18,64 +18,48 @@
 // You should have received a copy of the GNU General Public License
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
-// ── Channel quick-action menu (Alt+C) ──────────────────────
-// Pure, LVGL-free logic backing the in-chat channel menu. The chat
-// screen builds the popup from channel_menu_build() and dispatches the
-// user's choice through channel_menu_perform(). Keeping this free of
-// LVGL lets the region/scope sequencing be unit-tested on the host.
+// Channel quick-action menu (Alt+C). The LVGL-free logic here decides
+// which menu actions are available and validates private per-chat scopes.
 
+#include <cstddef>
 #include <cstdint>
 
 namespace sigurdos::ui {
 
-// Actions offered for the active channel. Region actions are only
-// applicable to public "#" channels (not DMs). MARK_READ is handled by
-// the chat screen itself (it touches chat-local unread state).
 enum class ChannelAction : uint8_t {
     None = 0,
-    SetActiveRegion,    // scope my outgoing floods to this channel's region
-    ClearActiveRegion,  // send Public (unscoped) again
-    ChooseScope,        // open the scope picker (pick/enter any send scope)
-    SetHomeRegion,      // make this channel's region my home region
-    SetDefaultScope,    // make this channel's region my default flood scope
-    MarkRead,           // clear this channel's unread badge (UI-only)
-    LeaveChannel,       // remove this channel from the device
+    ChooseScope,   // open the private scope editor for this chat
+    MarkRead,      // clear this chat unread badge (UI-only)
+    LeaveChannel,  // remove this channel from the device
 };
 
 struct ChannelMenuItem {
     ChannelAction action;
-    const char*   label;   // plain display label; the chat screen adds an icon
+    const char*   label;
 };
 
-// True when `channel` is a public "#" channel that region actions apply
-// to. False for DMs ("DM: name"), empty, or null.
-bool channel_supports_regions(const char* channel);
+// True when `channel` is a real conversation that can carry a private send
+// scope. This includes #channels and DMs; empty/null names are rejected.
+bool channel_supports_private_scope(const char* channel);
 
 // Fill `out` (up to `max` entries) with the menu items applicable to
-// `channel`. Region actions are included only for "#" channels. Returns
-// the number of items written.
+// `channel`. Private scope editing is included for every real conversation.
 int channel_menu_build(const char* channel, ChannelMenuItem* out, int max);
 
-// Perform a mesh-backed channel action. Encapsulates the region
-// sequencing the raw API requires (a region must exist before it can be
-// set active / home / default, so this auto-creates it first).
-// Returns true when the action was handled here; false for UI-only
-// actions (ChooseScope/MarkRead/None) and invalid inputs, which the
-// caller handles.
+// Perform a mesh-backed channel action. Returns true when the action was
+// handled here; false for UI-only actions and invalid inputs.
 bool channel_menu_perform(ChannelAction action, const char* channel, int channel_idx);
 
-// Validate a custom scope (region) name. A scope is just a name — the user
-// types e.g. "eng-sw" (an optional leading '#' is accepted). The body must
-// be 1–29 chars of letters, digits and single hyphens. `reason` (if
-// non-null) gets a short failure description. An empty/null name is valid
-// and means "Public (unscoped)".
-bool scope_name_valid(const char* name, const char** reason = nullptr);
+// Validate a private scope name. Empty/null is valid and means "clear this
+// chat scope". Bare names and $names are accepted; public #names are rejected.
+bool private_scope_name_valid(const char* name, const char** reason = nullptr);
 
-// Set the active send scope to a named region. "" / null → Public
-// (unscoped). Otherwise the name must pass scope_name_valid(); it is
-// normalised to "#<body>" so MeshCore derives its transport key (SHA256 of
-// the name), the region is auto-created, and it becomes the active flood
-// scope. Returns true on success, false on a bad name.
-bool channel_scope_apply(const char* scope_name);
+// Normalize a user-entered private scope and derive its 16-byte key. Empty/null
+// clears the scope and writes an empty out_name plus a zero key. Non-empty input
+// writes "$<body>" to out_name and a stable 16-byte key to key16.
+bool private_scope_prepare(const char* scope_name,
+                           char* out_name, size_t out_name_len,
+                           uint8_t key16[16],
+                           const char** reason = nullptr);
 
 } // namespace sigurdos::ui

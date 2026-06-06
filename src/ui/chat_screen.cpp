@@ -26,7 +26,6 @@
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
 #include "../mesh/mesh_wrapper.h"
-#include "../mesh/regions.h"
 #include "../mesh/channel_validation.h"
 #include "../mesh/message_store.h"
 #include "../hal/prefs.h"
@@ -34,7 +33,6 @@
 #include <lvgl.h>
 #include <cstring>
 #include <cstdio>
-#include <cstdlib>
 #include <SPIFFS.h>
 #include <esp_heap_caps.h>
 #include "utils/utf8_util.h"
@@ -152,6 +150,64 @@ struct ChannelMessage {
 static ChannelMessage* ch_msgs[MAX_CHANNELS] = {nullptr};
 static uint16_t       ch_msg_capacity[MAX_CHANNELS] = {0};
 static uint16_t       ch_msg_count[MAX_CHANNELS];
+
+
+struct ChatPrivateScopeState {
+    char conversation[32];
+    char name[31];
+    uint8_t key[16];
+    bool has_scope;
+};
+static ChatPrivateScopeState ch_private_scopes[MAX_CHANNELS];
+
+static ChatPrivateScopeState* find_chat_private_scope(const char* conversation, bool create)
+{
+    if (!conversation || !conversation[0]) return nullptr;
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (ch_private_scopes[i].conversation[0] &&
+            strcmp(ch_private_scopes[i].conversation, conversation) == 0) {
+            return &ch_private_scopes[i];
+        }
+    }
+    if (!create) return nullptr;
+    for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (!ch_private_scopes[i].conversation[0]) {
+            strncpy(ch_private_scopes[i].conversation, conversation,
+                    sizeof(ch_private_scopes[i].conversation) - 1);
+            ch_private_scopes[i].conversation[sizeof(ch_private_scopes[i].conversation) - 1] = '\0';
+            return &ch_private_scopes[i];
+        }
+    }
+    return nullptr;
+}
+
+static const ChatPrivateScopeState* get_chat_private_scope(const char* conversation)
+{
+    ChatPrivateScopeState* scope = find_chat_private_scope(conversation, false);
+    return (scope && scope->has_scope) ? scope : nullptr;
+}
+
+static bool set_chat_private_scope(const char* conversation, const char* name, const uint8_t key[16])
+{
+    if (!conversation || !conversation[0] || !name || !name[0] || !key) return false;
+    ChatPrivateScopeState* scope = find_chat_private_scope(conversation, true);
+    if (!scope) return false;
+    strncpy(scope->name, name, sizeof(scope->name) - 1);
+    scope->name[sizeof(scope->name) - 1] = '\0';
+    memcpy(scope->key, key, sizeof(scope->key));
+    scope->has_scope = true;
+    return true;
+}
+
+static void clear_chat_private_scope(const char* conversation)
+{
+    ChatPrivateScopeState* scope = find_chat_private_scope(conversation, false);
+    if (!scope) return;
+    scope->conversation[0] = '\0';
+    scope->name[0] = '\0';
+    memset(scope->key, 0, sizeof(scope->key));
+    scope->has_scope = false;
+}
 
 static void ensure_channel_buffer(int idx)
 {
@@ -1535,14 +1591,17 @@ static void do_send()
     bool is_dm = (strncmp(chan, "DM: ", 4) == 0);
     const char* dest = is_dm ? (chan + 4) : chan;
 
+    const ChatPrivateScopeState* scope = get_chat_private_scope(chan);
+    const uint8_t* scope_key = scope ? scope->key : nullptr;
+
     bool sent = false;
     uint32_t ts = sigurdos::mesh::getCurrentTime();
     if (is_dm) {
-        uint32_t send_ts = sigurdos::mesh::sendMessage(dest, text);
+        uint32_t send_ts = sigurdos::mesh::sendMessageWithScopeKey(dest, text, scope_key);
         sent = (send_ts != 0);
         if (sent) ts = send_ts;  // use the timestamp the mesh layer tracked the ACK with
     } else {
-        sent = sigurdos::mesh::sendChannelMessage(dest, text);
+        sent = sigurdos::mesh::sendChannelMessageWithScopeKey(dest, text, scope_key);
     }
 
     int sent_channel = active_channel;
@@ -1991,23 +2050,18 @@ static void show_add_channel_options(lv_obj_t* parent) {
 }
 
 // ── Channel quick-action menu (Alt+C) ──────────────────────
-// A small popup over the messaging view exposing per-channel region
-// controls (scope, home, default) plus channel actions (mark read,
-// leave). The action logic lives in channel_menu.{h,cpp}; this just
-// renders it and reports the outcome inline.
+// Small popup over the messaging view for per-chat private scope entry
+// plus normal chat actions. The validation/key derivation lives in
+// channel_menu.{h,cpp}; this block only renders and stores per-chat state.
 
 static void show_scope_picker();
 
 static const char* channel_action_icon(ChannelAction a) {
     switch (a) {
-    case ChannelAction::ChooseScope:       return LV_SYMBOL_GPS;
-    case ChannelAction::SetActiveRegion:   return LV_SYMBOL_GPS;
-    case ChannelAction::ClearActiveRegion: return LV_SYMBOL_LIST;
-    case ChannelAction::SetHomeRegion:     return LV_SYMBOL_HOME;
-    case ChannelAction::SetDefaultScope:   return LV_SYMBOL_OK;
-    case ChannelAction::MarkRead:          return LV_SYMBOL_EYE_OPEN;
-    case ChannelAction::LeaveChannel:      return LV_SYMBOL_TRASH;
-    default:                               return LV_SYMBOL_RIGHT;
+    case ChannelAction::ChooseScope:  return LV_SYMBOL_GPS;
+    case ChannelAction::MarkRead:     return LV_SYMBOL_EYE_OPEN;
+    case ChannelAction::LeaveChannel: return LV_SYMBOL_TRASH;
+    default:                          return LV_SYMBOL_RIGHT;
     }
 }
 
@@ -2025,14 +2079,12 @@ static void channel_menu_action_cb(lv_event_t* e) {
     const char* channel = dyn_channels[active_channel];
     const int   idx     = active_channel;
 
-    // UI-only: open the scope picker (replaces this menu).
     if (action == ChannelAction::ChooseScope) {
         if (dlg) lv_obj_del_async(dlg);
         show_scope_picker();
         return;
     }
 
-    // UI-only: clear this channel's unread badge.
     if (action == ChannelAction::MarkRead) {
         ch_meta[idx].unread = 0;
         rebuild_channel_ribbon();
@@ -2043,43 +2095,16 @@ static void channel_menu_action_cb(lv_event_t* e) {
         return;
     }
 
-    // Leaving the channel invalidates this messaging view — return to the
-    // channel list, which loads a fresh screen and disposes this dialog.
     if (action == ChannelAction::LeaveChannel) {
         channel_menu_perform(action, channel, idx);
+        clear_chat_private_scope(channel);
         show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
         return;
     }
-
-    bool ok = channel_menu_perform(action, channel, idx);
-    if (!feedback) return;
-
-    char buf[64];
-    switch (action) {
-    case ChannelAction::SetActiveRegion:
-        if (ok) snprintf(buf, sizeof(buf), "Scoping sends to %s", channel);
-        else    snprintf(buf, sizeof(buf), "Could not scope");
-        break;
-    case ChannelAction::ClearActiveRegion:
-        snprintf(buf, sizeof(buf), "Now sending Public");
-        break;
-    case ChannelAction::SetHomeRegion:
-        snprintf(buf, sizeof(buf), ok ? "Home region set" : "Failed");
-        break;
-    case ChannelAction::SetDefaultScope:
-        snprintf(buf, sizeof(buf), ok ? "Default scope set" : "Failed");
-        break;
-    default:
-        buf[0] = '\0';
-        break;
-    }
-    lv_label_set_text(feedback, buf);
-    lv_obj_set_style_text_color(feedback, lv_color_hex(ok ? ACCENT_GREEN : ACCENT_RED), 0);
 }
 
 void chat_screen_show_channel_menu()
 {
-    // Only meaningful from the messaging view of a real channel.
     if (!input_field || !lv_obj_is_valid(input_field)) return;
     if (active_channel < 0 || active_channel >= dyn_count) return;
 
@@ -2092,7 +2117,7 @@ void chat_screen_show_channel_menu()
 
     lv_obj_t* parent = lv_scr_act();
 
-    auto dlg_sz = dialog_size(240, 214);
+    auto dlg_sz = dialog_size(240, 176);
     lv_obj_t* dlg = lv_obj_create(parent);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -2105,38 +2130,27 @@ void chat_screen_show_channel_menu()
 
     channel_menu = dlg;
     lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
-        // Only clear if we're still the active overlay — the scope picker may
-        // have replaced us before this (async) delete fires.
         if (channel_menu == (lv_obj_t*)lv_event_get_target(e)) channel_menu = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 
-    // Title = channel name.
     lv_obj_t* title = lv_label_create(dlg);
     lv_label_set_text(title, channel);
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
-    // Subtitle = the scope outgoing messages currently use (region actions
-    // only, so leave it blank for DMs which aren't region-scoped).
     lv_obj_t* scope_lbl = lv_label_create(dlg);
     char scope_buf[48];
-    if (channel_supports_regions(channel)) {
-        const char* active = sigurdos::mesh::getActiveRegion();
-        if (active && active[0]) snprintf(scope_buf, sizeof(scope_buf), "Scope: %s", active);
-        else                     snprintf(scope_buf, sizeof(scope_buf), "Scope: Public");
-    } else {
-        scope_buf[0] = '\0';
-    }
+    const ChatPrivateScopeState* scope = get_chat_private_scope(channel);
+    if (scope) snprintf(scope_buf, sizeof(scope_buf), "Private: %s", scope->name);
+    else       snprintf(scope_buf, sizeof(scope_buf), "Private: none");
     lv_label_set_text(scope_lbl, scope_buf);
     lv_obj_set_style_text_color(scope_lbl, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(scope_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(scope_lbl, LV_ALIGN_TOP_MID, 0, 16);
 
-    // Scrollable list of action buttons (sits between the subtitle and the
-    // feedback/close row at the bottom).
     lv_obj_t* list = lv_obj_create(dlg);
-    lv_obj_set_size(list, dlg_sz.w - 16, dlg_sz.h - 96);
+    lv_obj_set_size(list, dlg_sz.w - 16, dlg_sz.h - 90);
     lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 32);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(list, 0, 0);
@@ -2146,13 +2160,11 @@ void chat_screen_show_channel_menu()
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
 
-    // Feedback line for action outcomes.
     lv_obj_t* feedback = lv_label_create(dlg);
     lv_label_set_text(feedback, "");
     lv_obj_set_style_text_color(feedback, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(feedback, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(feedback, LV_ALIGN_BOTTOM_MID, 0, -30);
-    // The action callback locates the feedback label via the list's user_data.
     lv_obj_set_user_data(list, feedback);
 
     lv_group_t* g = lv_group_get_default();
@@ -2185,7 +2197,6 @@ void chat_screen_show_channel_menu()
         }
     }
 
-    // Close button.
     lv_obj_t* close = lv_btn_create(dlg);
     lv_obj_set_size(close, 80, 26);
     lv_obj_align(close, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -2199,126 +2210,71 @@ void chat_screen_show_channel_menu()
     lv_obj_add_event_cb(close, [](lv_event_t* e) {
         lv_obj_t* b = (lv_obj_t*)lv_event_get_target(e);
         lv_obj_del_async(lv_obj_get_parent(b));
-        // Hand keyboard focus back to the message input.
         if (input_field && lv_obj_is_valid(input_field) && lv_group_get_default())
             lv_group_focus_obj(input_field);
     }, LV_EVENT_CLICKED, nullptr);
     if (g) lv_group_add_obj(g, close);
 }
 
-// ── Scope picker (from the channel menu's "Send scope...") ──
-// Lets the user pick the active flood scope from Public, the current
-// channel, and any saved region — or type a custom scope (#public /
-// $private) per the MeshCore region-naming convention.
+// ── Private scope editor ───────────────────────────────────
 
-static lv_obj_t* g_scope_list     = nullptr;
 static lv_obj_t* g_scope_subtitle = nullptr;
 
-static void scope_picker_rebuild();
-static void scope_rebuild_async(void*) { scope_picker_rebuild(); }
-
-static void scope_row_clicked(lv_event_t* e) {
-    const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-    channel_scope_apply(name ? name : "");
-    lv_async_call(scope_rebuild_async, nullptr);
+static const char* current_scope_channel()
+{
+    return (active_channel >= 0 && active_channel < dyn_count) ? dyn_channels[active_channel] : "";
 }
 
-static void scope_row_free(lv_event_t* e) {
-    void* p = lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-    if (p) free(p);
+static void update_private_scope_subtitle()
+{
+    if (!g_scope_subtitle || !lv_obj_is_valid(g_scope_subtitle)) return;
+    const ChatPrivateScopeState* scope = get_chat_private_scope(current_scope_channel());
+    char sb[48];
+    if (scope) snprintf(sb, sizeof(sb), "This chat: %s", scope->name);
+    else       snprintf(sb, sizeof(sb), "This chat: none");
+    lv_label_set_text(g_scope_subtitle, sb);
+    lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(TEXT_SECONDARY), 0);
 }
 
-// Add one selectable scope row. `scope_name` is the value applied on click
-// ("" = Public); `display` is the visible label; `active` draws a checkmark.
-static void scope_add_row(const char* display, const char* scope_name, bool active) {
-    if (!g_scope_list) return;
-    lv_obj_t* row = lv_obj_create(g_scope_list);
-    lv_obj_set_width(row, LV_PCT(100));
-    lv_obj_set_height(row, 26);
-    lv_obj_set_style_bg_color(row, lv_color_hex(active ? BG_TERTIARY : BG_INPUT), 0);
-    lv_obj_set_style_radius(row, 0, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    disable_scroll(row);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    lv_obj_t* check = lv_label_create(row);
-    lv_label_set_text(check, active ? LV_SYMBOL_OK : " ");
-    lv_obj_set_style_text_color(check, lv_color_hex(active ? ACCENT_GREEN : TEXT_MUTED), 0);
-    lv_obj_set_style_text_font(check, emoji_wrapped_montserrat_10, 0);
-    lv_obj_set_style_pad_left(check, 6, 0);
-
-    lv_obj_t* lbl = lv_label_create(row);
-    lv_label_set_text(lbl, display);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_10, 0);
-    lv_obj_set_style_pad_left(lbl, 6, 0);
-
-    lv_obj_set_user_data(row, strdup(scope_name ? scope_name : ""));
-    lv_obj_add_event_cb(row, scope_row_clicked, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_event_cb(row, scope_row_free, LV_EVENT_DELETE, nullptr);
-    if (lv_group_get_default()) lv_group_add_obj(lv_group_get_default(), row);
-}
-
-static void scope_picker_rebuild() {
-    if (!g_scope_list || !lv_obj_is_valid(g_scope_list)) return;
-    lv_obj_clean(g_scope_list);
-
-    const char* active = sigurdos::mesh::getActiveRegion();
-    if (!active) active = "";
-
-    // Public (unscoped)
-    scope_add_row("Public (unscoped)", "", active[0] == '\0');
-
-    // The current channel's own region (quick pick)
-    const char* chan = (active_channel >= 0 && active_channel < dyn_count)
-                           ? dyn_channels[active_channel] : "";
-    if (chan && chan[0] == '#') {
-        char disp[48];
-        snprintf(disp, sizeof(disp), "This channel: %s", chan);
-        scope_add_row(disp, chan, strcmp(active, chan) == 0);
-    }
-
-    // Every saved region (skip the current channel to avoid a duplicate row)
-    sigurdos::mesh::RegionInfo regions[32];
-    int n = sigurdos::mesh::listRegions(regions, 32);
-    for (int i = 0; i < n; i++) {
-        if (chan && chan[0] == '#' && strcmp(regions[i].name, chan) == 0) continue;
-        scope_add_row(regions[i].name, regions[i].name, strcmp(active, regions[i].name) == 0);
-    }
-
-    if (g_scope_subtitle && lv_obj_is_valid(g_scope_subtitle)) {
-        char sb[48];
-        if (active[0]) snprintf(sb, sizeof(sb), "Now: %s", active);
-        else           snprintf(sb, sizeof(sb), "Now: Public (unscoped)");
-        lv_label_set_text(g_scope_subtitle, sb);
-        lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(TEXT_SECONDARY), 0);
-    }
-}
-
-// "Set" on the custom-scope field: validate per spec, apply, refresh.
 static void scope_custom_apply(lv_obj_t* ta) {
     if (!ta) return;
-    const char* name = lv_textarea_get_text(ta);
+    const char* channel = current_scope_channel();
+    if (!channel || !channel[0]) return;
+
+    const char* text = lv_textarea_get_text(ta);
     const char* reason = nullptr;
-    if (!scope_name_valid(name, &reason)) {
+    char name[31];
+    uint8_t key[16];
+    if (!private_scope_prepare(text, name, sizeof(name), key, &reason)) {
         if (g_scope_subtitle && lv_obj_is_valid(g_scope_subtitle)) {
             lv_label_set_text(g_scope_subtitle, reason ? reason : "Invalid scope");
             lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(ACCENT_RED), 0);
         }
         return;
     }
-    channel_scope_apply(name);
+
+    if (name[0]) {
+        if (!set_chat_private_scope(channel, name, key)) {
+            if (g_scope_subtitle && lv_obj_is_valid(g_scope_subtitle)) {
+                lv_label_set_text(g_scope_subtitle, "Scope table full");
+                lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(ACCENT_RED), 0);
+            }
+            return;
+        }
+    } else {
+        clear_chat_private_scope(channel);
+    }
+
     lv_textarea_set_text(ta, "");
-    lv_async_call(scope_rebuild_async, nullptr);
+    update_private_scope_subtitle();
 }
 
 static void show_scope_picker() {
     if (!input_field || !lv_obj_is_valid(input_field)) return;
+    if (!current_scope_channel()[0]) return;
     lv_obj_t* parent = lv_scr_act();
 
-    auto dlg_sz = dialog_size(250, 228);
+    auto dlg_sz = dialog_size(250, 150);
     lv_obj_t* dlg = lv_obj_create(parent);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -2329,15 +2285,14 @@ static void show_scope_picker() {
     lv_obj_set_style_pad_all(dlg, 8, 0);
     disable_scroll(dlg);
 
-    channel_menu = dlg;  // reuse the overlay flag (trackball yields to LVGL)
+    channel_menu = dlg;
     lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
         if (channel_menu == (lv_obj_t*)lv_event_get_target(e)) channel_menu = nullptr;
-        g_scope_list = nullptr;
         g_scope_subtitle = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 
     lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Send scope");
+    lv_label_set_text(title, "Private scope");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
@@ -2345,23 +2300,11 @@ static void show_scope_picker() {
     g_scope_subtitle = lv_label_create(dlg);
     lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(g_scope_subtitle, emoji_wrapped_montserrat_10, 0);
-    lv_obj_align(g_scope_subtitle, LV_ALIGN_TOP_MID, 0, 15);
+    lv_obj_align(g_scope_subtitle, LV_ALIGN_TOP_MID, 0, 16);
 
-    g_scope_list = lv_obj_create(dlg);
-    lv_obj_set_size(g_scope_list, dlg_sz.w - 16, dlg_sz.h - 108);
-    lv_obj_align(g_scope_list, LV_ALIGN_TOP_MID, 0, 30);
-    lv_obj_set_style_bg_opa(g_scope_list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_scope_list, 0, 0);
-    lv_obj_set_style_pad_all(g_scope_list, 0, 0);
-    lv_obj_set_style_pad_row(g_scope_list, 3, 0);
-    lv_obj_set_flex_flow(g_scope_list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_scroll_dir(g_scope_list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(g_scope_list, LV_SCROLLBAR_MODE_AUTO);
-
-    // Custom-scope entry: text field + Set button.
     lv_obj_t* ta = lv_textarea_create(dlg);
     lv_obj_set_size(ta, dlg_sz.w - 16 - 48, 24);
-    lv_obj_align(ta, LV_ALIGN_BOTTOM_LEFT, 0, -34);
+    lv_obj_align(ta, LV_ALIGN_TOP_LEFT, 0, 38);
     lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(ta, emoji_wrapped_montserrat_10, 0);
@@ -2369,12 +2312,12 @@ static void show_scope_picker() {
     lv_obj_set_style_radius(ta, 0, 0);
     lv_textarea_set_one_line(ta, true);
     lv_textarea_set_max_length(ta, 30);
-    lv_textarea_set_placeholder_text(ta, "custom scope e.g. eng-sw");
+    lv_textarea_set_placeholder_text(ta, "private scope");
     apply_focus_style(ta);
 
     lv_obj_t* set_btn = lv_btn_create(dlg);
     lv_obj_set_size(set_btn, 44, 24);
-    lv_obj_align(set_btn, LV_ALIGN_BOTTOM_RIGHT, 0, -34);
+    lv_obj_align(set_btn, LV_ALIGN_TOP_RIGHT, 0, 38);
     lv_obj_set_style_bg_color(set_btn, lv_color_hex(ACCENT_GREEN), 0);
     lv_obj_set_style_radius(set_btn, 0, 0);
     lv_obj_set_style_border_width(set_btn, 0, 0);
@@ -2385,15 +2328,30 @@ static void show_scope_picker() {
     lv_obj_add_event_cb(set_btn, [](lv_event_t* e) {
         scope_custom_apply((lv_obj_t*)lv_event_get_user_data(e));
     }, LV_EVENT_CLICKED, (void*)ta);
-    // ENTER in the field applies too.
+
     lv_obj_add_event_cb(ta, [](lv_event_t* e) {
         if (lv_event_get_code(e) == LV_EVENT_READY)
             scope_custom_apply((lv_obj_t*)lv_event_get_target(e));
     }, LV_EVENT_ALL, nullptr);
 
+    lv_obj_t* clear = lv_btn_create(dlg);
+    lv_obj_set_size(clear, 74, 24);
+    lv_obj_align(clear, LV_ALIGN_BOTTOM_LEFT, 10, -4);
+    lv_obj_set_style_bg_color(clear, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_radius(clear, 0, 0);
+    lv_obj_set_style_border_width(clear, 0, 0);
+    lv_obj_t* clr = lv_label_create(clear);
+    lv_label_set_text(clr, "Clear");
+    lv_obj_set_style_text_font(clr, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(clr);
+    lv_obj_add_event_cb(clear, [](lv_event_t*) {
+        clear_chat_private_scope(current_scope_channel());
+        update_private_scope_subtitle();
+    }, LV_EVENT_CLICKED, nullptr);
+
     lv_obj_t* close = lv_btn_create(dlg);
-    lv_obj_set_size(close, 90, 22);
-    lv_obj_align(close, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_set_size(close, 74, 24);
+    lv_obj_align(close, LV_ALIGN_BOTTOM_RIGHT, -10, -4);
     lv_obj_set_style_bg_color(close, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_radius(close, 0, 0);
     lv_obj_set_style_border_width(close, 0, 0);
@@ -2411,11 +2369,12 @@ static void show_scope_picker() {
     if (g) {
         lv_group_add_obj(g, ta);
         lv_group_add_obj(g, set_btn);
+        lv_group_add_obj(g, clear);
         lv_group_add_obj(g, close);
+        lv_group_focus_obj(ta);
     }
 
-    scope_picker_rebuild();   // populates list + group rows
-    if (g) lv_group_focus_obj(ta);  // ready to type a custom scope
+    update_private_scope_subtitle();
 }
 
 void chat_screen_set_filter(int mode) {

@@ -30,6 +30,16 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
     (void)channel_name; (void)text; return false;
 }
 
+uint32_t sendMessageWithScopeKey(const char* dest_name, const char* text, const uint8_t* key16) {
+    (void)key16;
+    return sendMessage(dest_name, text);
+}
+
+bool sendChannelMessageWithScopeKey(const char* channel_name, const char* text, const uint8_t* key16) {
+    (void)key16;
+    return sendChannelMessage(channel_name, text);
+}
+
 int pollMessages(MeshMessage* out, int max) {
     int drained = 0;
     while (drained < max && mock_msg_count > 0) {

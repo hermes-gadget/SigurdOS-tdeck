@@ -1678,6 +1678,13 @@ public:
         return _active_scope.isNull();
     }
 
+    /// Copy the active flood-scope key. Returns false if no scope is set.
+    bool copyActiveScope(uint8_t* key16) const {
+        if (!key16 || _active_scope.isNull()) return false;
+        memcpy(key16, _active_scope.key, sizeof(_active_scope.key));
+        return true;
+    }
+
 private:
     void sendScopedImpl(::mesh::Packet* pkt, uint32_t delay_millis) {
         if (!pkt) return;

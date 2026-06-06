@@ -275,7 +275,7 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
         // and only emits a finished byte for a few combos. Alt+C is the one
         // free, non-typing code it sends (0x0C / form feed) — Alt+Space and
         // the Mic key (NULL in the C3 keymap) produce nothing the host can
-        // see. Opens per-channel region/scope controls plus channel actions
+        // see. Opens per-chat private scope controls plus channel actions
         // when the chat messaging view is active.
         if (key == 0x0C) {
             lv_obj_t* ci = sigurdos::ui::chat_screen_get_input_field();

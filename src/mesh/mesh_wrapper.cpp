@@ -972,6 +972,27 @@ void loop()
 
 // ── Send ────────────────────────────────────────
 
+class ScopedFloodScope {
+public:
+    ScopedFloodScope(mesh_impl_t* mesh, const uint8_t* key16) : _mesh(mesh) {
+        if (!_mesh) return;
+        _had_prev = _mesh->copyActiveScope(_prev);
+        if (key16) _mesh->setActiveScope(key16);
+        else       _mesh->clearActiveScope();
+    }
+
+    ~ScopedFloodScope() {
+        if (!_mesh) return;
+        if (_had_prev) _mesh->setActiveScope(_prev);
+        else           _mesh->clearActiveScope();
+    }
+
+private:
+    mesh_impl_t* _mesh = nullptr;
+    uint8_t _prev[16]{};
+    bool _had_prev = false;
+};
+
 uint32_t sendMessage(const char* dest, const char* text) {
     if (!g_mesh) return 0;
     uint32_t ts = getCurrentTime();
@@ -1002,6 +1023,16 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
         }
     }
     return false;
+}
+
+uint32_t sendMessageWithScopeKey(const char* dest_name, const char* text, const uint8_t* key16) {
+    ScopedFloodScope scope(g_mesh, key16);
+    return sendMessage(dest_name, text);
+}
+
+bool sendChannelMessageWithScopeKey(const char* channel_name, const char* text, const uint8_t* key16) {
+    ScopedFloodScope scope(g_mesh, key16);
+    return sendChannelMessage(channel_name, text);
 }
 
 // ── Message queue ───────────────────────────────

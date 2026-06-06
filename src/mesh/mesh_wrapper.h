@@ -97,6 +97,9 @@ void loop();
 // The UI must store this returned timestamp so isMessageAcked() can match against it later.
 uint32_t sendMessage(const char* dest_name, const char* text);
 bool sendChannelMessage(const char* channel_name, const char* text);
+// Scoped variants temporarily stamp this send with key16. A null key sends unscoped.
+uint32_t sendMessageWithScopeKey(const char* dest_name, const char* text, const uint8_t* key16);
+bool sendChannelMessageWithScopeKey(const char* channel_name, const char* text, const uint8_t* key16);
 
 int  pollMessages(MeshMessage* out, int max);
 int  pendingMessageCount();

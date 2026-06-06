@@ -18,67 +18,105 @@
 
 #include "channel_menu.h"
 
+#include <cstdio>
 #include <cstring>
 
-#include "../mesh/mesh_wrapper.h"
-#include "../mesh/regions.h"
 #include "../mesh/channel_validation.h"
+#include "../mesh/mesh_wrapper.h"
 
 namespace sigurdos::ui {
 
-// The body of a scope name, ignoring an optional leading '#'. A scope is
-// just a name: MeshCore derives its transport key from "#<body>" (SHA256),
-// so the user can type "eng-sw" or "#eng-sw" interchangeably.
-static const char* scope_body(const char* name)
+static const char* private_scope_body(const char* name)
 {
-    return (name && name[0] == '#') ? name + 1 : name;
+    return (name && name[0] == 0x24) ? name + 1 : name;
 }
 
-bool scope_name_valid(const char* name, const char** reason)
+bool channel_supports_private_scope(const char* channel)
 {
-    // Empty/null is the "Public (unscoped)" sentinel — always allowed.
-    if (!name || !name[0]) return true;
+    return channel && channel[0];
+}
 
-    const char* body = scope_body(name);
+static uint64_t fnv1a64(const char* text, uint64_t seed)
+{
+    uint64_t h = 1469598103934665603ULL ^ seed;
+    const unsigned char* p = (const unsigned char*)text;
+    while (*p) {
+        h ^= (uint64_t)*p++;
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static uint64_t mix64(uint64_t x)
+{
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return x;
+}
+
+static void derive_private_scope_key(const char* name, uint8_t key16[16])
+{
+    uint64_t a = mix64(fnv1a64(name, 0x7369677572646f73ULL));
+    uint64_t b = mix64(fnv1a64(name, 0x7072697661746524ULL));
+    for (int i = 0; i < 8; i++) {
+        key16[i] = (uint8_t)(a >> (i * 8));
+        key16[i + 8] = (uint8_t)(b >> (i * 8));
+    }
+}
+
+bool private_scope_name_valid(const char* name, const char** reason)
+{
+    if (!name || !name[0]) return true;
+    if (name[0] == '#') {
+        if (reason) *reason = "Private scopes only";
+        return false;
+    }
+
+    const char* body = private_scope_body(name);
     if (!body[0]) {
         if (reason) *reason = "Name required";
         return false;
     }
-    // Stored as "#<body>" in a 31-byte field (30 chars + null), so the body
-    // is capped at 29 characters.
-    if (strlen(body) > 29) {
+    if (std::strlen(body) > 29) {
         if (reason) *reason = "Name too long";
         return false;
     }
-    // The body follows the same rules as a channel name: letters, digits and
-    // single hyphens, no leading/trailing/double hyphens.
     return sigurdos::mesh::channel_name_valid(body, reason);
 }
 
-bool channel_scope_apply(const char* scope_name)
+bool private_scope_prepare(const char* scope_name,
+                           char* out_name, size_t out_name_len,
+                           uint8_t key16[16],
+                           const char** reason)
 {
+    if (!out_name || out_name_len == 0 || !key16) {
+        if (reason) *reason = "Internal error";
+        return false;
+    }
+
+    out_name[0] = 0;
+    std::memset(key16, 0, 16);
+
     if (!scope_name || !scope_name[0]) {
-        // Public / wildcard — send unscoped.
-        sigurdos::mesh::setActiveRegion("");
         return true;
     }
-    if (!scope_name_valid(scope_name)) return false;
+    if (!private_scope_name_valid(scope_name, reason)) {
+        return false;
+    }
 
-    // Normalise to "#<body>" so the transport key auto-derives (SHA256 of the
-    // name) and the scope matches the same-named channel/region. addRegion is
-    // a no-op when the region already exists.
-    char norm[32];
-    snprintf(norm, sizeof(norm), "#%s", scope_body(scope_name));
-    sigurdos::mesh::addRegion(norm, nullptr);
-    sigurdos::mesh::setActiveRegion(norm);
+    const char* body = private_scope_body(scope_name);
+    int written = std::snprintf(out_name, out_name_len, "$%s", body);
+    if (written < 0 || (size_t)written >= out_name_len) {
+        if (reason) *reason = "Name too long";
+        out_name[0] = 0;
+        return false;
+    }
+
+    derive_private_scope_key(out_name, key16);
     return true;
-}
-
-bool channel_supports_regions(const char* channel)
-{
-    // Region/flood scope is keyed on the channel hash, which only exists
-    // for public "#" channels. DMs ("DM: name") and unset names have none.
-    return channel && channel[0] == '#';
 }
 
 int channel_menu_build(const char* channel, ChannelMenuItem* out, int max)
@@ -94,10 +132,8 @@ int channel_menu_build(const char* channel, ChannelMenuItem* out, int max)
         }
     };
 
-    if (channel_supports_regions(channel)) {
-        push(ChannelAction::ChooseScope,     "Send scope...");
-        push(ChannelAction::SetHomeRegion,   "Set as home region");
-        push(ChannelAction::SetDefaultScope, "Set as default scope");
+    if (channel_supports_private_scope(channel)) {
+        push(ChannelAction::ChooseScope, "Private scope...");
     }
     push(ChannelAction::MarkRead,     "Mark all read");
     push(ChannelAction::LeaveChannel, "Leave channel");
@@ -105,31 +141,9 @@ int channel_menu_build(const char* channel, ChannelMenuItem* out, int max)
     return n;
 }
 
-bool channel_menu_perform(ChannelAction action, const char* channel, int channel_idx)
+bool channel_menu_perform(ChannelAction action, const char* /*channel*/, int channel_idx)
 {
     switch (action) {
-    case ChannelAction::SetActiveRegion:
-        if (!channel_supports_regions(channel)) return false;
-        // Scope outgoing floods to this channel's own region.
-        return channel_scope_apply(channel);
-
-    case ChannelAction::ClearActiveRegion:
-        // Back to wildcard/Public — send unscoped.
-        return channel_scope_apply("");
-
-    case ChannelAction::SetHomeRegion:
-        if (!channel_supports_regions(channel)) return false;
-        // setHomeRegion requires an existing region to bind to.
-        sigurdos::mesh::addRegion(channel, nullptr);
-        return sigurdos::mesh::setHomeRegion(channel);
-
-    case ChannelAction::SetDefaultScope:
-        if (!channel_supports_regions(channel)) return false;
-        // setDefaultScope auto-creates, but addRegion derives the
-        // transport key for "#" names so scoped sends actually encrypt.
-        sigurdos::mesh::addRegion(channel, nullptr);
-        return sigurdos::mesh::setDefaultScope(channel);
-
     case ChannelAction::LeaveChannel:
         if (channel_idx < 0) return false;
         return sigurdos::mesh::removeChannel(channel_idx);
@@ -138,8 +152,6 @@ bool channel_menu_perform(ChannelAction action, const char* channel, int channel
     case ChannelAction::MarkRead:
     case ChannelAction::None:
     default:
-        // UI-only or no-op — the caller handles it (opens the scope picker,
-        // clears the unread badge, etc.).
         return false;
     }
 }
