@@ -74,7 +74,7 @@ static lv_obj_t* msg_list       = nullptr;
 static lv_obj_t* input_bar      = nullptr;
 static lv_obj_t* input_field    = nullptr;
 static lv_obj_t* byte_counter   = nullptr;
-// Alt+Space channel menu overlay (null when closed). While open, trackball
+// Alt+C channel menu overlay (null when closed). While open, trackball
 // events fall through to the LVGL group so its buttons stay navigable.
 static lv_obj_t* channel_menu   = nullptr;
 
@@ -1988,7 +1988,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
     }, LV_EVENT_ALL, (void*)fb);
 }
 
-// ── Channel quick-action menu (Alt+Space) ──────────────────
+// ── Channel quick-action menu (Alt+C) ──────────────────────
 // A small popup over the messaging view exposing per-channel region
 // controls (scope, home, default) plus channel actions (mark read,
 // leave). The action logic lives in channel_menu.{h,cpp}; this just

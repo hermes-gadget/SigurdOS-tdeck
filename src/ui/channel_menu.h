@@ -18,7 +18,7 @@
 // You should have received a copy of the GNU General Public License
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
-// ── Channel quick-action menu (Alt+Space) ──────────────────
+// ── Channel quick-action menu (Alt+C) ──────────────────────
 // Pure, LVGL-free logic backing the in-chat channel menu. The chat
 // screen builds the popup from channel_menu_build() and dispatches the
 // user's choice through channel_menu_perform(). Keeping this free of
