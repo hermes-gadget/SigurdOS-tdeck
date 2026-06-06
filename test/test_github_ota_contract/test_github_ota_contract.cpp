@@ -17,13 +17,19 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <gtest/gtest.h>
+#include <cstring>
 
 #include "hal/github_ota.h"
+#include "hal/github_ota_plan.h"
 
 namespace {
 
 using sigurdos::github_ota::GitHubOTAState;
 using sigurdos::github_ota::GitHubOTAStatus;
+using sigurdos::github_ota::branchNeedsReleaseApi;
+using sigurdos::github_ota::buildReleaseDownloadUrl;
+using sigurdos::github_ota::copyFallbackDownloadUrl;
+using sigurdos::github_ota::selectReleaseTagFromJson;
 
 TEST(GitHubOTAContractTest, StateValuesStayStableForUiProgress) {
     EXPECT_EQ(static_cast<int>(GitHubOTAState::Idle), 0);
@@ -62,6 +68,110 @@ TEST(GitHubOTAContractTest, PublicApiSignaturesStayStable) {
     (void)static_cast<void_fn>(sigurdos::github_ota::cancel);
     (void)static_cast<label_fn>(sigurdos::github_ota::getDownloadLabel);
     SUCCEED();
+}
+
+TEST(GitHubOTAPlanTest, LatestAndEmptyBranchUseFallbackWithoutApi) {
+    EXPECT_FALSE(branchNeedsReleaseApi(nullptr));
+    EXPECT_FALSE(branchNeedsReleaseApi(""));
+    EXPECT_FALSE(branchNeedsReleaseApi("latest"));
+    EXPECT_TRUE(branchNeedsReleaseApi("main"));
+    EXPECT_TRUE(branchNeedsReleaseApi("dev"));
+}
+
+TEST(GitHubOTAPlanTest, BuildsReleaseAndFallbackUrlsWithinBuffer) {
+    char url[256] = "";
+    buildReleaseDownloadUrl("v2.0.0", url, sizeof(url));
+    EXPECT_STREQ(url,
+        "https://github.com/hermes-gadget/SigurdOS-tdeck"
+        "/releases/download/v2.0.0/firmware.bin");
+
+    char fallback[256] = "";
+    copyFallbackDownloadUrl(fallback, sizeof(fallback));
+    EXPECT_STREQ(fallback,
+        "https://github.com/hermes-gadget/SigurdOS-tdeck"
+        "/releases/latest/download/firmware.bin");
+}
+
+TEST(GitHubOTAPlanTest, ReleaseUrlIsAlwaysTerminatedWhenBufferIsSmall) {
+    char url[18];
+    for (char& c : url) c = '?';
+
+    buildReleaseDownloadUrl("v2.0.0", url, sizeof(url));
+
+    EXPECT_EQ(url[sizeof(url) - 1], '\0');
+    EXPECT_STRNE(url, "");
+}
+
+TEST(GitHubOTAPlanTest, SelectsFirstMatchingNonPrereleaseForBranch) {
+    const char* json = R"([
+      {"tag_name":"dev-pre","target_commitish":"dev","prerelease":true},
+      {"tag_name":"main-stable","target_commitish":"main","prerelease":false},
+      {"tag_name":"dev-stable","target_commitish":"dev","prerelease":false}
+    ])";
+    char tag[32] = "";
+
+    ASSERT_TRUE(selectReleaseTagFromJson(json, "dev", false, tag, sizeof(tag)));
+    EXPECT_STREQ(tag, "dev-stable");
+}
+
+TEST(GitHubOTAPlanTest, AllowsPrereleaseWhenConfigured) {
+    const char* json = R"([
+      {"tag_name":"dev-pre","target_commitish":"dev","prerelease":true},
+      {"tag_name":"dev-stable","target_commitish":"dev","prerelease":false}
+    ])";
+    char tag[32] = "";
+
+    ASSERT_TRUE(selectReleaseTagFromJson(json, "dev", true, tag, sizeof(tag)));
+    EXPECT_STREQ(tag, "dev-pre");
+}
+
+TEST(GitHubOTAPlanTest, SkipsNestedUnknownReleaseFields) {
+    const char* json = R"([
+      {
+        "assets":[{"name":"firmware.bin","size":1234}],
+        "body":{"notes":["ignored"]},
+        "tag_name":"main-stable",
+        "target_commitish":"main",
+        "prerelease":false
+      }
+    ])";
+    char tag[32] = "";
+
+    ASSERT_TRUE(selectReleaseTagFromJson(json, "main", false, tag, sizeof(tag)));
+    EXPECT_STREQ(tag, "main-stable");
+}
+
+TEST(GitHubOTAPlanTest, NoMatchingReleaseIsNegativeCase) {
+    const char* json = R"([
+      {"tag_name":"dev-only","target_commitish":"dev","prerelease":false}
+    ])";
+    char tag[32] = "unchanged";
+
+    EXPECT_FALSE(selectReleaseTagFromJson(json, "main", false, tag, sizeof(tag)));
+    EXPECT_STREQ(tag, "");
+}
+
+TEST(GitHubOTAPlanTest, MalformedJsonIsNegativeCase) {
+    char tag[32] = "unchanged";
+
+    EXPECT_FALSE(selectReleaseTagFromJson("[{\"tag_name\":\"bad\"", "main",
+                                          false, tag, sizeof(tag)));
+    EXPECT_STREQ(tag, "");
+}
+
+TEST(GitHubOTAPlanTest, InvalidArgumentsAreNegativeCases) {
+    char tag[32] = "unchanged";
+
+    EXPECT_FALSE(selectReleaseTagFromJson(nullptr, "main", false, tag, sizeof(tag)));
+    EXPECT_STREQ(tag, "");
+    std::strncpy(tag, "unchanged", sizeof(tag));
+    EXPECT_FALSE(selectReleaseTagFromJson("[]", nullptr, false, tag, sizeof(tag)));
+    EXPECT_STREQ(tag, "");
+    std::strncpy(tag, "unchanged", sizeof(tag));
+    EXPECT_FALSE(selectReleaseTagFromJson("[]", "latest", false, tag, sizeof(tag)));
+    EXPECT_STREQ(tag, "");
+    EXPECT_FALSE(selectReleaseTagFromJson("[]", "main", false, nullptr, sizeof(tag)));
+    EXPECT_FALSE(selectReleaseTagFromJson("[]", "main", false, tag, 0));
 }
 
 } // namespace
