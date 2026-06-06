@@ -103,6 +103,40 @@ Telemetry observations:
   fix acquisition. A sky-view run with `fix=1` and satellites must still be
   attached before GPS is marked complete for RC2.
 
+### 2026-06-06 COM8 Non-radio UI Smoke
+
+Branch and commit: `codex/rc2-ui-hardware-validation` at `ab89c7e`
+
+Commands:
+
+```powershell
+pio run -e SigurdOS_TDeck_remote_test
+pio run -e SigurdOS_TDeck_remote_test -t upload --upload-port COM8
+python scripts\validation\remote_test_smoke.py --port COM8 --profile ui --forbid-port COM11 --forbid-port COM29
+```
+
+Result:
+
+| Check | Evidence |
+| --- | --- |
+| Build | PASS, 00:06:35.669 |
+| Size | RAM 109,420/327,680 bytes; flash 1,838,309/6,553,600 bytes; merged image 1,904,256 bytes |
+| Upload | PASS on manually specified `COM8`, 00:01:12.891; all esptool flash hashes verified |
+| Serial smoke | PASS, 10/10 checks |
+| Artifacts | `.pio/rc2_hardware_validation/2026-06-06-105938/summary.json`, `.pio/rc2_hardware_validation/2026-06-06-105938/serial.log` |
+
+UI observations:
+
+- `SigurdOS_TDeck_remote_test` ran without `SIGURDOS_REMOTE_TEST_RADIO`, so this
+  evidence covers serial UI/input automation without LoRa radio initialization
+  or RF transmit.
+- The script validated readable screen state, heap/PSRAM status, home to chat
+  navigation, simulated `#general` channel message injection, visible-widget
+  dumping, settings and signal navigation, backlight query, and return home.
+- Build output still carries the known `LORA_FREQ`, `LORA_BW`, and `LORA_SF`
+  macro redefinition warnings, plus upstream library warnings. These remain part
+  of the warning-cleanup roadmap and did not block this hardware smoke.
+
 ## RC2 Validation Matrix
 
 | Area | Minimum RC2 evidence | Current status |
@@ -110,7 +144,7 @@ Telemetry observations:
 | Native tests | `pio test -e native_test -v` passes | Green in PR #464: 679 cases, 678 succeeded, 1 skipped |
 | Release build | `pio run -e SigurdOS_TDeck` passes with size and warning summary recorded | Needed on current RC2 branch |
 | Telemetry smoke | COM8 `SigurdOS_TDeck_telemetry` upload plus `remote_test_smoke.py --profile telemetry` pass | PASS on 2026-06-06 COM8 run |
-| Non-radio remote UI | COM8 `SigurdOS_TDeck_remote_test` upload plus `remote_test_smoke.py --profile ui` pass | Needed after telemetry smoke |
+| Non-radio remote UI | COM8 `SigurdOS_TDeck_remote_test` upload plus `remote_test_smoke.py --profile ui` pass | PASS on 2026-06-06 COM8 run |
 | GPS | COM8 SPIFFS/NVS evidence with fixed records and privacy-safe coordinates | PR #464 records 84 fixed records and NVS `boot_count_value=36`; 2026-06-06 telemetry smoke proves GPS UART data path but not fix |
 | Companion BLE | COM8 BLE validation boot/advertising plus official app pairing/auth/RX/TX | Boot/advertising previously proven; phone pairing still needed |
 | RF interop | Named frequency/profile, peer node identity, TX/RX packet counters, packet log, and transcript | Not started for RC2; do not use `COM11` under current port constraint |
