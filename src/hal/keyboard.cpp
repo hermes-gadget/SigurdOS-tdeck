@@ -150,6 +150,23 @@ void sigurdos_keyboard_scan()
         keyValue = Wire.read();
     }
 
+#if defined(SIGURDOS_DEBUG)
+    // Raw key-byte probe: prints the exact byte the C3 keyboard sends for
+    // every key (including would-be-dropped 0xFF), so unknown keys like the
+    // Mic key can be identified and bound. Deduped to avoid held-key spam.
+    {
+        static int last_logged = -1;
+        if (keyValue != 0 && keyValue != last_logged) {
+            char c = (keyValue >= 0x20 && keyValue < 0x7F) ? (char)keyValue : '.';
+            Serial.printf("[kbd] raw byte: 0x%02X (%d) '%c'\n",
+                          keyValue & 0xFF, keyValue, c);
+            last_logged = keyValue;
+        } else if (keyValue == 0) {
+            last_logged = -1;  // reset on key release so a repeat re-logs
+        }
+    }
+#endif
+
     if (keyValue <= 0 || keyValue == 0xFF) {
         // MCU returned 0 or invalid — nothing to enqueue.
         return;
