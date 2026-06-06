@@ -293,18 +293,22 @@ static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
                 continue;
             }
 
-            const bool ext_layer = alt_down || alt_one_shot || mic_down || mic_one_shot;
+            const bool alt_layer = alt_down || alt_one_shot;
+            const bool mic_layer = mic_down || mic_one_shot;
             uint32_t out = 0;
 
             if (key.kind == RawKeyKind::Enter || key.kind == RawKeyKind::Backspace) {
                 out = key.normal;
             } else if (key.kind == RawKeyKind::Mic && sym_layer) {
                 out = (shift_down && key.sym_shift) ? key.sym_shift : key.sym;
-            } else if (alt_down && key.normal == ' ') {
-                out = 0x0C; // Channel-menu shortcut, moved off Alt+C so Alt+C can type c-cedilla.
+            } else if (alt_layer && key.normal == ' ') {
+                out = 0x0C; // Channel-menu shortcut, leaving Alt+letter for character options.
             } else if (alt_down && key.normal == 'b') {
                 out = 0;    // The keyboard MCU owns Alt+B backlight toggling.
-            } else if (ext_layer) {
+            } else if (alt_layer) {
+                out = sigurdos_keyboard_char_picker_key(
+                    (uint8_t)(shift_down ? shifted_codepoint(key.normal) : key.normal));
+            } else if (mic_layer) {
                 out = extended_codepoint(key.normal, shift_down);
                 if (out == 0) {
                     out = sym_layer

@@ -276,6 +276,15 @@ Row5   SPC      z        c        n        m
 Row6   Mic      LShift   f        j        k
 ```
 
+### Host Raw-Mode Key Layers
+
+- `Sym` opens the symbol layer; tapping `Sym` arms it for one key.
+- `Alt` opens an on-screen character picker for the pressed base key; tapping
+  `Alt` arms the picker for one key.
+- `Mic` is a fast extended-character alias for common accented characters.
+- `Alt+Space` emits the channel-menu shortcut event (`0x0C`).
+- `Alt+B` remains handled by the keyboard MCU for backlight toggling.
+
 ### Backlight Control
 
 | API Call                                          | Effect                          |

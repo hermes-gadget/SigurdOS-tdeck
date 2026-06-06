@@ -26,9 +26,11 @@
 #include "../ui/ui.h"
 #include "../ui/chat_screen.h"
 #include "../ui/navigation.h"
+#include "../ui/theme.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../diagnostics/debug_cfg.h"
 #include "../diagnostics/debug.h"
+#include "../fonts/emoji_font.h"
 #if SIGURDOS_TELEMETRY
 #include "../diagnostics/telemetry.h"
 #endif
@@ -116,6 +118,264 @@ static SigurdOSTrackballEvent trackball_fallback_queue[TRACKBALL_FALLBACK_QUEUE_
 static uint8_t trackball_fallback_head = 0;
 static uint8_t trackball_fallback_tail = 0;
 static uint8_t trackball_fallback_count = 0;
+static lv_obj_t* character_picker = nullptr;
+static lv_obj_t* character_picker_target = nullptr;
+
+struct CharacterPickerButtonData {
+    lv_obj_t* target;
+    const char* text;
+};
+
+static CharacterPickerButtonData character_picker_buttons[8];
+
+static char lowercase_ascii(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c + ('a' - 'A')) : c;
+}
+
+static bool character_options_for_base(char base,
+                                       const char* const** options,
+                                       uint8_t* count)
+{
+    static const char* const a_lower[] = {"á", "à", "â", "ä", "å", "æ", "ã", "a"};
+    static const char* const a_upper[] = {"Á", "À", "Â", "Ä", "Å", "Æ", "Ã", "A"};
+    static const char* const c_lower[] = {"ç", "ć", "č", "ĉ", "ċ", "c"};
+    static const char* const c_upper[] = {"Ç", "Ć", "Č", "Ĉ", "Ċ", "C"};
+    static const char* const e_lower[] = {"é", "è", "ê", "ë", "ē", "e"};
+    static const char* const e_upper[] = {"É", "È", "Ê", "Ë", "Ē", "E"};
+    static const char* const i_lower[] = {"í", "ì", "î", "ï", "ī", "i"};
+    static const char* const i_upper[] = {"Í", "Ì", "Î", "Ï", "Ī", "I"};
+    static const char* const l_lower[] = {"ł", "ĺ", "ľ", "l"};
+    static const char* const l_upper[] = {"Ł", "Ĺ", "Ľ", "L"};
+    static const char* const n_lower[] = {"ñ", "ń", "ň", "n"};
+    static const char* const n_upper[] = {"Ñ", "Ń", "Ň", "N"};
+    static const char* const o_lower[] = {"ó", "ò", "ô", "ö", "ø", "œ", "õ", "o"};
+    static const char* const o_upper[] = {"Ó", "Ò", "Ô", "Ö", "Ø", "Œ", "Õ", "O"};
+    static const char* const s_lower[] = {"ß", "ś", "š", "ş", "s"};
+    static const char* const s_upper[] = {"Ś", "Š", "Ş", "S"};
+    static const char* const u_lower[] = {"ú", "ù", "û", "ü", "ū", "u"};
+    static const char* const u_upper[] = {"Ú", "Ù", "Û", "Ü", "Ū", "U"};
+    static const char* const y_lower[] = {"ý", "ÿ", "ŷ", "y"};
+    static const char* const y_upper[] = {"Ý", "Ÿ", "Ŷ", "Y"};
+
+    if (!options || !count) return false;
+
+    const bool upper = (base >= 'A' && base <= 'Z');
+    switch (lowercase_ascii(base)) {
+    case 'a':
+        *options = upper ? a_upper : a_lower;
+        *count = (uint8_t)(sizeof(a_lower) / sizeof(a_lower[0]));
+        return true;
+    case 'c':
+        *options = upper ? c_upper : c_lower;
+        *count = (uint8_t)(sizeof(c_lower) / sizeof(c_lower[0]));
+        return true;
+    case 'e':
+        *options = upper ? e_upper : e_lower;
+        *count = (uint8_t)(sizeof(e_lower) / sizeof(e_lower[0]));
+        return true;
+    case 'i':
+        *options = upper ? i_upper : i_lower;
+        *count = (uint8_t)(sizeof(i_lower) / sizeof(i_lower[0]));
+        return true;
+    case 'l':
+        *options = upper ? l_upper : l_lower;
+        *count = (uint8_t)(sizeof(l_lower) / sizeof(l_lower[0]));
+        return true;
+    case 'n':
+        *options = upper ? n_upper : n_lower;
+        *count = (uint8_t)(sizeof(n_lower) / sizeof(n_lower[0]));
+        return true;
+    case 'o':
+        *options = upper ? o_upper : o_lower;
+        *count = (uint8_t)(sizeof(o_lower) / sizeof(o_lower[0]));
+        return true;
+    case 's':
+        *options = upper ? s_upper : s_lower;
+        *count = (uint8_t)(upper
+            ? (sizeof(s_upper) / sizeof(s_upper[0]))
+            : (sizeof(s_lower) / sizeof(s_lower[0])));
+        return true;
+    case 'u':
+        *options = upper ? u_upper : u_lower;
+        *count = (uint8_t)(sizeof(u_lower) / sizeof(u_lower[0]));
+        return true;
+    case 'y':
+        *options = upper ? y_upper : y_lower;
+        *count = (uint8_t)(sizeof(y_lower) / sizeof(y_lower[0]));
+        return true;
+    default:
+        return false;
+    }
+}
+
+static lv_obj_t* find_textarea_in_tree(lv_obj_t* root, uint8_t depth)
+{
+    if (!root || depth == 0) return nullptr;
+    if (lv_obj_check_type(root, &lv_textarea_class)) return root;
+
+    const uint32_t cnt = lv_obj_get_child_cnt(root);
+    for (uint32_t i = 0; i < cnt; i++) {
+        lv_obj_t* child = lv_obj_get_child(root, i);
+        lv_obj_t* found = find_textarea_in_tree(child, (uint8_t)(depth - 1));
+        if (found) return found;
+    }
+    return nullptr;
+}
+
+static lv_obj_t* find_keyboard_textarea()
+{
+    lv_group_t* g = lv_group_get_default();
+    lv_obj_t* focused = g ? lv_group_get_focused(g) : nullptr;
+    if (focused && lv_obj_is_valid(focused) &&
+        lv_obj_check_type(focused, &lv_textarea_class)) {
+        return focused;
+    }
+    return find_textarea_in_tree(lv_scr_act(), 5);
+}
+
+static void focus_textarea(lv_obj_t* target)
+{
+    if (target && lv_obj_is_valid(target) && lv_group_get_default()) {
+        lv_group_focus_obj(target);
+    }
+}
+
+static void focus_chat_input_if_active()
+{
+    lv_obj_t* chat_input = sigurdos::ui::chat_screen_get_input_field();
+    if (!chat_input || !lv_obj_is_valid(chat_input)) return;
+
+    lv_obj_t* chat_scr = lv_obj_get_screen(chat_input);
+    lv_obj_t* act_scr = lv_scr_act();
+    if (chat_scr == act_scr && lv_group_get_default()) {
+        lv_group_focus_obj(chat_input);
+    }
+}
+
+static void close_character_picker(bool restore_focus)
+{
+    lv_obj_t* target = character_picker_target;
+    if (character_picker && lv_obj_is_valid(character_picker)) {
+        lv_obj_t* closing = character_picker;
+        character_picker = nullptr;
+        character_picker_target = nullptr;
+        lv_obj_del_async(closing);
+    }
+    if (restore_focus) {
+        focus_textarea(target);
+    }
+}
+
+static void character_picker_insert_cb(lv_event_t* e)
+{
+    auto* data = (CharacterPickerButtonData*)lv_event_get_user_data(e);
+    if (data && data->target && lv_obj_is_valid(data->target) && data->text) {
+        lv_textarea_add_text(data->target, data->text);
+        character_picker_target = data->target;
+    }
+    close_character_picker(true);
+}
+
+static void character_picker_close_cb(lv_event_t*)
+{
+    close_character_picker(true);
+}
+
+static bool show_character_picker(char base, lv_obj_t* target)
+{
+    const char* const* options = nullptr;
+    uint8_t count = 0;
+    if (!character_options_for_base(base, &options, &count) || count == 0) {
+        return false;
+    }
+    if (!target || !lv_obj_is_valid(target) ||
+        !lv_obj_check_type(target, &lv_textarea_class)) {
+        return false;
+    }
+    if (count > 8) count = 8;
+
+    close_character_picker(false);
+
+    lv_obj_t* dlg = lv_obj_create(lv_scr_act());
+    character_picker = dlg;
+    character_picker_target = target;
+
+    lv_obj_set_size(dlg, 272, 86);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(sigurdos::theme::BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(dlg, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, sigurdos::theme::PIXEL_BORDER, 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(sigurdos::theme::ACCENT), 0);
+    lv_obj_set_style_pad_all(dlg, 6, 0);
+    lv_obj_remove_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        if (character_picker == (lv_obj_t*)lv_event_get_target(e)) {
+            character_picker = nullptr;
+            character_picker_target = nullptr;
+        }
+    }, LV_EVENT_DELETE, nullptr);
+
+    char title_buf[8] = {0};
+    title_buf[0] = base;
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, title_buf);
+    lv_obj_set_style_text_color(title, lv_color_hex(sigurdos::theme::TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 2, 0);
+
+    lv_obj_t* close = lv_btn_create(dlg);
+    lv_obj_set_size(close, 24, 22);
+    lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(close, lv_color_hex(sigurdos::theme::BG_INPUT), 0);
+    lv_obj_set_style_radius(close, 0, 0);
+    lv_obj_set_style_border_width(close, 0, 0);
+    lv_obj_t* close_lbl = lv_label_create(close);
+    lv_label_set_text(close_lbl, LV_SYMBOL_CLOSE);
+    lv_obj_set_style_text_font(close_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(close_lbl);
+    lv_obj_add_event_cb(close, character_picker_close_cb, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* row = lv_obj_create(dlg);
+    lv_obj_set_size(row, 258, 42);
+    lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_style_pad_gap(row, 4, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_group_t* g = lv_group_get_default();
+    for (uint8_t i = 0; i < count; i++) {
+        character_picker_buttons[i].target = target;
+        character_picker_buttons[i].text = options[i];
+
+        lv_obj_t* btn = lv_btn_create(row);
+        lv_obj_set_size(btn, 28, 36);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(
+            i == 0 ? sigurdos::theme::ACCENT : sigurdos::theme::BG_INPUT), 0);
+        lv_obj_set_style_radius(btn, 0, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, options[i]);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(sigurdos::theme::TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_16, 0);
+        lv_obj_center(lbl);
+
+        lv_obj_add_event_cb(btn, character_picker_insert_cb, LV_EVENT_CLICKED,
+                            &character_picker_buttons[i]);
+        if (g) {
+            lv_group_add_obj(g, btn);
+            if (i == 0) lv_group_focus_obj(btn);
+        }
+    }
+    if (g) lv_group_add_obj(g, close);
+    return true;
+}
 
 static uint32_t keyboard_key_to_lvgl_key(int key)
 {
@@ -282,8 +542,8 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
     int key = sigurdos_keyboard_get_key();
     if (key > 0 && sigurdos_keyboard_consume_event()) {
         // ── Global shortcut: channel quick-action menu ──
-        // Raw matrix mode maps Alt+Space to 0x0C so Alt+C remains available
-        // for c-cedilla. Legacy key-mode C3 firmware also emits 0x0C for
+        // Raw matrix mode maps Alt+Space to 0x0C so Alt+letter can open
+        // the character picker. Legacy key-mode C3 firmware emits 0x0C for
         // Alt+C, so the display layer only needs to handle the event code.
         if (key == 0x0C) {
             lv_obj_t* ci = sigurdos::ui::chat_screen_get_input_field();
@@ -292,6 +552,23 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
             }
             sigurdos_keyboard_consume_key();
             data->state = LV_INDEV_STATE_RELEASED;
+            return;
+        }
+
+        if (sigurdos_keyboard_is_char_picker_key((uint32_t)key)) {
+            if (!sigurdos::ui::chat_screen_overlay_active()) {
+                focus_chat_input_if_active();
+            }
+            const char base = sigurdos_keyboard_char_picker_base((uint32_t)key);
+            lv_obj_t* target = find_keyboard_textarea();
+            if (!show_character_picker(base, target)) {
+                data->key = sigurdos_display_encode_text_key((uint32_t)base);
+                data->state = LV_INDEV_STATE_PRESSED;
+            } else {
+                data->state = LV_INDEV_STATE_RELEASED;
+            }
+            sigurdos_display_wake();
+            sigurdos_keyboard_consume_key();
             return;
         }
 
@@ -310,57 +587,14 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
         // Route keyboard input to the chat textarea only when the chat
         // screen is the active screen — never steal focus from other
         // textareas (WiFi password dialog, etc.).
-        lv_obj_t* chat_input = sigurdos::ui::chat_screen_get_input_field();
-        if (chat_input && lv_obj_is_valid(chat_input)) {
-            lv_obj_t* chat_scr = lv_obj_get_screen(chat_input);
-            lv_obj_t* act_scr = lv_scr_act();
-            if (chat_scr == act_scr) {
-                lv_group_t* g = lv_group_get_default();
-                if (g) lv_group_focus_obj(chat_input);
-            }
-        }
+        focus_chat_input_if_active();
 
         // For printable codepoints, ensure focus is on a textarea.
         // The trackball (ENCODER indev) can accidentally move group
         // focus to a button — if focus isn't a textarea, find one
         // on the active screen and refocus it so keystrokes land.
         if (key > 0x20 && key != 0x7F) {
-            lv_group_t* g = lv_group_get_default();
-            lv_obj_t* focused = g ? lv_group_get_focused(g) : nullptr;
-            if (!focused || !lv_obj_check_type(focused, &lv_textarea_class)) {
-                // Focus lost — walk the screen tree for any textarea
-                lv_obj_t* act_scr = lv_scr_act();
-                if (act_scr) {
-                    uint32_t cnt = lv_obj_get_child_cnt(act_scr);
-                    for (uint32_t i = 0; i < cnt; i++) {
-                        lv_obj_t* c = lv_obj_get_child(act_scr, i);
-                        // Check direct child
-                        if (lv_obj_check_type(c, &lv_textarea_class)) {
-                            lv_group_focus_obj(c);
-                            break;
-                        }
-                        // Check grandchildren (textareas in dialogs)
-                        uint32_t gc = lv_obj_get_child_cnt(c);
-                        for (uint32_t j = 0; j < gc; j++) {
-                            lv_obj_t* gc_obj = lv_obj_get_child(c, j);
-                            if (lv_obj_check_type(gc_obj, &lv_textarea_class)) {
-                                lv_group_focus_obj(gc_obj);
-                                goto found;
-                            }
-                            // Check great-grandchildren
-                            uint32_t ggc = lv_obj_get_child_cnt(gc_obj);
-                            for (uint32_t k = 0; k < ggc; k++) {
-                                lv_obj_t* ggc_obj = lv_obj_get_child(gc_obj, k);
-                                if (lv_obj_check_type(ggc_obj, &lv_textarea_class)) {
-                                    lv_group_focus_obj(ggc_obj);
-                                    goto found;
-                                }
-                            }
-                        }
-                    }
-                    found:;
-                }
-            }
+            focus_textarea(find_keyboard_textarea());
         }
 
         data->key = keyboard_key_to_lvgl_key(key);

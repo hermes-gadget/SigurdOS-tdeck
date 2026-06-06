@@ -353,19 +353,19 @@ TEST_F(KeyboardTest, RawMatrixKeepsMicKeyUsableAsZeroOnSymLayer) {
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
 }
 
-TEST_F(KeyboardTest, RawMatrixMapsAltLayerToAccentedLatin) {
+TEST_F(KeyboardTest, RawMatrixMapsAltCToCharacterPicker) {
     init_with_ack();
     scan_raw({{0, 4}, {2, 5}}); // alt + c
 
-    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00E7); // c cedilla
+    EXPECT_EQ(sigurdos_keyboard_get_key(), (int)sigurdos_keyboard_char_picker_key('c'));
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
 }
 
-TEST_F(KeyboardTest, RawMatrixMapsShiftAltLayerToUpperAccentedLatin) {
+TEST_F(KeyboardTest, RawMatrixMapsShiftAltCToUpperCharacterPicker) {
     init_with_ack();
     scan_raw({{0, 4}, {1, 6}, {2, 5}}); // alt + shift + c
 
-    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00C7); // C cedilla
+    EXPECT_EQ(sigurdos_keyboard_get_key(), (int)sigurdos_keyboard_char_picker_key('C'));
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
 }
 
@@ -458,9 +458,20 @@ TEST_F(KeyboardTest, RawMatrixSupportsOneShotAltLayer) {
     EXPECT_FALSE(sigurdos_keyboard_has_event());
     release_raw();
 
-    scan_raw({{3, 0}}); // next u uses one-shot alt layer
-    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00FC);
+    scan_raw({{3, 0}}); // next u opens one-shot alt character picker
+    EXPECT_EQ(sigurdos_keyboard_get_key(), (int)sigurdos_keyboard_char_picker_key('u'));
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, CharacterPickerKeyHelpersPreserveBaseCharacter) {
+    uint32_t lower = sigurdos_keyboard_char_picker_key('c');
+    uint32_t upper = sigurdos_keyboard_char_picker_key('C');
+
+    EXPECT_TRUE(sigurdos_keyboard_is_char_picker_key(lower));
+    EXPECT_TRUE(sigurdos_keyboard_is_char_picker_key(upper));
+    EXPECT_EQ(sigurdos_keyboard_char_picker_base(lower), 'c');
+    EXPECT_EQ(sigurdos_keyboard_char_picker_base(upper), 'C');
+    EXPECT_FALSE(sigurdos_keyboard_is_char_picker_key('c'));
 }
 
 TEST_F(KeyboardTest, RawMatrixSupportsOneShotSymLayer) {

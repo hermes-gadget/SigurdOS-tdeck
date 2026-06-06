@@ -20,6 +20,26 @@
 
 #include <cstdint>
 
+// Internal keyboard event: request an on-screen character picker for a base key.
+// The low byte stores the ASCII base character, e.g. 'c' or 'C'.
+static constexpr uint32_t SIGURDOS_KEY_CHAR_PICKER_BASE = 0x01000000u;
+static constexpr uint32_t SIGURDOS_KEY_CHAR_PICKER_MASK = 0xFFFFFF00u;
+
+inline uint32_t sigurdos_keyboard_char_picker_key(uint8_t base)
+{
+    return SIGURDOS_KEY_CHAR_PICKER_BASE | (uint32_t)base;
+}
+
+inline bool sigurdos_keyboard_is_char_picker_key(uint32_t key)
+{
+    return (key & SIGURDOS_KEY_CHAR_PICKER_MASK) == SIGURDOS_KEY_CHAR_PICKER_BASE;
+}
+
+inline char sigurdos_keyboard_char_picker_base(uint32_t key)
+{
+    return (char)(key & 0xFFu);
+}
+
 // ── T-Deck Keyboard (ESP32-C3 via I2C) ─────────────────
 // The T-Deck keyboard is a separate ESP32-C3 MCU on I2C address 0x55.
 // It handles matrix scanning, debouncing, modifier keys, and backlight.

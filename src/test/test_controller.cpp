@@ -13,6 +13,7 @@
 //   back                          Go back
 //   tb up|down|left|right|click   Simulate trackball event
 //   type <text>                   Type text via keyboard simulation
+//   picker <char>                 Open keyboard character picker
 //   press enter|backspace|esc     Press special key
 //   inject <from> <text>          Simulate incoming DM
 //   inject <from> channel=<ch> <text>  Simulate incoming channel msg
@@ -122,6 +123,7 @@ static void print_help() {
     Serial.println(F("║  back        Go back                 ║"));
     Serial.println(F("║  tb <dir>    Trackball (u/d/l/r/c)   ║"));
     Serial.println(F("║  type <txt>  Type text               ║"));
+    Serial.println(F("║  picker <c>  Open char picker        ║"));
     Serial.println(F("║  press <key> Press Enter/Bksp/Esc    ║"));
     Serial.println(F("║  inject <from> [channel=<ch>] <msg>  ║"));
     Serial.println(F("║  sendchannel <ch> <text>          Send on a channel        ║"));
@@ -341,6 +343,24 @@ static void cmd_press(const char* key) {
     sigurdos_keyboard_inject(code);
     Serial.printf("[test] press %s (0x%02X)\n", key, code);
     // Small delay to let LVGL process the keypress before reading focus
+    delay(50);
+    dump_focused_widget();
+}
+
+static void cmd_picker(const char* arg) {
+    if (!arg || !arg[0]) {
+        Serial.println("[test] picker: usage: picker <ascii-char>");
+        return;
+    }
+    unsigned char base = (unsigned char)arg[0];
+    if (base < 0x20 || base >= 0x7F) {
+        Serial.println("[test] picker: base must be one ASCII character");
+        return;
+    }
+    sigurdos_keyboard_inject_codepoint(sigurdos_keyboard_char_picker_key(base));
+    Serial.printf("[test] picker %c (0x%08lX)\n",
+                  (char)base,
+                  (unsigned long)sigurdos_keyboard_char_picker_key(base));
     delay(50);
     dump_focused_widget();
 }
@@ -1082,6 +1102,9 @@ static bool dispatch(const char* line) {
         cmd_trackball(arg);
     } else if (strcmp(cmd, "type") == 0) {
         cmd_type(arg);
+    } else if (strcmp(cmd, "picker") == 0) {
+        if (!arg) { Serial.println("[test] picker: missing base character"); return true; }
+        cmd_picker(arg);
     } else if (strcmp(cmd, "press") == 0) {
         if (!arg) { Serial.println("[test] press: missing key name"); return true; }
         cmd_press(arg);

@@ -67,6 +67,18 @@ TEST(InputContractTest, KeyboardRemoteHookSignaturesStayStable) {
     SUCCEED();
 }
 
+TEST(InputContractTest, KeyboardCharacterPickerEventEncodingStaysInternal) {
+    uint32_t c_picker = sigurdos_keyboard_char_picker_key('c');
+    uint32_t upper_picker = sigurdos_keyboard_char_picker_key('C');
+
+    EXPECT_TRUE(sigurdos_keyboard_is_char_picker_key(c_picker));
+    EXPECT_TRUE(sigurdos_keyboard_is_char_picker_key(upper_picker));
+    EXPECT_FALSE(sigurdos_keyboard_is_char_picker_key((uint32_t)'c'));
+    EXPECT_EQ(sigurdos_keyboard_char_picker_base(c_picker), 'c');
+    EXPECT_EQ(sigurdos_keyboard_char_picker_base(upper_picker), 'C');
+    EXPECT_GT(SIGURDOS_KEY_CHAR_PICKER_BASE, 0x10FFFFu);
+}
+
 TEST(InputContractTest, TrackballRemoteHookSignaturesStayStable) {
     using init_fn = bool (*)();
     using scan_fn = void (*)();
