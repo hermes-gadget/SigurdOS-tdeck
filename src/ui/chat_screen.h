@@ -64,6 +64,11 @@ const char* chat_screen_get_active_channel_name();
 // unless the messaging view of a real channel is currently shown.
 void chat_screen_show_channel_menu();
 
+// True while a chat overlay (channel menu or scope picker) is open. The
+// keyboard callback uses this to deliver keys straight to the focused
+// overlay widget instead of forcing focus back to the message input.
+bool chat_screen_overlay_active();
+
 // Chat message history cap (per-channel): get/set and persistence-backed config.
 uint16_t chat_screen_get_message_cap();
 void     chat_screen_set_message_cap(uint16_t cap);

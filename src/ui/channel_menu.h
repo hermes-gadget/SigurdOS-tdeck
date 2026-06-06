@@ -35,6 +35,7 @@ enum class ChannelAction : uint8_t {
     None = 0,
     SetActiveRegion,    // scope my outgoing floods to this channel's region
     ClearActiveRegion,  // send Public (unscoped) again
+    ChooseScope,        // open the scope picker (pick/enter any send scope)
     SetHomeRegion,      // make this channel's region my home region
     SetDefaultScope,    // make this channel's region my default flood scope
     MarkRead,           // clear this channel's unread badge (UI-only)
@@ -59,7 +60,20 @@ int channel_menu_build(const char* channel, ChannelMenuItem* out, int max);
 // sequencing the raw API requires (a region must exist before it can be
 // set active / home / default, so this auto-creates it first).
 // Returns true when the action was handled here; false for UI-only
-// actions (MarkRead/None) and invalid inputs, which the caller handles.
+// actions (ChooseScope/MarkRead/None) and invalid inputs, which the
+// caller handles.
 bool channel_menu_perform(ChannelAction action, const char* channel, int channel_idx);
+
+// Validate a custom scope (region) name against the MeshCore convention:
+// must start with '#' (public) or '$' (private), 2–30 chars total, with an
+// alphanumeric/hyphen body. `reason` (if non-null) gets a short failure
+// description. An empty/null name is valid and means "Public (unscoped)".
+bool scope_name_valid(const char* name, const char** reason = nullptr);
+
+// Set the active send scope to an arbitrary region name. "" / null →
+// Public (unscoped). Otherwise the name must pass scope_name_valid(); the
+// region is auto-created (so #public names derive their transport key) and
+// made the active flood scope. Returns true on success, false on a bad name.
+bool channel_scope_apply(const char* scope_name);
 
 } // namespace sigurdos::ui

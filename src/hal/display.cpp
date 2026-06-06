@@ -287,6 +287,21 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
             return;
         }
 
+        // While a chat overlay (channel menu / scope picker) is open, deliver
+        // keys straight to the focused overlay widget. Skipping the chat
+        // refocus heuristics below lets the scope picker's custom-scope field
+        // actually receive typing instead of the message box stealing it.
+        if (sigurdos::ui::chat_screen_overlay_active()) {
+            if (key == 0x08)      data->key = LV_KEY_BACKSPACE;
+            else if (key == 0x0D) data->key = LV_KEY_ENTER;
+            else if (key == 0x09) data->key = LV_KEY_NEXT;
+            else                  data->key = (uint32_t)key;
+            data->state = LV_INDEV_STATE_PRESSED;
+            sigurdos_display_wake();
+            sigurdos_keyboard_consume_key();
+            return;
+        }
+
         // Route keyboard input to the chat textarea only when the chat
         // screen is the active screen — never steal focus from other
         // textareas (WiFi password dialog, etc.).

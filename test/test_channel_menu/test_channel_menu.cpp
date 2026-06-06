@@ -39,6 +39,8 @@ using sigurdos::ui::ChannelMenuItem;
 using sigurdos::ui::channel_supports_regions;
 using sigurdos::ui::channel_menu_build;
 using sigurdos::ui::channel_menu_perform;
+using sigurdos::ui::scope_name_valid;
+using sigurdos::ui::channel_scope_apply;
 
 namespace {
 
@@ -71,8 +73,7 @@ TEST(ChannelMenuTest, SupportsRegionsOnlyForHashtagChannels) {
 TEST(ChannelMenuTest, HashtagChannelOffersRegionAndChannelActions) {
     ChannelMenuItem items[8];
     int n = channel_menu_build("#general", items, 8);
-    EXPECT_TRUE(menu_has(items, n, ChannelAction::SetActiveRegion));
-    EXPECT_TRUE(menu_has(items, n, ChannelAction::ClearActiveRegion));
+    EXPECT_TRUE(menu_has(items, n, ChannelAction::ChooseScope));
     EXPECT_TRUE(menu_has(items, n, ChannelAction::SetHomeRegion));
     EXPECT_TRUE(menu_has(items, n, ChannelAction::SetDefaultScope));
     EXPECT_TRUE(menu_has(items, n, ChannelAction::MarkRead));
@@ -82,7 +83,7 @@ TEST(ChannelMenuTest, HashtagChannelOffersRegionAndChannelActions) {
 TEST(ChannelMenuTest, DmOffersChannelActionsButNoRegionActions) {
     ChannelMenuItem items[8];
     int n = channel_menu_build("DM: bob", items, 8);
-    EXPECT_FALSE(menu_has(items, n, ChannelAction::SetActiveRegion));
+    EXPECT_FALSE(menu_has(items, n, ChannelAction::ChooseScope));
     EXPECT_FALSE(menu_has(items, n, ChannelAction::SetHomeRegion));
     EXPECT_FALSE(menu_has(items, n, ChannelAction::SetDefaultScope));
     EXPECT_TRUE(menu_has(items, n, ChannelAction::MarkRead));
@@ -160,9 +161,62 @@ TEST(ChannelMenuTest, LeaveChannelNeedsValidIndex) {
     EXPECT_FALSE(channel_menu_perform(ChannelAction::LeaveChannel, "#general", -1));
 }
 
-TEST(ChannelMenuTest, MarkReadAndNoneAreCallerHandled) {
+TEST(ChannelMenuTest, ChooseScopeMarkReadAndNoneAreCallerHandled) {
+    EXPECT_FALSE(channel_menu_perform(ChannelAction::ChooseScope, "#general", 0));
     EXPECT_FALSE(channel_menu_perform(ChannelAction::MarkRead, "#general", 0));
     EXPECT_FALSE(channel_menu_perform(ChannelAction::None, "#general", 0));
+}
+
+// ── scope_name_valid ────────────────────────────────────
+
+TEST(ChannelMenuTest, ScopeNameValidAcceptsPublicAndPrivate) {
+    EXPECT_TRUE(scope_name_valid("#london"));
+    EXPECT_TRUE(scope_name_valid("$ops-team"));
+    EXPECT_TRUE(scope_name_valid("#a"));
+    // Empty/null is the "Public (unscoped)" sentinel.
+    EXPECT_TRUE(scope_name_valid(""));
+    EXPECT_TRUE(scope_name_valid(nullptr));
+}
+
+TEST(ChannelMenuTest, ScopeNameValidRejectsBadNames) {
+    const char* reason = nullptr;
+    EXPECT_FALSE(scope_name_valid("london", &reason));   // missing # / $
+    EXPECT_NE(reason, nullptr);
+    EXPECT_FALSE(scope_name_valid("#"));                  // prefix only
+    EXPECT_FALSE(scope_name_valid("$"));
+    EXPECT_FALSE(scope_name_valid("#bad name"));          // space in body
+    EXPECT_FALSE(scope_name_valid("#-lead"));             // leading hyphen
+    // 31 chars after the '#' exceeds the 30-char region name limit.
+    EXPECT_FALSE(scope_name_valid("#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+}
+
+// ── channel_scope_apply ─────────────────────────────────
+
+TEST(ChannelMenuTest, ChannelScopeApplyCreatesAndActivatesCustomScope) {
+    removeAllRegionEntriesNamed("#custom-scope");
+    sigurdos::mesh::setActiveRegion("");
+
+    EXPECT_TRUE(channel_scope_apply("#custom-scope"));
+    EXPECT_NE(sigurdos::mesh::findRegion("#custom-scope"), nullptr);
+    EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "#custom-scope");
+
+    removeAllRegionEntriesNamed("#custom-scope");
+    sigurdos::mesh::setActiveRegion("");
+}
+
+TEST(ChannelMenuTest, ChannelScopeApplyEmptyGoesPublic) {
+    sigurdos::mesh::setActiveRegion("#something");
+    EXPECT_TRUE(channel_scope_apply(""));
+    EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "");
+    EXPECT_TRUE(channel_scope_apply(nullptr));
+    EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "");
+}
+
+TEST(ChannelMenuTest, ChannelScopeApplyRejectsInvalidName) {
+    sigurdos::mesh::setActiveRegion("");
+    EXPECT_FALSE(channel_scope_apply("nohash"));
+    // A rejected name must not change the active scope.
+    EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "");
 }
 
 } // namespace
