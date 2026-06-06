@@ -74,7 +74,7 @@ static lv_obj_t* msg_list       = nullptr;
 static lv_obj_t* input_bar      = nullptr;
 static lv_obj_t* input_field    = nullptr;
 static lv_obj_t* byte_counter   = nullptr;
-// Alt+C channel menu overlay (null when closed). While open, trackball
+// Channel menu overlay (null when closed). While open, trackball
 // events fall through to the LVGL group so its buttons stay navigable.
 static lv_obj_t* channel_menu   = nullptr;
 
@@ -2045,7 +2045,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
     }, LV_EVENT_ALL, (void*)fb);
 }
 
-// ── Channel quick-action menu (Alt+C) ──────────────────────
+// ── Channel quick-action menu (keyboard shortcut emits 0x0C) ───────────────
 // Small popup over the messaging view for per-chat private scope entry
 // plus normal chat actions. The validation/key derivation lives in
 // channel_menu.{h,cpp}; this block only renders and stores per-chat state.

@@ -34,7 +34,7 @@ test/
 |-- mocks/                    Native Arduino/LVGL/MeshCore/driver mocks
 |-- test_battery/             Battery conversion and ADC math
 |-- test_build/               Header inclusion and cross-module sanity checks
-|-- test_channel_menu/        Alt+C channel menu actions and private scopes
+|-- test_channel_menu/        Channel menu actions and private scopes
 |-- test_channel_validation/  Channel name validation and sanitising
 |-- test_chat_truncation/     UTF-8 safe chat truncation
 |-- test_emoji/               Emoji font, lookup, fallback, and data checks

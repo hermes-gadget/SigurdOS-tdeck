@@ -234,8 +234,8 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 | I2C Address        | **0x55**                      |
 | Bus Speed          | **100 kHz**                   |
 | Protocol           | LilyGo T-Deck Keyboard_ESP32C3 (MIT) |
-| Operating Mode     | **Key mode** (ASCII)          |
-| Raw mode           | Available (bitmask per column) |
+| Operating Mode     | **Raw mode** (bitmask per column) |
+| Key mode           | Legacy fallback (ASCII)       |
 | Poll Interval      | 5 ms                          |
 | Backlight Default  | 127 (mid-brightness)          |
 | Matrix             | 5 columns × 7 rows            |
@@ -251,7 +251,8 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 
 ### I2C Read (Master ← Slave)
 
-- `Wire.requestFrom(0x55, 1)` returns 1 byte:
+- Raw mode: `Wire.requestFrom(0x55, 5)` returns one 7-bit row mask per column.
+- Legacy key mode: `Wire.requestFrom(0x55, 1)` returns one byte:
 
 | Value          | Meaning                        |
 |----------------|--------------------------------|
@@ -259,7 +260,7 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 | `0x08`         | Backspace                      |
 | `0x0D`         | Enter                          |
 | `0x09`         | Tab                            |
-| `0x0C`         | Alt+C toggle                   |
+| `0x0C`         | Channel-menu shortcut event    |
 | `0x20`–`0x7E`  | ASCII printable character      |
 
 ### Key Matrix (5 × 7)
@@ -292,15 +293,13 @@ Row6   Mic      LShift   f        j        k
 2. Probe: request 1 byte from address 0x55 (must ACK)
 3. Send `CMD_BRIGHTNESS` (0x01) with stored value
 4. Send `CMD_DEFAULT_BRIGHTNESS` (0x02) with min(30) clamping
-5. Send `CMD_MODE_KEY` (0x04) to ensure ASCII key mode
+5. Send `CMD_MODE_RAW` (0x03) to expose Sym, Shift, Alt, and Mic layers
 
 ### Known Limitations
 
-- Modifier tracking (Shift, Ctrl, Alt) is best-effort — the MCU sends
-  pre-processed ASCII codes, not raw scancodes.
-- Shift state inferred from uppercase/lowercase letters.
-- Alt detected via Alt+C special code (0x0C).
-- Ctrl state is not detectable from ASCII key codes.
+- Ctrl state is not available from the current keyboard matrix.
+- Legacy key-mode fallback has best-effort modifier state only because the MCU
+  sends pre-processed ASCII bytes instead of raw scancodes.
 
 ---
 

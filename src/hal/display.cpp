@@ -281,13 +281,10 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
     sigurdos_keyboard_scan();   // force a fresh poll (catches first key after focus)
     int key = sigurdos_keyboard_get_key();
     if (key > 0 && sigurdos_keyboard_consume_event()) {
-        // ── Global shortcut: Alt+C = channel quick-action menu ──
-        // The T-Deck keyboard's ESP32-C3 swallows modifier keys internally
-        // and only emits a finished byte for a few combos. Alt+C is the one
-        // free, non-typing code it sends (0x0C / form feed) — Alt+Space and
-        // the Mic key (NULL in the C3 keymap) produce nothing the host can
-        // see. Opens per-chat private scope controls plus channel actions
-        // when the chat messaging view is active.
+        // ── Global shortcut: channel quick-action menu ──
+        // Raw matrix mode maps Alt+Space to 0x0C so Alt+C remains available
+        // for c-cedilla. Legacy key-mode C3 firmware also emits 0x0C for
+        // Alt+C, so the display layer only needs to handle the event code.
         if (key == 0x0C) {
             lv_obj_t* ci = sigurdos::ui::chat_screen_get_input_field();
             if (ci && lv_obj_is_valid(ci) && lv_obj_get_screen(ci) == lv_scr_act()) {

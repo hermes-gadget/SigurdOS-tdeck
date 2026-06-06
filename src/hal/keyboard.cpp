@@ -143,8 +143,10 @@ static bool     alt_held        = false;
 static bool     raw_mode_active = true;
 static uint8_t  raw_prev[KB_RAW_COLS] = {0};
 static bool     sym_one_shot    = false;
+static bool     alt_one_shot    = false;
 static bool     mic_one_shot    = false;
 static bool     sym_combo_used  = false;
+static bool     alt_combo_used  = false;
 static bool     mic_combo_used  = false;
 
 // ── Ring buffer for key events ─────────────────────────────
@@ -240,9 +242,6 @@ static void enqueue_key(uint32_t key_code)
     } else if (key_code >= 'a' && key_code <= 'z') {
         shift_held = false;
     }
-    if (key_code == 0x0C) {
-        alt_held = !alt_held;
-    }
 }
 
 static void process_legacy_key(int keyValue)
@@ -251,6 +250,9 @@ static void process_legacy_key(int keyValue)
         return;
     }
     enqueue_key((uint32_t)keyValue);
+    if (keyValue == 0x0C) {
+        alt_held = !alt_held;
+    }
 }
 
 static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
@@ -260,17 +262,21 @@ static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
     const bool mic_down = raw_key_down(matrix, 0, 6);
     const bool shift_down = raw_key_down(matrix, 1, 6) || raw_key_down(matrix, 2, 3);
     const bool sym_was_down = raw_key_down(raw_prev, 0, 2);
+    const bool alt_was_down = raw_key_down(raw_prev, 0, 4);
     const bool mic_was_down = raw_key_down(raw_prev, 0, 6);
 
     if (sym_down && !sym_was_down) {
         sym_combo_used = false;
+    }
+    if (alt_down && !alt_was_down) {
+        alt_combo_used = false;
     }
     if (mic_down && !mic_was_down) {
         mic_combo_used = false;
     }
 
     shift_held = shift_down;
-    alt_held = alt_down || mic_down || mic_one_shot;
+    alt_held = alt_down || alt_one_shot || mic_down || mic_one_shot;
 
     for (uint8_t row = 0; row < KB_RAW_ROWS; row++) {
         for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
@@ -287,18 +293,18 @@ static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
                 continue;
             }
 
-            const bool mic_layer = mic_down || mic_one_shot;
+            const bool ext_layer = alt_down || alt_one_shot || mic_down || mic_one_shot;
             uint32_t out = 0;
 
             if (key.kind == RawKeyKind::Enter || key.kind == RawKeyKind::Backspace) {
                 out = key.normal;
             } else if (key.kind == RawKeyKind::Mic && sym_layer) {
                 out = (shift_down && key.sym_shift) ? key.sym_shift : key.sym;
-            } else if (alt_down && key.normal == 'c') {
-                out = 0x0C; // Preserve the existing Alt+C channel-menu shortcut.
+            } else if (alt_down && key.normal == ' ') {
+                out = 0x0C; // Channel-menu shortcut, moved off Alt+C so Alt+C can type c-cedilla.
             } else if (alt_down && key.normal == 'b') {
                 out = 0;    // The keyboard MCU owns Alt+B backlight toggling.
-            } else if (mic_layer) {
+            } else if (ext_layer) {
                 out = extended_codepoint(key.normal, shift_down);
                 if (out == 0) {
                     out = sym_layer
@@ -312,8 +318,10 @@ static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
             }
 
             if (sym_down) sym_combo_used = true;
+            if (alt_down) alt_combo_used = true;
             if (mic_down) mic_combo_used = true;
             if (sym_one_shot) sym_one_shot = false;
+            if (alt_one_shot) alt_one_shot = false;
             if (mic_one_shot) mic_one_shot = false;
             enqueue_key(out);
         }
@@ -321,6 +329,9 @@ static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
 
     if (!sym_down && sym_was_down && !sym_combo_used) {
         sym_one_shot = true;
+    }
+    if (!alt_down && alt_was_down && !alt_combo_used) {
+        alt_one_shot = true;
     }
     if (!mic_down && mic_was_down && !mic_combo_used) {
         mic_one_shot = true;
@@ -516,8 +527,10 @@ void sigurdos_keyboard_reset_scan_state()
     alt_held        = false;
     raw_mode_active = true;
     sym_one_shot    = false;
+    alt_one_shot    = false;
     mic_one_shot    = false;
     sym_combo_used  = false;
+    alt_combo_used  = false;
     mic_combo_used  = false;
     memset(raw_prev, 0, sizeof(raw_prev));
 }

@@ -17,7 +17,7 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 /**
- * Unit tests for the Alt+C channel quick-action menu logic.
+ * Unit tests for the channel quick-action menu logic.
  *
  * Covers: private-scope menu availability, UI-only action handling, private
  * scope validation, and deterministic private key derivation.

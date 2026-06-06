@@ -18,7 +18,7 @@
 // You should have received a copy of the GNU General Public License
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
-// Channel quick-action menu (Alt+C). The LVGL-free logic here decides
+// Channel quick-action menu. The LVGL-free logic here decides
 // which menu actions are available and validates private per-chat scopes.
 
 #include <cstddef>

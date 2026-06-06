@@ -353,9 +353,25 @@ TEST_F(KeyboardTest, RawMatrixKeepsMicKeyUsableAsZeroOnSymLayer) {
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
 }
 
-TEST_F(KeyboardTest, RawMatrixPreservesAltCChannelShortcut) {
+TEST_F(KeyboardTest, RawMatrixMapsAltLayerToAccentedLatin) {
     init_with_ack();
     scan_raw({{0, 4}, {2, 5}}); // alt + c
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00E7); // c cedilla
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixMapsShiftAltLayerToUpperAccentedLatin) {
+    init_with_ack();
+    scan_raw({{0, 4}, {1, 6}, {2, 5}}); // alt + shift + c
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00C7); // C cedilla
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixMapsAltSpaceToChannelShortcut) {
+    init_with_ack();
+    scan_raw({{0, 4}, {0, 5}}); // alt + space
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x0C);
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
@@ -432,6 +448,17 @@ TEST_F(KeyboardTest, RawMatrixSupportsOneShotMicLayer) {
     release_raw();
 
     scan_raw({{3, 0}}); // next u uses one-shot mic layer
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00FC);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RawMatrixSupportsOneShotAltLayer) {
+    init_with_ack();
+    scan_raw({{0, 4}}); // tap alt
+    EXPECT_FALSE(sigurdos_keyboard_has_event());
+    release_raw();
+
+    scan_raw({{3, 0}}); // next u uses one-shot alt layer
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00FC);
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
 }
