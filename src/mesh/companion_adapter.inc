@@ -89,7 +89,7 @@ static void storeIncomingMessageForCompanion(const char* sender, const char* cha
         strncpy(msg.conversation, channel, sizeof(msg.conversation) - 1);
         snprintf(msg.text, sizeof(msg.text), "%s: %s", sender ? sender : "", text ? text : "");
     } else {
-        snprintf(msg.conversation, sizeof(msg.conversation), "DM: %s", sender ? sender : "");
+        formatDmConversation(msg.conversation, sizeof(msg.conversation), sender);
         strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
     }
     strncpy(msg.sender, sender ? sender : "", sizeof(msg.sender) - 1);
@@ -248,8 +248,8 @@ public:
         if (send_result == MSG_SEND_FAILED) return result;
         if (expected_ack) g_mesh->addPendingAck(contact->name, ts, expected_ack);
 
-        char conversation[32];
-        snprintf(conversation, sizeof(conversation), "DM: %s", contact->name);
+        char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
+        formatDmConversation(conversation, sizeof(conversation), contact->name);
         storeOutgoingMessageForCompanion(conversation, text, ts, false);
         queue_push_outgoing(conversation, own_name, text, ts);
         sigurdos::mesh::pushPacketLog(own_name, 0, 0.0f, "TX_DM");
