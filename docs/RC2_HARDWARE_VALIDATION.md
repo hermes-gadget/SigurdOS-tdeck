@@ -137,16 +137,53 @@ UI observations:
   macro redefinition warnings, plus upstream library warnings. These remain part
   of the warning-cleanup roadmap and did not block this hardware smoke.
 
+### 2026-06-06 Current-dev Release And BLE Build
+
+Branch: `codex/rc2-release-build-validation`, based on `origin/dev` at
+`58e5fc5` (`fix: OTA branch/prerelease buttons update inline instead of
+rebuilding screen`).
+
+Port safety: no serial port or BLE hardware was opened for this validation
+slice. This pass did not touch `COM8`, `COM11`, or `COM29`.
+
+Commands:
+
+```powershell
+pio run -e SigurdOS_TDeck
+pio run -e SigurdOS_TDeck_ble
+pio test -e native_test -v
+```
+
+Result:
+
+| Check | Evidence |
+| --- | --- |
+| Release build | PASS, 00:01:32.604 after local warning cleanup |
+| Release size | RAM 110,812/327,680 bytes; flash 1,973,701/6,553,600 bytes; merged image 2,039,648 bytes; webflasher firmware 1,974,112 bytes |
+| BLE build | PASS, 00:09:14.596 |
+| BLE size | RAM 133,240/327,680 bytes; flash 2,540,825/6,553,600 bytes; merged image 2,606,784 bytes; webflasher firmware 2,541,248 bytes |
+| Native tests | PASS, 683 cases collected; 682 succeeded; 1 skipped; duration 00:08:20.499 |
+
+Warning observations:
+
+- Local release warnings fixed in this branch: unused GitHub OTA JSON helper and
+  locals, release-only unused BLE validation log stub, and companion DM
+  conversation-label truncation.
+- Remaining warning debt is local-adjacent or upstream/third-party and remains
+  in the roadmap: qrcode warnings, RadioLib policy warnings, MeshCore
+  reorder/memset/sensor warnings, Melopero RTC `requestFrom` ambiguity, LVGL
+  config messages, and existing RF macro redefinition warnings in some profiles.
+
 ## RC2 Validation Matrix
 
 | Area | Minimum RC2 evidence | Current status |
 | --- | --- | --- |
-| Native tests | `pio test -e native_test -v` passes | Green in PR #464: 679 cases, 678 succeeded, 1 skipped |
-| Release build | `pio run -e SigurdOS_TDeck` passes with size and warning summary recorded | Needed on current RC2 branch |
+| Native tests | `pio test -e native_test -v` passes | PASS on 2026-06-06 current-dev run: 683 cases, 682 succeeded, 1 skipped |
+| Release build | `pio run -e SigurdOS_TDeck` passes with size and warning summary recorded | PASS on 2026-06-06 current-dev run; local release warnings cleaned in this branch; third-party/upstream warning debt remains |
 | Telemetry smoke | COM8 `SigurdOS_TDeck_telemetry` upload plus `remote_test_smoke.py --profile telemetry` pass | PASS on 2026-06-06 COM8 run |
 | Non-radio remote UI | COM8 `SigurdOS_TDeck_remote_test` upload plus `remote_test_smoke.py --profile ui` pass | PASS on 2026-06-06 COM8 run |
-| GPS | COM8 SPIFFS/NVS evidence with fixed records and privacy-safe coordinates | PR #464 records 84 fixed records and NVS `boot_count_value=36`; 2026-06-06 telemetry smoke proves GPS UART data path but not fix |
-| Companion BLE | COM8 BLE validation boot/advertising plus official app pairing/auth/RX/TX | Boot/advertising previously proven; phone pairing still needed |
+| GPS | COM8 SPIFFS/NVS evidence with fixed records and privacy-safe coordinates | PASS for hardware lock in PR #464: 84 fixed records, first fix `fix=1`, `qual=1`, `sv=7`, `ft=3`, `rmc=A`, `loc=1`; production power/time-sync UX remains |
+| Companion BLE | COM8 BLE validation boot/advertising plus official app pairing/auth/RX/TX | Local COM8 boot/advertising and USB BLE pair-only authenticated pairing PASS in PR #466; official phone-app RX/TX, reconnect, and sync still needed |
 | RF interop | Named frequency/profile, peer node identity, TX/RX packet counters, packet log, and transcript | Not started for RC2; do not use `COM11` under current port constraint |
 | Repeater/room | Login, status, telemetry, CLI data, fetch, timeout/error mapping with a real server/repeater | Needed |
 | OTA | AP OTA and GitHub OTA positive and negative cases: no credentials, wrong credentials, TLS/404/interrupted download | Needed |

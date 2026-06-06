@@ -248,8 +248,11 @@ public:
         if (send_result == MSG_SEND_FAILED) return result;
         if (expected_ack) g_mesh->addPendingAck(contact->name, ts, expected_ack);
 
-        char conversation[32];
-        snprintf(conversation, sizeof(conversation), "DM: %s", contact->name);
+        char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
+        static constexpr int kDmConversationNameMax =
+            (int)sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN - 5;
+        snprintf(conversation, sizeof(conversation), "DM: %.*s",
+                 kDmConversationNameMax, contact->name);
         storeOutgoingMessageForCompanion(conversation, text, ts, false);
         queue_push_outgoing(conversation, own_name, text, ts);
         sigurdos::mesh::pushPacketLog(own_name, 0, 0.0f, "TX_DM");

@@ -2,16 +2,28 @@
 
 Date: 2026-06-04
 Refreshed: 2026-06-06 source review against `020195e4581ec7b83147bab09af07e5c902b8ae5`
+Validation refreshed: 2026-06-06 current-dev release build, BLE build, and native suite
 
 This audit covers the SigurdOS T-Deck MeshCore firmware at commit `97fb805fbb63fcbae19ed8e199e9f3659b8b331b`, with MeshCore submodule `9a888541efaf57c38dfb886c1c1e4702f371baf1`. The review focused on stability, performance, tests, debug tooling, and feature parity against core MeshCore field workflows.
 
-No physical hardware test was performed during the original audit. Findings are based on source review, documentation review, native test execution, and release build execution. A 2026-06-06 source refresh removed findings that the current code clearly fixes, but did not rerun PlatformIO validation.
+No physical hardware test was performed during the original audit. Findings are
+based on source review, documentation review, native test execution, and release
+build execution. Later 2026-06-06 follow-up work added COM8 GPS, COM8 remote
+UI/telemetry, local USB BLE pairing, current-dev release build, BLE build, and
+native-suite evidence in the validation docs.
 
 ## Executive Summary
 
 SigurdOS T-Deck is beyond a prototype. It already contains a functional embedded application with a broad UI, MeshCore/BaseChatMesh integration, channel and direct messaging, contacts, regions, GPS, offline maps, OTA entry points, structured telemetry builds, remote-test support, and a strong native test suite.
 
-The main risk is not missing code volume. The main risk is release hardening. The original release build succeeded, but it used 86.4% of available internal RAM, emitted a large warning stream, and had limited automated coverage for hardware, radio interop, sleep/wake, OTA, storage failure, and long-running operation. Current source fixes some of the earlier policy and wake-mask issues, but build and hardware evidence still need refresh.
+The main risk is not missing code volume. The main risk is release hardening.
+The original release build succeeded, but it used 86.4% of available internal
+RAM, emitted a large warning stream, and had limited automated coverage for
+hardware, radio interop, sleep/wake, OTA, storage failure, and long-running
+operation. Current-dev release and BLE builds now have fresh validation with
+substantially lower static RAM use, but RF interop, official phone-app BLE,
+repeater/room, OTA, SD/map, sleep/wake/power, storage failure, and soak evidence
+still need to be closed before production release.
 
 The largest feature-parity gap is still companion/client behavior. Connected field workflows emphasize phone/terminal-style operation, map/cache behavior, visible connection state, contact/message detail, and management UX. SigurdOS now has an experimental BLE companion bridge and native protocol coverage, but it still needs official app hardware validation, durable state sync, richer message/contact detail, stronger map behavior, and repeatable interop tests.
 
@@ -29,6 +41,24 @@ Commands run during the audit:
 | Release build flash | 1,935,401 of 6,553,600 bytes used, 29.5% |
 
 The firmware build generated a merged image at `.pio/build/SigurdOS_TDeck/firmware-merged.bin`. After image generation, PlatformIO printed a Windows cp1252 `UnicodeEncodeError` in its output reader while still reporting environment success. Treat this as a contributor-tooling issue, not a firmware build failure.
+
+Current-dev validation refreshed on 2026-06-06:
+
+| Check | Result |
+| --- | --- |
+| Base | `origin/dev` at `58e5fc5` |
+| `pio run -e SigurdOS_TDeck` | Success; duration 00:01:32.604 |
+| Release build RAM | 110,812 of 327,680 bytes used, 33.8% |
+| Release build flash | 1,973,701 of 6,553,600 bytes used, 30.1% |
+| `pio run -e SigurdOS_TDeck_ble` | Success; duration 00:09:14.596 |
+| BLE build RAM | 133,240 of 327,680 bytes used, 40.7% |
+| BLE build flash | 2,540,825 of 6,553,600 bytes used, 38.8% |
+| `pio test -e native_test -v` | 683 test cases collected; 682 succeeded; 1 skipped; duration 00:08:20.499 |
+
+This refresh also removed current local release warnings in the GitHub OTA JSON
+scanner, BLE validation no-op stubs, and companion DM conversation-label
+storage path. Remaining warning work is tracked in the roadmap and RC2 hardware
+validation matrix.
 
 ## Architecture Map
 

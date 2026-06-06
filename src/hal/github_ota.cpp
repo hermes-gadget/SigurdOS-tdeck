@@ -180,50 +180,6 @@ static bool json_read_value(const char*& p, char* out_str, size_t out_size,
     return false;
 }
 
-// Find a key-value pair in the current JSON object context.
-// Scans from *p, looking for "key":value patterns at the current depth.
-// Stops at the next sibling '}' at depth curr_depth or end of buffer.
-static bool json_find_key(const char*& p, const char* key,
-                          char* val_str, size_t val_size,
-                          bool* val_bool = nullptr) {
-    size_t key_len = strlen(key);
-    while (*p) {
-        p = json_skip_ws(p);
-        if (*p == '}') {
-            // End of current object — not found
-            return false;
-        }
-        if (*p == '"') {
-            // Peek at key
-            const char* key_start = p + 1;
-            const char* colon = (const char*)memchr(key_start, '"', 64);
-            if (colon && (size_t)(colon - key_start) == key_len &&
-                strncmp(key_start, key, key_len) == 0) {
-                p = colon + 1; // skip past closing "
-                p = json_skip_ws(p);
-                if (*p == ':') {
-                    p++; // skip colon
-                    return json_read_value(p, val_str, val_size, val_bool);
-                }
-                return false;
-            }
-            // Skip this key-value pair
-            p = colon ? colon + 1 : p + 1;
-            p = json_skip_ws(p);
-            if (*p == ':') {
-                p++;
-                // Skip the value
-                char dummy[2];
-                json_read_value(p, dummy, sizeof(dummy));
-            }
-        } else {
-            // Unexpected char — skip
-            p++;
-        }
-    }
-    return false;
-}
-
 // Walk to the next top-level object ({ or [). Skips past array/object boundaries.
 static const char* json_next_object(const char* p) {
     int depth = 0;
@@ -280,7 +236,7 @@ static bool findMatchingRelease(const char* json, const char* branch,
 
         // Walk the object looking for our keys
         const char* scan = obj_start + 1; // skip past '{'
-        bool got_tag = false, got_branch = false, got_prerelease = false;
+        bool got_tag = false, got_branch = false;
 
         while (*scan && *scan != '}') {
             scan = json_skip_ws(scan);
@@ -288,7 +244,6 @@ static bool findMatchingRelease(const char* json, const char* branch,
 
             // Try each key
             char key[32] = "";
-            const char* key_save = scan;
             if (!json_read_string(scan, key, sizeof(key))) {
                 scan++;
                 continue;
@@ -306,9 +261,7 @@ static bool findMatchingRelease(const char* json, const char* branch,
                     got_branch = true;
                 }
             } else if (strcmp(key, "prerelease") == 0) {
-                if (json_read_value(scan, nullptr, 0, &prerelease)) {
-                    got_prerelease = true;
-                }
+                json_read_value(scan, nullptr, 0, &prerelease);
             } else {
                 // Skip this value
                 char dummy[2];

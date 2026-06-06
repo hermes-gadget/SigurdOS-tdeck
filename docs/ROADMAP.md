@@ -7,7 +7,11 @@ This roadmap is the current source of truth for bringing SigurdOS T-Deck to feat
 - Source audit baseline: `020195e4581ec7b83147bab09af07e5c902b8ae5` on `dev`
 - MeshCore submodule: `9a888541efaf57c38dfb886c1c1e4702f371baf1`
 - Target board: LilyGo T-Deck, ESP32-S3, SX1262, ST7789, GT911, I2C keyboard, trackball
-- Validation status: source audit only for this refresh; release build and native-test counts need a fresh PlatformIO validation run before the next firmware release.
+- Validation status: 2026-06-06 current-dev release validation passed
+  `pio run -e SigurdOS_TDeck`, `pio run -e SigurdOS_TDeck_ble`, and
+  `pio test -e native_test -v`; hardware interop, OTA, SD/map, sleep/wake, and
+  soak gates remain before production release. See
+  [RC2_HARDWARE_VALIDATION.md](RC2_HARDWARE_VALIDATION.md).
 - Audited sources: `src/`, `test/`, `platformio.ini`, MeshCore companion-radio references, and feature docs.
 
 SigurdOS already has a strong base: standalone chat, channel and DM messaging, BaseChatMesh integration, regions, contacts, GPS, offline maps, packet logs, telemetry builds, remote test support, OTA entry points, message persistence, an experimental companion BLE bridge, and a sizeable native test suite. The work below is about hardening that base, closing companion-app parity gaps, and making the firmware reliable enough for field use and repeated development.
@@ -18,7 +22,7 @@ This audit records what is already present in the codebase so future roadmap wor
 
 | Area | Implemented now | Remaining roadmap work |
 | --- | --- | --- |
-| Mesh core | `SigurdMeshV2` extends `BaseChatMesh`; DMs, group channels, ACK tracking, advert discovery, trace, ping nearby, telemetry request/answer, client repeat, packet stats, and duty-cycle APIs exist. | Hardware interop matrix, warning cleanup, and release-build validation still need to catch up with the source state. |
+| Mesh core | `SigurdMeshV2` extends `BaseChatMesh`; DMs, group channels, ACK tracking, advert discovery, trace, ping nearby, telemetry request/answer, client repeat, packet stats, and duty-cycle APIs exist. | Hardware interop matrix, release warning budget, and third-party warning isolation still need to catch up with the source state. |
 | Regions | `src/mesh/regions.*` wraps `RegionMap`; channel names can seed regions; active scope persists in prefs; `sendFloodScoped()` stamps transport codes; Settings/region UI surfaces exist. | Physical scoped-flood interop, `$` private key persistence, collision tests, and app-driven flood-scope edge cases need validation. |
 | Message persistence | Chat has legacy `/msgs` history and the newer `/companion_msgs` shared store with dedup, ACK flag, companion-sent flag, path length, and recent-message loading. | Unify the stores, add schema migration/power-loss tests, preserve text subtype metadata, and expand capacity/compaction policy. |
 | Companion app bridge | `CompanionBridge` implements the stock frame dispatcher for device query, app start, contacts, DMs, channel text/data, channels, time get/set, stats, signing, identity import/export, flood scope, login, status, telemetry, trace, and async pushes. `SigurdOS_TDeck_ble` links the MeshCore ESP32 BLE NUS transport. | Treat BLE as experimental until official app hardware pairing, reconnect, sync, security, RAM, and repeater-management flows are validated. |
@@ -26,6 +30,30 @@ This audit records what is already present in the codebase so future roadmap wor
 | GPS | GPS init, baud probing, interval-gated polling, fix data, satellite diagnostics, map/adverts, and settings toggles exist. Defaults still enable GPS and poll every loop. | Reduce default battery cost, add a "Sync time from GPS" action, add fix-acquisition timeout/status UX, and test sleep/wake behavior with GPS disabled/enabled. |
 | Repeater/room workflows | Local UI supports repeater/room login, saved passwords, CLI command rows, fetch messages, status/telemetry requests, and command response display. Companion bridge sends login/status/telemetry and CLI-data requests. | Official MeshCore app repeater management needs a focused audit: CLI replies are currently re-stored/framed as plain messages instead of `TXT_TYPE_CLI_DATA`, allowed-repeat-frequency replies are empty, timeout/error mapping is incomplete, and keep-alive/session state needs app-level validation. |
 | OTA and release ops | AP upload OTA, GitHub pull OTA, WiFi credential prefs, merged firmware script, and release docs exist. | Negative OTA tests, rollback/recovery docs, checksums, and release evidence still need to become routine. |
+
+## Production-release Remainder
+
+As of the 2026-06-06 current-dev validation refresh, the next production release
+is gated by the following work:
+
+1. Finish the release hardening pass: keep native/release/BLE builds green,
+   maintain a no-new-local-warning budget, isolate third-party warnings, and
+   close the remaining release/debug-policy items.
+2. Complete hardware validation that is still missing from the RC2 matrix: RF
+   interop, repeater/room workflows, OTA positive and negative cases, SD/map
+   behavior, sleep/wake/power, and multi-hour soak.
+3. Harden persistence and state sync: unify message stores, version schemas,
+   add migration/power-loss tests, and preserve metadata needed for companion
+   sync and repeater command replies.
+4. Close companion parity: official MeshCore phone-app pairing, RX/TX,
+   reconnect, sync, security policy, connection-state UI, and
+   repeater-management flows.
+5. Finish field UX and performance polish: contact/message detail, region
+   interop, map cache behavior, alerts, telemetry history, virtualized long
+   lists, and demand-driven GPS/power behavior.
+6. Prepare release operations: signed or checksummed artifacts, firmware
+   manifests, rollback/recovery docs, issue templates, and a repeatable release
+   checklist with attached hardware evidence.
 
 ## North Star
 
@@ -72,6 +100,10 @@ Priority tasks:
 - Fix the ESP32 sleep wake mask warning caused by shifting a 32-bit value for high GPIO numbers. This affects LoRa DIO and deep-sleep wake reliability.
 - Remove or gate release serial commands such as screenshot, send, and nav behind an explicit debug or remote-test policy.
 - Clean project warnings in `src/ui/theme.h`, `src/hal/github_ota.cpp`, `src/hal/prefs.cpp`, `src/ui/screens.cpp`, `src/ui/navigation.cpp`, and `src/ui/home_screen.cpp`.
+- 2026-06-06 release-validation work removed the current local warnings in
+  `src/hal/github_ota.cpp`, the release BLE validation stub, and the companion
+  DM conversation-label path. The remaining warning work should keep using the
+  release build as the source of truth.
 - Make LVGL config inclusion explicit so the build no longer prints repeated `lv_conf.h` possible-failure messages.
 - Resolve `MAX_TEXT_LEN` redefinition between build flags and `BaseChatMesh`.
 - Separate upstream MeshCore warnings from local warnings in CI logs so local regressions are visible.
