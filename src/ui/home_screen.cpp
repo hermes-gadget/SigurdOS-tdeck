@@ -29,8 +29,9 @@
 #include "../diagnostics/debug_cfg.h"
 #if SIGURDOS_DEBUG_UI
 #include "../diagnostics/debug.h"
-#include <Arduino.h>
 #endif
+#include "../fonts/emoji_font.h"
+#include <Arduino.h>
 #include <lvgl.h>
 #include <cstdio>
 #include <cstring>
@@ -219,7 +220,7 @@ static void create_top_bar()
     lv_obj_set_width(hashtag_label, HASHTAG_LABEL_W());
     lv_obj_set_style_text_color(hashtag_label,
         lv_color_hex(configured ? CHANNEL_HASH : ACCENT_RED), 0);
-    lv_obj_set_style_text_font(hashtag_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(hashtag_label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(hashtag_label, LV_ALIGN_LEFT_MID, 26, 0);
 
     // Time (far right)
@@ -228,7 +229,7 @@ static void create_top_bar()
     format_time_str(tbuf, sizeof(tbuf));
     lv_label_set_text(time_label, tbuf);
     lv_obj_set_style_text_color(time_label, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(time_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(time_label, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(time_label, LV_ALIGN_RIGHT_MID, -4, 0);
 
     // Signal dots (iOS-style, left of time)
@@ -260,13 +261,13 @@ static void create_bottom_bar()
     lv_obj_t* dev = lv_label_create(bottom_bar);
     lv_label_set_text(dev, sigurdos::mesh::getOwnName());
     lv_obj_set_style_text_color(dev, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(dev, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(dev, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
 
     batt_label = lv_label_create(bottom_bar);
     lv_label_set_text(batt_label, "--%");
     lv_obj_set_style_text_color(batt_label, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_text_font(batt_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(batt_label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(batt_label, LV_ALIGN_RIGHT_MID, -4, 0);
 
     // Divider
@@ -300,14 +301,14 @@ static lv_obj_t* create_icon_tile(lv_obj_t* parent, const IconDef& icon, int idx
 
     lv_obj_t* icon_label = lv_label_create(tile);
     lv_label_set_text(icon_label, icon.symbol);
-    lv_obj_set_style_text_font(icon_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(icon_label, emoji_wrapped_montserrat_14, 0);
     lv_obj_set_style_text_color(icon_label, lv_color_hex(ACCENT), 0);
     lv_obj_align(icon_label, LV_ALIGN_CENTER, 0, -8);
 
     lv_obj_t* label = lv_label_create(tile);
     lv_label_set_text(label, icon.label);
     lv_obj_set_style_text_color(label, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 12);
 
     if (icon.badge) {
@@ -326,7 +327,7 @@ static lv_obj_t* create_icon_tile(lv_obj_t* parent, const IconDef& icon, int idx
         lv_obj_t* cnt_lbl = lv_label_create(badge_obj);
         lv_label_set_text(cnt_lbl, "0");
         lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_text_font(cnt_lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(cnt_lbl, emoji_wrapped_montserrat_10, 0);
         lv_obj_center(cnt_lbl);
     }
 

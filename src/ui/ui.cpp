@@ -52,13 +52,13 @@ void init()
     lv_obj_t* logo = lv_label_create(splash_scr);
     lv_label_set_text(logo, "SigurdOS");
     lv_obj_set_style_text_color(logo, lv_color_hex(theme::ACCENT), 0);
-    lv_obj_set_style_text_font(logo, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_font(logo, emoji_wrapped_montserrat_24, 0);
     lv_obj_align(logo, LV_ALIGN_CENTER, 0, -16);
 
     lv_obj_t* sub = lv_label_create(splash_scr);
     lv_label_set_text(sub, "T-Deck");
     lv_obj_set_style_text_color(sub, lv_color_hex(theme::TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(sub, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(sub, emoji_wrapped_montserrat_14, 0);
     lv_obj_align(sub, LV_ALIGN_CENTER, 0, 16);
 
     // Loading bar

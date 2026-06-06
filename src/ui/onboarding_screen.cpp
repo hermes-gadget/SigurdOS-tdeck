@@ -4,6 +4,7 @@
 #include "responsive.h"
 #include "chat_screen.h"
 #include "screens.h"
+#include "../fonts/emoji_font.h"
 #include "../hal/prefs.h"
 #include "../mesh/mesh_wrapper.h"
 #include <Arduino.h>
@@ -60,19 +61,19 @@ static void build_step1()
     lv_obj_t* step_lbl = lv_label_create(s_content);
     lv_label_set_text(step_lbl, "Step 1 of 3");
     lv_obj_set_style_text_color(step_lbl, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(step_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(step_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(step_lbl, LV_ALIGN_TOP_MID, 0, 0);
 
     lv_obj_t* title = lv_label_create(s_content);
     lv_label_set_text(title, "Set Node Name");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
 
     lv_obj_t* hint = lv_label_create(s_content);
     lv_label_set_text(hint, "Choose a name other nodes will see.");
     lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(hint, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 38);
 
     s_name_input = lv_textarea_create(s_content);
@@ -80,7 +81,7 @@ static void build_step1()
     lv_obj_align(s_name_input, LV_ALIGN_TOP_MID, 0, 58);
     lv_obj_set_style_bg_color(s_name_input, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(s_name_input, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_name_input, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_name_input, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_border_width(s_name_input, 0, 0);
     lv_textarea_set_one_line(s_name_input, true);
     lv_textarea_set_max_length(s_name_input, 31);
@@ -127,13 +128,13 @@ static void build_step2()
     lv_obj_t* step_lbl = lv_label_create(s_content);
     lv_label_set_text(step_lbl, "Step 2 of 3");
     lv_obj_set_style_text_color(step_lbl, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(step_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(step_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(step_lbl, LV_ALIGN_TOP_MID, 0, 0);
 
     lv_obj_t* title = lv_label_create(s_content);
     lv_label_set_text(title, "Set Date & Time");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
 
     int y, mo, d, h, mi;
@@ -142,7 +143,7 @@ static void build_step2()
     lv_obj_t* dl = lv_label_create(s_content);
     lv_label_set_text(dl, "Date (YYYY-MM-DD):");
     lv_obj_set_style_text_color(dl, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(dl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(dl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(dl, LV_ALIGN_TOP_LEFT, 16, 38);
 
     char date_buf[16];
@@ -152,7 +153,7 @@ static void build_step2()
     lv_obj_align(s_date_input, LV_ALIGN_TOP_MID, 0, 56);
     lv_obj_set_style_bg_color(s_date_input, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(s_date_input, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_date_input, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_date_input, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_border_width(s_date_input, 0, 0);
     lv_textarea_set_one_line(s_date_input, true);
     lv_textarea_set_text(s_date_input, date_buf);
@@ -161,7 +162,7 @@ static void build_step2()
     lv_obj_t* tl = lv_label_create(s_content);
     lv_label_set_text(tl, "Time (HH:MM 24h):");
     lv_obj_set_style_text_color(tl, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(tl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(tl, LV_ALIGN_TOP_LEFT, 16, 90);
 
     char time_buf[8];
@@ -171,7 +172,7 @@ static void build_step2()
     lv_obj_align(s_time_input, LV_ALIGN_TOP_MID, 0, 108);
     lv_obj_set_style_bg_color(s_time_input, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(s_time_input, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_time_input, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_time_input, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_border_width(s_time_input, 0, 0);
     lv_textarea_set_one_line(s_time_input, true);
     lv_textarea_set_text(s_time_input, time_buf);
@@ -241,7 +242,7 @@ static void build_step3()
     lv_obj_t* title = lv_label_create(s_content);
     lv_label_set_text(title, "Set Frequency");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
     static const struct { const char* label; float freq; } freqs[] = {
@@ -264,7 +265,7 @@ static void build_step3()
         auto* tl = lv_label_create(btn);
         lv_label_set_text(tl, freqs[i].label);
         lv_obj_set_style_text_color(tl, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(tl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_10, 0);
         lv_obj_center(tl);
         s_freq_btns[i] = btn;
 
@@ -289,7 +290,7 @@ static void build_step3()
     s_sf_label = lv_label_create(s_content);
     lv_label_set_text(s_sf_label, sf_buf);
     lv_obj_set_style_text_color(s_sf_label, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_sf_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_sf_label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(s_sf_label, LV_ALIGN_TOP_LEFT, 16, row_y);
 
     auto* sf_minus = lv_btn_create(s_content);
@@ -323,7 +324,7 @@ static void build_step3()
     s_pwr_label = lv_label_create(s_content);
     lv_label_set_text(s_pwr_label, pwr_buf);
     lv_obj_set_style_text_color(s_pwr_label, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_pwr_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(s_pwr_label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(s_pwr_label, LV_ALIGN_TOP_LEFT, 150, row_y);
 
     auto* pwr_minus = lv_btn_create(s_content);
@@ -362,7 +363,7 @@ static void build_step3()
     lv_obj_set_style_border_width(custom_btn, 0, 0);
     auto* ctl = lv_label_create(custom_btn);
     lv_label_set_text(ctl, "Full Radio Setup...");
-    lv_obj_set_style_text_font(ctl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(ctl, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(ctl);
     lv_obj_add_event_cb(custom_btn, [](lv_event_t*) {
         sigurdos::ui::radio_setup_screen_show();
@@ -465,13 +466,13 @@ void onboarding_screen_show()
     lv_obj_t* back_icon = lv_label_create(back);
     lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
     lv_obj_set_style_text_color(back_icon, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_text_font(back_icon, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(back_icon, emoji_wrapped_montserrat_12, 0);
     lv_obj_center(back_icon);
 
     lv_obj_t* title_lbl = lv_label_create(top);
     lv_label_set_text(title_lbl, "Setup Wizard");
     lv_obj_set_style_text_color(title_lbl, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(title_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(title_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(title_lbl, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t* tdiv = lv_obj_create(s_scr);

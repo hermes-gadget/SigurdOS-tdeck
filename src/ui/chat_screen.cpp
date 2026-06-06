@@ -650,7 +650,7 @@ static void populate_channel_rows(lv_obj_t* list) {
                 lv_obj_t* title = lv_label_create(dlg);
                 lv_label_set_text(title, "Delete channel?");
                 lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-                lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+                lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
                 lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
                 lv_obj_t* msg = lv_label_create(dlg);
@@ -658,7 +658,7 @@ static void populate_channel_rows(lv_obj_t* list) {
                 snprintf(msg_buf, sizeof(msg_buf), "Delete channel #%s?", dyn_channels[idx]);
                 lv_label_set_text(msg, msg_buf);
                 lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
-                lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+                lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
                 lv_obj_align(msg, LV_ALIGN_CENTER, 0, -4);
 
                 lv_obj_t* cancel_btn = lv_btn_create(dlg);

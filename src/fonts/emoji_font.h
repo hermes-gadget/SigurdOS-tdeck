@@ -12,6 +12,14 @@ extern "C" {
 // Size: 16px, Bpp: 4 (grayscale anti-aliasing)
 extern const lv_font_t emoji_font;
 
+// Latin-extended font (Montserrat Regular) providing Latin-1 Supplement +
+// Latin Extended-A glyphs (äöüéèàç, etc.) for Western/Central European
+// accented characters. Used as an intermediate fallback in the chain:
+// Montserrat → latin_ext_font → emoji_font.
+// Generated — see scripts/generate_latin_ext_font.sh
+// Size: 16px, Bpp: 4
+extern const lv_font_t latin_ext_font;
+
 // Writable wrappers around Montserrat fonts with emoji fallback set.
 // Use these instead of lv_font_montserrat_XX where emoji support is needed.
 extern const lv_font_t* emoji_wrapped_montserrat_10;

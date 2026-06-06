@@ -190,7 +190,7 @@ static lv_obj_t* make_screen_full(const char* title)
     lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
     lv_obj_set_style_text_color(back_icon,
         lv_color_hex(can_go_back() ? ACCENT : TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(back_icon, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(back_icon, emoji_wrapped_montserrat_12, 0);
     lv_obj_center(back_icon);
 
     // Screen title (centered, visible now that channels are gone)
@@ -198,7 +198,7 @@ static lv_obj_t* make_screen_full(const char* title)
         lv_obj_t* ttl = lv_label_create(top);
         lv_label_set_text(ttl, title);
         lv_obj_set_style_text_color(ttl, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(ttl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(ttl, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(ttl, LV_ALIGN_CENTER, 0, 0);
     }
 
@@ -215,7 +215,7 @@ static lv_obj_t* make_screen_full(const char* title)
         lv_obj_t* tl = lv_label_create(top);
         lv_label_set_text(tl, t);
         lv_obj_set_style_text_color(tl, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(tl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
 
@@ -247,14 +247,14 @@ static lv_obj_t* make_screen_full(const char* title)
     lv_obj_t* dev = lv_label_create(bot);
     lv_label_set_text(dev, sigurdos::mesh::getOwnName());
     lv_obj_set_style_text_color(dev, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(dev, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(dev, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
 
     // WiFi status icon (next to battery)
     {
         lv_obj_t* wifi = lv_label_create(bot);
         lv_label_set_text(wifi, LV_SYMBOL_WIFI);
-        lv_obj_set_style_text_font(wifi, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(wifi, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(wifi, LV_ALIGN_RIGHT_MID, -52, 0);
         g_wifi_icon = wifi;
         update_wifi_status();  // set initial state
@@ -269,7 +269,7 @@ static lv_obj_t* make_screen_full(const char* title)
         lv_label_set_text(bl, batt);
         lv_obj_set_style_text_color(bl,
             lv_color_hex(pct > 20 ? ACCENT : ACCENT_RED), 0);
-        lv_obj_set_style_text_font(bl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(bl, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(bl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
 
@@ -297,7 +297,7 @@ static void show_contact_memory_error(lv_obj_t* scr)
     lv_obj_set_width(err, CONTENT_W);
     lv_obj_set_style_text_align(err, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
-    lv_obj_set_style_text_font(err, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(err, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(err, LV_ALIGN_CENTER, 0, 0);
 }
 
@@ -332,7 +332,7 @@ static void add_contact_pager(lv_obj_t* scr, int page, int pages, int total,
     lv_obj_set_width(status, CONTENT_W - 88);
     lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(status, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(status, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(status, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(status, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t* next = lv_btn_create(pager);
@@ -407,7 +407,7 @@ static void packets_rebuild_list()
         lv_obj_t* empty = lv_label_create(g_packets_list);
         lv_label_set_text(empty, "No packets yet.\nWaiting for mesh traffic...");
         lv_obj_set_style_text_color(empty, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(empty, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(empty, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(empty, LV_ALIGN_TOP_LEFT, 8, 8);
         return;
     }
@@ -436,7 +436,7 @@ static void packets_rebuild_list()
         lv_obj_t* time_l = lv_label_create(row);
         lv_label_set_text(time_l, tbuf);
         lv_obj_set_style_text_color(time_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(time_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(time_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(time_l, LV_ALIGN_LEFT_MID, PKT_COL_TIME, 0);
 
         // Source
@@ -446,7 +446,7 @@ static void packets_rebuild_list()
         lv_obj_t* src_l = lv_label_create(row);
         lv_label_set_text(src_l, src_buf);
         lv_obj_set_style_text_color(src_l, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(src_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(src_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_set_width(src_l, 100);
         lv_label_set_long_mode(src_l, LV_LABEL_LONG_DOT);
         lv_obj_align(src_l, LV_ALIGN_LEFT_MID, PKT_COL_SOURCE, 0);
@@ -460,7 +460,7 @@ static void packets_rebuild_list()
             e.rssi > -85  ? lv_color_hex(ACCENT_GREEN)  :
             e.rssi > -100 ? lv_color_hex(ACCENT_ORANGE) :
                             lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_text_font(rssi_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(rssi_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(rssi_l, LV_ALIGN_LEFT_MID, PKT_COL_RSSI, 0);
 
         // SNR
@@ -469,7 +469,7 @@ static void packets_rebuild_list()
         lv_obj_t* snr_l = lv_label_create(row);
         lv_label_set_text(snr_l, snr_buf);
         lv_obj_set_style_text_color(snr_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(snr_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(snr_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(snr_l, LV_ALIGN_LEFT_MID, PKT_COL_SNR, 0);
 
         // Type
@@ -486,7 +486,7 @@ static void packets_rebuild_list()
         lv_obj_t* type_l = lv_label_create(row);
         lv_label_set_text(type_l, e.type);
         lv_obj_set_style_text_color(type_l, lv_color_hex(type_color), 0);
-        lv_obj_set_style_text_font(type_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(type_l, emoji_wrapped_montserrat_10, 0);
         lv_label_set_long_mode(type_l, LV_LABEL_LONG_DOT);
         lv_obj_set_width(type_l, DISPLAY_W - PKT_COL_TYPE - PKT_COL_MARGIN);
         lv_obj_align(type_l, LV_ALIGN_LEFT_MID, PKT_COL_TYPE, 0);
@@ -527,7 +527,7 @@ void heard_screen_show()
         lv_obj_t* cl = lv_label_create(hdr);
         lv_label_set_text(cl, col_labels[i]);
         lv_obj_set_style_text_color(cl, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(cl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(cl, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(cl, LV_ALIGN_LEFT_MID, col_x[i], 0);
     }
 
@@ -622,7 +622,7 @@ void contacts_screen_show()
         lv_obj_set_style_pad_right(info, 8, 0);
         lv_obj_set_style_text_align(info, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_color(info, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(info, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(info, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
         delete[] all_contacts;
         show_screen(scr);
@@ -696,14 +696,14 @@ void contacts_screen_show()
         lv_obj_t* icon = lv_label_create(row);
         lv_label_set_text(icon, LV_SYMBOL_CALL);
         lv_obj_set_style_text_color(icon, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(icon, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 6, 0);
 
         // Name
         lv_obj_t* name_l = lv_label_create(row);
         lv_label_set_text(name_l, c.name);
         lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(name_l, LV_ALIGN_LEFT_MID, 28, 0);
 
         // RSSI
@@ -712,7 +712,7 @@ void contacts_screen_show()
         lv_obj_t* rssi_l = lv_label_create(row);
         lv_label_set_text(rssi_l, rssi_buf);
         lv_obj_set_style_text_color(rssi_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(rssi_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(rssi_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(rssi_l, LV_ALIGN_RIGHT_MID, -6, 0);
 
         // SNR
@@ -721,7 +721,7 @@ void contacts_screen_show()
         lv_obj_t* snr_l = lv_label_create(row);
         lv_label_set_text(snr_l, snr_buf);
         lv_obj_set_style_text_color(snr_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(snr_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(snr_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(snr_l, LV_ALIGN_RIGHT_MID, -56, 0);
 
         // Store name + type for click handler
@@ -778,7 +778,7 @@ static void show_login_password_dialog(const char* contact_name)
     lv_obj_t* title = lv_label_create(dlg);
     lv_label_set_text(title, title_buf);
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     // Password textarea
@@ -802,7 +802,7 @@ static void show_login_password_dialog(const char* contact_name)
     lv_checkbox_set_text(save_cb, "Save Password");
     lv_obj_align(save_cb, LV_ALIGN_TOP_MID, 0, 62);
     lv_obj_set_style_text_color(save_cb, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(save_cb, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(save_cb, emoji_wrapped_montserrat_10, 0);
 
     // Pre-fill password from NVS if saved
     char saved_pw[64] = {0};
@@ -1007,7 +1007,7 @@ static void show_admin_cmd_dialog(const char* contact_name)
     snprintf(title_buf, sizeof(title_buf), "> Admin: %s", contact_name);
     lv_label_set_text(title, title_buf);
     lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 4, 0);
 
     // Close button (top-right)
@@ -1043,7 +1043,7 @@ static void show_admin_cmd_dialog(const char* contact_name)
     lv_obj_set_style_bg_color(out, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(out, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(out, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(out, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(out, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_radius(out, 0, 0);
     lv_obj_set_style_border_width(out, 0, 0);
     lv_obj_set_style_pad_all(out, 4, 0);
@@ -1080,7 +1080,7 @@ static void show_admin_cmd_dialog(const char* contact_name)
     lv_textarea_set_max_length(ta, 240);  // prevent buffer overflow in echo buffer
     lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(ta, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(ta, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_radius(ta, 0, 0);
     lv_obj_set_style_border_color(ta, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_border_width(ta, 2, 0);
@@ -1211,14 +1211,14 @@ static void show_fetch_msgs_dialog(const char* contact_name)
     lv_obj_t* title = lv_label_create(dlg);
     lv_label_set_text(title, "Fetch room messages");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     // Hint
     lv_obj_t* hint = lv_label_create(dlg);
     lv_label_set_text(hint, "Enter channel name (e.g. #general)");
     lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(hint, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 24);
 
     // Channel name textarea
@@ -1336,7 +1336,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_t* err = lv_label_create(scr);
         lv_label_set_text(err, "Contact not found");
         lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_text_font(err, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(err, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(err, LV_ALIGN_CENTER, 0, 0);
         show_screen(scr);
         return;
@@ -1371,12 +1371,12 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_t* lbl = lv_label_create(row);
         lv_label_set_text(lbl, label);
         lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_10, 0);
 
         lv_obj_t* val = lv_label_create(row);
         lv_label_set_text(val, value);
         lv_obj_set_style_text_color(val, lv_color_hex(color), 0);
-        lv_obj_set_style_text_font(val, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(val, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(val, LV_ALIGN_RIGHT_MID, -8, 0);
     };
 
@@ -1384,7 +1384,7 @@ void contact_detail_screen_show(const char* contact_name)
     lv_obj_t* name_l = lv_label_create(list);
     lv_label_set_text(name_l, target->name);
     lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(name_l, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_14, 0);
     lv_obj_set_style_pad_left(name_l, 8, 0);
     lv_obj_set_style_pad_bottom(name_l, 4, 0);
 
@@ -1512,7 +1512,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_label_set_text(demote_lbl, "\u25BC Demote");
         lv_obj_center(demote_lbl);
         lv_obj_set_style_text_color(demote_lbl, lv_color_hex(BG_PRIMARY), 0);
-        lv_obj_set_style_text_font(demote_lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(demote_lbl, emoji_wrapped_montserrat_10, 0);
         char* acl_demote = strdup(contact_name);
         lv_obj_set_user_data(demote_btn, acl_demote);
         lv_obj_add_event_cb(demote_btn, [](lv_event_t* e) {
@@ -1537,7 +1537,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_label_set_text(promote_lbl, "\u25B2 Promote");
         lv_obj_center(promote_lbl);
         lv_obj_set_style_text_color(promote_lbl, lv_color_hex(BG_PRIMARY), 0);
-        lv_obj_set_style_text_font(promote_lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(promote_lbl, emoji_wrapped_montserrat_10, 0);
         char* acl_promote = strdup(contact_name);
         lv_obj_set_user_data(promote_btn, acl_promote);
         lv_obj_add_event_cb(promote_btn, [](lv_event_t* e) {
@@ -1758,7 +1758,7 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* title = lv_label_create(dlg);
             lv_label_set_text(title, "Remove contact?");
             lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
             lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
             lv_obj_t* msg = lv_label_create(dlg);
@@ -1766,7 +1766,7 @@ void contact_detail_screen_show(const char* contact_name)
             snprintf(msg_buf, sizeof(msg_buf), "Remove %s from contacts?", name);
             lv_label_set_text(msg, msg_buf);
             lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
-            lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(msg, LV_ALIGN_CENTER, 0, -4);
 
             lv_obj_t* cancel_btn = lv_btn_create(dlg);
@@ -2150,7 +2150,7 @@ void finder_screen_show()
         lv_obj_set_style_pad_right(empty, 8, 0);
         lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_color(empty, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(empty, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(empty, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(empty, LV_ALIGN_CENTER, 0, 0);
     }
 
@@ -2163,7 +2163,7 @@ void finder_screen_show()
         lv_obj_set_style_pad_left(foot, 8, 0);
         lv_obj_set_style_text_align(foot, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_color(foot, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(foot, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(foot, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -4);
         lv_label_set_text(foot, buf);
     }
@@ -2214,7 +2214,7 @@ void repeaters_screen_show()
         lv_obj_set_style_pad_right(info, 8, 0);
         lv_obj_set_style_text_align(info, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_color(info, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(info, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(info, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
         delete[] contacts;
         show_screen(scr);
@@ -2287,14 +2287,14 @@ void repeaters_screen_show()
         lv_obj_t* icon = lv_label_create(row);
         lv_label_set_text(icon, LV_SYMBOL_WIFI);
         lv_obj_set_style_text_color(icon, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(icon, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 6, 0);
 
         // Name
         lv_obj_t* name_l = lv_label_create(row);
         lv_label_set_text(name_l, c.name);
         lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(name_l, LV_ALIGN_LEFT_MID, 28, 0);
 
         // Store name for click handler
@@ -2307,7 +2307,7 @@ void repeaters_screen_show()
         lv_obj_t* rssi_l = lv_label_create(row);
         lv_label_set_text(rssi_l, rssi_buf);
         lv_obj_set_style_text_color(rssi_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(rssi_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(rssi_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(rssi_l, LV_ALIGN_RIGHT_MID, -6, 0);
 
         // SNR
@@ -2316,7 +2316,7 @@ void repeaters_screen_show()
         lv_obj_t* snr_l = lv_label_create(row);
         lv_label_set_text(snr_l, snr_buf);
         lv_obj_set_style_text_color(snr_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(snr_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(snr_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(snr_l, LV_ALIGN_RIGHT_MID, -56, 0);
 
         // Click handler — open dedicated repeater detail with login flow
@@ -2371,14 +2371,14 @@ static void repeater_input_dialog(const char* contact_name,
     lv_obj_t* ttl = lv_label_create(dlg);
     lv_label_set_text(ttl, title);
     lv_obj_set_style_text_color(ttl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(ttl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(ttl, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(ttl, LV_ALIGN_TOP_MID, 0, 4);
 
     // Hint
     lv_obj_t* hnt = lv_label_create(dlg);
     lv_label_set_text(hnt, hint);
     lv_obj_set_style_text_color(hnt, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(hnt, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(hnt, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(hnt, LV_ALIGN_TOP_MID, 0, 24);
 
     // Textarea
@@ -2507,7 +2507,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         lv_obj_t* err = lv_label_create(scr);
         lv_label_set_text(err, "Contact not found");
         lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_text_font(err, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(err, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(err, LV_ALIGN_CENTER, 0, 0);
         show_screen(scr);
         return;
@@ -2548,7 +2548,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_t* title_lbl = lv_label_create(title_row);
             lv_label_set_text(title_lbl, contact_name);
             lv_obj_set_style_text_color(title_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(title_lbl, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(title_lbl, emoji_wrapped_montserrat_14, 0);
             lv_obj_align(title_lbl, LV_ALIGN_LEFT_MID, 8, 0);
         }
         // Favourite star toggle
@@ -2606,12 +2606,12 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_t* tl = lv_label_create(tr);
             lv_label_set_text(tl, "  Type");
             lv_obj_set_style_text_color(tl, lv_color_hex(TEXT_SECONDARY), 0);
-            lv_obj_set_style_text_font(tl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(tl, LV_ALIGN_LEFT_MID, 4, 0);
             lv_obj_t* tv = lv_label_create(tr);
             lv_label_set_text(tv, type_str);
             lv_obj_set_style_text_color(tv, lv_color_hex(ACCENT), 0);
-            lv_obj_set_style_text_font(tv, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(tv, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(tv, LV_ALIGN_RIGHT_MID, -4, 0);
             // SNR + RSSI on one row
             lv_obj_t* sr = lv_obj_create(list);
@@ -2625,22 +2625,22 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_t* snr_l = lv_label_create(sr);
             lv_label_set_text(snr_l, "  SNR");
             lv_obj_set_style_text_color(snr_l, lv_color_hex(TEXT_SECONDARY), 0);
-            lv_obj_set_style_text_font(snr_l, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(snr_l, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(snr_l, LV_ALIGN_LEFT_MID, 4, 0);
             lv_obj_t* snr_v = lv_label_create(sr);
             lv_label_set_text(snr_v, snr_str);
             lv_obj_set_style_text_color(snr_v, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(snr_v, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(snr_v, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(snr_v, LV_ALIGN_LEFT_MID, 40, 0);
             lv_obj_t* rssi_l = lv_label_create(sr);
             lv_label_set_text(rssi_l, "RSSI");
             lv_obj_set_style_text_color(rssi_l, lv_color_hex(TEXT_SECONDARY), 0);
-            lv_obj_set_style_text_font(rssi_l, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(rssi_l, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(rssi_l, LV_ALIGN_LEFT_MID, 120, 0);
             lv_obj_t* rssi_v = lv_label_create(sr);
             lv_label_set_text(rssi_v, rssi_str);
             lv_obj_set_style_text_color(rssi_v, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(rssi_v, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(rssi_v, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(rssi_v, LV_ALIGN_LEFT_MID, 158, 0);
             row += 2;
         }
@@ -2667,12 +2667,12 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_t* login_l = lv_label_create(lr);
             lv_label_set_text(login_l, "  Login");
             lv_obj_set_style_text_color(login_l, lv_color_hex(TEXT_SECONDARY), 0);
-            lv_obj_set_style_text_font(login_l, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(login_l, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(login_l, LV_ALIGN_LEFT_MID, 4, 0);
             lv_obj_t* login_v = lv_label_create(lr);
             lv_label_set_text(login_v, login_text);
             lv_obj_set_style_text_color(login_v, lv_color_hex(login_color), 0);
-            lv_obj_set_style_text_font(login_v, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(login_v, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(login_v, LV_ALIGN_RIGHT_MID, -4, 0);
             row++;
         }
@@ -2720,7 +2720,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_set_style_bg_color(h, lv_color_hex(BG_TERTIARY), 0);
             lv_obj_set_style_bg_opa(h, LV_OPA_COVER, 0);
             lv_obj_set_style_text_color(h, lv_color_hex(TEXT_MUTED), 0);
-            lv_obj_set_style_text_font(h, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(h, emoji_wrapped_montserrat_10, 0);
             lv_obj_clear_flag(h, LV_OBJ_FLAG_CLICKABLE);
             row++;
         };
@@ -3000,7 +3000,7 @@ void signal_screen_show()
         lv_obj_set_style_pad_right(lbl, 8, 0);
         lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
 
         char buf[256];
@@ -3041,7 +3041,7 @@ void signal_screen_show()
             lv_obj_t* ch_label = lv_label_create(scr);
             lv_label_set_text(ch_label, "RSSI History");
             lv_obj_set_style_text_color(ch_label, lv_color_hex(TEXT_SECONDARY), 0);
-            lv_obj_set_style_text_font(ch_label, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(ch_label, emoji_wrapped_montserrat_12, 0);
             lv_obj_align_to(ch_label, chart, LV_ALIGN_OUT_TOP_LEFT, 0, -2);
         }
     } else {
@@ -3060,7 +3060,7 @@ void signal_screen_show()
         lv_obj_t* left = lv_label_create(row);
         lv_obj_set_width(left, LV_PCT(48));
         lv_obj_set_style_text_color(left, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(left, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(left, emoji_wrapped_montserrat_10, 0);
 
         char left_buf[256];
         snprintf(left_buf, sizeof(left_buf),
@@ -3078,7 +3078,7 @@ void signal_screen_show()
         lv_obj_t* right = lv_label_create(row);
         lv_obj_set_width(right, LV_PCT(48));
         lv_obj_set_style_text_color(right, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(right, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(right, emoji_wrapped_montserrat_10, 0);
 
         char right_buf[256];
         snprintf(right_buf, sizeof(right_buf),
@@ -3129,7 +3129,7 @@ void signal_screen_show()
             lv_obj_t* ch_label = lv_label_create(scr);
             lv_label_set_text(ch_label, "RSSI History");
             lv_obj_set_style_text_color(ch_label, lv_color_hex(TEXT_SECONDARY), 0);
-            lv_obj_set_style_text_font(ch_label, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(ch_label, emoji_wrapped_montserrat_12, 0);
             lv_obj_align_to(ch_label, chart, LV_ALIGN_OUT_TOP_LEFT, 0, -2);
         }
     }
@@ -3323,7 +3323,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
     lv_obj_t* title = lv_label_create(dlg);
     lv_label_set_text(title, is_date ? "Set Date (YYYY-MM-DD)" : "Set Time (HH:MM 24h)");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     lv_obj_t* input = lv_textarea_create(dlg);
@@ -3331,7 +3331,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
     lv_obj_align(input, LV_ALIGN_TOP_MID, 0, 28);
     lv_obj_set_style_bg_color(input, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(input, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(input, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(input, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_border_width(input, 0, 0);
     lv_textarea_set_one_line(input, true);
     lv_textarea_set_text(input, cur);
@@ -3346,7 +3346,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
 
     lv_obj_t* fb = lv_label_create(dlg);
     lv_obj_set_style_text_color(fb, lv_color_hex(ACCENT_RED), 0);
-    lv_obj_set_style_text_font(fb, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(fb, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(fb, LV_ALIGN_BOTTOM_MID, 0, -28);
 
     lv_obj_t* cancel_btn = lv_btn_create(dlg);
@@ -3356,7 +3356,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
     lv_obj_set_style_radius(cancel_btn, 0, 0);
     lv_obj_t* cl = lv_label_create(cancel_btn);
     lv_label_set_text(cl, "Cancel");
-    lv_obj_set_style_text_font(cl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(cl, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(cl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
         lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
@@ -3369,7 +3369,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
     lv_obj_set_style_radius(set_btn, 0, 0);
     lv_obj_t* sl = lv_label_create(set_btn);
     lv_label_set_text(sl, "Set");
-    lv_obj_set_style_text_font(sl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(sl, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(sl);
 
     // ctx lives until the dialog is deleted (see LV_EVENT_DELETE below)
@@ -3470,7 +3470,7 @@ static void chat_message_cap_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     lv_obj_t* title = lv_label_create(dlg);
     lv_label_set_text(title, "Chat Message Cap");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     int cap = (int)chat_screen_get_message_cap();
@@ -3479,7 +3479,7 @@ static void chat_message_cap_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     snprintf(cap_buf, sizeof(cap_buf), "%d msgs", cap);
     lv_label_set_text(cap_lbl, cap_buf);
     lv_obj_set_style_text_color(cap_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(cap_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(cap_lbl, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(cap_lbl, LV_ALIGN_CENTER, 0, -2);
 
     auto* minus_btn = lv_btn_create(dlg);
@@ -3561,7 +3561,7 @@ static void backlight_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     lv_obj_t* title = lv_label_create(dlg);
     lv_label_set_text(title, "Keyboard Backlight");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
@@ -3572,7 +3572,7 @@ static void backlight_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     snprintf(val_buf, sizeof(val_buf), "%d (%d%%)", brightness, brightness * 100 / 255);
     lv_label_set_text(val_lbl, val_buf);
     lv_obj_set_style_text_color(val_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(val_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(val_lbl, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(val_lbl, LV_ALIGN_CENTER, 0, -2);
 
     auto* minus_btn = lv_btn_create(dlg);
@@ -3661,7 +3661,7 @@ static void auto_off_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     lv_obj_t* title = lv_label_create(dlg);
     lv_label_set_text(title, "Auto-off Timeout");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     struct Opt { const char* label; uint16_t value; };
@@ -3779,7 +3779,7 @@ static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     lv_obj_t* title = lv_label_create(dlg);
     lv_label_set_text(title, "Display Brightness");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
@@ -3790,7 +3790,7 @@ static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     snprintf(val_buf, sizeof(val_buf), "%d (%d%%)", brightness, brightness * 100 / 255);
     lv_label_set_text(val_lbl, val_buf);
     lv_obj_set_style_text_color(val_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(val_lbl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(val_lbl, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(val_lbl, LV_ALIGN_CENTER, 0, -2);
 
     auto* minus_btn = lv_btn_create(dlg);
@@ -4652,13 +4652,13 @@ void settings_system_show()
             lv_obj_t* title = lv_label_create(dlg);
             lv_label_set_text(title, "Set/Change PIN");
             lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
             lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
             lv_obj_t* msg = lv_label_create(dlg);
             lv_label_set_text(msg, "Enter new 4-digit PIN:");
             lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
-            lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(msg, LV_ALIGN_TOP_LEFT, 8, 24);
 
             lv_obj_t* pin_ta = lv_textarea_create(dlg);
@@ -4763,7 +4763,7 @@ void settings_system_show()
         lv_obj_t* title = lv_label_create(dlg);
         lv_label_set_text(title, "OTA Update Active");
         lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
         char info[80];
@@ -4774,7 +4774,7 @@ void settings_system_show()
         lv_obj_t* msg = lv_label_create(dlg);
         lv_label_set_text(msg, info);
         lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(msg, LV_ALIGN_CENTER, 0, 0);
 
         lv_obj_t* close_btn = lv_btn_create(dlg);
@@ -4874,13 +4874,13 @@ void settings_system_show()
         lv_obj_t* title = lv_label_create(dlg);
         lv_label_set_text(title, sigurdos::github_ota::getDownloadLabel());
         lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
         lv_obj_t* status_lbl = lv_label_create(dlg);
         lv_label_set_text(status_lbl, "Starting...");
         lv_obj_set_style_text_color(status_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(status_lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(status_lbl, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(status_lbl, LV_ALIGN_CENTER, 0, -10);
 
         lv_obj_t* bar = lv_bar_create(dlg);
@@ -4970,13 +4970,13 @@ void settings_system_show()
         lv_obj_t* title = lv_label_create(dlg);
         lv_label_set_text(title, "Shut down?");
         lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
         lv_obj_t* msg = lv_label_create(dlg);
         lv_label_set_text(msg, "Save state and power off?");
         lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(msg, LV_ALIGN_CENTER, 0, -4);
 
         lv_obj_t* cancel_btn = lv_btn_create(dlg);
@@ -5041,13 +5041,13 @@ void settings_system_show()
         lv_obj_t* title = lv_label_create(dlg);
         lv_label_set_text(title, "Factory reset?");
         lv_obj_set_style_text_color(title, lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
         lv_obj_t* msg = lv_label_create(dlg);
         lv_label_set_text(msg, "Erase all data and reboot?\nAll settings, contacts and\nidentity will be lost.");
         lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(msg, LV_ALIGN_TOP_MID, 0, 22);
 
         // Cancel
@@ -5120,7 +5120,7 @@ void node_stats_screen_show()
     lv_obj_set_style_bg_color(r0, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r0, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r0, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(r0, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(r0, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_pad_top(r0, 4, 0);
     lv_obj_set_style_pad_bottom(r0, 4, 0);
     row++;
@@ -5130,7 +5130,7 @@ void node_stats_screen_show()
     lv_obj_set_style_bg_color(r1, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r1, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r1, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(r1, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(r1, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_pad_top(r1, 4, 0);
     lv_obj_set_style_pad_bottom(r1, 4, 0);
     row++;
@@ -5141,7 +5141,7 @@ void node_stats_screen_show()
     lv_obj_set_style_bg_color(r2, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r2, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r2, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(r2, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(r2, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_pad_top(r2, 4, 0);
     lv_obj_set_style_pad_bottom(r2, 4, 0);
     row++;
@@ -5151,7 +5151,7 @@ void node_stats_screen_show()
     lv_obj_set_style_bg_color(r3, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r3, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r3, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(r3, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(r3, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_pad_top(r3, 4, 0);
     lv_obj_set_style_pad_bottom(r3, 4, 0);
     row++;
@@ -5164,7 +5164,7 @@ void node_stats_screen_show()
     lv_obj_set_style_bg_color(r4, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r4, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r4, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(r4, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(r4, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_pad_top(r4, 4, 0);
     lv_obj_set_style_pad_bottom(r4, 4, 0);
     row++;
@@ -5174,7 +5174,7 @@ void node_stats_screen_show()
     lv_obj_set_style_bg_color(r5, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r5, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r5, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(r5, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(r5, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_pad_top(r5, 4, 0);
     lv_obj_set_style_pad_bottom(r5, 4, 0);
     row++;
@@ -5185,7 +5185,7 @@ void node_stats_screen_show()
     lv_obj_set_style_bg_color(r6, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r6, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r6, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(r6, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(r6, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_pad_top(r6, 4, 0);
     lv_obj_set_style_pad_bottom(r6, 4, 0);
     row++;
@@ -5195,7 +5195,7 @@ void node_stats_screen_show()
     lv_obj_set_style_bg_color(r7, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r7, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r7, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(r7, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(r7, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_style_pad_top(r7, 4, 0);
     lv_obj_set_style_pad_bottom(r7, 4, 0);
     row++;
@@ -5210,7 +5210,7 @@ void node_stats_screen_show()
         lv_obj_set_style_bg_color(rs0, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
         lv_obj_set_style_bg_opa(rs0, LV_OPA_COVER, 0);
         lv_obj_set_style_text_color(rs0, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(rs0, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(rs0, emoji_wrapped_montserrat_12, 0);
         lv_obj_set_style_pad_top(rs0, 4, 0);
         lv_obj_set_style_pad_bottom(rs0, 4, 0);
         row++;
@@ -5227,7 +5227,7 @@ void node_stats_screen_show()
             lv_obj_set_style_bg_color(rs1, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
             lv_obj_set_style_bg_opa(rs1, LV_OPA_COVER, 0);
             lv_obj_set_style_text_color(rs1, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(rs1, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(rs1, emoji_wrapped_montserrat_12, 0);
             lv_obj_set_style_pad_top(rs1, 4, 0);
             lv_obj_set_style_pad_bottom(rs1, 4, 0);
             row++;
@@ -5256,13 +5256,13 @@ void node_stats_screen_show()
         lv_obj_t* title = lv_label_create(dlg);
         lv_label_set_text(title, "Reset packet stats?");
         lv_obj_set_style_text_color(title, lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
         lv_obj_t* msg = lv_label_create(dlg);
         lv_label_set_text(msg, "All counters will be zeroed.");
         lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(msg, LV_ALIGN_CENTER, 0, -4);
 
         // Cancel
@@ -5443,7 +5443,7 @@ void terminal_screen_show()
     lv_obj_align(input, LV_ALIGN_TOP_MID, 0, CONTENT_Y + TERM_LOG_H + DIVIDER_H);
     lv_obj_set_style_bg_color(input, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(input, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(input, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(input, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_border_width(input, 0, 0);
     lv_obj_set_style_pad_all(input, 4, 0);
     lv_textarea_set_one_line(input, true);
@@ -5768,7 +5768,7 @@ void trace_screen_show()
     lv_obj_set_style_pad_right(info, 8, 0);
     lv_obj_set_style_text_align(info, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(info, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(info, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(info, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
 
     if (total == 0) {
@@ -5812,21 +5812,21 @@ void trace_screen_show()
         lv_obj_t* icon = lv_label_create(row);
         lv_label_set_text(icon, has_path ? LV_SYMBOL_GPS : LV_SYMBOL_WARNING);
         lv_obj_set_style_text_color(icon, lv_color_hex(ACCENT), 0);
-        lv_obj_set_style_text_font(icon, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(icon, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(icon, LV_ALIGN_LEFT_MID, 6, 0);
 
         // Name
         lv_obj_t* name_l = lv_label_create(row);
         lv_label_set_text(name_l, names[i]);
         lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(name_l, LV_ALIGN_LEFT_MID, 28, 0);
 
         // Path status
         lv_obj_t* status_l = lv_label_create(row);
         lv_label_set_text(status_l, has_path ? "[path known]" : "[no path]");
         lv_obj_set_style_text_color(status_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(status_l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(status_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(status_l, LV_ALIGN_RIGHT_MID, -6, 0);
 
         if (has_path) {
@@ -5838,7 +5838,7 @@ void trace_screen_show()
                     lv_obj_t* scr_ref = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
                     lv_obj_t* result_lbl = lv_label_create(scr_ref);
                     lv_obj_set_style_text_color(result_lbl, lv_color_hex(ACCENT), 0);
-                    lv_obj_set_style_text_font(result_lbl, &lv_font_montserrat_10, 0);
+                    lv_obj_set_style_text_font(result_lbl, emoji_wrapped_montserrat_10, 0);
                     lv_obj_align(result_lbl, LV_ALIGN_BOTTOM_MID, 0,
                                  -(BOT_BAR_H + DIVIDER_H + 24));
                     lv_label_set_text(result_lbl, "Trace sent, waiting...");
@@ -5898,7 +5898,7 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
     lv_obj_t* title = lv_label_create(dialog);
     lv_label_set_text(title, "Add # Channel");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     lv_obj_t* name_label = lv_label_create(dialog);
@@ -5911,7 +5911,7 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
     lv_obj_align(name_input, LV_ALIGN_TOP_MID, 0, 46);
     lv_obj_set_style_bg_color(name_input, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(name_input, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(name_input, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(name_input, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_border_width(name_input, 0, 0);
     lv_textarea_set_one_line(name_input, true);
     lv_textarea_set_max_length(name_input, 31);
@@ -5926,7 +5926,7 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
 
     lv_obj_t* feedback = lv_label_create(dialog);
     lv_obj_set_style_text_color(feedback, lv_color_hex(ACCENT_RED), 0);
-    lv_obj_set_style_text_font(feedback, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(feedback, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(feedback, LV_ALIGN_BOTTOM_MID, 0, -32);
 
     lv_obj_t* create_btn = lv_btn_create(dialog);
@@ -6011,13 +6011,13 @@ void channels_screen_show()
                 lv_obj_t* icon = lv_label_create(row);
                 lv_label_set_text(icon, LV_SYMBOL_LIST);
                 lv_obj_set_style_text_color(icon, lv_color_hex(ACCENT), 0);
-                lv_obj_set_style_text_font(icon, &lv_font_montserrat_12, 0);
+                lv_obj_set_style_text_font(icon, emoji_wrapped_montserrat_12, 0);
                 lv_obj_set_style_pad_left(icon, 8, 0);
 
                 lv_obj_t* name_l = lv_label_create(row);
                 lv_label_set_text(name_l, names[i]);
                 lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
-                lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
+                lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_12, 0);
                 lv_obj_set_flex_grow(name_l, 1);
                 lv_obj_set_style_pad_left(name_l, 8, 0);
 
@@ -6031,7 +6031,7 @@ void channels_screen_show()
                     lv_obj_set_style_pad_all(del_btn, 0, 0);
                     auto* dl = lv_label_create(del_btn);
                     lv_label_set_text(dl, LV_SYMBOL_CLOSE);
-                    lv_obj_set_style_text_font(dl, &lv_font_montserrat_10, 0);
+                    lv_obj_set_style_text_font(dl, emoji_wrapped_montserrat_10, 0);
                     lv_obj_center(dl);
                     lv_obj_set_style_pad_right(del_btn, 4, 0);
                     int ch_idx = i;
@@ -6060,7 +6060,7 @@ void channels_screen_show()
                         lv_obj_t* title = lv_label_create(dlg);
                         lv_label_set_text(title, "Delete channel?");
                         lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-                        lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+                        lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
                         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
                         lv_obj_t* msg = lv_label_create(dlg);
@@ -6068,7 +6068,7 @@ void channels_screen_show()
                         snprintf(msg_buf, sizeof(msg_buf), "Delete channel #%s?", ch_name);
                         lv_label_set_text(msg, msg_buf);
                         lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
-                        lv_obj_set_style_text_font(msg, &lv_font_montserrat_10, 0);
+                        lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
                         lv_obj_align(msg, LV_ALIGN_CENTER, 0, -4);
 
                         lv_obj_t* cancel_btn = lv_btn_create(dlg);
@@ -6110,7 +6110,7 @@ void channels_screen_show()
                     lv_obj_set_style_pad_all(qr_btn, 0, 0);
                     auto* ql = lv_label_create(qr_btn);
                     lv_label_set_text(ql, "QR");
-                    lv_obj_set_style_text_font(ql, &lv_font_montserrat_10, 0);
+                    lv_obj_set_style_text_font(ql, emoji_wrapped_montserrat_10, 0);
                     lv_obj_center(ql);
                     lv_obj_set_style_pad_right(qr_btn, 4, 0);
                     int qr_idx = i;
@@ -6149,7 +6149,7 @@ void channels_screen_show()
     lv_obj_set_style_radius(add_btn, 0, 0);
     lv_obj_t* al = lv_label_create(add_btn);
     lv_label_set_text(al, LV_SYMBOL_PLUS "  Add # Channel");
-    lv_obj_set_style_text_font(al, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(al, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(al);
 
     lv_obj_add_event_cb(add_btn, [](lv_event_t* e) {
@@ -6183,7 +6183,7 @@ void advertise_screen_show()
     lv_obj_set_style_pad_right(info, 8, 0);
     lv_obj_set_style_text_align(info, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(info, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(info, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(info, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
 
     lv_obj_t* status = lv_label_create(scr);
@@ -6194,7 +6194,7 @@ void advertise_screen_show()
     lv_obj_set_style_pad_right(status, 8, 0);
     lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(status, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(status, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(status, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(status, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 110);
 
     lv_obj_t* btn = lv_btn_create(scr);
@@ -6270,7 +6270,7 @@ void custom_rf_screen_show()
         lv_obj_t* lbl = lv_label_create(scr);
         lv_label_set_text(lbl, fields[i].label);
         lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 8, y + 3);
 
         lv_obj_t* ta = lv_textarea_create(scr);
@@ -6278,7 +6278,7 @@ void custom_rf_screen_show()
         lv_obj_align(ta, LV_ALIGN_TOP_LEFT, 8 + lbl_w, y);
         lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
         lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(ta, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(ta, emoji_wrapped_montserrat_10, 0);
         lv_obj_set_style_border_width(ta, 0, 0);
         lv_textarea_set_one_line(ta, true);
         lv_textarea_set_text(ta, fields[i].val);
@@ -6292,7 +6292,7 @@ void custom_rf_screen_show()
     // Error label
     lv_obj_t* err_lbl = lv_label_create(scr);
     lv_obj_set_style_text_color(err_lbl, lv_color_hex(ACCENT_RED), 0);
-    lv_obj_set_style_text_font(err_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(err_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_width(err_lbl, CONTENT_W);
     lv_obj_align(err_lbl, LV_ALIGN_TOP_LEFT, 8, y);
     lv_label_set_text(err_lbl, "");
@@ -6417,7 +6417,7 @@ void radio_setup_screen_show()
     lv_obj_set_style_pad_right(warn, 8, 0);
     lv_obj_set_style_text_align(warn, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(warn, lv_color_hex(0xccaa00), 0);
-    lv_obj_set_style_text_font(warn, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(warn, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(warn, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 2);
 
     // ── Left column: frequency presets ────────────────────
@@ -6445,7 +6445,7 @@ void radio_setup_screen_show()
         lv_obj_set_style_border_width(btn, 0, 0);
         auto* tl = lv_label_create(btn);
         lv_label_set_text(tl, freqs[i].label);
-        lv_obj_set_style_text_font(tl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_10, 0);
         lv_obj_center(tl);
         freq_btns[i] = btn;
 
@@ -6475,7 +6475,7 @@ void radio_setup_screen_show()
     lv_obj_set_style_border_width(custom_btn, 0, 0);
     auto* ctl = lv_label_create(custom_btn);
     lv_label_set_text(ctl, "Custom RF...");
-    lv_obj_set_style_text_font(ctl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(ctl, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(ctl);
     lv_obj_add_event_cb(custom_btn, [](lv_event_t*) {
         custom_rf_screen_show();
@@ -6487,7 +6487,7 @@ void radio_setup_screen_show()
     auto* sf_lbl = lv_label_create(scr);
     lv_label_set_text(sf_lbl, buf);
     lv_obj_set_style_text_color(sf_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(sf_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(sf_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(sf_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
 
     auto* sf_minus = lv_btn_create(scr);
@@ -6516,7 +6516,7 @@ void radio_setup_screen_show()
     auto* bw_lbl = lv_label_create(scr);
     lv_label_set_text(bw_lbl, buf);
     lv_obj_set_style_text_color(bw_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(bw_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(bw_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(bw_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
 
     auto* bw_minus = lv_btn_create(scr);
@@ -6549,7 +6549,7 @@ void radio_setup_screen_show()
     auto* pwr_lbl = lv_label_create(scr);
     lv_label_set_text(pwr_lbl, buf);
     lv_obj_set_style_text_color(pwr_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(pwr_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(pwr_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(pwr_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
 
     auto* pwr_minus = lv_btn_create(scr);
@@ -6578,7 +6578,7 @@ void radio_setup_screen_show()
     auto* gain_lbl = lv_label_create(scr);
     lv_label_set_text(gain_lbl, buf);
     lv_obj_set_style_text_color(gain_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(gain_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(gain_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(gain_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
 
     auto* gain_toggle = lv_btn_create(scr);
@@ -6609,7 +6609,7 @@ void radio_setup_screen_show()
     auto* mack_lbl = lv_label_create(scr);
     lv_label_set_text(mack_lbl, buf);
     lv_obj_set_style_text_color(mack_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(mack_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(mack_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(mack_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
 
     auto* mack_toggle = lv_btn_create(scr);
@@ -6639,7 +6639,7 @@ void radio_setup_screen_show()
     auto* buzzer_lbl = lv_label_create(scr);
     lv_label_set_text(buzzer_lbl, buf);
     lv_obj_set_style_text_color(buzzer_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(buzzer_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(buzzer_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(buzzer_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
 
     auto* buzzer_toggle = lv_btn_create(scr);
@@ -6724,12 +6724,12 @@ void telemetry_screen_show()
         lv_obj_t* lbl = lv_label_create(row);
         lv_label_set_text(lbl, label);
         lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_10, 0);
 
         lv_obj_t* val = lv_label_create(row);
         lv_label_set_text(val, value);
         lv_obj_set_style_text_color(val, lv_color_hex(color), 0);
-        lv_obj_set_style_text_font(val, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(val, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(val, LV_ALIGN_RIGHT_MID, -8, 0);
     };
 
@@ -6759,7 +6759,7 @@ void telemetry_screen_show()
         lv_obj_t* waiting = lv_label_create(list);
         lv_label_set_text(waiting, "Requesting telemetry...\nWaiting for response...");
         lv_obj_set_style_text_color(waiting, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(waiting, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(waiting, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(waiting, LV_ALIGN_CENTER, 0, 0);
     }
 
@@ -6791,7 +6791,7 @@ static void wifi_do_scan(lv_timer_t* timer) {
         lv_obj_t* empty = lv_label_create(list);
         lv_label_set_text(empty, "No networks found");
         lv_obj_set_style_text_color(empty, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(empty, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(empty, emoji_wrapped_montserrat_12, 0);
         lv_obj_center(empty);
     } else {
         lv_group_t* g = lv_group_get_default();
@@ -6814,7 +6814,7 @@ static void wifi_do_scan(lv_timer_t* timer) {
             lv_obj_t* lbl = lv_label_create(btn);
             lv_label_set_text(lbl, row_buf);
             lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_12, 0);
             lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 2, 0);
             lv_obj_set_width(lbl, CONTENT_W - 30);
             lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
@@ -6841,7 +6841,7 @@ static void wifi_do_scan(lv_timer_t* timer) {
                 lv_obj_t* title = lv_label_create(dlg);
                 lv_label_set_text(title, "Enter Password");
                 lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-                lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+                lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
                 lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
                 
                 char ssid_label[48];
@@ -6849,7 +6849,7 @@ static void wifi_do_scan(lv_timer_t* timer) {
                 lv_obj_t* net_lbl = lv_label_create(dlg);
                 lv_label_set_text(net_lbl, ssid_label);
                 lv_obj_set_style_text_color(net_lbl, lv_color_hex(TEXT_SECONDARY), 0);
-                lv_obj_set_style_text_font(net_lbl, &lv_font_montserrat_10, 0);
+                lv_obj_set_style_text_font(net_lbl, emoji_wrapped_montserrat_10, 0);
                 lv_obj_align(net_lbl, LV_ALIGN_TOP_LEFT, 8, 28);
                 
                 lv_obj_t* pw_ta = lv_textarea_create(dlg);
@@ -7032,7 +7032,7 @@ void wifi_networks_screen_show()
     lv_obj_t* scanning = lv_label_create(cont);
     lv_label_set_text(scanning, "Scanning for networks...");
     lv_obj_set_style_text_color(scanning, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(scanning, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(scanning, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_width(scanning, CONTENT_W - 8);
     
     // Results list (scrollable, flex column)
@@ -7085,12 +7085,12 @@ void node_status_screen_show()
         lv_obj_t* lbl = lv_label_create(row);
         lv_label_set_text(lbl, label);
         lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_10, 0);
 
         lv_obj_t* val = lv_label_create(row);
         lv_label_set_text(val, value);
         lv_obj_set_style_text_color(val, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(val, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(val, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(val, LV_ALIGN_RIGHT_MID, -8, 0);
     };
 
@@ -7144,7 +7144,7 @@ void node_status_screen_show()
         lv_obj_t* waiting = lv_label_create(list);
         lv_label_set_text(waiting, "Requesting status...\nWaiting for response...");
         lv_obj_set_style_text_color(waiting, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(waiting, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(waiting, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(waiting, LV_ALIGN_CENTER, 0, 0);
     }
 
@@ -7215,14 +7215,14 @@ static void pin_entry_show(Screen target_screen) {
     lv_obj_t* title = lv_label_create(scr);
     lv_label_set_text(title, "Enter Device PIN");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
 
     // Subtitle
     lv_obj_t* sub = lv_label_create(scr);
     lv_label_set_text(sub, "4-digit PIN to unlock");
     lv_obj_set_style_text_color(sub, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(sub, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(sub, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 60);
 
     // PIN input
@@ -7235,14 +7235,14 @@ static void pin_entry_show(Screen target_screen) {
     lv_textarea_set_max_length(ta, 4);
     lv_textarea_set_accepted_chars(ta, "0123456789");
     lv_textarea_set_placeholder_text(ta, "----");
-    lv_obj_set_style_text_font(ta, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(ta, emoji_wrapped_montserrat_14, 0);
     apply_pixel_input(ta);
 
     // Attempts remaining label
     lv_obj_t* attempts_label = lv_label_create(scr);
     lv_label_set_text(attempts_label, "3 attempts remaining");
     lv_obj_set_style_text_color(attempts_label, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(attempts_label, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(attempts_label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(attempts_label, LV_ALIGN_BOTTOM_MID, 0, -20);
 
     // Back to Home button
@@ -7326,7 +7326,7 @@ static void regions_add_dialog(lv_obj_t* parent_scr) {
     lv_obj_t* title = lv_label_create(dlg);
     lv_label_set_text(title, "Add Region");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     // Name field
@@ -7337,7 +7337,7 @@ static void regions_add_dialog(lv_obj_t* parent_scr) {
     lv_textarea_set_placeholder_text(name_ta, "#name or $name");
     lv_obj_set_style_bg_color(name_ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(name_ta, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(name_ta, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(name_ta, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_border_width(name_ta, 2, 0);
     lv_obj_set_style_border_color(name_ta, lv_color_hex(DIVIDER), 0);
     lv_obj_set_style_radius(name_ta, 0, 0);
@@ -7351,7 +7351,7 @@ static void regions_add_dialog(lv_obj_t* parent_scr) {
     lv_textarea_set_placeholder_text(key_ta, "24-char base64 key");
     lv_obj_set_style_bg_color(key_ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(key_ta, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(key_ta, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(key_ta, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_border_width(key_ta, 2, 0);
     lv_obj_set_style_border_color(key_ta, lv_color_hex(DIVIDER), 0);
     lv_obj_set_style_radius(key_ta, 0, 0);
@@ -7386,7 +7386,7 @@ static void regions_add_dialog(lv_obj_t* parent_scr) {
     // Error label
     lv_obj_t* err_lbl = lv_label_create(dlg);
     lv_obj_set_style_text_color(err_lbl, lv_color_hex(ACCENT_RED), 0);
-    lv_obj_set_style_text_font(err_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(err_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_width(err_lbl, dlg_sz.w - 16);
     lv_obj_align(err_lbl, LV_ALIGN_TOP_MID, 0, 82);
 
@@ -7499,7 +7499,7 @@ void regions_screen_show()
         lv_label_set_text(active_lbl, buf);
     }
     lv_obj_set_style_text_color(active_lbl, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(active_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(active_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(active_lbl, LV_ALIGN_TOP_LEFT, 8, CONTENT_Y + 4);
 
     // List container for regions
@@ -7538,13 +7538,13 @@ void regions_screen_show()
                 lv_label_set_text(icon, " ");
                 lv_obj_set_style_text_color(icon, lv_color_hex(TEXT_MUTED), 0);
             }
-            lv_obj_set_style_text_font(icon, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(icon, emoji_wrapped_montserrat_12, 0);
             lv_obj_set_style_pad_left(icon, 8, 0);
 
             lv_obj_t* name_l = lv_label_create(row);
             lv_label_set_text(name_l, "Public (unscoped)");
             lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_12, 0);
             lv_obj_set_flex_grow(name_l, 1);
             lv_obj_set_style_pad_left(name_l, 8, 0);
 
@@ -7598,14 +7598,14 @@ void regions_screen_show()
                 lv_label_set_text(icon, " ");
                 lv_obj_set_style_text_color(icon, lv_color_hex(TEXT_MUTED), 0);
             }
-            lv_obj_set_style_text_font(icon, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(icon, emoji_wrapped_montserrat_12, 0);
             lv_obj_set_style_pad_left(icon, 8, 0);
 
             // Region name
             lv_obj_t* name_l = lv_label_create(row);
             lv_label_set_text(name_l, regions[i].name);
             lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(name_l, &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_12, 0);
             lv_obj_set_flex_grow(name_l, 1);
             lv_obj_set_style_pad_left(name_l, 8, 0);
 
@@ -7649,7 +7649,7 @@ void regions_screen_show()
             lv_obj_set_style_pad_all(del_btn, 0, 0);
             auto* dl = lv_label_create(del_btn);
             lv_label_set_text(dl, LV_SYMBOL_CLOSE);
-            lv_obj_set_style_text_font(dl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_font(dl, emoji_wrapped_montserrat_10, 0);
             lv_obj_center(dl);
             lv_obj_set_style_pad_right(del_btn, 4, 0);
 
@@ -7704,7 +7704,7 @@ void regions_screen_show()
     lv_obj_set_style_border_color(sync_btn, lv_color_hex(ACCENT), 0);
     lv_obj_t* sl = lv_label_create(sync_btn);
     lv_label_set_text(sl, LV_SYMBOL_REFRESH "  Sync");
-    lv_obj_set_style_text_font(sl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(sl, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_text_color(sl, lv_color_hex(ACCENT), 0);
     lv_obj_center(sl);
 
@@ -7743,7 +7743,7 @@ void regions_screen_show()
     lv_obj_set_style_radius(add_btn, 0, 0);
     lv_obj_t* al = lv_label_create(add_btn);
     lv_label_set_text(al, LV_SYMBOL_PLUS "  Add Region");
-    lv_obj_set_style_text_font(al, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_font(al, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(al);
 
     lv_obj_add_event_cb(add_btn, [](lv_event_t* e) {
