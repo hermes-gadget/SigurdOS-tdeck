@@ -1,18 +1,19 @@
 # SigurdOS T-Deck End-To-End Audit
 
 Date: 2026-06-04
+Refreshed: 2026-06-06 source review against `020195e4581ec7b83147bab09af07e5c902b8ae5`
 
-This audit covers the SigurdOS T-Deck MeshCore firmware at commit `97fb805fbb63fcbae19ed8e199e9f3659b8b331b`, with MeshCore submodule `9a888541efaf57c38dfb886c1c1e4702f371baf1`. The review focused on stability, performance, tests, debug tooling, and feature parity against [MeshOS](https://meshcore.co.uk/meshos.html) and [MC Term](https://github.com/dabeani/meshcoreterm).
+This audit covers the SigurdOS T-Deck MeshCore firmware at commit `97fb805fbb63fcbae19ed8e199e9f3659b8b331b`, with MeshCore submodule `9a888541efaf57c38dfb886c1c1e4702f371baf1`. The review focused on stability, performance, tests, debug tooling, and feature parity against core MeshCore field workflows.
 
-No physical hardware test was performed during this audit. Findings are based on source review, documentation review, native test execution, release build execution, and comparison against the external parity targets.
+No physical hardware test was performed during the original audit. Findings are based on source review, documentation review, native test execution, and release build execution. A 2026-06-06 source refresh removed findings that the current code clearly fixes, but did not rerun PlatformIO validation.
 
 ## Executive Summary
 
 SigurdOS T-Deck is beyond a prototype. It already contains a functional embedded application with a broad UI, MeshCore/BaseChatMesh integration, channel and direct messaging, contacts, regions, GPS, offline maps, OTA entry points, structured telemetry builds, remote-test support, and a strong native test suite.
 
-The main risk is not missing code volume. The main risk is release hardening. The current release build succeeds, but it uses 86.4% of available internal RAM, emits a large warning stream, contains several release/debug policy questions, and has limited automated coverage for hardware, radio interop, sleep/wake, OTA, storage failure, and long-running operation.
+The main risk is not missing code volume. The main risk is release hardening. The original release build succeeded, but it used 86.4% of available internal RAM, emitted a large warning stream, and had limited automated coverage for hardware, radio interop, sleep/wake, OTA, storage failure, and long-running operation. Current source fixes some of the earlier policy and wake-mask issues, but build and hardware evidence still need refresh.
 
-The largest feature-parity gap is companion/client behavior. MeshOS and MC Term emphasize phone/terminal-style connected workflows, map/cache behavior, visible connection state, contact/message detail, and management UX. SigurdOS has many of the primitives, but it still needs durable state sync, BLE/WiFi bridge parity, richer message/contact detail, stronger map behavior, and repeatable interop tests.
+The largest feature-parity gap is still companion/client behavior. Connected field workflows emphasize phone/terminal-style operation, map/cache behavior, visible connection state, contact/message detail, and management UX. SigurdOS now has an experimental BLE companion bridge and native protocol coverage, but it still needs official app hardware validation, durable state sync, richer message/contact detail, stronger map behavior, and repeatable interop tests.
 
 ## Validation Evidence
 
@@ -44,17 +45,17 @@ The firmware build generated a merged image at `.pio/build/SigurdOS_TDeck/firmwa
 
 ## Feature Parity Snapshot
 
-| Capability | SigurdOS current state | MeshOS / MC Term expectation | Gap |
+| Capability | SigurdOS current state | Parity target expectation | Gap |
 | --- | --- | --- | --- |
-| Standalone channel/DM chat | Present with persisted messages, timestamps, search, ACK indicator, emoji support, and UTF-8 truncation helpers | Standalone messaging with clear delivery and history workflows | Mostly present; message metadata persistence and richer detail remain |
+| Standalone channel/DM chat | Present with persisted messages, timestamps, search, ACK indicator, emoji support, UTF-8 truncation helpers, and a newer shared companion message store | Standalone messaging with clear delivery and history workflows | Mostly present; legacy and companion stores need unification, subtype metadata persistence, and richer detail views |
 | Contacts | Discovery, LRU cap, details, removal, path reset, telemetry request, QR display pieces | Sort/filter, favorites, badges, public key/manual add, rich metadata | Needs manual/favorite/filter UX and persistent richer metadata |
-| Regions | Region APIs and tests are present | Region/channel isolation and scoped sends must interop | Needs hardware and interop proof |
-| Maps | Offline SD tiles, contact markers, panning/zooming, cache | MC Term has slippy maps, online tile fetching, negative tile cache, map source selection | Needs online/cache parity and map performance tests |
-| Repeater/room management | Login/command/fetch primitives exist through BaseChatMesh path | MeshOS/MC Term expose management workflows and status | Needs UI polish, errors, permissions, and interop validation |
-| Telemetry | Structured telemetry builds, collectors, packet logs, commands, battery/GPS response | Visible diagnostics and telemetry history | Needs history UI, release-safe policy, and doc reconciliation |
-| Companion client | No confirmed full BLE/WiFi companion bridge parity | MeshOS and MC Term center on connected client workflows | Largest functional gap |
+| Regions | Region APIs, scoped send hooks, active-scope prefs, UI surfaces, and native tests are present | Region/channel isolation and scoped sends must interop | Needs hardware proof, private-key persistence, and app-driven flood-scope validation |
+| Maps | Offline SD tiles, contact markers, panning/zooming, cache | Online tile fetching, negative tile cache, and map source selection | Needs online/cache parity and map performance tests |
+| Repeater/room management | Local login, command, fetch, status, telemetry, saved-password, and companion command paths exist | Field-terminal workflows expose management actions, status, and errors | Official app management still needs timeout fixes, CLI-data framing, allowed-frequency semantics, explicit errors, permissions, and interop validation |
+| Telemetry | Structured telemetry builds, collectors, packet logs, commands, battery/GPS response | Visible diagnostics and telemetry history | Needs history UI, release-output validation, and doc reconciliation |
+| Companion client | Experimental BLE bridge, companion frame dispatcher, offline queue, pushes, time get/set, and native protocol tests exist | Connected clients center on app/terminal workflows | Needs official app hardware validation, WiFi bridge work, reconnect/sync hardening, and repeater-management timeout fixes |
 | OTA/update | AP OTA and GitHub OTA entry points exist | Safe update, progress, recovery, and release artifacts | Needs negative tests, rollback docs, manifests |
-| Power | Low-battery shutdown, backlight control, sleep paths | Field terminals need predictable runtime and wake behavior | Needs measured hardware profiles and wake-source fixes |
+| Power | Low-battery shutdown, backlight control, sleep paths, GPS settings, and wake-mask helpers | Field terminals need predictable runtime and wake behavior | Needs measured hardware profiles, battery-safe GPS defaults, and wake-source hardware proof |
 
 ## Stability Findings
 
@@ -64,31 +65,19 @@ The release build uses 283,036 bytes of 327,680 bytes of RAM, leaving roughly 44
 
 Recommendation: make RAM a release gate. Track internal RAM, PSRAM, minimum heap, stack high-water marks, and worst-case map/chat/OTA scenarios. Reduce release RAM below 80% before adding large companion features.
 
-### S2 - Sleep/wake GPIO warning needs immediate attention
-
-The build reports left-shift warnings around high GPIO numbers in the LoRa DIO wake configuration path. On ESP32-S3, GPIO numbers above 31 require 64-bit masks. A 32-bit shift can break wake-source behavior.
-
-Recommendation: fix the mask type and add hardware sleep/wake tests for LoRa DIO, touch, keyboard/trackball, button wake, and low-battery shutdown.
-
-### S3 - Release/debug command policy is not fully clean
-
-The display path accepts serial commands such as `SCREENSHOT`, `SEND`, and `NAV` in non-remote-test release builds. These are useful, but they should be governed by an explicit release, debug, or remote-test policy.
-
-Recommendation: gate command injection behind `SIGURDOS_REMOTE_TEST` or a documented opt-in debug flag. Keep screenshot capture available for tests, but not accidentally exposed in field release builds.
-
-### S4 - OTA and WiFi paths can starve the main loop
+### S2 - OTA and WiFi paths can starve the main loop
 
 The main loop is cooperative. GitHub OTA performs HTTP connection and stream/write work inside the loop state machine, and AP/STA WiFi paths contain blocking delays and restart delays. These are acceptable for controlled update flows, but they need explicit UI and watchdog expectations.
 
 Recommendation: add OTA state-machine tests, negative tests, watchdog/heartbeat telemetry during OTA, and user-visible "mesh paused/update active" semantics where appropriate.
 
-### S5 - Persistence works but is not yet power-loss robust
+### S3 - Persistence has improved but still needs unification
 
-Messages are stored in SPIFFS with a bounded record format, but the current path rewrites the message file periodically and on shutdown/config transitions. Contacts persist a compact binary record, but not all route/path/shared metadata survives reboot.
+Messages now have a shared bounded binary store at `/companion_msgs` with deduplication, ACK flags, companion-sent flags, path length, and recent-message loading. The legacy chat path still persists `/msgs` through periodic whole-file rewrites, so the system has dual sources of truth and not all subtype, route, or command-reply metadata survives across UI, companion, and reboot paths.
 
-Recommendation: move message history toward journaled or append-friendly storage, version schemas, add migration tests, and persist enough metadata for companion sync and message details.
+Recommendation: unify `/msgs` and `/companion_msgs` behind one journaled or append-friendly store, version schemas, add migration tests, and persist enough metadata for companion sync, command replies, and message details.
 
-### S6 - Documentation has source-of-truth drift
+### S4 - Documentation has source-of-truth drift
 
 The code now implements several capabilities that older roadmap and telemetry-plan documents still present as planned or partial. This creates review risk for parallel contributors.
 
@@ -108,11 +97,11 @@ The map renderer decodes PNG tiles, converts to RGB565, and caches tiles in PSRA
 
 Recommendation: add map performance tests for cache hit/miss, SD missing, high zoom, contact markers, and low PSRAM. Add online tile fetch only after cache budgets and UI responsiveness are measured.
 
-### P3 - Chat history save strategy can create latency and flash wear
+### P3 - Dual message stores can create latency and state drift
 
-Periodic whole-file message saves are simple and testable, but they can become expensive as history grows. They also do not persist ACK and route metadata.
+The newer shared message store adds stable IDs, deduplication, ACK state, companion-sent state, path length, and bounded recent loading. The legacy chat save path still performs periodic whole-file writes to `/msgs`, which can become expensive as history grows and can drift from the companion-visible `/companion_msgs` store.
 
-Recommendation: move to a log/journal design with compaction, stable IDs, deduplication, and migration coverage.
+Recommendation: collapse chat and companion persistence into one log/journal design with compaction, stable IDs, subtype metadata, deduplication, and migration coverage.
 
 ### P4 - Build time and dependency volume are high
 
@@ -124,7 +113,7 @@ Recommendation: keep fast native tests, add targeted build profiles, and make wa
 
 ### Strengths
 
-- Native tests cover many key areas: battery, build assumptions, channel validation, chat truncation, emoji, GPS, home screen, keyboard, layout, map, mesh messaging, mesh wrapper, navigation, pins, preferences, regions, SD card, terminal, theme, touch, and trackball.
+- Native tests cover many key areas: battery, build assumptions, channel validation, chat truncation, companion protocol frames, emoji, GPS, home screen, keyboard, layout, map, message store behavior, mesh messaging, mesh wrapper, navigation, pins, preferences, regions, SD card, serial debug gating, terminal, theme, touch, and trackball.
 - The remote test controller is unusually valuable for an embedded UI firmware project. It can drive navigation, typing, screenshot capture, widget listing, radio setup, channels, messages, repeaters/rooms, login, fetch, and diagnostics.
 - Telemetry and debug builds are already represented in `platformio.ini`.
 
@@ -135,7 +124,7 @@ Recommendation: keep fast native tests, add targeted build profiles, and make wa
 - ACK matching and delivery status need deeper tests for multi-contact, repeated ACK, timeout, reboot, and persisted state.
 - OTA needs both positive and negative tests.
 - Map rendering needs low-resource and missing-resource tests.
-- Companion-client behavior has no parity test harness yet.
+- Companion-client behavior now has native protocol coverage, but still lacks official app hardware, reconnect, sync, and repeater-management artifacts.
 
 Recommendation: keep the current native suite as the baseline, then add hardware/remote-test artifacts and interop fixtures before declaring feature parity.
 
@@ -150,18 +139,17 @@ Recommendation: keep the current native suite as the baseline, then add hardware
 
 ### Risks
 
-- Release-safe command and serial-output policy needs tightening.
+- Release serial-output and telemetry budgets still need fresh build validation now that serial command injection is opt-in.
 - Telemetry architecture docs describe planned work that now partly exists in code, making it hard to know what is authoritative.
 - The build warning stream is noisy enough that important warnings are easy to miss.
 - The PlatformIO output encoding exception on Windows can distract from real build issues.
 
-Recommendation: define debug surfaces by build type: release, debug, telemetry, remote test, and hardware CI. Each should have explicit serial command availability and memory budget expectations.
+Recommendation: keep debug surfaces defined by build type: release, debug, telemetry, remote test, and hardware CI. Each should have explicit serial output, command availability, and memory budget expectations.
 
 ## Warning Categories Observed
 
 Local or local-adjacent warnings to prioritize:
 
-- `src/hal/tdeck_pins.h` / MeshCore board helpers: high-GPIO left shift warning for wake masks
 - `src/ui/theme.h`: inline variables require C++17 while target build is not configured for C++17
 - `src/hal/github_ota.cpp`: progress string may truncate
 - `src/hal/prefs.cpp`: small key-buffer truncation warnings for WiFi profile keys
@@ -179,14 +167,14 @@ Third-party or submodule warnings to isolate:
 
 ## Recommended Priority Order
 
-1. Fix warning hygiene and release/debug policy before adding major features.
+1. Refresh release build and native-test validation, then fix remaining warning hygiene before adding major features.
 2. Add hardware sleep/wake and OTA negative tests.
 3. Reduce RAM pressure and record runtime heap/PSRAM telemetry in release-like scenarios.
-4. Replace message persistence with a schema-versioned, power-loss-aware store.
-5. Build companion BLE/WiFi bridge parity and state sync.
-6. Expand MeshOS/MC Term parity UX: contact filters, message details, map cache, room/repeater management, alerts.
+4. Unify chat and companion message persistence into a schema-versioned, power-loss-aware store.
+5. Validate companion BLE/WiFi bridge parity and state sync on hardware with the official app.
+6. Expand parity UX: contact filters, message details, map cache, room/repeater management, alerts.
 7. Add release artifacts, recovery docs, and field validation checklists.
 
 ## Audit Conclusion
 
-SigurdOS T-Deck has a credible foundation and a broad feature surface, but it should be treated as a beta firmware until hardware, warning, persistence, companion-sync, and release-operation gaps are closed. The highest-leverage next step is not a single new feature. It is to stabilize the build, make tests span actual hardware behavior, and turn the existing primitives into reliable MeshOS/MC Term parity workflows.
+SigurdOS T-Deck has a credible foundation and a broad feature surface, but it should be treated as a beta firmware until hardware, warning, persistence, companion-sync, and release-operation gaps are closed. The highest-leverage next step is not a single new feature. It is to stabilize the build, make tests span actual hardware behavior, and turn the existing primitives into reliable parity workflows.
