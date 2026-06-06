@@ -68,6 +68,9 @@ const char* getOwnName() { return mock_own_name; }
 int getContactCount() { return 0; }
 int exportContacts(char names[][32], int max) { return 0; }
 int exportContactsFull(ContactInfo* out, int max) { (void)out; return 0; }
+bool getContactByName(const char* name, ContactInfo* out) {
+    (void)name; (void)out; return false;
+}
 int getChannelCount() { return 0; }
 int exportChannels(char names[][32], int max) { return 0; }
 bool addChannel(const char* name, const char* psk) { return false; }

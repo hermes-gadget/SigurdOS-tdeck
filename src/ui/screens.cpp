@@ -21,6 +21,7 @@
 #include "navigation.h"
 #include "theme.h"
 #include "responsive.h"
+#include "contact_paging.h"
 #include "home_screen.h"
 #include "chat_screen.h"
 #include "../hal/tdeck_pins.h"
@@ -43,9 +44,11 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <math.h>
 #include <functional>
+#include <new>
 #include <SPIFFS.h>
 
 namespace sigurdos::ui {
@@ -77,6 +80,9 @@ static void pin_entry_show(Screen target_screen);
 static lv_obj_t*  g_packets_list       = nullptr;
 static lv_timer_t* g_packets_timer     = nullptr;
 static int        g_packets_last_count = -1;
+
+static int g_contacts_page = 0;
+static int g_repeaters_page = 0;
 
 static void advertise_status_update()
 {
@@ -284,6 +290,78 @@ static void show_screen(lv_obj_t* scr)
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
 }
 
+static void show_contact_memory_error(lv_obj_t* scr)
+{
+    lv_obj_t* err = lv_label_create(scr);
+    lv_label_set_text(err, "Contact list unavailable.\nNot enough memory.");
+    lv_obj_set_width(err, CONTENT_W);
+    lv_obj_set_style_text_align(err, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
+    lv_obj_set_style_text_font(err, &lv_font_montserrat_12, 0);
+    lv_obj_align(err, LV_ALIGN_CENTER, 0, 0);
+}
+
+static void add_contact_pager(lv_obj_t* scr, int page, int pages, int total,
+                              lv_event_cb_t prev_cb, lv_event_cb_t next_cb)
+{
+    if (pages <= 1) return;
+
+    lv_obj_t* pager = lv_obj_create(scr);
+    lv_obj_set_size(pager, CONTENT_W, 24);
+    lv_obj_align(pager, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 2);
+    lv_obj_set_style_bg_opa(pager, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pager, 0, 0);
+    lv_obj_set_style_pad_all(pager, 0, 0);
+
+    lv_obj_t* prev = lv_btn_create(pager);
+    lv_obj_set_size(prev, 34, 22);
+    lv_obj_align(prev, LV_ALIGN_LEFT_MID, 4, 0);
+    apply_pixel_btn_outline(prev);
+    if (page <= 0) lv_obj_add_state(prev, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(prev, prev_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* prev_l = lv_label_create(prev);
+    lv_label_set_text(prev_l, LV_SYMBOL_LEFT);
+    lv_obj_center(prev_l);
+
+    int start = contact_page_start(page, total) + 1;
+    int end = contact_page_end(page, total);
+    char page_buf[32];
+    snprintf(page_buf, sizeof(page_buf), "%d-%d/%d", start, end, total);
+    lv_obj_t* status = lv_label_create(pager);
+    lv_label_set_text(status, page_buf);
+    lv_obj_set_width(status, CONTENT_W - 88);
+    lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(status, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(status, &lv_font_montserrat_10, 0);
+    lv_obj_align(status, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t* next = lv_btn_create(pager);
+    lv_obj_set_size(next, 34, 22);
+    lv_obj_align(next, LV_ALIGN_RIGHT_MID, -4, 0);
+    apply_pixel_btn_outline(next);
+    if (page >= pages - 1) lv_obj_add_state(next, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(next, next_cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* next_l = lv_label_create(next);
+    lv_label_set_text(next_l, LV_SYMBOL_RIGHT);
+    lv_obj_center(next_l);
+}
+
+static int compare_contacts_by_name(const void* a, const void* b)
+{
+    const auto* ca = static_cast<const sigurdos::mesh::ContactInfo*>(a);
+    const auto* cb = static_cast<const sigurdos::mesh::ContactInfo*>(b);
+    return strcmp(ca->name, cb->name);
+}
+
+static int compare_contacts_by_last_seen_desc(const void* a, const void* b)
+{
+    const auto* ca = static_cast<const sigurdos::mesh::ContactInfo*>(a);
+    const auto* cb = static_cast<const sigurdos::mesh::ContactInfo*>(b);
+    if (ca->last_seen < cb->last_seen) return 1;
+    if (ca->last_seen > cb->last_seen) return -1;
+    return strcmp(ca->name, cb->name);
+}
+
 // ── WiFi status icon in bottom bar ──────────────────────
 
 void update_wifi_status() {
@@ -489,14 +567,24 @@ static int contacts_filter_type = -1; // -1=all, else ADV_TYPE_*
 
 void contacts_screen_set_filter(int adv_type) {
     contacts_filter_type = adv_type;
+    g_contacts_page = 0;
 }
 
 void contacts_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Contacts");
 
-    sigurdos::mesh::ContactInfo all_contacts[32];
-    int total = sigurdos::mesh::exportContactsFull(all_contacts, 32);
+    sigurdos::mesh::ContactInfo* all_contacts =
+        new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    if (!all_contacts) {
+        show_contact_memory_error(scr);
+        show_screen(scr);
+        return;
+    }
+
+    int total = sigurdos::mesh::exportContactsFull(all_contacts, MAX_CONTACTS);
+    if (total < 0) total = 0;
+    if (total > MAX_CONTACTS) total = MAX_CONTACTS;
 
     // Filter based on mode
     int n = 0;
@@ -517,14 +605,11 @@ void contacts_screen_show()
     }
     sigurdos::mesh::ContactInfo* contacts = all_contacts;
 
-    // Sort alphabetically
-    for (int i = 0; i < n - 1; i++)
-        for (int j = i + 1; j < n; j++)
-            if (strcmp(contacts[j].name, contacts[i].name) < 0) {
-                auto tmp = contacts[i]; contacts[i] = contacts[j]; contacts[j] = tmp;
-            }
+    // Sort alphabetically across the full 350-contact table before paging.
+    if (n > 1) qsort(contacts, n, sizeof(contacts[0]), compare_contacts_by_name);
 
     if (n == 0) {
+        g_contacts_page = 0;
         lv_obj_t* info = lv_label_create(scr);
         lv_label_set_text(info,
             "No contacts yet.\n\n"
@@ -539,13 +624,48 @@ void contacts_screen_show()
         lv_obj_set_style_text_color(info, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(info, &lv_font_montserrat_12, 0);
         lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
+        delete[] all_contacts;
         show_screen(scr);
         return;
     }
 
+    int pages = contact_page_count(n);
+    g_contacts_page = contact_clamp_page(g_contacts_page, n);
+    int page_start = contact_page_start(g_contacts_page, n);
+    int page_end = contact_page_end(g_contacts_page, n);
+    int page_n = page_end - page_start;
+    sigurdos::mesh::ContactInfo page_contacts[CONTACT_LIST_PAGE_SIZE];
+    for (int i = 0; i < page_n; i++) {
+        page_contacts[i] = contacts[page_start + i];
+    }
+    delete[] all_contacts;
+    all_contacts = nullptr;
+    contacts = page_contacts;
+
+    int list_y = CONTENT_Y;
+    int list_h = CONTENT_H;
+    if (pages > 1) {
+        add_contact_pager(scr, g_contacts_page, pages, n,
+            [](lv_event_t*) {
+                if (g_contacts_page > 0) g_contacts_page--;
+                contacts_screen_show();
+            },
+            [](lv_event_t*) {
+                g_contacts_page++;
+                contacts_screen_show();
+            });
+        list_y += 28;
+        list_h -= 28;
+    }
+
     lv_obj_t* list = lv_obj_create(scr);
-    lv_obj_set_size(list, LV_PCT(100), CONTENT_H);
-    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
+    if (!list) {
+        show_contact_memory_error(scr);
+        show_screen(scr);
+        return;
+    }
+    lv_obj_set_size(list, LV_PCT(100), list_h);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, list_y);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_style_pad_all(list, 0, 0);
@@ -555,13 +675,14 @@ void contacts_screen_show()
 
     static constexpr int ROW_H = 32;
 
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < page_n; i++) {
         auto& c = contacts[i];
 
         lv_obj_t* row = lv_obj_create(list);
+        if (!row) break;
         lv_obj_set_size(row, LV_PCT(100), ROW_H);
         lv_obj_set_style_bg_color(row,
-            lv_color_hex(i % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_color_hex((page_start + i) % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
         lv_obj_set_style_bg_color(row,
             lv_color_hex(ACCENT), LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
@@ -1205,18 +1326,13 @@ void contact_detail_screen_show(const char* contact_name)
 
     lv_obj_t* scr = make_screen_full("Contact");
 
-    // Look up the contact via exportContactsFull
-    sigurdos::mesh::ContactInfo* contacts = new sigurdos::mesh::ContactInfo[MAX_CONTACTS];
-    int total = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
+    // Look up only the requested contact; the firmware can store 350 contacts.
+    sigurdos::mesh::ContactInfo target_info{};
     const sigurdos::mesh::ContactInfo* target = nullptr;
-    for (int i = 0; i < total; i++) {
-        if (strcmp(contacts[i].name, contact_name) == 0) {
-            target = &contacts[i];
-            break;
-        }
+    if (sigurdos::mesh::getContactByName(contact_name, &target_info)) {
+        target = &target_info;
     }
     if (!target) {
-        delete[] contacts;
         lv_obj_t* err = lv_label_create(scr);
         lv_label_set_text(err, "Contact not found");
         lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
@@ -1890,7 +2006,6 @@ void contact_detail_screen_show(const char* contact_name)
         }
     }
 
-    delete[] contacts;
     show_screen(scr);
 }
 // ════════════════════════════════════════════════════════
@@ -2063,8 +2178,17 @@ void repeaters_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Repeaters");
 
-    sigurdos::mesh::ContactInfo contacts[32];
-    int total = sigurdos::mesh::exportContactsFull(contacts, 32);
+    sigurdos::mesh::ContactInfo* contacts =
+        new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    if (!contacts) {
+        show_contact_memory_error(scr);
+        show_screen(scr);
+        return;
+    }
+
+    int total = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
+    if (total < 0) total = 0;
+    if (total > MAX_CONTACTS) total = MAX_CONTACTS;
 
     // Filter to repeaters only
     int n = 0;
@@ -2075,20 +2199,11 @@ void repeaters_screen_show()
         }
     }
 
-    // Sort by last_seen descending (most recently heard first)
-    if (n > 1) {
-        for (int i = 0; i < n - 1; i++) {
-            for (int j = 0; j < n - 1 - i; j++) {
-                if (contacts[j].last_seen < contacts[j + 1].last_seen) {
-                    sigurdos::mesh::ContactInfo tmp = contacts[j];
-                    contacts[j] = contacts[j + 1];
-                    contacts[j + 1] = tmp;
-                }
-            }
-        }
-    }
+    // Sort by last_seen descending (most recently heard first) before paging.
+    if (n > 1) qsort(contacts, n, sizeof(contacts[0]), compare_contacts_by_last_seen_desc);
 
     if (n == 0) {
+        g_repeaters_page = 0;
         lv_obj_t* info = lv_label_create(scr);
         lv_label_set_text(info,
             "No repeaters found.\n\n"
@@ -2101,13 +2216,47 @@ void repeaters_screen_show()
         lv_obj_set_style_text_color(info, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(info, &lv_font_montserrat_12, 0);
         lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
+        delete[] contacts;
         show_screen(scr);
         return;
     }
 
+    int pages = contact_page_count(n);
+    g_repeaters_page = contact_clamp_page(g_repeaters_page, n);
+    int page_start = contact_page_start(g_repeaters_page, n);
+    int page_end = contact_page_end(g_repeaters_page, n);
+    int page_n = page_end - page_start;
+    sigurdos::mesh::ContactInfo page_contacts[CONTACT_LIST_PAGE_SIZE];
+    for (int i = 0; i < page_n; i++) {
+        page_contacts[i] = contacts[page_start + i];
+    }
+    delete[] contacts;
+    contacts = page_contacts;
+
+    int list_y = CONTENT_Y;
+    int list_h = CONTENT_H;
+    if (pages > 1) {
+        add_contact_pager(scr, g_repeaters_page, pages, n,
+            [](lv_event_t*) {
+                if (g_repeaters_page > 0) g_repeaters_page--;
+                repeaters_screen_show();
+            },
+            [](lv_event_t*) {
+                g_repeaters_page++;
+                repeaters_screen_show();
+            });
+        list_y += 28;
+        list_h -= 28;
+    }
+
     lv_obj_t* list = lv_obj_create(scr);
-    lv_obj_set_size(list, LV_PCT(100), CONTENT_H);
-    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
+    if (!list) {
+        show_contact_memory_error(scr);
+        show_screen(scr);
+        return;
+    }
+    lv_obj_set_size(list, LV_PCT(100), list_h);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, list_y);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_style_pad_all(list, 0, 0);
@@ -2117,13 +2266,14 @@ void repeaters_screen_show()
 
     static constexpr int ROW_H = 32;
 
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < page_n; i++) {
         auto& c = contacts[i];
 
         lv_obj_t* row = lv_obj_create(list);
+        if (!row) break;
         lv_obj_set_size(row, LV_PCT(100), ROW_H);
         lv_obj_set_style_bg_color(row,
-            lv_color_hex(i % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_color_hex((page_start + i) % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
         lv_obj_set_style_bg_color(row,
             lv_color_hex(ACCENT), LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
@@ -2333,15 +2483,12 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 {
     if (!contact_name || !contact_name[0]) return;
 
-    // Look up the contact first (need type for screen title)
-    sigurdos::mesh::ContactInfo* contacts = new sigurdos::mesh::ContactInfo[MAX_CONTACTS];
-    int total = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
+    // Look up the contact first (need type for screen title). Avoid copying
+    // the full 350-contact table just to open one repeater detail page.
+    sigurdos::mesh::ContactInfo target_info{};
     const sigurdos::mesh::ContactInfo* target = nullptr;
-    for (int i = 0; i < total; i++) {
-        if (strcmp(contacts[i].name, contact_name) == 0) {
-            target = &contacts[i];
-            break;
-        }
+    if (sigurdos::mesh::getContactByName(contact_name, &target_info)) {
+        target = &target_info;
     }
 
     // Determine screen title from contact type
@@ -2357,7 +2504,6 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
     lv_obj_t* scr = make_screen_full(screen_title);
 
     if (!target) {
-        delete[] contacts;
         lv_obj_t* err = lv_label_create(scr);
         lv_label_set_text(err, "Contact not found");
         lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
@@ -2831,7 +2977,6 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         }
     }
 
-    delete[] contacts;
     show_screen(scr);
 }
 
@@ -3034,8 +3179,15 @@ bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
 // Helper: render map tiles then overlay contact markers
 static void render_map_with_contacts() {
     sigurdos_map_render();
-    sigurdos::mesh::ContactInfo* contacts = new sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    sigurdos::mesh::ContactInfo* contacts =
+        new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    if (!contacts) {
+        sigurdos_map_contact_render(nullptr, 0);
+        return;
+    }
     int n = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
+    if (n < 0) n = 0;
+    if (n > MAX_CONTACTS) n = MAX_CONTACTS;
     sigurdos_map_contact_render(contacts, n);
     delete[] contacts;
 }

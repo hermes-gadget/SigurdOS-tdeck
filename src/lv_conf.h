@@ -55,15 +55,15 @@
 #define LV_USE_ANIMATION          1
 #define LV_USE_SNAPSHOT           1
 
-// Memory — keep LVGL's 64 KB TLSF pool in PSRAM, not internal DRAM.
+// Memory — keep LVGL's TLSF pool in PSRAM, not internal DRAM.
 //
 // NOTE: the old `LV_MEM_CUSTOM_*` macros below are LVGL v8 names. This project
 // is on LVGL v9, which ignores them entirely — so they were a silent no-op and
-// LVGL placed its 64 KB pool as a static array in internal DRAM (the big
+// LVGL placed its pool as a static array in internal DRAM (the big
 // `work_mem_int` symbol). v9 instead uses LV_USE_STDLIB_MALLOC + a pool
 // allocator: defining LV_MEM_POOL_ALLOC makes lv_mem_init() create the TLSF
 // pool from PSRAM and drops the internal `work_mem_int` array completely.
 #define LV_USE_STDLIB_MALLOC      LV_STDLIB_BUILTIN
-#define LV_MEM_SIZE               (64 * 1024U)
+#define LV_MEM_SIZE               (256 * 1024U)
 #define LV_MEM_POOL_INCLUDE       <esp_heap_caps.h>
 #define LV_MEM_POOL_ALLOC(size)   heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)

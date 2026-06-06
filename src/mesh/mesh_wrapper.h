@@ -110,6 +110,7 @@ void resetUnreadMessageCount();
 int  getContactCount();
 int  exportContacts(char names[][32], int max);
 int  exportContactsFull(ContactInfo* out, int max);
+bool getContactByName(const char* name, ContactInfo* out);
 bool isContactFavourite(const char* name);
 void setContactFavourite(const char* name, bool favourite);
 

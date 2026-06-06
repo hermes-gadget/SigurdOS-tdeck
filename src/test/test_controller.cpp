@@ -38,6 +38,7 @@
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
+#include <new>
 #include <cctype>
 #include <lvgl.h>
 #include <others/snapshot/lv_snapshot.h>
@@ -133,6 +134,7 @@ static void print_help() {
 
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
+    Serial.println(F("║  contactstats Show contact counters ║"));
     Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
     Serial.println(F("║  debug <feat> <1|0>  Toggle feature: display/mesh/ui/map/diag║"));
     Serial.println(F("║  debug all <1|0>     Enable/disable all debug features      ║"));
@@ -376,6 +378,39 @@ static void cmd_status() {
     Serial.printf("[test] heap=%u psram=%u\n",
                   (unsigned)ESP.getFreeHeap(),
                   (unsigned)ESP.getFreePsram());
+}
+
+static void cmd_contactstats() {
+    auto* contacts = new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    if (!contacts) {
+        Serial.println(F("[test] contactstats: OOM"));
+        return;
+    }
+
+    int exported = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
+    if (exported < 0) exported = 0;
+    if (exported > MAX_CONTACTS) exported = MAX_CONTACTS;
+
+    int repeaters = 0;
+    int rooms = 0;
+    int chat = 0;
+    int other = 0;
+    for (int i = 0; i < exported; i++) {
+        if (contacts[i].type == ADV_TYPE_REPEATER) {
+            repeaters++;
+        } else if (contacts[i].type == ADV_TYPE_ROOM) {
+            rooms++;
+        } else if (contacts[i].type == ADV_TYPE_CHAT) {
+            chat++;
+        } else {
+            other++;
+        }
+    }
+    delete[] contacts;
+
+    Serial.printf("[test] contactstats stored=%d exported=%d repeaters=%d rooms=%d chat=%d other=%d max=%d\n",
+                  sigurdos::mesh::getContactCount(), exported,
+                  repeaters, rooms, chat, other, MAX_CONTACTS);
 }
 
 static void cmd_debug(const char* arg) {
@@ -1077,6 +1112,8 @@ static bool dispatch(const char* line) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {
         cmd_status();
+    } else if (strcmp(cmd, "contactstats") == 0) {
+        cmd_contactstats();
     } else if (strcmp(cmd, "debug") == 0) {
         cmd_debug(arg);
     } else if (strcmp(cmd, "term-log") == 0) {

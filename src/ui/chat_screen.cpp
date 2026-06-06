@@ -1810,14 +1810,10 @@ static void open_channel_messaging(int idx)
     if (idx >= 0 && idx < dyn_count && dyn_channels[idx] &&
         strncmp(dyn_channels[idx], "DM: ", 4) == 0) {
         const char* contact_name = dyn_channels[idx] + 4;
-        sigurdos::mesh::ContactInfo cbuf[32];
-        int cn = sigurdos::mesh::exportContactsFull(cbuf, 32);
-        for (int ci = 0; ci < cn; ci++) {
-            if (strcmp(cbuf[ci].name, contact_name) == 0) {
-                lv_obj_t* sig = create_signal_dots(top_bar, cbuf[ci].rssi);
-                lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -30, 0);
-                break;
-            }
+        sigurdos::mesh::ContactInfo contact_info{};
+        if (sigurdos::mesh::getContactByName(contact_name, &contact_info)) {
+            lv_obj_t* sig = create_signal_dots(top_bar, contact_info.rssi);
+            lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -30, 0);
         }
     }
 

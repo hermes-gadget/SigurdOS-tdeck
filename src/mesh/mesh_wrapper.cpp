@@ -1055,7 +1055,7 @@ void resetUnreadMessageCount() { unread_count = 0; }
 int getContactCount() { return g_mesh ? g_mesh->getContactCount() : 0; }
 
 int exportContacts(char names[][32], int max) {
-    if (!g_mesh) return 0;
+    if (!g_mesh || !names || max <= 0) return 0;
     int n = 0;
     for (int i = 0; i < g_mesh->getContactCount() && n < max; i++) {
         auto* c = g_mesh->getContact(i);
@@ -1065,30 +1065,45 @@ int exportContacts(char names[][32], int max) {
 }
 
 // ContactInfo is declared in mesh_wrapper.h — exportContactsFull uses it
+static void fillContactInfo(ContactInfo& dest, const ::ContactInfo& src) {
+    strncpy(dest.name, src.name, sizeof(dest.name) - 1);
+    dest.name[sizeof(dest.name) - 1] = '\0';
+    dest.type = src.type;
+    // Extract perm from MeshCore ContactInfo::flags bits 1-2
+    dest.perm = (src.flags >> 1) & 0x03;
+    // MeshCore's ContactInfo stores GPS as int32 (1e6 fixed-point) and
+    // carries no per-contact RSSI/SNR — pull signal from the side-channel.
+    dest.has_location = (src.gps_lat != 0 || src.gps_lon != 0);
+    dest.latitude  = (float)src.gps_lat / 1000000.0f;
+    dest.longitude = (float)src.gps_lon / 1000000.0f;
+    dest.rssi = g_mesh->getContactRSSI(src.id.pub_key);
+    dest.snr  = g_mesh->getContactSNR(src.id.pub_key);
+    dest.last_seen = src.last_advert_timestamp;
+}
 
 int exportContactsFull(ContactInfo* out, int max) {
-    if (!g_mesh) return 0;
+    if (!g_mesh || !out || max <= 0) return 0;
     int n = 0;
     for (int i = 0; i < g_mesh->getContactCount() && n < max; i++) {
         auto* c = g_mesh->getContact(i);
         if (c && c->name[0]) {
-            strncpy(out[n].name, c->name, 31);
-            out[n].name[31] = '\0';
-            out[n].type = c->type;
-            // Extract perm from MeshCore ContactInfo::flags bits 1-2
-            out[n].perm = (c->flags >> 1) & 0x03;
-            // MeshCore's ContactInfo stores GPS as int32 (1e6 fixed-point) and
-            // carries no per-contact RSSI/SNR — pull signal from the side-channel.
-            out[n].has_location = (c->gps_lat != 0 || c->gps_lon != 0);
-            out[n].latitude  = (float)c->gps_lat / 1000000.0f;
-            out[n].longitude = (float)c->gps_lon / 1000000.0f;
-            out[n].rssi = g_mesh->getContactRSSI(c->id.pub_key);
-            out[n].snr  = g_mesh->getContactSNR(c->id.pub_key);
-            out[n].last_seen = c->last_advert_timestamp;
+            fillContactInfo(out[n], *c);
             n++;
         }
     }
     return n;
+}
+
+bool getContactByName(const char* name, ContactInfo* out) {
+    if (!g_mesh || !name || !name[0] || !out) return false;
+    for (int i = 0; i < g_mesh->getContactCount(); i++) {
+        auto* c = g_mesh->getContact(i);
+        if (c && c->name[0] && strcmp(c->name, name) == 0) {
+            fillContactInfo(*out, *c);
+            return true;
+        }
+    }
+    return false;
 }
 
 // ── Favourite contacts ──────────────────────────
@@ -1107,14 +1122,17 @@ bool isContactFavourite(const char* name) {
 void setContactFavourite(const char* name, bool favourite) {
     if (!g_mesh || !name) return;
     for (int i = 0; i < g_mesh->getContactCount(); i++) {
-        auto* c = const_cast<::ContactInfo*>(g_mesh->getContact(i));
+        auto* c = g_mesh->getContact(i);
         if (c && strcmp(c->name, name) == 0) {
-            if (favourite) c->flags |= 0x01;
-            else           c->flags &= ~0x01;
+            ::ContactInfo updated = *c;
+            if (favourite) updated.flags |= 0x01;
+            else           updated.flags &= ~0x01;
             // Bump lastmod + persist so a companion app's incremental
             // CMD_GET_CONTACTS(since=…) picks up the favourite change (R3).
-            c->lastmod = getCurrentTime();
-            saveContacts();
+            updated.lastmod = getCurrentTime();
+            if (g_mesh->removeContact(i) && g_mesh->addContact(updated)) {
+                saveContacts();
+            }
             return;
         }
     }
@@ -1776,22 +1794,62 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
 
 #if defined(SIGURDOS_REMOTE_TEST)
     // ── Test repeater helper ──────────────────────────
-    bool addTestRepeater(const char* name) {
-        if (!g_mesh || !name || !name[0]) return false;
-        ::ContactInfo c{};
+    static void fillTestContact(::ContactInfo& c, const char* name, uint8_t type) {
+        c = ::ContactInfo{};
         strncpy(c.name, name, sizeof(c.name) - 1);
         c.name[sizeof(c.name) - 1] = '\0';
-        c.type = ADV_TYPE_REPEATER;
+        c.type = type;
+        c.out_path_len = OUT_PATH_UNKNOWN;
+        c.last_advert_timestamp = millis() / 1000;
+        c.lastmod = c.last_advert_timestamp;
+
+        uint32_t h = 2166136261u;
+        for (const char* p = name; *p; p++) {
+            h ^= static_cast<uint8_t>(*p);
+            h *= 16777619u;
+        }
+        for (int i = 0; i < PUB_KEY_SIZE; i++) {
+            h ^= static_cast<uint8_t>(i * 37);
+            h *= 16777619u;
+            c.id.pub_key[i] = static_cast<uint8_t>(h >> ((i & 3) * 8));
+        }
+        if (c.id.pub_key[0] == 0x00 || c.id.pub_key[0] == 0xFF) {
+            c.id.pub_key[0] = 0x42;
+        }
+    }
+
+    static bool addTestContact(const char* name, uint8_t type) {
+        if (!g_mesh || !name || !name[0]) return false;
+        ::ContactInfo c{};
+        fillTestContact(c, name, type);
+
+        for (int i = 0; i < g_mesh->getContactCount(); i++) {
+            auto* live = g_mesh->getContact(i);
+            if (live && strcmp(live->name, c.name) == 0) {
+                if (!g_mesh->removeContact(i)) return false;
+                return g_mesh->addContact(c);
+            }
+        }
+
+        if (g_mesh->getContactCount() >= MAX_CONTACTS && type == ADV_TYPE_REPEATER) {
+            for (int i = 0; i < g_mesh->getContactCount(); i++) {
+                auto* live = g_mesh->getContact(i);
+                if (live && live->type != ADV_TYPE_REPEATER) {
+                    if (!g_mesh->removeContact(i)) return false;
+                    return g_mesh->addContact(c);
+                }
+            }
+        }
+
         return g_mesh->addContact(c);
     }
 
+    bool addTestRepeater(const char* name) {
+        return addTestContact(name, ADV_TYPE_REPEATER);
+    }
+
     bool addTestRoomServer(const char* name) {
-        if (!g_mesh || !name || !name[0]) return false;
-        ::ContactInfo c{};
-        strncpy(c.name, name, sizeof(c.name) - 1);
-        c.name[sizeof(c.name) - 1] = '\0';
-        c.type = ADV_TYPE_ROOM;
-        return g_mesh->addContact(c);
+        return addTestContact(name, ADV_TYPE_ROOM);
     }
 #endif
 
