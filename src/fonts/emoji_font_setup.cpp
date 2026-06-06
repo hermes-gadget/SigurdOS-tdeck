@@ -40,6 +40,10 @@ static lv_font_t wrapped_20;
 static lv_font_t wrapped_24;
 static lv_font_t wrapped_28;
 
+// Writable wrapper for latin_ext_font. Same deal: the generated font data is
+// const (flash), but the .fallback chain pointer must be mutable at runtime.
+static lv_font_t wrapped_latin_ext;
+
 // Expose wrapped fonts for use in UI code
 const lv_font_t* emoji_wrapped_montserrat_10 = &wrapped_10;
 const lv_font_t* emoji_wrapped_montserrat_12 = &wrapped_12;
@@ -52,35 +56,34 @@ const lv_font_t* emoji_wrapped_montserrat_28 = &wrapped_28;
 
 extern "C" void emoji_font_register_fallback()
 {
-    // Set latin_ext_font's fallback to emoji font
-    // (lv_font_t* is const for the font data, but fallback pointer is mutable)
-    lv_font_t* le = (lv_font_t*)&latin_ext_font;
-    le->fallback = &emoji_font;
+    // Copy const latin_ext_font into writable wrapper and set emoji fallback
+    memcpy(&wrapped_latin_ext, &latin_ext_font, sizeof(lv_font_t));
+    wrapped_latin_ext.fallback = &emoji_font;
 
-    // Copy const Montserrat fonts into writable wrappers and set latin_ext_font fallback
+    // Copy const Montserrat fonts into writable wrappers and set latin_ext fallback
     memcpy(&wrapped_10, &lv_font_montserrat_10, sizeof(lv_font_t));
-    wrapped_10.fallback = &latin_ext_font;
+    wrapped_10.fallback = &wrapped_latin_ext;
 
     memcpy(&wrapped_12, &lv_font_montserrat_12, sizeof(lv_font_t));
-    wrapped_12.fallback = &latin_ext_font;
+    wrapped_12.fallback = &wrapped_latin_ext;
 
     memcpy(&wrapped_14, &lv_font_montserrat_14, sizeof(lv_font_t));
-    wrapped_14.fallback = &latin_ext_font;
+    wrapped_14.fallback = &wrapped_latin_ext;
 
     memcpy(&wrapped_16, &lv_font_montserrat_16, sizeof(lv_font_t));
-    wrapped_16.fallback = &latin_ext_font;
+    wrapped_16.fallback = &wrapped_latin_ext;
 
     memcpy(&wrapped_18, &lv_font_montserrat_18, sizeof(lv_font_t));
-    wrapped_18.fallback = &latin_ext_font;
+    wrapped_18.fallback = &wrapped_latin_ext;
 
     memcpy(&wrapped_20, &lv_font_montserrat_20, sizeof(lv_font_t));
-    wrapped_20.fallback = &latin_ext_font;
+    wrapped_20.fallback = &wrapped_latin_ext;
 
     memcpy(&wrapped_24, &lv_font_montserrat_24, sizeof(lv_font_t));
-    wrapped_24.fallback = &latin_ext_font;
+    wrapped_24.fallback = &wrapped_latin_ext;
 
     memcpy(&wrapped_28, &lv_font_montserrat_28, sizeof(lv_font_t));
-    wrapped_28.fallback = &latin_ext_font;
+    wrapped_28.fallback = &wrapped_latin_ext;
 }
 
 // ════════════════════════════════════════════════════════

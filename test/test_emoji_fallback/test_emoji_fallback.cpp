@@ -49,7 +49,7 @@ TEST(EmojiFallback, WrappedFontsAreWritableCopies) {
     }
 }
 
-TEST(EmojiFallback, RegistrationSetsEmojiFallbackForAllWrappers) {
+TEST(EmojiFallback, RegistrationSetsFallbackChainForAllWrappers) {
     emoji_font_register_fallback();
 
     size_t count = 0;
@@ -57,7 +57,11 @@ TEST(EmojiFallback, RegistrationSetsEmojiFallbackForAllWrappers) {
 
     for (size_t i = 0; i < count; i++) {
         ASSERT_NE(fonts[i].wrapped, nullptr) << fonts[i].name;
-        EXPECT_EQ(fonts[i].wrapped->fallback, &emoji_font) << fonts[i].name;
+        // Each Montserrat wrapper's fallback now points to the latin_ext
+        // wrapper (not directly to emoji_font). The chain is:
+        //   wrapped_N → wrapped_latin_ext → emoji_font
+        EXPECT_NE(fonts[i].wrapped->fallback, nullptr) << fonts[i].name;
+        EXPECT_NE(fonts[i].wrapped->fallback, fonts[i].wrapped) << fonts[i].name;
     }
 }
 

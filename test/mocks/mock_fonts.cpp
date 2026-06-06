@@ -24,3 +24,8 @@ const lv_font_t lv_font_montserrat_28   = {nullptr};
 // Only used for pointer equality checks in fallback registration.
 // The real emoji_font data lives in src/fonts/emoji_font.c.
 const lv_font_t emoji_font = {nullptr};
+
+// Latin-extended font — empty struct for native test link resolution.
+// Only used for pointer equality checks in fallback registration.
+// The real latin_ext_font data lives in src/fonts/latin_ext_font.c.
+const lv_font_t latin_ext_font = {nullptr};
