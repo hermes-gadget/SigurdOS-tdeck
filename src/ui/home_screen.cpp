@@ -186,7 +186,7 @@ static void on_icon_click(lv_event_t* e)
         if (strcmp(icons[idx].label, "DMs") == 0) {
             chat_screen_set_filter(2);       // DMs only
         } else if (strcmp(icons[idx].label, "CHATS") == 0) {
-            chat_screen_set_filter(1);       // #channels only
+            chat_screen_set_filter(1);       // channels only
         } else if (strcmp(icons[idx].label, "ROOMS") == 0) {
             contacts_screen_set_filter(ADV_TYPE_ROOM);  // room servers only
         }

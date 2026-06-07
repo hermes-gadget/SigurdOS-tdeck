@@ -6,6 +6,7 @@
 
 #include "mesh_wrapper.h"
 #include "channel_validation.h"
+#include "public_channel.h"
 #include "message_store.h"
 #include "comms/companion_bridge.h"
 #include "comms/observed_ble_interface.h"
@@ -381,6 +382,37 @@ static void parse_status_blob(const uint8_t* data, uint8_t len, sigurdos::mesh::
 
 namespace sigurdos {
 namespace mesh {
+
+namespace {
+
+bool hasPublicChannel()
+{
+    if (!g_mesh) return false;
+    for (int i = 0; i < g_mesh->getChannelCount(); i++) {
+        const ChannelDetails* ch = g_mesh->getChannel(i);
+        if (ch && isPublicChannelName(ch->name)) return true;
+    }
+    return false;
+}
+
+bool ensurePublicChannelPresent(bool persist)
+{
+    if (!g_mesh) return false;
+    if (hasPublicChannel()) return true;
+
+    bool ok = g_mesh->addChannelBool(PUBLIC_CHANNEL_NAME, PUBLIC_CHANNEL_PSK_BASE64);
+    if (ok) {
+#if SIGURDOS_DEBUG_MESH
+        Serial.println("[mesh] Added missing Public channel");
+#endif
+        if (persist) saveChannels();
+    } else {
+        Serial.println("[mesh] WARNING: Public channel missing and channel list is full");
+    }
+    return ok;
+}
+
+} // namespace
 
 // ── Packet log ────────────────────────────────────
 static constexpr int MAX_PACKET_LOG = 50;
@@ -837,18 +869,9 @@ bool init(bool spiffs_ok)
     // Restore persisted contacts from SPIFFS
     loadContacts();
 
-    // Safety net: if no channels are loaded, auto-join the Public channel.
-    // This handles fresh flashes where NVS was erased, ensuring the device
-    // can at least receive Public channel messages even without completing
-    // the onboarding wizard's channel setup.
-    if (g_mesh->getChannelCount() == 0) {
-        Serial.println("[mesh] No channels found — auto-joining Public channel");
-        g_mesh->addChannelBool("Public", "izOH6cXN6mrJ5e26oRXNcg==");
-        // Also auto-join chat channels discovered via incoming messages so
-        // the device can reply on the same channel it received from.
-        // Persist immediately so the channel survives reboot.
-        saveChannels();
-    }
+    // Safety net: Public is the built-in MeshCore channel and must be present
+    // even if persisted NVS contains other channels from older firmware.
+    ensurePublicChannelPresent(true);
 
     // Debug builds: auto-join the #testingsigurdos test channel for RF testing on
     // 869.525/SF10/BW250/CR5. addChannelBool() is a no-op if already present.
@@ -1189,7 +1212,9 @@ bool addHashtagChannel(const char* name) {
 }
 
 bool joinPublicChannel() {
-    return addChannel("Public", "izOH6cXN6mrJ5e26oRXNcg==");
+    bool ok = addChannel(PUBLIC_CHANNEL_NAME, PUBLIC_CHANNEL_PSK_BASE64);
+    if (ok) saveChannels();
+    return ok;
 }
 
 // ── Region sync from channels ────────────────────
@@ -1704,7 +1729,10 @@ uint32_t companionBlePin() { return g_companion_host.blePin(); }
     // ── Channel management extensions ────────────
     bool removeChannel(int idx) {
         if (!g_mesh) return false;
+        const ChannelDetails* ch = g_mesh->getChannel(idx);
+        if (ch && isPublicChannelName(ch->name)) return false;
         bool ok = g_mesh->removeChannel(idx);
+        if (ok) saveChannels();
         return ok;
     }
 

@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include "mesh/mesh_wrapper.h"
+#include "mesh/public_channel.h"
 
 namespace {
 
@@ -38,6 +39,15 @@ TEST(MeshContractTest, AdvertTypesMatchMeshCoreCompanionValues) {
     EXPECT_EQ(ADV_TYPE_REPEATER, 2);
     EXPECT_EQ(ADV_TYPE_ROOM, 3);
     EXPECT_EQ(ADV_TYPE_SENSOR, 4);
+}
+
+TEST(MeshContractTest, PublicChannelDefaultsStayStable) {
+    EXPECT_STREQ(sigurdos::mesh::PUBLIC_CHANNEL_NAME, "Public");
+    EXPECT_STREQ(sigurdos::mesh::PUBLIC_CHANNEL_PSK_BASE64,
+                 "izOH6cXN6mrJ5e26oRXNcg==");
+    EXPECT_TRUE(sigurdos::mesh::isPublicChannelName("Public"));
+    EXPECT_FALSE(sigurdos::mesh::isPublicChannelName("#public"));
+    EXPECT_FALSE(sigurdos::mesh::isPublicChannelName(nullptr));
 }
 
 TEST(MeshContractTest, ContactPermissionsFitPackedFlagBits) {

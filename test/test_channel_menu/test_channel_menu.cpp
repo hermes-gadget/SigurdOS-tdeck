@@ -60,6 +60,15 @@ TEST(ChannelMenuTest, ChannelMenuOffersPrivateScopeAndChatActions) {
     EXPECT_TRUE(menu_has(items, n, ChannelAction::LeaveChannel));
 }
 
+TEST(ChannelMenuTest, PublicChannelCannotBeLeftFromMenu) {
+    ChannelMenuItem items[8];
+    int n = channel_menu_build("Public", items, 8);
+    EXPECT_TRUE(menu_has(items, n, ChannelAction::ChooseScope));
+    EXPECT_TRUE(menu_has(items, n, ChannelAction::MarkRead));
+    EXPECT_FALSE(menu_has(items, n, ChannelAction::LeaveChannel));
+    EXPECT_FALSE(channel_menu_perform(ChannelAction::LeaveChannel, "Public", 0));
+}
+
 TEST(ChannelMenuTest, DmAlsoOffersPrivateScope) {
     ChannelMenuItem items[8];
     int n = channel_menu_build("DM: bob", items, 8);

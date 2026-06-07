@@ -23,6 +23,7 @@
 
 #include "../mesh/channel_validation.h"
 #include "../mesh/mesh_wrapper.h"
+#include "../mesh/public_channel.h"
 
 namespace sigurdos::ui {
 
@@ -136,16 +137,19 @@ int channel_menu_build(const char* channel, ChannelMenuItem* out, int max)
         push(ChannelAction::ChooseScope, "Private scope...");
     }
     push(ChannelAction::MarkRead,     "Mark all read");
-    push(ChannelAction::LeaveChannel, "Leave channel");
+    if (!sigurdos::mesh::isPublicChannelName(channel)) {
+        push(ChannelAction::LeaveChannel, "Leave channel");
+    }
 
     return n;
 }
 
-bool channel_menu_perform(ChannelAction action, const char* /*channel*/, int channel_idx)
+bool channel_menu_perform(ChannelAction action, const char* channel, int channel_idx)
 {
     switch (action) {
     case ChannelAction::LeaveChannel:
         if (channel_idx < 0) return false;
+        if (sigurdos::mesh::isPublicChannelName(channel)) return false;
         return sigurdos::mesh::removeChannel(channel_idx);
 
     case ChannelAction::ChooseScope:

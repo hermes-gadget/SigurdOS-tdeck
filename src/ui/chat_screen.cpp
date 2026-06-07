@@ -27,6 +27,7 @@
 #include "../hal/battery.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../mesh/channel_validation.h"
+#include "../mesh/public_channel.h"
 #include "../mesh/message_store.h"
 #include "../hal/prefs.h"
 #include "../fonts/emoji_font.h"
@@ -129,7 +130,7 @@ static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_l
 static int   active_channel = 0;
 
 // ── Channel filter mode ────────────────────────────────────
-// 0 = show all, 1 = #channels only, 2 = DMs only
+// 0 = show all, 1 = channels only, 2 = DMs only
 static int   chat_filter_mode = 0;
 
 // ── Per-channel metadata ───────────────────────────────────
@@ -370,20 +371,20 @@ static void refresh_channels()
 
     // ── Apply channel filter ─────────────────────────────
     if (chat_filter_mode == 1) {
-        // #channels only: keep entries starting with #
+        // Channels only: keep real group channels, including PSK-backed Public.
 #if defined(SIGURDOS_DEBUG)
-        Serial.printf("[chat] filter: #channels only, before=%d\n", dyn_count);
+        Serial.printf("[chat] filter: channels only, before=%d\n", dyn_count);
 #endif
         int keep = 0;
         for (int i = 0; i < dyn_count; i++) {
-            if (dyn_channels[i][0] == '#') {
+            if (chat_screen_filter_accepts_channel(chat_filter_mode, dyn_channels[i])) {
                 if (keep < i) strcpy(dyn_channels[keep], dyn_channels[i]);
                 keep++;
             }
         }
         dyn_count = keep;
 #if defined(SIGURDOS_DEBUG)
-        Serial.printf("[chat] filter: #channels only, after=%d\n", dyn_count);
+        Serial.printf("[chat] filter: channels only, after=%d\n", dyn_count);
 #endif
     } else if (chat_filter_mode == 2) {
         // DMs only: keep entries starting with "DM:"
@@ -392,7 +393,7 @@ static void refresh_channels()
 #endif
         int keep = 0;
         for (int i = 0; i < dyn_count; i++) {
-            if (strncmp(dyn_channels[i], "DM:", 3) == 0) {
+            if (chat_screen_filter_accepts_channel(chat_filter_mode, dyn_channels[i])) {
                 if (keep < i) strcpy(dyn_channels[keep], dyn_channels[i]);
                 keep++;
             }
@@ -407,7 +408,7 @@ static void refresh_channels()
     // ── Fallback: if filter removed everything, add a default ─
     if (dyn_count == 0) {
         if (chat_filter_mode == 1) {
-            // #channels filter: add #general
+            // Channels filter: add a synthetic fallback if mesh is unavailable.
             strncpy(dyn_channels[0], "#general", 31);
             dyn_channels[0][31] = '\0';
             dyn_count = 1;
@@ -437,7 +438,7 @@ static void refresh_channels()
     // DM conversations are synthetic entries (prefixed "DM:")
     // that aren't part of the mesh channel export. Re-append
     // any that existed before the refresh so they persist.
-    // Skip when filtering to #channels only (mode 1).
+    // Skip when filtering to channels only (mode 1).
     if (chat_filter_mode != 1) {
         for (int old_idx = 0; old_idx < old_count; old_idx++) {
             if (old_names[old_idx][0] == '\0') continue;
@@ -621,7 +622,9 @@ static void populate_channel_rows(lv_obj_t* list) {
         int ch_idx = i;
 
         // Delete button (hidden when only 1 channel, or for synthetic DM entries)
-        if (dyn_count > 1 && strncmp(dyn_channels[i], "DM: ", 4) != 0) {
+        if (dyn_count > 1 &&
+            !chat_screen_is_dm_name(dyn_channels[i]) &&
+            !sigurdos::mesh::isPublicChannelName(dyn_channels[i])) {
             lv_obj_t* del_btn = lv_btn_create(row);
             lv_obj_set_size(del_btn, 28, 24);
             lv_obj_set_style_bg_color(del_btn, lv_color_hex(ACCENT_RED), 0);

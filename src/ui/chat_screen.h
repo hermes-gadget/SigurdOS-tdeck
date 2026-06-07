@@ -22,6 +22,7 @@
 #include "../hal/trackball.h"
 #include <lvgl.h>
 #include <cstdint>
+#include <cstring>
 
 namespace sigurdos::ui {
 
@@ -38,13 +39,25 @@ inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)
     return cap;
 }
 
+inline bool chat_screen_is_dm_name(const char* name)
+{
+    return name && std::strncmp(name, "DM:", 3) == 0;
+}
+
+inline bool chat_screen_filter_accepts_channel(int mode, const char* name)
+{
+    if (mode == 1) return name && name[0] && !chat_screen_is_dm_name(name);
+    if (mode == 2) return chat_screen_is_dm_name(name);
+    return true;
+}
+
 // Create and show the chat screen
 void chat_screen_show();
 
 // Open a direct message conversation with a contact (creates if needed)
 void chat_screen_open_dm(const char* contact_name);
 
-// Set which channels to show: 0=all, 1=#channels only, 2=DMs only
+// Set which conversations to show: 0=all, 1=channels only, 2=DMs only
 void chat_screen_set_filter(int mode);
 
 // Add a message to the chat display

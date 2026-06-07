@@ -37,6 +37,7 @@
 #include "../mesh/mesh_wrapper.h"
 #include "../mesh/regions.h"
 #include "../mesh/channel_validation.h"
+#include "../mesh/public_channel.h"
 #include "../app/map_renderer.h"
 #include "../fonts/emoji_font.h"
 #include "../app/qr_show.h"
@@ -6021,8 +6022,8 @@ void channels_screen_show()
                 lv_obj_set_flex_grow(name_l, 1);
                 lv_obj_set_style_pad_left(name_l, 8, 0);
 
-                // Delete button (hidden if only 1 channel remaining)
-                if (n > 1) {
+                // Delete button (hidden if only 1 channel remaining or for built-in Public)
+                if (n > 1 && !sigurdos::mesh::isPublicChannelName(names[i])) {
                     lv_obj_t* del_btn = lv_btn_create(row);
                     lv_obj_set_size(del_btn, 28, 24);
                     lv_obj_set_style_bg_color(del_btn, lv_color_hex(ACCENT_RED), 0);
