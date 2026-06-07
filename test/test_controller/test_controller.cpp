@@ -122,4 +122,7 @@ TEST(TestControllerRfParserTest, RejectsTxPowerOutsideRange) {
               SigurdOSTestRfParseResult::TxPowerOutOfRange);
 }
 
+// getrf does not use the parser — it reads prefs directly and prints via Serial.
+// Dispatch/Serial smoke tests require the full controller linked on hardware.
+
 } // namespace
