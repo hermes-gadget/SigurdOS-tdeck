@@ -23,43 +23,48 @@ static const char OTA_HTML[] PROGMEM = R"rawliteral(
 <style>
 body{background:#0F0F0F;color:#00BFFF;font-family:monospace;text-align:center;padding:20px}
 h1{font-size:20px;margin-bottom:10px}
-input[type=file]{margin:20px 0;padding:10px;background:#1A1A2E;color:#00BFFF;border:2px solid #00BFFF}
+input[type=file],input[type=password]{margin:20px 0;padding:10px;background:#1A1A2E;color:#00BFFF;border:2px solid #00BFFF;width:80%;max-width:300px;box-sizing:border-box}
+input[type=password]::placeholder{color:#4A4A6E}
 input[type=submit]{padding:10px 30px;background:#00BFFF;color:#0F0F0F;border:none;font-weight:bold;cursor:pointer}
 #progress{width:80%;height:20px;background:#1A1A2E;border:2px solid #00BFFF;margin:20px auto;display:none}
 #bar{width:0;height:100%;background:#00BFFF}
 #status{margin-top:10px;font-size:14px}
+#error{color:#FF4444;margin-top:10px;display:none}
 </style></head><body>
 <h1>SigurdOS Firmware Update</h1>
-<p>Select firmware.bin and click Update.</p>
+<p>Enter device PIN and select firmware.bin.</p>
 <form method="POST" action="/update" enctype="multipart/form-data" id="otaform">
+<input type="password" name="pin" placeholder="Device PIN" required><br>
 <input type="file" name="firmware" accept=".bin" required><br>
 <input type="submit" value="Update">
 </form>
 <div id="progress"><div id="bar"></div></div>
+<div id="error"></div>
 <div id="status"></div>
 <script>
 document.getElementById('otaform').addEventListener('submit',function(e){
 e.preventDefault();
+var pin=document.querySelector('input[name=pin]').value;
 var file=document.querySelector('input[type=file]').files[0];
-if(!file)return;
+if(!file||!pin)return;
+var formData=new FormData();
+formData.append('pin',pin);
+formData.append('firmware',file);
 var xhr=new XMLHttpRequest();
 xhr.open('POST','/update',true);
-xhr.upload.onprogress=function(e){
-if(e.lengthComputable){
-var pct=Math.round(e.loaded/e.total*100);
-document.getElementById('progress').style.display='block';
-document.getElementById('bar').style.width=pct+'%';
-document.getElementById('status').textContent=pct+'%';
-}
-};
 xhr.onload=function(){
 if(xhr.status==200){
 document.getElementById('status').textContent='Update OK — rebooting...';
 }else{
-document.getElementById('status').textContent='Update FAILED: '+xhr.responseText;
+document.getElementById('error').textContent='Update FAILED: '+xhr.responseText;
+document.getElementById('error').style.display='block';
 }
 };
-xhr.send(file);
+xhr.onerror=function(){
+document.getElementById('error').textContent='Network error';
+document.getElementById('error').style.display='block';
+};
+xhr.send(formData);
 });
 </script></body></html>
 )rawliteral";
@@ -113,6 +118,24 @@ bool start(const char* ssid, const char* password) {
         []() {
             HTTPUpload& upload = server->upload();
             if (upload.status == UPLOAD_FILE_START) {
+                // Validate device PIN before accepting upload
+                const NodePrefs& p = prefs_get();
+                String pin_arg = server->arg("pin");
+                bool pin_valid = false;
+                if (p.device_pin != 0 && pin_arg.length() > 0) {
+                    pin_valid = ((uint32_t)pin_arg.toInt() == p.device_pin);
+                } else if (p.device_pin == 0) {
+                    // No PIN configured — accept upload (PIN field is ignored)
+                    pin_valid = true;
+                }
+                if (!pin_valid) {
+                    Serial.printf("[ota] Upload rejected: invalid PIN\n");
+                    // Reject by setting a zero-length update so the write/end
+                    // callbacks become no-ops. The completion handler will
+                    // report the error.
+                    Update.abort();
+                    return;
+                }
                 Serial.printf("[ota] Update start: %s (%u bytes)\n",
                               upload.filename.c_str(), upload.totalSize);
                 if (!Update.begin(upload.totalSize)) {
