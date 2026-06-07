@@ -1,5 +1,5 @@
-#ifndef EMJI_DATA_H
-#define EMJI_DATA_H
+#ifndef EMOJI_DATA_H
+#define EMOJI_DATA_H
 
 #include <cstdint>
 
@@ -19,4 +19,4 @@ extern const EmojiEntry emoji_data[];
 // Results written to out[] up to max_results. Returns number of matches found.
 int emoji_search(const char* prefix, EmojiEntry* out, int max_results);
 
-#endif  // EMJI_DATA_H
+#endif  // EMOJI_DATA_H
