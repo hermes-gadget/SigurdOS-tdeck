@@ -60,7 +60,9 @@ Effort levels on the still-missing items below estimate the work remaining:
 
 ---
 
-## Regions — Companion Flood Scope (PLANNED) — M
+## Regions — Companion Flood Scope ✅ IMPLEMENTED
+
+> **✅ IMPLEMENTED** — Full RegionMap CRUD API, NVS-persisted region list with active scope state, flood scope stamping in `SigurdMeshV2::sendFloodScoped()`, dedicated UI screen (add/set-active/delete), navigation entry, Settings hook, and 43 native tests. The detailed plan below is preserved as historical reference.
 
 **Goal:** let the user pick a *region* (a named flood scope) so that outgoing flood traffic is stamped with a MeshCore **transport code**. Region-aware repeaters then only re-flood packets for the regions they serve, keeping traffic contained. This is the **companion half** of MeshCore regions — send-side scope stamping plus a small management UI. It deliberately does **not** implement the repeater half (the `RegionMap` deny-flood gating that decides what to forward); a handheld does not relay floods.
 
@@ -92,9 +94,9 @@ When a packet is flooded *with* a region, the sender computes a 2-byte **transpo
 
 So for the companion the work is: **(1)** store a chosen scope, **(2)** stamp it onto outgoing floods, **(3)** a UI to manage/select it. That's it.
 
-### Current state in SigurdOS
+### Historical context (before implementation)
 
-Everything is sent **unscoped** today. `SigurdMeshV2` extends `BaseChatMesh`, whose `sendFloodScoped()` is a no-op pass-through:
+Everything was sent **unscoped** before implementation. `SigurdMeshV2` extended `BaseChatMesh`, whose `sendFloodScoped()` was a no-op pass-through:
 
 ```cpp
 // lib/meshcore/src/helpers/BaseChatMesh.cpp
@@ -173,7 +175,9 @@ struct SigurdRegion {
 
 ---
 
-## Companion BLE — Connect to the Official MeshCore App (PLANNED) — L
+## Companion BLE — Connect to the Official MeshCore App ✅ IMPLEMENTED
+
+> **✅ IMPLEMENTED** — Complete `CompanionBridge` with 38+ `CMD_*` codes, `ObservedSerialBLEInterface` wrapping `SerialBLEInterface`, offline queue with `seedOfflineQueueFromStore()`, dual-consumer hook via `companion_adapter.inc`, SPIFFS message store, Bluetooth UI screen, Settings entry, build envs in `platformio.ini`, and 53 companion protocol + 5 message store native tests. The detailed plan below is preserved as historical reference.
 
 **Goal:** let the T-Deck pair with and serve the **official MeshCore phone app** (Android/iOS) over Bluetooth LE, speaking the same companion frame protocol as a stock companion radio. The phone becomes a full client of the T-Deck's radio — sync contacts, read/send DMs and channel messages, configure the radio — *alongside* the built-in LVGL UI.
 
@@ -260,7 +264,7 @@ BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queu
 - **Phase 0 — foundational persistence (lands first, independent of BLE):** add the SPIFFS message log (R1.1) so chat history survives reboot, and make message arrival/send fan out through the dual-consumer hook into *(persistent log + UI)*. Without this, none of the sync requirements can hold.
 - **Phase 1 — MVP (app connects + basic DMs):** wire `SerialBLEInterface`; handshake (`CMD_DEVICE_QUERY`, `CMD_APP_START`); `CMD_GET_CONTACTS`; `CMD_SYNC_NEXT_MESSAGE` + offline queue **as a non-destructive mirror** of the persistent log (R1.2) + `PUSH_CODE_MSG_WAITING`; `CMD_SEND_TXT_MSG` + `RESP_CODE_SENT` + `PUSH_CODE_SEND_CONFIRMED`, **also appending the sent text to the log + UI** (R2 app→T-Deck); `CMD_GET/SET_DEVICE_TIME`; `CMD_GET_BATT_AND_STORAGE`. → app connects, lists contacts, reads & sends DMs, and the T-Deck keeps its own copy.
 - **Phase 2:** channels (`CMD_GET/SET_CHANNEL`, `CMD_SEND_CHANNEL_TXT_MSG`, channel sync); adverts (`CMD_SEND_SELF_ADVERT`, `SET_ADVERT_NAME/LATLON`, `PUSH_CODE_ADVERT/NEW_ADVERT`); radio params (`CMD_SET_RADIO_PARAMS/TX_POWER/TUNING_PARAMS`); contact CRUD (`add/update/remove/share/export/import`).
-- **Phase 3:** repeater login (`CMD_SEND_LOGIN`, `PUSH_CODE_LOGIN_*`), trace / path discovery (`CMD_SEND_TRACE_PATH`, `CMD_RESET_PATH`), telemetry, message signing (`CMD_SIGN_*`), private-key export/import, factory reset, and the flood-scope commands (`CMD_SET_DEFAULT_FLOOD_SCOPE` etc.) — which tie into the [Regions](#regions--companion-flood-scope-planned--m) feature.
+- **Phase 3:** repeater login (`CMD_SEND_LOGIN`, `PUSH_CODE_LOGIN_*`), trace / path discovery (`CMD_SEND_TRACE_PATH`, `CMD_RESET_PATH`), telemetry, message signing (`CMD_SIGN_*`), private-key export/import, factory reset, and the flood-scope commands (`CMD_SET_DEFAULT_FLOOD_SCOPE` etc.) — which tie into the [Regions](#regions--companion-flood-scope--implemented) feature.
 
 ### File-by-file plan
 
@@ -294,15 +298,15 @@ BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queu
 
 > These turn the T-Deck into something other than a handheld companion. Listed for completeness; excluded from the implementation plan.
 
-### BLE companion protocol (connect the official phone app) — ✅ NOW PLANNED
+### BLE companion protocol (connect the official phone app) — ✅ IMPLEMENTED
 
-- **Moved.** Previously listed here as "a different product." The repo owner has requested it, so it is now a planned feature with a full implementation plan — see [Companion BLE — Connect to the Official MeshCore App](#companion-ble--connect-to-the-official-meshcore-app-planned--l) above. (A USB-serial variant via `ArduinoSerialInterface` is a trivial subset of the same protocol once the bridge exists.)
+- **Moved.** Previously listed here as "a different product." The repo owner requested it; now fully implemented — see [Companion BLE — Connect to the Official MeshCore App](#companion-ble--connect-to-the-official-meshcore-app--implemented) above. (A USB-serial variant via `ArduinoSerialInterface` is a trivial subset of the same protocol once the bridge exists.)
 
 ---
 
 ### Repeater-side region gating (`RegionMap` deny-flood) — ❌ NOT DOING
 
-- **Reason:** This is the *repeater* half of regions — deciding which floods to re-transmit (`RegionMap::findMatch` + `REGION_DENY_FLOOD`). A handheld companion does not relay floods. The **companion** half (stamping our own outgoing floods with a scope) is a planned feature — see [Regions — Companion Flood Scope](#regions--companion-flood-scope-planned--m) above.
+- **Reason:** This is the *repeater* half of regions — deciding which floods to re-transmit (`RegionMap::findMatch` + `REGION_DENY_FLOOD`). A handheld companion does not relay floods. The **companion** half (stamping our own outgoing floods with a scope) is implemented — see [Regions — Companion Flood Scope](#regions--companion-flood-scope--implemented) above.
 - **Reference (for posterity):** [`src/helpers/RegionMap.h`](https://github.com/meshcore-dev/MeshCore/blob/main/src/helpers/RegionMap.h) / [`RegionMap.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/src/helpers/RegionMap.cpp) — `RegionMap`, `RegionEntry`, `REGION_DENY_FLOOD`/`REGION_DENY_DIRECT`, `MAX_REGION_ENTRIES`; [`examples/simple_repeater/MyMesh.cpp`](https://github.com/meshcore-dev/MeshCore/blob/main/examples/simple_repeater/MyMesh.cpp) — `allowPacketForward`, `region_map.findMatch`
 
 ---
@@ -315,4 +319,4 @@ A niche build target for running under `bmorcelli/Launcher`. Not relevant to the
 
 ---
 
-*Last reviewed: 2026-06-04 against companion firmware v1.15.0 and dev branch. Planned: Regions — Companion Flood Scope; Companion BLE — Connect to the Official MeshCore App. All other previously tracked features are ✅ implemented; declined items remain above for reference.*
+*Last reviewed: 2026-06-06 against companion firmware v1.15.0 and dev branch. All previously tracked features are ✅ implemented; declined items remain above for reference.*

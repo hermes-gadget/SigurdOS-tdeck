@@ -143,6 +143,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Node Discovery Protocol** — answers MeshCore `0x80`/`0x81` discovery requests with `0x90|node_type` responses
 - **Telemetry request/answer** — request remote CayenneLPP telemetry and answer inbound telemetry requests with local battery/GPS data
 - **Client repeat + multi-ACK** — optional opportunistic relay and redundant ACK transmission settings
+- **Regions (Companion Flood Scope)** — RegionMap CRUD with active scope selection, NVS-persisted region list, flood scope stamping on all outgoing packets via `SigurdMeshV2::sendFloodScoped()` override (public hashtag `#name`, private `$key`, wildcard). Dedicated UI screen for add/set-active/delete; adverts remain unscoped by design. 43 native tests.
 - **Packet logging** — per-packet RX log with type, RSSI, SNR
 - **RTC time sync** — mesh-synchronised clock for message timestamps
 - **Advert broadcast** — manual send with optional GPS coordinates
@@ -236,6 +237,18 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Inject capabilities** — `keyboard_inject()`, `trackball_inject()`, `test_set_touch()`, `injectMessage()`
 - **Remote test loop** — runs alongside normal display/UI loop for automated QA
 **Sources:** [`src/test/test_controller.h`](../src/test/test_controller.h), [`src/main.cpp`](../src/main.cpp) (lines 67–73, 127)
+
+### Companion BLE (Official MeshCore App)
+
+- **CompanionBridge** — full BLE companion protocol implementation (38+ `CMD_*` codes, 28 `RESP_CODE_*`, 16 `PUSH_CODE_*`) driven by `loop()` via `ObservedSerialBLEInterface` wrapping `SerialBLEInterface`
+- **Offline queue** — `seedOfflineQueueFromStore()` buffers messages received while phone is disconnected; drained via `CMD_SYNC_NEXT_MESSAGE` on reconnect
+- **Dual-consumer hook** — `companion_adapter.inc` fans out message/advert/ack events to both UI and BLE simultaneously
+- **SPIFFS message store** — persistent, append-only, dedup-keyed by (conversation, sender, timestamp); survives reboot; shared between chat UI and BLE sync
+- **Bluetooth UI screen** — enable/disable toggle, PIN display, connection status indicator, Settings → Network entry
+- **Build envs** — `[env:SigurdOS_TDeck_ble]` with `-D SIGURDOS_COMPANION_BLE=1`; 53 companion protocol + 5 message store native tests
+- **PIN pairing** — static PIN from `NodePrefs.device_pin` with MITM bonding
+- **Phased implementation** — Phase 0 (message store persistence), Phase 1 (MVP: handshake, contact sync, DM send/recv), Phase 2 (channels, adverts, radio config), Phase 3 (repeater login, trace, telemetry, private-key export)
+**Sources:** [`src/comms/companion_bridge.h`](../src/comms/companion_bridge.h), [`src/comms/companion_bridge.cpp`](../src/comms/companion_bridge.cpp), [`src/comms/companion_adapter.inc`](../src/comms/companion_adapter.inc), [`src/mesh/message_store.h`](../src/mesh/message_store.h), [`src/mesh/message_store.cpp`](../src/mesh/message_store.cpp), [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`platformio.ini`](../platformio.ini), [`test/test_companion_protocol/`](../test/test_companion_protocol/), [`test/test_message_store/`](../test/test_message_store/)
 
 ---
 
@@ -345,7 +358,7 @@ A dedicated app-level feature bridging the display, SD card, and GPS systems.
 
 ## Test Suite
 
-While not a user-facing feature, the comprehensive test suite (332 tests (1 skipped, 331 passed) across 19 modules) validates every subsystem:
+While not a user-facing feature, the comprehensive test suite (433 tests (1 skipped, 432 passed) across 22 modules) validates every subsystem:
 
 | Module | Tests | What's Covered |
 |--------|-------|----------------|
@@ -368,6 +381,9 @@ While not a user-facing feature, the comprehensive test suite (332 tests (1 skip
 | `test_terminal` | 6 | Terminal command parsing, execution, edge cases |
 | `test_emoji` | 5 | Emoji font fallback, index access, rendering |
 | `test_chat_truncation` | 4 | Message truncation, UTF-8 safety, boundary conditions |
+| `test_regions` | 43 | Region CRUD, key derivation, transport code calc, scope stamping, NVS round-trip |
+| `test_companion_protocol` | 53 | Handshake frames, cmd dispatch, offline queue, contact/channel sync, byte-level golden frames |
+| `test_message_store` | 5 | Append-only persistence, dedup, reboot survival, offline-queue isolation |
 
 See [`test/README.md`](../test/README.md) for full documentation.
 

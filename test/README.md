@@ -31,29 +31,60 @@ PR body:
 
 ```text
 test/
-|-- mocks/                    Native Arduino/LVGL/MeshCore/driver mocks
-|-- test_battery/             Battery conversion and ADC math
-|-- test_build/               Header inclusion and cross-module sanity checks
-|-- test_channel_menu/        Channel menu actions and private scopes
-|-- test_channel_validation/  Channel name validation and sanitising
-|-- test_chat_truncation/     UTF-8 safe chat truncation
-|-- test_emoji/               Emoji font, lookup, fallback, and data checks
-|-- test_gps/                 NMEA parsing, coordinates, checksums, fix fields
-|-- test_home_screen/         Home tile routing contract
-|-- test_keyboard/            Keyboard scan, event, brightness, injection logic
-|-- test_layout/              Screen layout overlap regression checks
-|-- test_map/                 Map projection, tile math, tile cache behavior
-|-- test_mesh_messaging/      Message queues, contacts, responses, LPP parsing
-|-- test_mesh_wrapper/        Public mesh API contracts and return ranges
-|-- test_navigation/          Navigation stack and back-swipe behavior
-|-- test_pins/                GPIO ranges, conflicts, and board pin sanity
-|-- test_prefs/               Preferences defaults and native mock persistence
-|-- test_regions/             Region structs, binary layout, key derivation
-|-- test_sdcard/              SD card state, path checks, size formatting
-|-- test_terminal/            Terminal line cap behavior
-|-- test_theme/               Theme contrast and color distinctness
-|-- test_touch/               GT911 coordinate parsing and screen mapping
-|-- test_trackball/           Trackball debounce, direction, and click events
+|-- mocks/                          Native Arduino/LVGL/MeshCore/driver mocks
+|-- test_battery/                   Battery conversion and ADC math
+|-- test_build/                     Header inclusion and cross-module sanity checks
+|-- test_build_info/                Firmware version string and build info defaults
+|-- test_buzzer/                    Buzzer notification patterns and duration bounds
+|-- test_channel_menu/              Channel menu actions and private scopes
+|-- test_channel_validation/        Channel name validation and sanitising
+|-- test_chat_config/               Chat message cap clamping and config bounds
+|-- test_chat_truncation/           UTF-8 safe chat truncation
+|-- test_companion_protocol/        Companion protocol frame shapes and sync behavior
+|-- test_contact_paging/            Contact list paging bounds and page clamp logic
+|-- test_controller/                RF parameter parsing and validation
+|-- test_debug/                     Debug level bounds and stubs
+|-- test_emoji/                     Emoji font, lookup, fallback, and data checks
+|-- test_emoji_fallback/            Emoji font fallback wrapper registration and writable copies
+|-- test_emoji_integrity/           Emoji font index coverage and uniqueness
+|-- test_github_ota_contract/       GitHub OTA state enum, buffer capacities, and plan fallback
+|-- test_gps/                       NMEA parsing, coordinates, checksums, fix fields
+|-- test_hal_contract/              HAL lifecycle, power, display, and GPS API stability
+|-- test_home_screen/               Home tile routing contract
+|-- test_input_contract/            Trackball, keyboard, and input event encoding stability
+|-- test_keyboard/                  Keyboard scan, event, brightness, injection logic
+|-- test_layout/                    Screen layout overlap regression checks
+|-- test_lodepng_alloc/             LodePNG PSRAM allocator with DRAM fallback
+|-- test_map/                       Map projection, tile math, tile cache behavior
+|-- test_map_renderer/              Map renderer constants, zoom validation, and tile math
+|-- test_mesh_contract/             Mesh advert types, contact flags, and buffer capacity stability
+|-- test_mesh_messaging/            Message queues, contacts, responses, LPP parsing
+|-- test_mesh_wrapper/              Public mesh API contracts and return ranges
+|-- test_message_store/             Message append, dedup, rotation, and persistence
+|-- test_navigation/                Navigation stack and back-swipe behavior
+|-- test_navigation_contract/       Screen enum stability and screen inventory checks
+|-- test_onboarding/                Onboarding date/time validation and leap year rules
+|-- test_pins/                      GPIO ranges, conflicts, and board pin sanity
+|-- test_prefs/                     Preferences defaults and native mock persistence
+|-- test_prefs_defaults/            Radio, identity, and UI preference default values
+|-- test_qr_show/                   QR code version sizing, buffer sizing, and scale fitting
+|-- test_regions/                   Region structs, binary layout, key derivation
+|-- test_responsive/                Responsive layout column offset distribution
+|-- test_sdcard/                    SD card state, path checks, size formatting
+|-- test_tdeck_board/               Board power thresholds and shutdown logic
+|-- test_telemetry_collectors/      Telemetry task watermark and buffer null-safety
+|-- test_telemetry_crash/           Crash backtrace capacity and bounded count
+|-- test_telemetry_hb_ring/         Heartbeat ring buffer wrap, read, and retention
+|-- test_telemetry_input/           Telemetry input sampling and direction validation
+|-- test_telemetry_packet_log/      Telemetry packet log field formatting
+|-- test_telemetry_protocol/        Telemetry record emission and field encoding
+|-- test_terminal/                  Terminal line cap behavior
+|-- test_theme/                     Theme contrast and color distinctness
+|-- test_touch/                     GT911 coordinate parsing and screen mapping
+|-- test_trackball/                 Trackball debounce, direction, and click events
+|-- test_ui_contract/               UI screen show APIs and screen function stability
+|-- test_ui_timing/                 Splash screen timing and millisecond rollover
+|-- test_wifi_scan/                 Wi-Fi scan AP count, sorting, and input validation
 ```
 
 ## Mocks
