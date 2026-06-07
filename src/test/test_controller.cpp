@@ -1037,13 +1037,15 @@ static void cmd_setrf(const char* arg) {
     p.bw = rf.bw;
     p.cr = rf.cr;
     p.tx_power_dbm = rf.tx_power_dbm;
+    p.rx_boosted_gain = rf.rx_boosted_gain;
     p.configured = true;
 
     if (prefs_save(p)) {
         sigurdos::prefs_set(p);
         Serial.println(F("[test] setrf: radio params saved to NVS"));
-        Serial.printf("[test] setrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm\n",
-                      rf.freq, (int)rf.sf, rf.bw, (int)rf.cr, (int)rf.tx_power_dbm);
+        Serial.printf("[test] setrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm RX_BOOST=%d\n",
+                      rf.freq, (int)rf.sf, rf.bw, (int)rf.cr, (int)rf.tx_power_dbm,
+                      (int)rf.rx_boosted_gain);
         Serial.println(F("[test] setrf: reboot to apply changes"));
     } else {
         Serial.println(F("[test] setrf: ERROR failed to save to NVS"));

@@ -20,6 +20,7 @@ struct SigurdOSTestRfParams {
     float bw;
     uint8_t cr;
     int8_t tx_power_dbm;
+    bool rx_boosted_gain;  // 6th optional arg (0 or 1), defaults to false when absent
 };
 
 enum class SigurdOSTestRfParseResult : uint8_t {
@@ -45,9 +46,11 @@ sigurdos_test_controller_parse_rf_params(const char* arg,
     float bw = 0.0f;
     int cr = 0;
     int tx_pwr = 0;
-    const int n = sscanf(arg, "%f %d %f %d %d", &freq, &sf, &bw, &cr, &tx_pwr);
+    int rx_boost = 0;  // optional 6th: 0 or 1, absent = 0
+    const int n = sscanf(arg, "%f %d %f %d %d %d", &freq, &sf, &bw, &cr, &tx_pwr, &rx_boost);
     if (parsed_fields) *parsed_fields = n;
-    if (n != 5) return SigurdOSTestRfParseResult::BadArgumentCount;
+    // Accept 5 or 6 args; 6th is optional
+    if (n < 5 || n > 6) return SigurdOSTestRfParseResult::BadArgumentCount;
 
     if (freq < 400.0f || freq > 1000.0f) {
         return SigurdOSTestRfParseResult::FrequencyOutOfRange;
@@ -70,6 +73,7 @@ sigurdos_test_controller_parse_rf_params(const char* arg,
     out->bw = bw;
     out->cr = static_cast<uint8_t>(cr);
     out->tx_power_dbm = static_cast<int8_t>(tx_pwr);
+    out->rx_boosted_gain = (rx_boost != 0);
     return SigurdOSTestRfParseResult::Ok;
 }
 
