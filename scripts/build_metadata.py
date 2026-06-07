@@ -40,6 +40,22 @@ def _git_dirty(cwd):
     return bool(completed.stdout.strip())
 
 
+def _git_describe(cwd):
+    try:
+        completed = subprocess.run(
+            ["git", "describe", "--tags", "--dirty"],
+            cwd=str(cwd),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    value = completed.stdout.strip()
+    return value if value else None
+
+
 project_dir = Path(env.subst("$PROJECT_DIR"))
 meshcore_dir = project_dir / "lib" / "meshcore"
 board_config = env.BoardConfig()
@@ -54,6 +70,10 @@ if not partitions:
 git_sha = _git(["rev-parse", "--short=12", "HEAD"], project_dir)
 meshcore_sha = _git(["rev-parse", "--short=12", "HEAD"], meshcore_dir)
 git_dirty = _git_dirty(project_dir)
+git_tag = _git_describe(project_dir)
+
+# Set SIGURDOS_VERSION from git describe with tdeck_pins.h define as fallback
+sigurdos_version = _macro_string(git_tag) if git_tag else None
 
 env.Append(
     CPPDEFINES=[
@@ -66,6 +86,11 @@ env.Append(
         ("SIGURDOS_BUILD_MCU", _macro_string(mcu)),
     ]
 )
+
+# Add build-derived SIGURDOS_VERSION if git describe succeeded
+# (overrides the static default in tdeck_pins.h)
+if sigurdos_version:
+    env.Append(CPPDEFINES=[("SIGURDOS_VERSION", sigurdos_version)])
 
 dirty_suffix = "+dirty" if git_dirty else ""
 print(
