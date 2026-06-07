@@ -59,7 +59,7 @@ bool prefs_load(NodePrefs& p) {
     p.theme_id = nvs.getUChar("theme", 0);
     p.multi_acks = nvs.getBool("multi_ack", false);
     p.buzzer_quiet = nvs.getBool("buzz_q", false);
-    p.gps_enabled = nvs.getBool("gps_en", true);
+    p.gps_enabled = nvs.getBool("gps_en", false);
     p.gps_interval = nvs.getUShort("gps_int", 0);
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
     p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
