@@ -182,15 +182,17 @@ bool parseReleaseObject(const char*& p, char* tag, size_t tag_size,
 
 }  // namespace
 
-bool branchNeedsReleaseApi(const char* branch) {
-    return branch && branch[0] != '\0' && std::strcmp(branch, "latest") != 0;
+bool branchNeedsReleaseApi(const char* branch, bool allow_prerelease) {
+    if (!branch || branch[0] == '\0') return false;
+    if (std::strcmp(branch, "latest") == 0) return allow_prerelease;  // API needed to filter prereleases
+    return true;
 }
 
 bool selectReleaseTagFromJson(const char* json, const char* branch,
                               bool allow_prerelease,
                               char* tag_out, size_t tag_max) {
     if (tag_out && tag_max > 0) tag_out[0] = '\0';
-    if (!json || !branchNeedsReleaseApi(branch) || !tag_out || tag_max == 0) {
+    if (!json || !branchNeedsReleaseApi(branch, allow_prerelease) || !tag_out || tag_max == 0) {
         return false;
     }
 
@@ -214,7 +216,7 @@ bool selectReleaseTagFromJson(const char* json, const char* branch,
             return false;
         }
 
-        if (tag[0] && std::strcmp(target, branch) == 0 &&
+        if (tag[0] && (std::strcmp(branch, "latest") == 0 || std::strcmp(target, branch) == 0) &&
             (allow_prerelease || !prerelease)) {
             return copyBounded(tag_out, tag_max, tag, std::strlen(tag));
         }

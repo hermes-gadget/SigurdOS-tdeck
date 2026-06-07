@@ -71,11 +71,17 @@ TEST(GitHubOTAContractTest, PublicApiSignaturesStayStable) {
 }
 
 TEST(GitHubOTAPlanTest, LatestAndEmptyBranchUseFallbackWithoutApi) {
-    EXPECT_FALSE(branchNeedsReleaseApi(nullptr));
-    EXPECT_FALSE(branchNeedsReleaseApi(""));
-    EXPECT_FALSE(branchNeedsReleaseApi("latest"));
-    EXPECT_TRUE(branchNeedsReleaseApi("main"));
-    EXPECT_TRUE(branchNeedsReleaseApi("dev"));
+    // Without allow_prerelease, empty/unknown/latest branches need no API
+    EXPECT_FALSE(branchNeedsReleaseApi(nullptr, false));
+    EXPECT_FALSE(branchNeedsReleaseApi("", false));
+    EXPECT_FALSE(branchNeedsReleaseApi("latest", false));
+    EXPECT_TRUE(branchNeedsReleaseApi("main", false));
+    EXPECT_TRUE(branchNeedsReleaseApi("dev", false));
+    // With allow_prerelease, "latest" also needs the API
+    EXPECT_TRUE(branchNeedsReleaseApi("latest", true));
+    // Named branches always need API regardless of prerelease flag
+    EXPECT_TRUE(branchNeedsReleaseApi("main", true));
+    EXPECT_TRUE(branchNeedsReleaseApi("dev", true));
 }
 
 TEST(GitHubOTAPlanTest, BuildsReleaseAndFallbackUrlsWithinBuffer) {
@@ -157,6 +163,30 @@ TEST(GitHubOTAPlanTest, MalformedJsonIsNegativeCase) {
     EXPECT_FALSE(selectReleaseTagFromJson("[{\"tag_name\":\"bad\"", "main",
                                           false, tag, sizeof(tag)));
     EXPECT_STREQ(tag, "");
+}
+
+TEST(GitHubOTAPlanTest, SelectsLatestReleaseWhenBranchIsLatestWithPrerelease) {
+    const char* json = R"([
+      {"tag_name":"dev-pre","target_commitish":"dev","prerelease":true},
+      {"tag_name":"main-stable","target_commitish":"main","prerelease":false}
+    ])";
+    char tag[32] = "";
+
+    // "latest" with allow_prerelease=true should pick the first (newest) matching release
+    ASSERT_TRUE(selectReleaseTagFromJson(json, "latest", true, tag, sizeof(tag)));
+    EXPECT_STREQ(tag, "dev-pre");
+}
+
+TEST(GitHubOTAPlanTest, SkipsPrereleasesWhenLatestWithoutPrerelease) {
+    const char* json = R"([
+      {"tag_name":"dev-pre","target_commitish":"dev","prerelease":true},
+      {"tag_name":"main-pre","target_commitish":"main","prerelease":true}
+    ])";
+    char tag[32] = "";
+
+    // "latest" with allow_prerelease=false shouldn't be called through selectReleaseTagFromJson
+    // (branchNeedsReleaseApi filter handles it), but verify the function behaves safely
+    EXPECT_FALSE(selectReleaseTagFromJson(json, "latest", false, tag, sizeof(tag)));
 }
 
 TEST(GitHubOTAPlanTest, InvalidArgumentsAreNegativeCases) {

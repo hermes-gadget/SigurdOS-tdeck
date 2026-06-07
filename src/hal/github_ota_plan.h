@@ -9,7 +9,7 @@ constexpr const char* GITHUB_OTA_FALLBACK_URL =
     "https://github.com/hermes-gadget/SigurdOS-tdeck"
     "/releases/latest/download/firmware.bin";
 
-bool branchNeedsReleaseApi(const char* branch);
+bool branchNeedsReleaseApi(const char* branch, bool allow_prerelease);
 
 bool selectReleaseTagFromJson(const char* json, const char* branch,
                               bool allow_prerelease,
