@@ -33,10 +33,9 @@ RegionMap* getRegionMap() {
 
 bool regionsLoad() {
     if (!g_region_map) return false;
-    if (!SPIFFS.begin(true)) return false;
+    if (!SPIFFS.begin(false)) return false;
 
     bool ok = g_region_map->load(&SPIFFS, "/regions2");
-    SPIFFS.end();
 
     // Restore active scope from NodePrefs
     NodePrefs np = prefs_get();
@@ -52,10 +51,9 @@ bool regionsLoad() {
 
 bool regionsSave() {
     if (!g_region_map) return false;
-    if (!SPIFFS.begin(true)) return false;
+    if (!SPIFFS.begin(false)) return false;
 
     bool ok = g_region_map->save(&SPIFFS, "/regions2");
-    SPIFFS.end();
     return ok;
 }
 
