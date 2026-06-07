@@ -25,9 +25,9 @@
 #include <driver/rtc_io.h>
 #endif
 #ifdef SIGURDOS_TDECK
+#include "tdeck_pins.h"
 #include <helpers/ESP32Board.h>
 #endif
-#include "tdeck_pins.h"
 
 namespace sigurdos {
 
