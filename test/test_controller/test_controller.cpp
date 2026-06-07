@@ -170,4 +170,7 @@ TEST(TestControllerRfParserTest, ExtraTrailingArgsIgnoredGracefully) {
     EXPECT_TRUE(out.rx_boosted_gain);
 }
 
+// getrf does not use the parser — it reads prefs directly and prints via Serial.
+// Dispatch/Serial smoke tests require the full controller linked on hardware.
+
 } // namespace
