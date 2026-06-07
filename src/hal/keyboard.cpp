@@ -148,6 +148,9 @@ static bool     mic_one_shot    = false;
 static bool     sym_combo_used  = false;
 static bool     alt_combo_used  = false;
 static bool     mic_combo_used  = false;
+static uint32_t one_shot_active_ms = 0;
+
+static constexpr uint32_t ONE_SHOT_TIMEOUT_MS = 1500;
 
 // ── Ring buffer for key events ─────────────────────────────
 // Fixes single-slot latch that dropped fast key presses:
@@ -278,6 +281,14 @@ static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
     shift_held = shift_down;
     alt_held = alt_down || alt_one_shot || mic_down || mic_one_shot;
 
+    if (!sym_down && !alt_down && !mic_down &&
+        one_shot_active_ms && (millis() - one_shot_active_ms > ONE_SHOT_TIMEOUT_MS)) {
+        sym_one_shot = false;
+        alt_one_shot = false;
+        mic_one_shot = false;
+        one_shot_active_ms = 0;
+    }
+
     for (uint8_t row = 0; row < KB_RAW_ROWS; row++) {
         for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
             const bool is_down = raw_key_down(matrix, col, row);
@@ -333,12 +344,15 @@ static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
 
     if (!sym_down && sym_was_down && !sym_combo_used) {
         sym_one_shot = true;
+        one_shot_active_ms = millis();
     }
     if (!alt_down && alt_was_down && !alt_combo_used) {
         alt_one_shot = true;
+        one_shot_active_ms = millis();
     }
     if (!mic_down && mic_was_down && !mic_combo_used) {
         mic_one_shot = true;
+        one_shot_active_ms = millis();
     }
 
     for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
@@ -533,6 +547,7 @@ void sigurdos_keyboard_reset_scan_state()
     sym_one_shot    = false;
     alt_one_shot    = false;
     mic_one_shot    = false;
+    one_shot_active_ms = 0;
     sym_combo_used  = false;
     alt_combo_used  = false;
     mic_combo_used  = false;
