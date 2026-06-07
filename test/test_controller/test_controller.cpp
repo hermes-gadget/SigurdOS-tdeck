@@ -122,4 +122,52 @@ TEST(TestControllerRfParserTest, RejectsTxPowerOutsideRange) {
               SigurdOSTestRfParseResult::TxPowerOutOfRange);
 }
 
+TEST(TestControllerRfParserTest, OptionalRxBoostedGainEnabled) {
+    SigurdOSTestRfParams out{};
+    int parsed = 0;
+
+    EXPECT_EQ(parse("869.525 10 250 5 22 1", &out, &parsed),
+              SigurdOSTestRfParseResult::Ok);
+    EXPECT_EQ(parsed, 6);
+    EXPECT_FLOAT_EQ(out.freq, 869.525f);
+    EXPECT_EQ(out.sf, 10);
+    EXPECT_FLOAT_EQ(out.bw, 250.0f);
+    EXPECT_EQ(out.cr, 5);
+    EXPECT_EQ(out.tx_power_dbm, 22);
+    EXPECT_TRUE(out.rx_boosted_gain);
+}
+
+TEST(TestControllerRfParserTest, OptionalRxBoostedGainDisabled) {
+    SigurdOSTestRfParams out{};
+    int parsed = 0;
+
+    EXPECT_EQ(parse("869.525 10 250 5 22 0", &out, &parsed),
+              SigurdOSTestRfParseResult::Ok);
+    EXPECT_EQ(parsed, 6);
+    EXPECT_FALSE(out.rx_boosted_gain);
+}
+
+TEST(TestControllerRfParserTest, RxBoostedGainDefaultsToFalseWhenAbsent) {
+    SigurdOSTestRfParams out{};
+    int parsed = 0;
+
+    // 5 args (no rx_boost) — backward compatible
+    EXPECT_EQ(parse("869.525 10 250 5 22", &out, &parsed),
+              SigurdOSTestRfParseResult::Ok);
+    EXPECT_EQ(parsed, 5);
+    EXPECT_FALSE(out.rx_boosted_gain);
+}
+
+TEST(TestControllerRfParserTest, ExtraTrailingArgsIgnoredGracefully) {
+    SigurdOSTestRfParams out{};
+    int parsed = 0;
+
+    // sscanf only reads the 6 specifiers, ignoring trailing data.
+    // This is acceptable CLI behavior — parse what you need, ignore the rest.
+    EXPECT_EQ(parse("869.525 10 250 5 22 1 999 extra junk", &out, &parsed),
+              SigurdOSTestRfParseResult::Ok);
+    EXPECT_EQ(parsed, 6);
+    EXPECT_TRUE(out.rx_boosted_gain);
+}
+
 } // namespace
