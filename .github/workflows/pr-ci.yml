@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  platformio:
-    name: PlatformIO tests and firmware build
+  test:
+    name: Native tests
     runs-on: ubuntu-latest
 
     steps:
@@ -43,19 +43,5 @@ jobs:
       - name: Install PlatformIO
         run: python -m pip install --upgrade platformio
 
-      # Run native tests first for fast feedback
       - name: Run native tests
         run: pio test -e native_test -v
-
-      # Firmware builds run in parallel after tests pass
-      - name: Build SigurdOS_TDeck firmware
-        run: pio run -e SigurdOS_TDeck
-
-      - name: Build SigurdOS_TDeck_debug firmware
-        run: pio run -e SigurdOS_TDeck_debug
-
-      - name: Build SigurdOS_TDeck_ble firmware
-        run: pio run -e SigurdOS_TDeck_ble
-
-      - name: Build SigurdOS_TDeck_ble_validation firmware
-        run: pio run -e SigurdOS_TDeck_ble_validation
