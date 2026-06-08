@@ -68,18 +68,23 @@ bool prefs_load(NodePrefs& p) {
     // saved user preference still controls later boots.
     p.ble_enabled = nvs.getBool("ble_en", DEFAULT_BLE_ENABLED);
     p.device_pin = nvs.getULong("dev_pin", 0);
-    // WiFi credentials (GitHub OTA)
+    // WiFi credentials (GitHub OTA) — use getString guard matching node_name pattern
     size_t ssid_len = nvs.getString("wifi_ssid", p.wifi_ssid, sizeof(p.wifi_ssid));
-    if (ssid_len == 0) p.wifi_ssid[0] = '\0';
+    if (ssid_len == 0 || ssid_len > sizeof(p.wifi_ssid)) { p.wifi_ssid[0] = '\0'; }
+    else { p.wifi_ssid[sizeof(p.wifi_ssid) - 1] = '\0'; }
     size_t pw_len = nvs.getString("wifi_pw", p.wifi_password, sizeof(p.wifi_password));
-    if (pw_len == 0) p.wifi_password[0] = '\0';
+    if (pw_len == 0 || pw_len > sizeof(p.wifi_password)) { p.wifi_password[0] = '\0'; }
+    else { p.wifi_password[sizeof(p.wifi_password) - 1] = '\0'; }
     // Region (flood scope)
     size_t reg_len = nvs.getString("act_reg", p.active_region, sizeof(p.active_region));
-    if (reg_len == 0) p.active_region[0] = '\0';
+    if (reg_len == 0 || reg_len > sizeof(p.active_region)) { p.active_region[0] = '\0'; }
+    else { p.active_region[sizeof(p.active_region) - 1] = '\0'; }
     // OTA release channel
     size_t ota_br_len = nvs.getString("ota_br", p.ota_branch, sizeof(p.ota_branch));
-    if (ota_br_len == 0) {
+    if (ota_br_len == 0 || ota_br_len > sizeof(p.ota_branch)) {
         strncpy(p.ota_branch, "main", sizeof(p.ota_branch) - 1);
+        p.ota_branch[sizeof(p.ota_branch) - 1] = '\0';
+    } else {
         p.ota_branch[sizeof(p.ota_branch) - 1] = '\0';
     }
     p.ota_allow_prerelease = nvs.getBool("ota_pre", false);
