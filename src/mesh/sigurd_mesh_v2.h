@@ -53,12 +53,9 @@ public:
     }
     const char* getOwnName() const { return _own_name; }
 
-    // Stores the wrapper's message callback (auto-reply, queue push, etc.)
-    // Called from onChannelMessageRecv after pushing to the UI queue.
-    void (*_message_cb)(const char*, const char*, const char*) = nullptr;
-    void setMessageCallback(void (*cb)(const char*, const char*, const char*)) {
-        _message_cb = cb;
-    }
+    // _message_cb and setMessageCallback() were removed in 2026-06 — dead code
+    // after the RX double-queue fix removed _message_cb(...) invocations from all
+    // message handlers. See mesh_wrapper.cpp for removal history.
 
     // ── RSSI/SNR side-channel ───────────────────
     static constexpr int SIGNAL_SAMPLES_MAX = 64;

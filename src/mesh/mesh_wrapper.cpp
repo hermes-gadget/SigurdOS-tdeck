@@ -266,26 +266,10 @@ static bool queue_pop(MeshMessage* out) {
 // Forward declarations
 namespace sigurdos { namespace mesh { bool sendChannelMessage(const char* channel_name, const char* text); }}
 
-static void onMeshMessage(const char* sender, const char* channel, const char* text) {
-    queue_push(sender, channel, text);
-#if SIGURDOS_DEBUG
-    // Auto-reply in debug mode to test full duplex
-    if (channel && channel[0]) {
-        char reply[160];
-        snprintf(reply, sizeof(reply), "%s: Roger that (%s)", own_name, text);
-        sigurdos::mesh::sendChannelMessage(channel, reply);
-    }
-#endif
-#if SIGURDOS_DEBUG_MESH
-    SIGURDOS_RUNTIME_FEAT(mesh) {
-    int rssi = (int)radio_driver->getLastRSSI();
-    float snr = radio_driver->getLastSNR();
-    Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
-                  sender, channel && channel[0] ? " in " : "",
-                  channel && channel[0] ? channel : "", text, rssi, snr);
-    }
-#endif
-}
+// onMeshMessage was removed in 2026-06 — the _message_cb callback was dead code
+// after the RX double-queue fix removed _message_cb(...) invocations from all
+// SigurdMeshV2 message handlers. The callback registration remained as a latent
+// footgun (reconnecting it would re-introduce the double-queue bug).
 
 // ════════════════════════════════════════════════════
 // Identity persistence
@@ -845,7 +829,6 @@ bool init(bool spiffs_ok)
         Serial.println("[mesh] ERROR: SigurdMeshV2 allocation failed");
         return false;
     }
-    g_mesh->setMessageCallback(onMeshMessage);
     g_mesh->setOwnName(own_name);
 
     // Generate or load identity
