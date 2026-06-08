@@ -506,16 +506,23 @@ namespace mesh {
     }
 
     void SigurdMeshV2::onAnonDataRecv(::mesh::Packet* pkt, const uint8_t* secret, const ::mesh::Identity& sender, uint8_t* data, size_t len) {
-        if (len <= 4) return;
-        data[len - 1] = '\0';  // ensure null terminator
-        const char* text = (const char*)(data + 4);
+        if (len <= 4 || !data) return;
+        // Copy text to local buffer — do NOT modify the packet data in-place
+        // (the buffer may be shared between multiple callers).
+        size_t tlen = len - 4;
+        if (tlen > 159) tlen = 159;
+        char text[160];
+        memcpy(text, data + 4, tlen);
+        text[tlen] = '\0';
 
         int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
 
-        // Generate a fallback name from sender pubkey prefix
-        char fallback[16];
-        snprintf(fallback, sizeof(fallback), "anon_%02x", sender.pub_key[0]);
+        // Generate a fallback name from sender pubkey prefix (4 hex chars
+        // to reduce collision probability to ~1/65536 per sender pair)
+        char fallback[20];
+        snprintf(fallback, sizeof(fallback), "anon_%02x%02x",
+                 sender.pub_key[0], sender.pub_key[1]);
 
         sigurdos::mesh::mesh_v2_queue_push(fallback, "", text, rssi, snr);
     }

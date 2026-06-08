@@ -302,7 +302,6 @@ public:
                         const ::mesh::Identity& sender,
                         uint8_t* data, size_t len) override;
 
-
     void onSignedMessageRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
                              uint32_t sender_timestamp, const uint8_t* sender_prefix,
                              const char* text) override;
