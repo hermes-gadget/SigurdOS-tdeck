@@ -154,7 +154,7 @@ struct SigurdRegion {
 ### Design decisions (call these out in the PR)
 
 - **Adverts & path-returns:** adverts stay **unscoped** (discovery must cross regions). Return-path replies and ACKs ride through `sendFloodScoped`, so they inherit the active scope — consistent with upstream `MyMesh`.
-- **`path_hash_mode`:** upstream passes `_prefs.path_hash_mode + 1` as `path_hash_size`. SigurdOS uses the default `1` everywhere today; keep `path_hash_size = 1` unless/until a `path_hash_mode` pref is also added (out of scope here).
+- **`path_hash_mode`:** implemented. `NodePrefs.path_hash_mode` (0/1/2 → 1/2/3-byte path hash) is passed as `_prefs.path_hash_mode + 1` to `sendFlood()` for originated adverts and messages via `SigurdMeshV2::sendScopedImpl()` (matching upstream `MyMesh::sendFloodScoped`). Default is `0` (1 byte) for pre-1.14 repeater compatibility; configurable in Settings → Radio Setup and over the companion protocol (`CMD_SET_PATH_HASH_MODE`).
 - **Opt-in:** empty `active_region` ⇒ wildcard flood ⇒ byte-identical to current firmware. No silent behaviour change.
 - **Private key entry:** validate decoded length is exactly 16 bytes; reject otherwise. Never log raw keys (debug builds).
 

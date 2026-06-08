@@ -56,9 +56,11 @@ public:
     uint32_t tuning_tx_delay_factor_x1000 = 1000;
     uint32_t now = 1234;
 
+    uint8_t path_hash_mode = 0;
+
     uint32_t blePin() const override { return 123456; }
     uint8_t clientRepeat() const override { return 0; }
-    uint8_t pathHashMode() const override { return 0; }
+    uint8_t pathHashMode() const override { return path_hash_mode; }
     void selfInfo(sigurdos::comms::CompanionSelfInfo& out) const override {
         std::memset(&out, 0, sizeof(out));
         for (int i = 0; i < 32; i++) out.pub_key[i] = (uint8_t)i;
@@ -224,7 +226,11 @@ public:
     int      sign_len_seen = -1;
 
     void setOtherParams(const sigurdos::comms::CompanionOtherParams& p) override { last_other = p; }
-    bool setPathHashMode(uint8_t mode) override { return mode == 0; }
+    bool setPathHashMode(uint8_t mode) override {
+        if (mode > 2) return false;
+        path_hash_mode = mode;
+        return true;
+    }
     void getAutoAddConfig(uint8_t* cfg, uint8_t* hops) const override {
         if (cfg) *cfg = autoadd_cfg; if (hops) *hops = autoadd_hops;
     }
@@ -343,6 +349,39 @@ TEST_F(CompanionProtocolTest, DeviceQueryFrameMatchesOfficialShape) {
     uint32_t pin = 0;
     std::memcpy(&pin, &out[4], 4);
     EXPECT_EQ(pin, 123456u);
+    // Last two bytes: client_repeat (v9+), path_hash_mode (v10+).
+    EXPECT_EQ(out[81], host.pathHashMode());
+}
+
+TEST_F(CompanionProtocolTest, DeviceQueryReportsConfiguredPathHashMode) {
+    host.path_hash_mode = 2;  // 3-byte path hash
+    uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
+    ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 82u);
+    EXPECT_EQ(out[81], 2);
+}
+
+TEST_F(CompanionProtocolTest, SetPathHashModeAcceptsValidModes) {
+    for (uint8_t mode = 0; mode <= 2; mode++) {
+        serial.writes.clear();
+        uint8_t cmd[] = {sigurdos::comms::CMD_SET_PATH_HASH_MODE, 0, mode};
+        ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+        ASSERT_EQ(serial.writes.size(), 1u);
+        EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
+        EXPECT_EQ(host.pathHashMode(), mode);
+    }
+}
+
+TEST_F(CompanionProtocolTest, SetPathHashModeRejectsReservedMode) {
+    host.path_hash_mode = 1;
+    uint8_t cmd[] = {sigurdos::comms::CMD_SET_PATH_HASH_MODE, 0, 3};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+    EXPECT_EQ(host.pathHashMode(), 1);  // unchanged
 }
 
 TEST_F(CompanionProtocolTest, AppStartReturnsSelfInfo) {

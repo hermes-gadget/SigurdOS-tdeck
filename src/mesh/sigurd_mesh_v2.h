@@ -702,15 +702,26 @@ public:
 private:
     void sendScopedImpl(::mesh::Packet* pkt, uint32_t delay_millis) {
         if (!pkt) return;
+        // Multibyte support: originate with the configured path hash size
+        // (mode 0/1/2 → 1/2/3 bytes), matching the MeshCore companion firmware.
+        uint8_t hash_size = pathHashSize();
         if (_send_unscoped || _active_scope.isNull()) {
             _send_unscoped = false;  // one-shot: reset after use
-            sendFlood(pkt, delay_millis);
+            sendFlood(pkt, delay_millis, hash_size);
             return;
         }
         uint16_t codes[2];
         codes[0] = _active_scope.calcTransportCode(pkt);
         codes[1] = 0;  // home/return region — REVISIT upstream
-        sendFlood(pkt, codes, delay_millis);
+        sendFlood(pkt, codes, delay_millis, hash_size);
+    }
+
+    // Path hash size for originated packets: prefs path_hash_mode (0-2) + 1,
+    // clamped to the valid 1-3 byte range accepted by Mesh::sendFlood().
+    static uint8_t pathHashSize() {
+        uint8_t mode = sigurdos::prefs_get().path_hash_mode;
+        if (mode > 2) mode = 0;
+        return mode + 1;
     }
 
     TransportKey _active_scope;

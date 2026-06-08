@@ -57,6 +57,8 @@ bool prefs_load(NodePrefs& p) {
     p.advert_interval = nvs.getUChar("adv_int", 0);
     p.advert_type = nvs.getUChar("adv_type", 1);
     p.theme_id = nvs.getUChar("theme", 0);
+    p.path_hash_mode = nvs.getUChar("phash_mode", 0);
+    if (p.path_hash_mode > 2) p.path_hash_mode = 0;  // clamp (mode 3 reserved)
     p.multi_acks = nvs.getBool("multi_ack", false);
     p.buzzer_quiet = nvs.getBool("buzz_q", false);
     p.gps_enabled = nvs.getBool("gps_en", false);
@@ -121,6 +123,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("adv_int", p.advert_interval);
     nvs.putUChar("adv_type", p.advert_type);
     nvs.putUChar("theme", p.theme_id);
+    nvs.putUChar("phash_mode", p.path_hash_mode);
     nvs.putBool("multi_ack", p.multi_acks);
     nvs.putBool("buzz_q", p.buzzer_quiet);
     nvs.putBool("gps_en", p.gps_enabled);

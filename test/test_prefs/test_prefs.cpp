@@ -71,4 +71,35 @@ TEST_F(PrefsTest, RxBoostedGainRoundTripsThroughPrefsSaveAndLoad) {
     EXPECT_TRUE(loaded.rx_boosted_gain);
 }
 
+TEST_F(PrefsTest, DefaultPathHashModeIsOneByte) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+
+    EXPECT_EQ(0, prefs.path_hash_mode);
+}
+
+TEST_F(PrefsTest, PathHashModeRoundTripsThroughPrefsSetAndGet) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    prefs.path_hash_mode = 2;  // 3-byte path hash
+
+    sigurdos::prefs_set(prefs);
+
+    EXPECT_EQ(2, sigurdos::prefs_get().path_hash_mode);
+}
+
+TEST_F(PrefsTest, PathHashModeRoundTripsThroughPrefsSaveAndLoad) {
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.path_hash_mode = 1;  // 2-byte path hash
+
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_EQ(1, loaded.path_hash_mode);
+}
+
 } // namespace

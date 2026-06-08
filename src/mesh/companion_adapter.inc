@@ -153,7 +153,7 @@ public:
         return pin ? pin : SIGURDOS_DEFAULT_BLE_PIN;
     }
     uint8_t clientRepeat() const override { return sigurdos::prefs_get().client_repeat; }
-    uint8_t pathHashMode() const override { return 0; }
+    uint8_t pathHashMode() const override { return sigurdos::prefs_get().path_hash_mode; }
 
     void selfInfo(CompanionSelfInfo& out) const override {
         memset(&out, 0, sizeof(out));
@@ -421,8 +421,12 @@ public:
         sigurdos::prefs_set(p);
     }
     bool setPathHashMode(uint8_t mode) override {
-        // SigurdOS reports path_hash_mode 0 and does not vary it.
-        return mode == 0;
+        // Modes 0-2 = 1/2/3-byte path hash. Mode 3 is reserved (rejected).
+        if (mode > 2) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.path_hash_mode = mode;
+        sigurdos::prefs_set(p);
+        return true;
     }
     void getAutoAddConfig(uint8_t* cfg, uint8_t* max_hops) const override {
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();

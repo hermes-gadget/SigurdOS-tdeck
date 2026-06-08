@@ -1167,7 +1167,7 @@ namespace mesh {
         uint8_t app[MAX_ADVERT_DATA_SIZE];
         uint8_t app_len = builder.encodeTo(app);
         ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
-        if (pkt) sendFlood(pkt);
+        if (pkt) sendFlood(pkt, 0, pathHashSize());
     }
 
     void SigurdMeshV2::broadcastAdvert(const char* name, double lat, double lon, uint8_t adv_type) {
@@ -1175,7 +1175,7 @@ namespace mesh {
         uint8_t app[MAX_ADVERT_DATA_SIZE];
         uint8_t app_len = builder.encodeTo(app);
         ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
-        if (pkt) sendFlood(pkt);
+        if (pkt) sendFlood(pkt, 0, pathHashSize());
     }
 
     float SigurdMeshV2::getPacketSNR() const {

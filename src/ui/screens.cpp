@@ -6236,6 +6236,7 @@ static bool  s_rx_gain    = false;  // RX boosted gain toggle state
 static bool  s_multi_ack  = false;  // multi-ACK toggle state
 static bool  s_buzzer_quiet = false; // buzzer quiet toggle state
 static uint8_t s_duty_cycle = 0;    // duty cycle percentage (0 = disabled)
+static uint8_t s_path_hash_mode = 0; // path hash size mode (0=1B, 1=2B, 2=3B)
 
 void custom_rf_screen_show()
 {
@@ -6409,6 +6410,7 @@ void radio_setup_screen_show()
     s_duty_cycle = p.duty_cycle;
     s_multi_ack  = p.multi_acks;
     s_buzzer_quiet = p.buzzer_quiet;
+    s_path_hash_mode = p.path_hash_mode > 2 ? 0 : p.path_hash_mode;
 
     // Warning
     auto* warn = lv_label_create(scr);
@@ -6666,6 +6668,42 @@ void radio_setup_screen_show()
     }, LV_EVENT_CLICKED, (void*)buzzer_lbl);
     ry += 24;
 
+    // ── Path hash size (multibyte) cycle ────────────
+    // Mode 0/1/2 → 1/2/3-byte path hash for originated adverts & messages.
+    // Keep at 1 byte unless your mesh's repeaters all run MeshCore 1.14+.
+    snprintf(buf, sizeof(buf), "Path Hash: %d byte%s",
+             s_path_hash_mode + 1, s_path_hash_mode == 0 ? "" : "s");
+    auto* phash_lbl = lv_label_create(scr);
+    lv_label_set_text(phash_lbl, buf);
+    lv_obj_set_style_text_color(phash_lbl, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(phash_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(phash_lbl, LV_ALIGN_TOP_LEFT, rx, ry);
+
+    auto* phash_btn = lv_btn_create(scr);
+    lv_obj_set_size(phash_btn, 48, 20);
+    lv_obj_align(phash_btn, LV_ALIGN_TOP_LEFT, rx + rw - 52, ry - 2);
+    lv_obj_set_style_bg_color(phash_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(phash_btn, 0, 0);
+    auto* phl = lv_label_create(phash_btn);
+    snprintf(buf, sizeof(buf), "%dB", s_path_hash_mode + 1);
+    lv_label_set_text(phl, buf);
+    lv_obj_center(phl);
+    lv_obj_add_event_cb(phash_btn, [](lv_event_t* e) {
+        s_path_hash_mode = (s_path_hash_mode + 1) % 3;  // cycle 0→1→2→0
+        lv_obj_t* lbl = (lv_obj_t*)lv_event_get_user_data(e);
+        char b[32];
+        snprintf(b, sizeof(b), "Path Hash: %d byte%s",
+                 s_path_hash_mode + 1, s_path_hash_mode == 0 ? "" : "s");
+        lv_label_set_text(lbl, b);
+        lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_t* bl = lv_obj_get_child(target, 0);
+        if (bl && lv_obj_check_type(bl, &lv_label_class)) {
+            snprintf(b, sizeof(b), "%dB", s_path_hash_mode + 1);
+            lv_label_set_text(bl, b);
+        }
+    }, LV_EVENT_CLICKED, (void*)phash_lbl);
+    ry += 24;
+
     // Save & Reboot
     auto* save_btn = lv_btn_create(scr);
     lv_obj_set_size(save_btn, rw, 28);
@@ -6686,6 +6724,7 @@ void radio_setup_screen_show()
         np.multi_acks     = s_multi_ack;
         np.buzzer_quiet   = s_buzzer_quiet;
         np.duty_cycle   = s_duty_cycle;
+        np.path_hash_mode = s_path_hash_mode;
         np.configured   = true;
         sigurdos::prefs_set(np);
         sigurdos::mesh::saveChannels();
