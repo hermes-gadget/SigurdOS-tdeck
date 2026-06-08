@@ -474,7 +474,7 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
             if (mx_y > c.max_y) c.max_y = mx_y;
         }
 
-        if ((++scanned % 16) == 0) delay(0);
+        if ((++scanned % 16) == 0) delay(1);
     }
     closedir(xd);
 
@@ -500,7 +500,7 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
             have_sample = true;
         }
 
-        if ((++scanned % 16) == 0) delay(0);
+        if ((++scanned % 16) == 0) delay(1);
     }
 
     if (!have_sample) return false;
