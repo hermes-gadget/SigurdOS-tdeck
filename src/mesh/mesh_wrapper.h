@@ -237,6 +237,17 @@ bool getRoomMsgFetchEntry(int index, char* sender_out, int sender_sz,
                           uint32_t* timestamp_out);
 void clearRoomMsgFetch();
 
+// Send a text message to a room server contact as a peer TXT_MSG.
+// Returns the timestamp used for ACK tracking, or 0 on failure.
+uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text);
+
+// Count room server contacts that are currently logged in.
+int getLoggedInRoomServerCount();
+
+// Get the name of a logged-in room server contact by index (0..count-1).
+// Returns the contact name or empty string if not found.
+const char* getLoggedInRoomServerName(int index);
+
 // ── Status request (Phase 4.2) ────────────────
 #define NODE_STATUS_RESPONSE_SIZE  56  // size of RepeaterStats binary blob
 

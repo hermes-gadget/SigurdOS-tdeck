@@ -520,6 +520,57 @@ void clearRoomMsgFetch() {
     if (g_mesh) g_mesh->clearRoomMsgFetch();
 }
 
+// ── Room message posting ───────────────────────────
+uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text) {
+    if (!g_mesh || !contact_name || !channel_name || !text) return 0;
+    // Format: "[channel_name] text" — embeds the channel name in the message text
+    // so the room server can identify which channel the message is for.
+    char buf[160];
+    int n = snprintf(buf, sizeof(buf), "#%s %s", channel_name, text);
+    if (n <= 0) return 0;
+    if (n >= (int)sizeof(buf)) n = sizeof(buf) - 1;
+    // Send as a peer TXT_MSG to the room server contact (like a DM).
+    return sendMessage(contact_name, buf);
+}
+
+int getLoggedInRoomServerCount() {
+    if (!g_mesh) return 0;
+    int count = 0;
+    int n = g_mesh->getContactCount();
+    ::ContactInfo tmp;
+    for (int i = 0; i < n; i++) {
+        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
+            tmp.type == ADV_TYPE_ROOM &&
+            tmp.name[0] &&
+            g_mesh->isLoggedIn(tmp.name)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+const char* getLoggedInRoomServerName(int index) {
+    if (!g_mesh || index < 0) return "";
+    int count = 0;
+    int n = g_mesh->getContactCount();
+    ::ContactInfo tmp;
+    for (int i = 0; i < n; i++) {
+        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
+            tmp.type == ADV_TYPE_ROOM &&
+            tmp.name[0] &&
+            g_mesh->isLoggedIn(tmp.name)) {
+            if (count == index) {
+                static char name_buf[32];
+                strncpy(name_buf, tmp.name, sizeof(name_buf) - 1);
+                name_buf[sizeof(name_buf) - 1] = '\0';
+                return name_buf;
+            }
+            count++;
+        }
+    }
+    return "";
+}
+
 // ── Status request (Phase 4.2) ────────────────
 bool requestStatus(const char* dest_name) {
     if (!g_mesh || !dest_name || !dest_name[0]) return false;

@@ -1604,6 +1604,7 @@ static void do_send()
     const uint8_t* scope_key = scope ? scope->key : nullptr;
 
     bool sent = false;
+    bool room_forwarded = false;
     uint32_t ts = sigurdos::mesh::getCurrentTime();
     if (is_dm) {
         uint32_t send_ts = sigurdos::mesh::sendMessageWithScopeKey(dest, text, scope_key);
@@ -1611,12 +1612,23 @@ static void do_send()
         if (sent) ts = send_ts;  // use the timestamp the mesh layer tracked the ACK with
     } else {
         sent = sigurdos::mesh::sendChannelMessageWithScopeKey(dest, text, scope_key);
+        // Also forward the message to any logged-in room server contacts.
+        // This ensures room servers receive messages posted in their channels.
+        int n_room = sigurdos::mesh::getLoggedInRoomServerCount();
+        for (int ri = 0; ri < n_room; ri++) {
+            const char* room_name = sigurdos::mesh::getLoggedInRoomServerName(ri);
+            if (room_name && room_name[0]) {
+                uint32_t room_ts = sigurdos::mesh::sendRoomMessage(room_name, dest, text);
+                if (room_ts != 0) room_forwarded = true;
+            }
+        }
     }
 
     int sent_channel = active_channel;
     // Always show the message locally, but mark it if send failed
+    // (consider it sent if either the channel broadcast or the room forward succeeded)
     char display_text[200];
-    if (sent) {
+    if (sent || room_forwarded) {
         snprintf(display_text, sizeof(display_text), "%s", text);
     } else {
         snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
