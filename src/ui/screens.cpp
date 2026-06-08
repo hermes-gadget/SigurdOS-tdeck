@@ -1472,8 +1472,12 @@ void contact_detail_screen_show(const char* contact_name)
         if (st == LOGIN_STATUS_OK) {
             uint8_t perm = sigurdos::mesh::getLoginPermission(contact_name);
             char perm_buf[24];
-            if (perm) {
+            // Server permission encoding:
+            //   1 = Admin, 0 = Read-Write (logged-in non-admin), 2 = Guest (read-only)
+            if (perm == 1) {
                 snprintf(perm_buf, sizeof(perm_buf), "Admin (perm=%d)", perm);
+            } else if (perm == 0) {
+                snprintf(perm_buf, sizeof(perm_buf), "Read-Write");
             } else {
                 snprintf(perm_buf, sizeof(perm_buf), "Guest");
             }
@@ -2805,26 +2809,41 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             add_con("Login", "Logged in", ACCENT_GREEN);
             uint8_t perm = sigurdos::mesh::getLoginPermission(contact_name);
             char perm_buf[24];
-            snprintf(perm_buf, sizeof(perm_buf), "Admin (perm=%d)", perm);
-            add_con("Permission", perm_buf, ACCENT);
+            if (perm == 1) {
+                snprintf(perm_buf, sizeof(perm_buf), "Admin (perm=%d)", perm);
+            } else if (perm == 0) {
+                snprintf(perm_buf, sizeof(perm_buf), "Read-Write");
+            } else {
+                snprintf(perm_buf, sizeof(perm_buf), "Guest");
+            }
+            add_con("Permission", perm_buf, perm == 1 ? ACCENT : TEXT_SECONDARY);
         }
 
+        // Determine if the user has admin permission
+        // Server permission encoding: 1 = Admin, 0 = Read-Write, 2 = Guest
+        bool is_admin = (sigurdos::mesh::getLoginPermission(contact_name) == 1);
+
         // ── Section: Radio Settings ──────────────────────
+        if (is_admin) {
         sec_header("  Radio Settings");
         add_set(LV_SYMBOL_WIFI "  Freq (MHz)",  "Set Freq",       "e.g. 868.0",       "set freq ",  false);
         add_set(LV_SYMBOL_WIFI "  Bandwidth",   "Set Bandwidth",  "e.g. 125.0",       "set bw ",    false);
         add_set(LV_SYMBOL_WIFI "  Spreading Factor", "Set SF",    "Range 5-12",       "set sf ",    false);
         add_set(LV_SYMBOL_WIFI "  Coding Rate",  "Set CR",        "Range 5-8",        "set cr ",    false);
+        }
 
         // ── Section: Management ──────────────────────────
+        if (is_admin) {
         sec_header("  Management");
         add_set(LV_SYMBOL_REFRESH "  Advert Duration", "Advert Duration", "Hours (24/72/168)", "set advert.duration ", false);
         add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
         add_set(LV_SYMBOL_CLOSE "  Admin Password",   "Admin Password",   "New admin password", "password ",  true);
         add_set(LV_SYMBOL_CLOSE "  Guest Password",   "Guest Password",   "New guest password", "set guest.password ", false);
         add_act(LV_SYMBOL_LIST "  Version",           "ver",              "Sent: ver");
+        }
 
         // ── Section: Network ─────────────────────────────
+        if (is_admin) {
         sec_header("  Network");
         add_act(LV_SYMBOL_LIST "  Neighbours",        "neighbors",        "Sent: neighbors");
         add_act(LV_SYMBOL_LIST "  Regions",           "region",           "Sent: region");
@@ -2832,12 +2851,13 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         add_act(LV_SYMBOL_REFRESH "  Repeat Off",     "set repeat off",   "Sent: repeat off");
         add_act(LV_SYMBOL_REFRESH "  Advert (flood)",  "advert",          "Sent: flood advert");
         add_act(LV_SYMBOL_EDIT "  Public Key",        "get public.key",   "Sent: get public.key");
+        }
 
         // ── Section: Commands ────────────────────────────
         sec_header("  Commands");
 
-        // Admin Cmd
-        {
+        // Admin Cmd (admin only)
+        if (is_admin) {
             char* n = strdup(contact_name);
             lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_KEYBOARD "  Admin Cmd", ">");
             lv_obj_set_style_bg_color(r, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
@@ -2854,7 +2874,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             row++;
         }
 
-        // Fetch Msgs
+        // Fetch Msgs (available to all logged-in users)
         {
             char* n = strdup(contact_name);
             lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_LIST "  Fetch Msgs", ">");
@@ -2872,8 +2892,8 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             row++;
         }
 
-        // Reboot (with confirmation dialog)
-        {
+        // Reboot (with confirmation dialog) — admin only
+        if (is_admin) {
             char* n = strdup(contact_name);
             lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Reboot", "!!");
             lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_RED), 0);
