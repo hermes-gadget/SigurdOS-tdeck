@@ -2591,10 +2591,11 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             snprintf(snr_str, sizeof(snr_str), "%.1f dB", target->snr);
             snprintf(rssi_str, sizeof(rssi_str), "%d dBm", target->rssi);
             switch (target->type) {
-                case ADV_TYPE_REPEATER: strcpy(type_str, "Repeater"); break;
-                case ADV_TYPE_ROOM:     strcpy(type_str, "Room Server"); break;
-                default:                strcpy(type_str, "Unknown"); break;
+                case ADV_TYPE_REPEATER: strncpy(type_str, "Repeater", sizeof(type_str) - 1); break;
+                case ADV_TYPE_ROOM:     strncpy(type_str, "Room Server", sizeof(type_str) - 1); break;
+                default:                strncpy(type_str, "Unknown", sizeof(type_str) - 1); break;
             }
+            type_str[sizeof(type_str) - 1] = '\0';
             // Type row: left label, right value
             lv_obj_t* tr = lv_obj_create(list);
             lv_obj_set_size(tr, LV_PCT(100), 24);

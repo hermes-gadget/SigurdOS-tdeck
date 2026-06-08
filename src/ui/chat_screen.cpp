@@ -363,8 +363,8 @@ static void refresh_channels()
             dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_CHANNELS);
         }
         if (dyn_count == 0) {
-            strncpy(dyn_channels[0], "#general", 31);
-            dyn_channels[0][31] = '\0';
+            strncpy(dyn_channels[0], "#general", sizeof(dyn_channels[0]) - 1);
+            dyn_channels[0][sizeof(dyn_channels[0]) - 1] = '\0';
             dyn_count = 1;
         }
     }
@@ -378,7 +378,10 @@ static void refresh_channels()
         int keep = 0;
         for (int i = 0; i < dyn_count; i++) {
             if (chat_screen_filter_accepts_channel(chat_filter_mode, dyn_channels[i])) {
-                if (keep < i) strcpy(dyn_channels[keep], dyn_channels[i]);
+                if (keep < i) {
+                    strncpy(dyn_channels[keep], dyn_channels[i], sizeof(dyn_channels[keep]) - 1);
+                    dyn_channels[keep][sizeof(dyn_channels[keep]) - 1] = '\0';
+                }
                 keep++;
             }
         }
@@ -394,7 +397,10 @@ static void refresh_channels()
         int keep = 0;
         for (int i = 0; i < dyn_count; i++) {
             if (chat_screen_filter_accepts_channel(chat_filter_mode, dyn_channels[i])) {
-                if (keep < i) strcpy(dyn_channels[keep], dyn_channels[i]);
+                if (keep < i) {
+                    strncpy(dyn_channels[keep], dyn_channels[i], sizeof(dyn_channels[keep]) - 1);
+                    dyn_channels[keep][sizeof(dyn_channels[keep]) - 1] = '\0';
+                }
                 keep++;
             }
         }
@@ -409,8 +415,8 @@ static void refresh_channels()
     if (dyn_count == 0) {
         if (chat_filter_mode == 1) {
             // Channels filter: add a synthetic fallback if mesh is unavailable.
-            strncpy(dyn_channels[0], "#general", 31);
-            dyn_channels[0][31] = '\0';
+            strncpy(dyn_channels[0], "#general", sizeof(dyn_channels[0]) - 1);
+            dyn_channels[0][sizeof(dyn_channels[0]) - 1] = '\0';
             dyn_count = 1;
         }
         // DMs filter with no DMs: leave empty (user can start one from Contacts)
@@ -452,8 +458,8 @@ static void refresh_channels()
                 continue;
             }
             int new_idx = dyn_count++;
-            strncpy(dyn_channels[new_idx], old_names[old_idx], 31);
-            dyn_channels[new_idx][31] = '\0';
+            strncpy(dyn_channels[new_idx], old_names[old_idx], sizeof(dyn_channels[new_idx]) - 1);
+            dyn_channels[new_idx][sizeof(dyn_channels[new_idx]) - 1] = '\0';
             ch_msgs[new_idx] = old_msgs[old_idx];
             ch_msg_capacity[new_idx] = old_caps[old_idx];
             ch_msg_count[new_idx] = old_counts[old_idx];
@@ -2418,8 +2424,8 @@ void chat_screen_open_dm(const char* contact_name)
     int idx = find_channel_idx(dm_name);
     if (idx < 0 && dyn_count < MAX_CHANNELS) {
         idx = dyn_count;
-        strncpy(dyn_channels[idx], dm_name, 31);
-        dyn_channels[idx][31] = '\0';
+        strncpy(dyn_channels[idx], dm_name, sizeof(dyn_channels[idx]) - 1);
+        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
         dyn_count++;
     }
 
@@ -2443,8 +2449,8 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     if (idx < 0) {
         if (dyn_count < MAX_CHANNELS) {
             idx = dyn_count;
-            strncpy(dyn_channels[idx], channel, 31);
-            dyn_channels[idx][31] = '\0';
+            strncpy(dyn_channels[idx], channel, sizeof(dyn_channels[idx]) - 1);
+            dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
             dyn_count++;
         } else {
             return;
@@ -2778,8 +2784,8 @@ void chat_load_messages()
         // so they won't be found in dyn_channels. Create them on demand.
         if (idx < 0 && strncmp(ch_name, "DM: ", 4) == 0 && dyn_count < MAX_CHANNELS) {
             idx = dyn_count;
-            strncpy(dyn_channels[idx], ch_name, 31);
-            dyn_channels[idx][31] = '\0';
+            strncpy(dyn_channels[idx], ch_name, sizeof(dyn_channels[idx]) - 1);
+            dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
             dyn_count++;
         }
 

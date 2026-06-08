@@ -1084,7 +1084,7 @@ int exportContacts(char names[][32], int max) {
     int n = 0;
     for (int i = 0; i < g_mesh->getContactCount() && n < max; i++) {
         auto* c = g_mesh->getContact(i);
-        if (c) { strncpy(names[n], c->name, 31); names[n][31] = '\0'; n++; }
+        if (c) { strncpy(names[n], c->name, sizeof(names[n]) - 1); names[n][sizeof(names[n]) - 1] = '\0'; n++; }
     }
     return n;
 }
@@ -1172,7 +1172,7 @@ int exportChannels(char names[][32], int max) {
     int n = 0;
     for (int i = 0; i < g_mesh->getChannelCount() && n < max; i++) {
         auto* ch = g_mesh->getChannel(i);
-        if (ch) { strncpy(names[n], ch->name, 31); names[n][31] = '\0'; n++; }
+        if (ch) { strncpy(names[n], ch->name, sizeof(names[n]) - 1); names[n][sizeof(names[n]) - 1] = '\0'; n++; }
     }
     return n;
 }
