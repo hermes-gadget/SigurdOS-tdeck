@@ -283,10 +283,10 @@ All screens from the SigurdOS T-Deck UI, captured from a live device running the
 | **Terminal** | ![Terminal](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/terminal.png) | Serial-style command interface for direct MeshCore CLI commands (e.g. `info`, `status`, `nodes`, `channels`). |
 | **Signal & SNR** | ![Signal](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/signal.png) | Signal diagnostics screen showing RSSI, SNR, noise floor, and packet success rate for the current radio configuration. |
 | **Radio Setup** | ![Radio](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/radio.png) | Advanced radio configuration: frequency band, spreading factor, coding rate, TX power, and RX gain boost. |
-| **WiFiNetworks** | *No screenshot* | WiFi network scanning and connection management for OTA updates and diagnostics. |
+| **WiFiNetworks** | ![WiFi](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/wifi.png) | WiFi network scanning and connection management for OTA updates and diagnostics. Shows available access points with encryption status, RSSI, and connect flow. |
 | **NodeStats** | *No screenshot* | Node statistics display showing uptime, memory usage, packet counts, and mesh health. |
-| **Telemetry** | *No screenshot* | Environmental telemetry readouts (temperature, humidity, pressure) from sensor-equipped mesh nodes. |
-| **NodeStatus** | *No screenshot* | Node status overview showing connection state, last heard, and signal quality indicators. |
+| **Telemetry** | ![Telemetry](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/telemetry.png) | Environmental telemetry readouts (temperature, humidity, pressure) from sensor-equipped mesh nodes. |
+| **NodeStatus** | ![NodeStatus](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/node-status.png) | Node status overview showing connection state, last heard, and signal quality indicators. |
 
 ## License
 
