@@ -25,61 +25,61 @@ pio test -e native_test -f test_battery
 pio run -e SigurdOS_TDeck
 ```
 
-|| Test Module | What's Covered |
-||-------------|----------------|
-|| `test_battery` | Battery level monitoring, ADC reading, voltage conversion, percentage calculation |
-|| `test_build` | All headers compile together, cross-module API consistency |
-|| `test_build_info` | Firmware version string, git SHA, build environment metadata |
-|| `test_buzzer` | Buzzer notification patterns, tone durations, active-low control |
-|| `test_channel_menu` | Channel quick-action menu, private scope handling, leave/join logic |
-|| `test_channel_validation` | Channel name validation, allowed/hyphenated/mixed-case names, rejection rules |
-|| `test_chat_config` | Chat screen message capacity, normalization, clamp boundaries |
-|| `test_chat_truncation` | Chat message truncation, long text handling |
-|| `test_companion_protocol` | Companion device protocol frames, sync, message enqueue/drain |
-|| `test_contact_paging` | Contact list pagination, page count, start/end calculations |
-|| `test_controller` | RF parameter parsing, frequency/SF/bandwidth/coding rate validation |
-|| `test_debug` | Debug level clamping, serial debug command stubs, non-debug build guards |
-|| `test_emoji` | Emoji font rendering, fallback logic, sizing |
-|| `test_emoji_fallback` | Emoji wrapped font pointers, writable copies, LVGL fallback chain |
-|| `test_emoji_integrity` | Emoji font glyph count, indexed entry presence, uniqueness |
-|| `test_github_ota_contract` | GitHub OTA state machine, API signatures, release URL generation |
-|| `test_gps` | NMEA parsing, coordinate conversion, fix detection |
-|| `test_hal_contract` | HAL display/gps lifecycle signatures, debug capture APIs, type stability |
-|| `test_home_screen` | Home screen layout, icon grid, status bars |
-|| `test_input_contract` | Trackball/keyboard input event types, remote hook signatures |
-|| `test_keyboard` | Matrix scan, keymap, debounce, ghost detection, LVGL mapping |
-|| `test_layout` | Adaptive layout helpers, responsive grid calculations, screen size adjustments |
-|| `test_lodepng_alloc` | lodepng PSRAM allocator, malloc/realloc fallback, heap caps delegation |
-|| `test_map` | Tile math, zoom levels, bounding box |
-|| `test_map_renderer` | Map tile mercator math, zoom validation, lat/lon/tile round-trip |
-|| `test_mesh_contract` | Mesh advert types, contact flags, login status, wire format stability |
-|| `test_mesh_messaging` | Message queue, send/receive, channel ops, contact export |
-|| `test_mesh_wrapper` | API signatures, return value ranges, unread count init |
-|| `test_message_store` | Message storage append/load/dedup, path length, ring rotation |
-|| `test_navigation` | Forward/back with history stack, deep nav chains, all pairs |
-|| `test_navigation_contract` | Screen enum inventory, contiguous values, stable position checks |
-|| `test_onboarding` | Onboarding wizard date/time validation, leap year, days-in-month |
-|| `test_pins` | GPIO ranges, SPI/I2C bus conflicts, duplicate detection, LoRa params |
-|| `test_prefs` | NVS preferences, radio config persistence, identity storage, save/load |
-|| `test_prefs_defaults` | NVS preference default values, radio/identity/mesh behavior defaults |
-|| `test_qr_show` | QR code layout, version sizing, canvas fitting, scale calculation |
-|| `test_regions` | Geographic region registry, add/find/remove, prefix search |
-|| `test_responsive` | Responsive column offsets, weight distribution, edge cases |
-|| `test_sdcard` | SPI init, mount, read/write, directory listing, edge cases |
-|| `test_tdeck_board` | TDeckBoard power management, auto-shutdown threshold, voltage critical levels |
-|| `test_telemetry_collectors` | Telemetry task watermark collection, null/zero capacity validation |
-|| `test_telemetry_crash` | Crash backtrace ring buffer, bounded count clamping |
-|| `test_telemetry_hb_ring` | Heartbeat ring buffer, read/write, wrap-around, logical indexing |
-|| `test_telemetry_input` | Telemetry input sampling, invalid trackball direction rejection |
-|| `test_telemetry_packet_log` | Packet log field formatting, null/empty string handling |
-|| `test_telemetry_protocol` | Telemetry record emission, signed/unsigned/float/string fields |
-|| `test_terminal` | Terminal buffer management, command parsing |
-|| `test_theme` | Color darkness, vibrancy, distinctness, readability hierarchy |
-|| `test_touch` | GT911 coordinate mapping, multitouch parsing, press/release lifecycle |
-|| `test_trackball` | Direction debounce, deadtime, click detection, idle calibration |
-|| `test_ui_contract` | UI screen show APIs, home/detail/settings screen signature stability |
-|| `test_ui_timing` | UI splash screen timing, transition elapsed checks |
-|| `test_wifi_scan` | WiFi network scanning, connection management, AP-mode OTA |
+| Test Module | What's Covered |
+|-------------|----------------|
+| `test_battery` | Battery level monitoring, ADC reading, voltage conversion, percentage calculation |
+| `test_build` | All headers compile together, cross-module API consistency |
+| `test_build_info` | Firmware version string, git SHA, build environment metadata |
+| `test_buzzer` | Buzzer notification patterns, tone durations, active-low control |
+| `test_channel_menu` | Channel quick-action menu, private scope handling, leave/join logic |
+| `test_channel_validation` | Channel name validation, allowed/hyphenated/mixed-case names, rejection rules |
+| `test_chat_config` | Chat screen message capacity, normalization, clamp boundaries |
+| `test_chat_truncation` | Chat message truncation, long text handling |
+| `test_companion_protocol` | Companion device protocol frames, sync, message enqueue/drain |
+| `test_contact_paging` | Contact list pagination, page count, start/end calculations |
+| `test_controller` | RF parameter parsing, frequency/SF/bandwidth/coding rate validation |
+| `test_debug` | Debug level clamping, serial debug command stubs, non-debug build guards |
+| `test_emoji` | Emoji font rendering, fallback logic, sizing |
+| `test_emoji_fallback` | Emoji wrapped font pointers, writable copies, LVGL fallback chain |
+| `test_emoji_integrity` | Emoji font glyph count, indexed entry presence, uniqueness |
+| `test_github_ota_contract` | GitHub OTA state machine, API signatures, release URL generation |
+| `test_gps` | NMEA parsing, coordinate conversion, fix detection |
+| `test_hal_contract` | HAL display/gps lifecycle signatures, debug capture APIs, type stability |
+| `test_home_screen` | Home screen layout, icon grid, status bars |
+| `test_input_contract` | Trackball/keyboard input event types, remote hook signatures |
+| `test_keyboard` | Matrix scan, keymap, debounce, ghost detection, LVGL mapping |
+| `test_layout` | Adaptive layout helpers, responsive grid calculations, screen size adjustments |
+| `test_lodepng_alloc` | lodepng PSRAM allocator, malloc/realloc fallback, heap caps delegation |
+| `test_map` | Tile math, zoom levels, bounding box |
+| `test_map_renderer` | Map tile mercator math, zoom validation, lat/lon/tile round-trip |
+| `test_mesh_contract` | Mesh advert types, contact flags, login status, wire format stability |
+| `test_mesh_messaging` | Message queue, send/receive, channel ops, contact export |
+| `test_mesh_wrapper` | API signatures, return value ranges, unread count init |
+| `test_message_store` | Message storage append/load/dedup, path length, ring rotation |
+| `test_navigation` | Forward/back with history stack, deep nav chains, all pairs |
+| `test_navigation_contract` | Screen enum inventory, contiguous values, stable position checks |
+| `test_onboarding` | Onboarding wizard date/time validation, leap year, days-in-month |
+| `test_pins` | GPIO ranges, SPI/I2C bus conflicts, duplicate detection, LoRa params |
+| `test_prefs` | NVS preferences, radio config persistence, identity storage, save/load |
+| `test_prefs_defaults` | NVS preference default values, radio/identity/mesh behavior defaults |
+| `test_qr_show` | QR code layout, version sizing, canvas fitting, scale calculation |
+| `test_regions` | Geographic region registry, add/find/remove, prefix search |
+| `test_responsive` | Responsive column offsets, weight distribution, edge cases |
+| `test_sdcard` | SPI init, mount, read/write, directory listing, edge cases |
+| `test_tdeck_board` | TDeckBoard power management, auto-shutdown threshold, voltage critical levels |
+| `test_telemetry_collectors` | Telemetry task watermark collection, null/zero capacity validation |
+| `test_telemetry_crash` | Crash backtrace ring buffer, bounded count clamping |
+| `test_telemetry_hb_ring` | Heartbeat ring buffer, read/write, wrap-around, logical indexing |
+| `test_telemetry_input` | Telemetry input sampling, invalid trackball direction rejection |
+| `test_telemetry_packet_log` | Packet log field formatting, null/empty string handling |
+| `test_telemetry_protocol` | Telemetry record emission, signed/unsigned/float/string fields |
+| `test_terminal` | Terminal buffer management, command parsing |
+| `test_theme` | Color darkness, vibrancy, distinctness, readability hierarchy |
+| `test_touch` | GT911 coordinate mapping, multitouch parsing, press/release lifecycle |
+| `test_trackball` | Direction debounce, deadtime, click detection, idle calibration |
+| `test_ui_contract` | UI screen show APIs, home/detail/settings screen signature stability |
+| `test_ui_timing` | UI splash screen timing, transition elapsed checks |
+| `test_wifi_scan` | WiFi network scanning, connection management, AP-mode OTA |
 
 Full test documentation: [`test/README.md`](test/README.md)
 
