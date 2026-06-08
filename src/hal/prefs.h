@@ -34,8 +34,7 @@ struct NodePrefs {
     float    direct_tx_delay_factor; // 0-2.0, TX direct retransmit delay multiplier
     bool     rx_boosted_gain;        // enable SX1262 boosted RX sensitivity mode
     uint8_t  duty_cycle;             // 0-100, duty cycle budget percent (0 = disabled)
-    uint16_t advert_duration_h;      // 0=disabled, 24/72/168=hours of auto-advert activity
-    uint32_t advert_start_epoch;     // epoch seconds when auto-advert was last enabled
+    uint16_t advert_interval_h;      // 0=disabled, 24/72/168=hours between adverts (one per period)
     uint8_t  advert_type;            // ADV_TYPE_CHAT(1)/REPEATER(2)/ROOM(3)/SENSOR(4)
     bool     gps_enabled;            // GPS polling enabled
     uint16_t gps_interval;           // GPS read interval in seconds (0 = every loop)
@@ -78,8 +77,7 @@ struct NodePrefs {
         direct_tx_delay_factor = 1.0f; // default TX direct delay factor
         rx_boosted_gain = false;      // default: normal sensitivity mode
         duty_cycle = 0;               // 0 = disabled
-        advert_duration_h = 0;        // 0 = disabled
-        advert_start_epoch = 0;       // 0 = unset
+        advert_interval_h = 0;        // 0 = disabled
         advert_type = 1;              // 1 = ADV_TYPE_CHAT (default: chat companion)
         gps_enabled = false;          // GPS off by default (privacy, battery)
         gps_interval = 0;             // 0 = poll every loop
