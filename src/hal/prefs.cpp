@@ -54,7 +54,8 @@ bool prefs_load(NodePrefs& p) {
     p.direct_tx_delay_factor = nvs.getFloat("dir_tx", 1.0f);
     p.rx_boosted_gain = nvs.getBool("rx_boost", false);
     p.duty_cycle = nvs.getUChar("duty_cyc", 0);
-    p.advert_interval = nvs.getUChar("adv_int", 0);
+    p.advert_duration_h = nvs.getUShort("adv_dur", 0);
+    p.advert_start_epoch = nvs.getULong("adv_stamp", 0);
     p.advert_type = nvs.getUChar("adv_type", 1);
     p.theme_id = nvs.getUChar("theme", 0);
     p.path_hash_mode = nvs.getUChar("phash_mode", 0);
@@ -120,7 +121,8 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putFloat("dir_tx", p.direct_tx_delay_factor);
     nvs.putBool("rx_boost", p.rx_boosted_gain);
     nvs.putUChar("duty_cyc", p.duty_cycle);
-    nvs.putUChar("adv_int", p.advert_interval);
+    nvs.putUShort("adv_dur", p.advert_duration_h);
+    nvs.putULong("adv_stamp", p.advert_start_epoch);
     nvs.putUChar("adv_type", p.advert_type);
     nvs.putUChar("theme", p.theme_id);
     nvs.putUChar("phash_mode", p.path_hash_mode);

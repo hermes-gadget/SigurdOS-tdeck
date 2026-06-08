@@ -928,16 +928,11 @@ bool init(bool spiffs_ok)
     if (CompanionBridge* b = companionBridge()) b->begin(nullptr, &g_companion_host);
 #endif
 
-    // Only broadcast advert if user has explicitly configured radio params.
-    // Compile-time defaults may be illegal in some regions — transmit gating
-    // prevents first-boot broadcasts until user opens Settings → Radio Setup.
-#if SIGURDOS_DEBUG
-    g_mesh->broadcastAdvert(own_name, sigurdos::prefs_get().advert_type);
-#else
-    if (p.configured) {
-        g_mesh->broadcastAdvert(own_name, sigurdos::prefs_get().advert_type);
-    }
-#endif
+    // Auto-advert is now exclusively duration-limited and user-enabled:
+    // the periodic loop() handler below checks advert_duration_h and only
+    // fires adverts when the user has explicitly set a non-zero duration.
+    // No boot-time one-shot advert occurs — all advert traffic must be
+    // explicitly authorised by the user via Settings → Auto-advert.
 
     initialized = true;
 #if SIGURDOS_DEBUG_MESH
@@ -969,16 +964,36 @@ void loop()
     }
     rtc_clock.tick();
 
-    // ── Periodic auto-advert ──────────────────────────────
+    // ── Duration-limited auto-advert ──────────────────────
     {
         static uint32_t last_auto_adv = 0;
-        uint8_t interval = sigurdos::prefs_get().advert_interval;
-        if (interval > 0) {
-            uint32_t now = millis();
-            uint32_t interval_ms = (uint32_t)interval * 30000u; // half-minutes
-            if (now - last_auto_adv >= interval_ms) {
-                last_auto_adv = now;
-                sendAdvert();
+        const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+        if (p.advert_duration_h > 0) {
+            uint32_t now_epoch = sigurdos::mesh::getCurrentTime();
+            uint32_t start_epoch = p.advert_start_epoch;
+            uint32_t duration_secs = (uint32_t)p.advert_duration_h * 3600u;
+
+            // Validate start time: if clock was reset since start, re-anchor
+            if (start_epoch == 0 || now_epoch < start_epoch) {
+                sigurdos::NodePrefs np = p;
+                np.advert_start_epoch = now_epoch;
+                sigurdos::prefs_set(np);
+                start_epoch = now_epoch;
+            }
+
+            // Check if duration expired
+            if (now_epoch > start_epoch + duration_secs) {
+                sigurdos::NodePrefs np = sigurdos::prefs_get();
+                np.advert_duration_h = 0;
+                np.advert_start_epoch = 0;
+                sigurdos::prefs_set(np);
+            } else {
+                // Within duration — send periodic advert every 30 minutes
+                uint32_t now = millis();
+                if (now - last_auto_adv >= 1800000u) {
+                    last_auto_adv = now;
+                    sendAdvert();
+                }
             }
         }
     }

@@ -2818,7 +2818,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
         // ── Section: Management ──────────────────────────
         sec_header("  Management");
-        add_set(LV_SYMBOL_REFRESH "  Advert Interval", "Advert Interval", "Minutes (60-240)", "set advert.interval ", false);
+        add_set(LV_SYMBOL_REFRESH "  Advert Duration", "Advert Duration", "Hours (24/72/168)", "set advert.duration ", false);
         add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
         add_set(LV_SYMBOL_CLOSE "  Admin Password",   "Admin Password",   "New admin password", "password ",  true);
         add_set(LV_SYMBOL_CLOSE "  Guest Password",   "Guest Password",   "New guest password", "set guest.password ", false);
@@ -4198,16 +4198,16 @@ void settings_radio_show()
         row++;
     }
 
-    // Auto-advert interval
+    // Auto-advert duration (time-limited: 24h, 72h, or 168h)
     {
-        static constexpr uint8_t ADV_INT_VALUES[] = {0, 10, 20, 40, 60, 120};
-        static constexpr const char* ADV_INT_LABELS[] = {"Disabled", "5 min", "10 min", "20 min", "30 min", "1 hour"};
-        static constexpr int NUM_ADV_INT = 6;
+        static constexpr uint16_t ADV_DUR_VALUES[] = {0, 24, 72, 168};
+        static constexpr const char* ADV_DUR_LABELS[] = {"Disabled", "24 hours", "72 hours", "168 hours"};
+        static constexpr int NUM_ADV_DUR = 4;
         int cur_adv = 0;
-        for (int i = 0; i < NUM_ADV_INT; i++) {
-            if (p.advert_interval == ADV_INT_VALUES[i]) { cur_adv = i; break; }
+        for (int i = 0; i < NUM_ADV_DUR; i++) {
+            if (p.advert_duration_h == ADV_DUR_VALUES[i]) { cur_adv = i; break; }
         }
-        snprintf(buf, sizeof(buf), "  Auto-advert: %s", ADV_INT_LABELS[cur_adv]);
+        snprintf(buf, sizeof(buf), "  Auto-advert: %s", ADV_DUR_LABELS[cur_adv]);
         lv_obj_t* btn_adv = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
         lv_obj_set_style_bg_color(btn_adv, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
         lv_obj_set_style_bg_opa(btn_adv, LV_OPA_COVER, 0);
@@ -4215,15 +4215,21 @@ void settings_radio_show()
         lv_obj_add_event_cb(btn_adv, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             sigurdos::NodePrefs np = sigurdos::prefs_get();
-            static constexpr uint8_t VALS[] = {0, 10, 20, 40, 60, 120};
-            static constexpr const char* LABELS[] = {"Disabled","5 min","10 min","20 min","30 min","1 hour"};
-            static constexpr int N = 6;
+            static constexpr uint16_t VALS[] = {0, 24, 72, 168};
+            static constexpr const char* LABELS[] = {"Disabled","24 hours","72 hours","168 hours"};
+            static constexpr int N = 4;
             int idx = 0;
             for (int i = 0; i < N; i++) {
-                if (np.advert_interval == VALS[i]) { idx = i; break; }
+                if (np.advert_duration_h == VALS[i]) { idx = i; break; }
             }
             idx = (idx + 1) % N;
-            np.advert_interval = VALS[idx];
+            np.advert_duration_h = VALS[idx];
+            // Stamp start epoch when user enables; clear when disabling
+            if (np.advert_duration_h > 0) {
+                np.advert_start_epoch = sigurdos::mesh::getCurrentTime();
+            } else {
+                np.advert_start_epoch = 0;
+            }
             sigurdos::prefs_set(np);
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Auto-advert: %s", LABELS[idx]);
