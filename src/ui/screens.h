@@ -66,4 +66,7 @@ void screens_clear_back_btn();
 // Null the WiFi icon pointer so update_wifi_status() doesn't
 // dereference a freed label after screen transitions.
 void screens_clear_wifi_icon();
+// Returns true while the PIN entry overlay screen is displayed.
+// Used by the trackball handler to block back-swipe navigation.
+bool is_pin_entry_active();
 } // namespace sigurdos::ui

@@ -152,6 +152,9 @@ void loop()
 bool handle_trackball_event(SigurdOSTrackballEvent event)
 {
     if (!home_shown) return false;
+    // Block all trackball events while PIN entry screen is displayed
+    // Prevents back-swipe bypass of PIN authentication (#541)
+    if (is_pin_entry_active()) return true;
     if (current_screen() == Screen::Home) {
         home_screen_handle_trackball(event);
         return true;

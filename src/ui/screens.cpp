@@ -7242,6 +7242,9 @@ void screens_clear_wifi_icon()
 // ════════════════════════════════════════════════════════
 static uint32_t g_pin_last_unlock = 0;
 static constexpr uint32_t PIN_GRACE_SECONDS = 300; // 5 minutes
+static bool g_pin_entry_active = false;  // set while PIN entry screen is displayed
+
+bool is_pin_entry_active() { return g_pin_entry_active; }
 
 static bool pin_grace_active() {
     if (g_pin_last_unlock == 0) return false;
@@ -7257,6 +7260,7 @@ struct PinEntryCtx {
 };
 
 static void pin_entry_success(Screen target) {
+    g_pin_entry_active = false;
     g_pin_last_unlock = sigurdos::mesh::getCurrentTime();
     if (g_pin_last_unlock == 0) g_pin_last_unlock = 1;
     // Direct load — bypass navigate_to's same-screen guard
@@ -7268,6 +7272,7 @@ static void pin_entry_success(Screen target) {
 }
 
 static void pin_entry_show(Screen target_screen) {
+    g_pin_entry_active = true;
     lv_obj_t* scr = lv_obj_create(nullptr);
     apply_dark_bg(scr);
 
@@ -7314,6 +7319,7 @@ static void pin_entry_show(Screen target_screen) {
     lv_label_set_text(cancel_lbl, "Back to Home");
     lv_obj_center(cancel_lbl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t*) {
+        g_pin_entry_active = false;
         go_back();
     }, LV_EVENT_CLICKED, nullptr);
 
@@ -7336,6 +7342,7 @@ static void pin_entry_show(Screen target_screen) {
             ctx->attempts--;
             lv_textarea_set_text(ta_obj, "");
             if (ctx->attempts <= 0) {
+                g_pin_entry_active = false;
                 go_back();
             } else {
                 char att_buf[32];
