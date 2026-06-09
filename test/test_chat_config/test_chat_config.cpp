@@ -2,8 +2,71 @@
 // Copyright (C) 2025 Ben
 
 #include <gtest/gtest.h>
+#include <cstdint>
 #include <cstring>
 #include <cstdio>
+
+#include "ui/chat_screen.h"
+
+namespace {
+
+using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_DEFAULT;
+using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MAX;
+using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MIN;
+using sigurdos::ui::chat_screen_filter_accepts_channel;
+using sigurdos::ui::chat_screen_is_dm_name;
+using sigurdos::ui::chat_screen_normalize_message_cap;
+
+TEST(ChatConfig, ZeroUsesDefaultMessageCap) {
+    EXPECT_EQ(chat_screen_normalize_message_cap(0), CHAT_SCREEN_MESSAGE_CAP_DEFAULT);
+}
+
+TEST(ChatConfig, ValuesBelowMinimumClampUp) {
+    EXPECT_EQ(chat_screen_normalize_message_cap(1), CHAT_SCREEN_MESSAGE_CAP_MIN);
+    EXPECT_EQ(chat_screen_normalize_message_cap(CHAT_SCREEN_MESSAGE_CAP_MIN - 1),
+              CHAT_SCREEN_MESSAGE_CAP_MIN);
+}
+
+TEST(ChatConfig, MinimumAndMaximumAreAccepted) {
+    EXPECT_EQ(chat_screen_normalize_message_cap(CHAT_SCREEN_MESSAGE_CAP_MIN),
+              CHAT_SCREEN_MESSAGE_CAP_MIN);
+    EXPECT_EQ(chat_screen_normalize_message_cap(CHAT_SCREEN_MESSAGE_CAP_MAX),
+              CHAT_SCREEN_MESSAGE_CAP_MAX);
+}
+
+TEST(ChatConfig, MiddleValuesPassThrough) {
+    EXPECT_EQ(chat_screen_normalize_message_cap(64), static_cast<uint16_t>(64));
+}
+
+TEST(ChatConfig, ValuesAboveMaximumClampDown) {
+    EXPECT_EQ(chat_screen_normalize_message_cap(CHAT_SCREEN_MESSAGE_CAP_MAX + 1),
+              CHAT_SCREEN_MESSAGE_CAP_MAX);
+    EXPECT_EQ(chat_screen_normalize_message_cap(UINT16_MAX), CHAT_SCREEN_MESSAGE_CAP_MAX);
+}
+
+TEST(ChatConfig, DmNameDetectionUsesConversationPrefix) {
+    EXPECT_TRUE(chat_screen_is_dm_name("DM: Alice"));
+    EXPECT_TRUE(chat_screen_is_dm_name("DM:"));
+    EXPECT_FALSE(chat_screen_is_dm_name("Public"));
+    EXPECT_FALSE(chat_screen_is_dm_name("#general"));
+    EXPECT_FALSE(chat_screen_is_dm_name(nullptr));
+}
+
+TEST(ChatConfig, ChannelFilterKeepsPublicAndHashtagChannels) {
+    EXPECT_TRUE(chat_screen_filter_accepts_channel(1, "Public"));
+    EXPECT_TRUE(chat_screen_filter_accepts_channel(1, "#general"));
+    EXPECT_FALSE(chat_screen_filter_accepts_channel(1, "DM: Alice"));
+    EXPECT_FALSE(chat_screen_filter_accepts_channel(1, ""));
+    EXPECT_FALSE(chat_screen_filter_accepts_channel(1, nullptr));
+}
+
+TEST(ChatConfig, DmFilterKeepsOnlyDmConversations) {
+    EXPECT_TRUE(chat_screen_filter_accepts_channel(2, "DM: Alice"));
+    EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "Public"));
+    EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "#general"));
+}
+
+// ── Issue #543: DM name buffer overflow tests ──────────────────────────
 
 // Constants matching chat_screen.cpp
 static constexpr int MAX_NAME_LEN  = 31;
@@ -13,9 +76,6 @@ static constexpr int CHANNEL_BUF_SZ = 32;
 static void formatDmName(const char* contact_name, char* out, size_t out_sz) {
     snprintf(out, out_sz, "DM: %s", contact_name);
 }
-
-// Tests for issue #543: Stack buffer overflow in chat_screen_open_dm
-// The DM name buffer must fit "DM: " (4) + max contact name (31) + null (1) = 36 chars
 
 TEST(ChatScreenDmName, FormatFitsInBuffer) {
     // Verify compile-time sizing: DM prefix + MAX_NAME_LEN + null must fit in a reasonable buffer
@@ -69,3 +129,5 @@ TEST(ChatScreenDmName, ChannelCopyFits) {
         << "DM name truncated to fit channel buffer (4+len=" << (4 + MAX_NAME_LEN)
         << " > " << (CHANNEL_BUF_SZ - 1) << ")";
 }
+
+} // anonymous namespace

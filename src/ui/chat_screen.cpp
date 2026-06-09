@@ -2440,7 +2440,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     uint32_t now = sigurdos::mesh::getCurrentTime();
 
     // Map DM messages (empty channel) to "DM: <sender>" conversation
-    char dm_buf[32];
+    char dm_buf[37];
     if (!channel || !channel[0]) {
         snprintf(dm_buf, sizeof(dm_buf), "DM: %s", sender);
         channel = dm_buf;
