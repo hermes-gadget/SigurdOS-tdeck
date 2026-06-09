@@ -76,6 +76,17 @@ static int capture_backtrace(uint16_t* out_pcs, int max_frames) {
 // ── Shutdown handler ───────────────────────────────────
 // Registered via esp_register_shutdown_handler().
 // Called before esp_restart() — captures backtrace and saves to RTC memory.
+//
+// ⚠️ LIMITATION: This is a SHUTDOWN handler, not a PANIC handler.
+// It fires AFTER the default panic handler has already processed the
+// exception and called esp_restart(). The captured PC and backtrace
+// reflect the shutdown/restart path, NOT the actual crash site.
+// Debugging from telemetry crash records is therefore unreliable.
+//
+// FIXME: Replace with esp_panic_handler_register_with_id() to capture
+// the actual exception context (ESP-IDF v5.1+ API).
+// See: ESP-IDF Panic Handler documentation.
+// Requires: #include <esp_private/panic_reason.h> or similar.
 static void IRAM_ATTR crash_shutdown_handler(void) {
     g_crash_record.magic = CRASH_MAGIC;
     g_crash_record.reset_reason = (uint8_t)esp_reset_reason();
