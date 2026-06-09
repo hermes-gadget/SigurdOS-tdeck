@@ -57,8 +57,7 @@ public:
         pinMode(PIN_PERIPH_PWR, OUTPUT);
         digitalWrite(PIN_PERIPH_PWR, HIGH);
 
-        // Trackball button as input (T-Deck has external pull-up on GPIO 0)
-        pinMode(PIN_TRACKBALL, INPUT);
+        // Trackball button as input with internal pull-up (GPIO 0 shared with BOOT)\n        pinMode(PIN_TRACKBALL, INPUT_PULLUP);
 
         // LoRa DIO1 pullup
         pinMode(PIN_LORA_DIO1, INPUT_PULLUP);
