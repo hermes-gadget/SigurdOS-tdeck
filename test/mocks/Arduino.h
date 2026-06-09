@@ -81,6 +81,14 @@ inline void analogReadResolution(int bits) { (void)bits; }
 inline int analogRead(uint8_t pin) {
     return (pin < 16) ? arduino_mock::analog_values[pin] : 0;
 }
+inline int analogReadMilliVolts(uint8_t pin) {
+    // Simulate calibrated mV from raw value.
+    // Real ESP32-S3 applies efuse-based per-chip calibration;
+    // mock approximates as raw * 3300 / 4095.
+    return (pin < 16)
+        ? (arduino_mock::analog_values[pin] * 3300) / 4095
+        : 0;
+}
 inline void adcAttachPin(uint8_t pin) { (void)pin; }
 
 // ── Serial ───────────────────────────────────────────────

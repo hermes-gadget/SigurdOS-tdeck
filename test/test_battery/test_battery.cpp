@@ -107,15 +107,45 @@ TEST_F(BatteryTest, ADCRawToMillivolts) {
     EXPECT_NEAR(sigurdos_battery_mv_from_adc_raw(4095), 6598, 5);
 }
 
-TEST_F(BatteryTest, MockAnalogReadIntegration) {
-    arduino_mock::analog_values[PIN_BAT_ADC] = 2359;
+TEST_F(BatteryTest, AnalogReadMilliVoltsIntegration) {
+    // Set the mock value for the ADC pin; sigurdos_battery_mv() now uses
+    // analogReadMilliVolts internally with efuse-calibrated conversion.
+    // 2048 raw → mock calibrates to ~1650mV at pin → *2 (divider) → ~3300mV
+    arduino_mock::analog_values[PIN_BAT_ADC] = 2048;
+    uint16_t mv = sigurdos_battery_mv();
+    EXPECT_NEAR(mv, 3300, 10);
+}
 
-    int raw = analogRead(PIN_BAT_ADC);
-    EXPECT_EQ(raw, 2359);
+TEST_F(BatteryTest, AnalogReadMilliVoltsFullScale) {
+    // 4095 raw → mock calibrates to ~3300mV at pin → *2 → ~6600mV
+    arduino_mock::analog_values[PIN_BAT_ADC] = 4095;
+    uint16_t mv = sigurdos_battery_mv();
+    EXPECT_NEAR(mv, 6600, 10);
+}
 
-    uint16_t mv = sigurdos_battery_mv_from_adc_raw((uint16_t)raw);
-    EXPECT_NEAR(mv, 3800, 20);
-    EXPECT_EQ(sigurdos_battery_pct_from_mv(mv), 66);
+TEST_F(BatteryTest, AnalogReadMilliVoltsZero) {
+    // 0 raw → 0mV at pin → *2 → 0mV battery
+    arduino_mock::analog_values[PIN_BAT_ADC] = 0;
+    uint16_t mv = sigurdos_battery_mv();
+    EXPECT_EQ(mv, 0);
+}
+
+TEST_F(BatteryTest, AnalogReadMilliVoltsDischarged) {
+    // ~1820 raw → ~1465mV at pin → *2 → ~2930mV battery → ~0%
+    arduino_mock::analog_values[PIN_BAT_ADC] = 1820;
+    uint16_t mv = sigurdos_battery_mv();
+    EXPECT_NEAR(mv, 2930, 10);
+    uint8_t pct = sigurdos_battery_pct();
+    EXPECT_EQ(pct, 0);
+}
+
+TEST_F(BatteryTest, AnalogReadMilliVoltsCharged) {
+    // ~2606 raw → ~2100mV at pin → *2 → ~4200mV battery → 100%
+    arduino_mock::analog_values[PIN_BAT_ADC] = 2606;
+    uint16_t mv = sigurdos_battery_mv();
+    EXPECT_NEAR(mv, 4200, 10);
+    uint8_t pct = sigurdos_battery_pct();
+    EXPECT_EQ(pct, 100);
 }
 
 } // anonymous namespace

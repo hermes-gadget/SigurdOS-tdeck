@@ -26,6 +26,7 @@
 #endif
 #ifdef SIGURDOS_TDECK
 #include "tdeck_pins.h"
+#include "battery.h"
 #include <helpers/ESP32Board.h>
 #endif
 
@@ -93,12 +94,9 @@ public:
     }
 
     uint16_t getBattMilliVolts() override {
-        uint32_t raw = 0;
-        for (int i = 0; i < 8; i++) {
-            raw += analogRead(PIN_BAT_ADC);
-        }
-        raw /= 8;
-        return (uint16_t)((BAT_ADC_MULT * (float)raw) / 4096.0f);
+        // Delegate to sigurdos_battery_mv() for consistent efuse-calibrated
+        // ADC reading. Previously had duplicated analogReadMilliVolts logic.
+        return sigurdos_battery_mv();
     }
 
     float getMCUTemperature() override {

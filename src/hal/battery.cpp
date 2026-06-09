@@ -29,13 +29,19 @@ void sigurdos_battery_init()
 
 uint16_t sigurdos_battery_mv()
 {
+    // Use analogReadMilliVolts for calibrated ADC readings.
+    // ESP32-S3 applies efuse-based per-chip calibration, while analogRead()
+    // returns uncalibrated raw counts with up to 10-24% error.
     const int samples = 8;
-    uint32_t raw = 0;
+    uint32_t total_mv = 0;
     for (int i = 0; i < samples; i++) {
-        raw += analogRead(PIN_BAT_ADC);
+        total_mv += analogReadMilliVolts(PIN_BAT_ADC);
     }
-    raw /= samples;
-    return sigurdos_battery_mv_from_adc_raw((uint16_t)raw);
+    total_mv /= samples;
+    // analogReadMilliVolts returns mV at the ADC pin.
+    // T-Deck uses a 2:1 voltage divider (two 100k resistors),
+    // so battery voltage = ADC pin voltage * 2.
+    return (uint16_t)(total_mv * 2u);
 }
 
 uint8_t sigurdos_battery_pct()
