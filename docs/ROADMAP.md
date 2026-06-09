@@ -11,8 +11,7 @@ This roadmap is the current source of truth for bringing SigurdOS T-Deck to feat
   hardware smoke executed on `COM8`; `pio run -e SigurdOS_TDeck`,
   `pio run -e SigurdOS_TDeck_ble_validation`, and `pio test -e native_test -v`
   evidence is attached across roadmap/hardware docs; hardware interop, OTA, SD/map,
-  sleep/wake, and soak gates remain before production release. See
-  [RC2_HARDWARE_VALIDATION.md](RC2_HARDWARE_VALIDATION.md).
+  sleep/wake, and soak gates remain before production release.
 - Audited sources: `src/`, `test/`, `platformio.ini`, MeshCore companion-radio references, and feature docs.
 
 SigurdOS already has a strong base: standalone chat, channel and DM messaging, BaseChatMesh integration, regions, contacts, GPS, offline maps, packet logs, telemetry builds, remote test support, OTA entry points, message persistence, an experimental companion BLE bridge, and a sizeable native test suite. The work below is about hardening that base, closing companion-app parity gaps, and making the firmware reliable enough for field use and repeated development.
@@ -26,7 +25,7 @@ This audit records what is already present in the codebase so future roadmap wor
 | Mesh core | `SigurdMeshV2` extends `BaseChatMesh`; DMs, group channels, ACK tracking, advert discovery, trace, ping nearby, telemetry request/answer, client repeat, packet stats, and duty-cycle APIs exist. | Hardware interop matrix, release warning budget, and third-party warning isolation still need to catch up with the source state. |
 | Regions | `src/mesh/regions.*` wraps `RegionMap`; channel names can seed regions; active scope persists in prefs; `sendFloodScoped()` stamps transport codes; Settings/region UI surfaces exist. | Physical scoped-flood interop, `$` private key persistence, collision tests, and app-driven flood-scope edge cases need validation. |
 | Message persistence | Chat has legacy `/msgs` history and the newer `/companion_msgs` shared store with dedup, ACK flag, companion-sent flag, path length, and recent-message loading. | Unify the stores, add schema migration/power-loss tests, preserve text subtype metadata, and expand capacity/compaction policy. |
-| Companion app bridge | `CompanionBridge` implements the stock frame dispatcher for device query, app start, contacts, DMs, channel text/data, channels, time get/set, stats, signing, identity import/export, flood scope, login, status, telemetry, trace, and async pushes. `SigurdOS_TDeck_ble` links the MeshCore ESP32 BLE NUS transport. | Treat BLE as experimental until official app hardware pairing, reconnect, sync, security, RAM, and repeater-management flows are validated. |
+| Companion app bridge | `CompanionBridge` implements the stock frame dispatcher for device query, app start, contacts, DMs, channel text/data, channels, time get/set, stats, signing, identity import/export, flood scope, login, status, telemetry, trace, and async pushes. `SigurdOS_TDeck_ble_validation` links the MeshCore ESP32 BLE NUS transport. | Treat BLE as experimental until official app hardware pairing, reconnect, sync, security, RAM, and repeater-management flows are validated. |
 | Time | `CMD_GET_DEVICE_TIME` and `CMD_SET_DEVICE_TIME` are implemented through the companion host. GPS parsing includes NMEA checksum validation and currently sets the system RTC on first valid GPS date/time when GPS is active. | Add a clock policy and UI that identifies time source/age. GPS time sync should be user-polled or opportunistic when GPS is already active; it must not keep GPS powered or polling solely to maintain time. |
 | GPS | GPS init, baud probing, interval-gated polling, fix data, satellite diagnostics, map/adverts, and settings toggles exist. Defaults still enable GPS and poll every loop. | Reduce default battery cost, add a "Sync time from GPS" action, add fix-acquisition timeout/status UX, and test sleep/wake behavior with GPS disabled/enabled. |
 | Repeater/room workflows | Local UI supports repeater/room login, saved passwords, CLI command rows, fetch messages, status/telemetry requests, and command response display. Companion bridge sends login/status/telemetry and CLI-data requests. | Official MeshCore app repeater management needs a focused audit: CLI replies are currently re-stored/framed as plain messages instead of `TXT_TYPE_CLI_DATA`, allowed-repeat-frequency replies are empty, timeout/error mapping is incomplete, and keep-alive/session state needs app-level validation. |
@@ -171,7 +170,7 @@ Goal: close the largest connected-client feature gap: phone, app, and external-t
 
 Priority tasks:
 
-- Treat the existing `CompanionBridge` and `SigurdOS_TDeck_ble` build as experimental until they pass official MeshCore app hardware validation.
+- Treat the existing `CompanionBridge` and `SigurdOS_TDeck_ble_validation` build as experimental until they pass official MeshCore app hardware validation.
 - Complete official app pairing, reconnect, message sync, channel sync, contact sync, app-start, and app-shutdown tests over BLE.
 - Land the ESP32 MeshCore BLE cached-bond reconnect fix in the actual
   `lib/meshcore` transport source used by this firmware, then rerun the host

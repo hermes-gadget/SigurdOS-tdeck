@@ -6,13 +6,20 @@ This document tracks currently open known issues, bugs, and missing features in 
 
 ## Launcher Compatibility
 
-### SigurdOS doesn't work under bmorcelli/Launcher
+### SigurdOS Launcher compatibility
 
-[Launcher](https://github.com/bmorcelli/Launcher) is an ESP32 app launcher with explicit T-Deck support (display, touch, keyboard, SD card). A user tried running SigurdOS as a Launcher-launched app and ran into problems — the keyboard doesn't work properly, and many other things break.
+[Launcher](https://github.com/bmorcelli/Launcher) is an ESP32 app launcher with explicit T-Deck support. SigurdOS can be installed and run under Launcher by flashing the `SigurdOS-tdeck-launcher.bin` merged artifact from the latest release.
 
-**Root cause:** SigurdOS is built as standalone firmware that expects full hardware control at boot. Launcher initialises the display, keyboard, I2C, SPI, and LoRa pins before handing off, which leaves GPIOs, peripheral registers, and I2C bus state in an incompatible state when SigurdOS starts.
+**Current status:**
+- ✅ **Phase 1/4 (PR #573):** Runtime Launcher detection, self-OTA gates, partition layout compatibility, release artifacts, documentation — **code complete, awaiting hardware test**
+- 🔄 **Phase 2:** Boot/flash compatibility testing — blocked, needs hardware (see below)
+- 🔄 **Phase 5:** Full regression matrix (T1–T14) — blocked on hardware
+- ⏳ **Phase 3:** Warm-handoff keyboard timing hardening — scoping deferred
+- ⏳ **Phase 6:** LauncherHub catalog listing — post-hardware verification
 
-**Status:** Not planned. SigurdOS is designed as standalone firmware, not a Launcher app. Fixing this would require deep changes to every HAL driver to detect and handle pre-initialised peripherals.
+**Blocking issue:** Firmware testing requires a stable USB power supply on the test bench. The Pi-powered T-Deck is currently unreachable due to undervoltage (`throttled=0x50000`). A new power adapter is on order.
+
+Standalone (non-Launcher) firmware is unaffected by any of these changes.
 
 ---
 

@@ -1,9 +1,9 @@
 # Launcher Compatibility Roadmap
 
-**Status:** Analysis + roadmap (no firmware changes yet)
+**Status:** Phase 1/4 code complete, awaiting hardware test (PR #573)
 **Tracking issue:** [#567](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/567)
 **External project:** [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) (analyzed at v2.7.2, June 2026)
-**Related:** `docs/KNOWN_ISSUES.md` → "SigurdOS doesn't work under bmorcelli/Launcher", `docs/MISSING_FEATURES.md` → "Launcher compatibility — M"
+**Related:** `docs/KNOWN_ISSUES.md` → "SigurdOS Launcher compatibility", `docs/MISSING_FEATURES.md` → "Launcher compatibility — M"
 
 ---
 
