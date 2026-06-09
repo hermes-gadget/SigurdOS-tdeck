@@ -17,10 +17,6 @@
 namespace sigurdos {
 namespace mesh {
 
-    void SigurdMeshV2::setMessageCallback(void (*cb)(const char*, const char*, const char*)) {
-        _message_cb = cb;
-    }
-
     void SigurdMeshV2::pushSignalHistory(int rssi, float snr) {
         uint32_t now = 0;
         if (getRTCClock()) now = getRTCClock()->getCurrentTime();
