@@ -200,7 +200,7 @@ bool saveRepeaterPassword(const char* name, const char* password) {
     for (uint8_t i = 0; i < count; i++) {
         char key[10];
         makePasswordStoreKey(key, sizeof(key), "name", i);
-        char existing[32];
+        char existing[32] = {0};
         size_t len = nvs.getString(key, existing, sizeof(existing));
         if (len > 0 && strcmp(existing, name) == 0) {
             slot = i;
@@ -238,7 +238,7 @@ bool loadRepeaterPassword(const char* name, char* password, size_t max_len) {
     for (uint8_t i = 0; i < count; i++) {
         char key[10];
         makePasswordStoreKey(key, sizeof(key), "name", i);
-        char existing[32];
+        char existing[32] = {0};
         size_t len = nvs.getString(key, existing, sizeof(existing));
         if (len > 0 && strcmp(existing, name) == 0) {
             char pwkey[10];
@@ -262,7 +262,7 @@ void removeRepeaterPassword(const char* name) {
     for (uint8_t i = 0; i < count; i++) {
         char key[10];
         makePasswordStoreKey(key, sizeof(key), "name", i);
-        char existing[32];
+        char existing[32] = {0};
         size_t len = nvs.getString(key, existing, sizeof(existing));
         if (len > 0 && strcmp(existing, name) == 0) {
             char nk[10], pk[10];
