@@ -18,6 +18,9 @@
 #include "regions.h"
 #include "../diagnostics/debug_cfg.h"
 #include <helpers/sensors/LPPDataHelpers.h>
+#ifdef ESP32_PLATFORM
+#include <nvs_flash.h>
+#endif
 
 // REQ_TYPE constants not defined in core BaseChatMesh.h (only in examples)
 #ifndef REQ_TYPE_GET_TELEMETRY_DATA
@@ -1633,6 +1636,12 @@ void factoryReset()
 
     // Reformat SPIFFS to wipe identity, contacts, and any other files
     SPIFFS.format();
+
+    // Erase entire NVS partition (covers all namespaces, PHY calibration, etc.)
+    // nvs_flash_init() will recreate the partition on next boot's ESP-IDF init.
+#ifdef ESP32_PLATFORM
+    nvs_flash_erase();
+#endif
 
     // Give flash writes time to complete before restart
     delay(200);
