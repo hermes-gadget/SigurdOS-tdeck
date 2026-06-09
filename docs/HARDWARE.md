@@ -456,7 +456,7 @@ with the shared pins; the other drivers manage their own bus configuration.
 ### Init Order
 
 SD card must be initialised **after** the LoRa radio, because the LoRa/SPI init
-(`mesh::init()`) sets up the shared bus pins and calls `lora_spi.begin()`.
+(`mesh::init()`) sets up the shared bus pins and calls `sigurdos_shared_spi_begin()`.
 If the SD card is initialised first with unconfigured pins, FATFS returns
 `FR_NOT_READY`.
 
@@ -535,8 +535,8 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 1. **Hard reset SX1262** via RST pin: LOW 100 µs → HIGH, then wait 10 ms for
    TCXO stabilisation. This prevents bootloop if BUSY is stuck HIGH from a
    previous crash.
-2. Initialise SPI bus via `lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI)`
-3. Call `radio_module.std_init(&lora_spi)`
+2. Initialise SPI bus via `sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI)`
+3. Call `radio_module.std_init(&sigurdos_shared_spi())`
 4. Apply radio parameters: `setFrequency`, `setBandwidth`, `setSpreadingFactor`,
    `setCodingRate`, `setOutputPower`
 

@@ -26,9 +26,9 @@
 #ifndef REQ_TYPE_GET_TELEMETRY_DATA
 #define REQ_TYPE_GET_TELEMETRY_DATA  0x03
 #endif
-
+#include <SPI.h>
 #include <SPIFFS.h>
-#include <Preferences.h>
+#include <Preferences.h>  // for NVS prefs
 #include <mbedtls/base64.h>
 #include <time.h>
 #include <Mesh.h>
@@ -38,6 +38,7 @@
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
+#include "hal/spi_shared.h"
 
 using sigurdos::mesh::MeshMessage;
 
@@ -46,7 +47,6 @@ using sigurdos::mesh::MeshMessage;
 // ════════════════════════════════════════════════════
 
 static sigurdos::TDeckBoard        board;
-static SPIClass                  lora_spi(FSPI);
 static Module*                   lora_mod = nullptr;
 static CustomSX1262*             radio_module = nullptr;
 static CustomSX1262Wrapper*      radio_driver = nullptr;
@@ -773,7 +773,7 @@ bool init(bool spiffs_ok)
     // `new` returns nullptr (no exceptions). Delaying to init() time
     // and checking null avoids a silent crash when the radio starts.
     lora_mod = new Module(P_LORA_NSS, P_LORA_DIO_1,
-                          P_LORA_RESET, P_LORA_BUSY, lora_spi);
+                          P_LORA_RESET, P_LORA_BUSY, sigurdos_shared_spi());
     if (!lora_mod) {
         Serial.println("[mesh] FATAL: Radio Module allocation failed (OOM)");
         return false;
@@ -851,11 +851,11 @@ bool init(bool spiffs_ok)
 #if SIGURDOS_DEBUG_MESH
     Serial.println("[mesh] initializing LoRa SPI bus...");
 #endif
-    lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
+    sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
 #if SIGURDOS_DEBUG_MESH
     Serial.println("[mesh] calling radio_module->std_init()...");
 #endif
-    if (!radio_module->std_init(&lora_spi)) {
+    if (!radio_module->std_init(&sigurdos_shared_spi())) {
         Serial.println("[mesh] ERROR: Radio init failed");
         return false;
     }
@@ -997,7 +997,7 @@ bool init(bool spiffs_ok)
     return true;
 #else
     // Remote test without SIGURDOS_REMOTE_TEST_RADIO: init SPI bus for SD card only, no LoRa radio
-    lora_spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
+    sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
     initialized = true;
     return true;
 #endif

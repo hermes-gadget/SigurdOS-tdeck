@@ -286,7 +286,11 @@ extern TwoWire Wire;
 
 class SPIClass {
 public:
+    SPIClass() {}
+    SPIClass(uint8_t) {}  // host number (FSPI=1, VSPI=2)
     void begin() {}
+    void begin(int sck, int miso, int mosi) { (void)sck; (void)miso; (void)mosi; }
+    void begin(int sck, int miso, int mosi, int cs) { (void)sck; (void)miso; (void)mosi; (void)cs; }
 };
 extern SPIClass SPI;
 

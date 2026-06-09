@@ -19,6 +19,7 @@
 
 #include "sdcard.h"
 #include "tdeck_pins.h"
+#include "spi_shared.h"
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
@@ -29,7 +30,9 @@
 // FSPI (SPI2_HOST) is used here; the display also uses SPI2_HOST (via
 // LovyanGFX), and the LoRa radio uses SPI2_HOST (via RadioLib). All three
 // devices share the same SPI host and bus pins with different CS lines.
-static SPIClass sd_spi(FSPI);
+// We use the shared singleton SPIClass from spi_shared.h to avoid reinitialising
+// SPI2_HOST independently from the LoRa radio.
+static SPIClass& sd_spi = sigurdos_shared_spi();
 
 static bool mounted = false;
 static uint64_t capacity_bytes = 0;
@@ -37,7 +40,7 @@ static uint64_t free_bytes = 0;
 
 bool sigurdos_sdcard_init()
 {
-    sd_spi.begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
+    sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
 
     for (int attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) delay(500);

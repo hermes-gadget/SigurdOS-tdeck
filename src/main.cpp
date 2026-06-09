@@ -81,7 +81,7 @@ void setup()
 #else
     // Remote test mode — no LoRa radio initialised, but the shared SPI bus
     // (pins 40/38/41) must be initialised before SD card init or the card
-    // fails with FR_NOT_READY. mesh::init() handles this via lora_spi.begin().
+    // fails with FR_NOT_READY. mesh::init() handles this via sigurdos_shared_spi_begin().
     Serial.println("[boot] REMOTE TEST MODE — LoRa radio disabled");
 #endif
     sigurdos::mesh::init(spiffs_ok);
