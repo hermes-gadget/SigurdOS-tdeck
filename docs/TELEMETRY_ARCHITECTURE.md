@@ -1,9 +1,21 @@
 # SigurdOS T-Deck Telemetry & Agent Debug System
 
+> ⚠️ **OUT OF DATE — This document reflects an early design that differs significantly from the current implementation.**
+>
+> **Key discrepancies with the actual code at `src/diagnostics/`:**
+> - **Non-existent files:** `crash_capture.h/cpp` → actual: `telemetry_crash.h/cpp`; `monitor_lvgl.h/cpp`, `monitor_radio.h/cpp` → do not exist
+> - **Non-existent structs:** `TelemetryEngine` → actual: static state in `telemetry.cpp`; `HeartbeatEntry` → actual: `HbRingEntry` in `telemetry_hb_ring.h`
+> - **NVS backup tier:** described here does not exist in code
+> - **Panic handler:** describes `esp_panic_handler` wrapping; actual code uses `esp_register_shutdown_handler()`
+> - **Architecture diagram:** shows `CrashCapture`, `LVGLMonitor`, `RadioMonitor` components not present in code
+>
+> **Until this document is rewritten to match the actual implementation, treat it as a design reference only.**
+> **The source code at `src/diagnostics/` is the authoritative reference.**
+
 > Architecture document: structured telemetry, crash capture, diff-based updates,
 > and interactive agent queries for Hermes AI agent integration.
 
-**Status:** Design  
+**Status:** ⚠️ OUT OF DATE (see warning above)  
 **Target firmware:** SigurdOS T-Deck (ESP32-S3, LVGL v9, MeshCore)  
 **Branch:** `dev`  
 **Author:** Hermes Agent  
