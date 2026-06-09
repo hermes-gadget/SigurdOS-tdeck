@@ -2418,7 +2418,8 @@ void chat_screen_open_dm(const char* contact_name)
     navigate_to(Screen::Chat);
     refresh_channels();
 
-    char dm_name[32];
+    // Buffer must fit "DM: " (4) + max contact name (31) + null (1) = 36
+    char dm_name[37];
     snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
 
     int idx = find_channel_idx(dm_name);
