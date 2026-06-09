@@ -63,7 +63,21 @@
 // `work_mem_int` symbol). v9 instead uses LV_USE_STDLIB_MALLOC + a pool
 // allocator: defining LV_MEM_POOL_ALLOC makes lv_mem_init() create the TLSF
 // pool from PSRAM and drops the internal `work_mem_int` array completely.
+//
+// PSRAM fallback: if PSRAM is unavailable (faulty hardware, unpopulated chip),
+// we fall back to a smaller pool from internal DRAM so the firmware can still
+// boot and render the UI. The 48KB DRAM pool matches the original LVGL v8
+// default proven on this codebase — ample for a 320×240 UI with simple widgets.
+//
+// Implementation: hal/lv_pool.cpp
 #define LV_USE_STDLIB_MALLOC      LV_STDLIB_BUILTIN
-#define LV_MEM_SIZE               (256 * 1024U)
 #define LV_MEM_POOL_INCLUDE       <esp_heap_caps.h>
-#define LV_MEM_POOL_ALLOC(size)   heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+#define LV_MEM_SIZE               (48 * 1024U)
+
+#ifndef __ASSEMBLER__
+#ifdef __cplusplus
+extern "C"
+#endif
+void* sigurdos_lv_pool_alloc(unsigned long size);
+#define LV_MEM_POOL_ALLOC(size)   sigurdos_lv_pool_alloc(size)
+#endif
