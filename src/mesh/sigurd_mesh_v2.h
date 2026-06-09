@@ -27,7 +27,7 @@ namespace mesh {
 
 // RSSI/SNR side-channel — BaseChatMesh::ContactInfo doesn't carry signal data
 struct SignalSample {
-    uint8_t key[2];
+    uint8_t key[4];
     int     rssi;
     float   snr;
     uint32_t updated_at;

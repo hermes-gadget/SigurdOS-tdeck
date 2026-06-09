@@ -31,8 +31,7 @@ namespace mesh {
         if (!pub_key) return;
         uint32_t now = getRTCClock()->getCurrentTime();
         for (int i = 0; i < _n_signal_samples; i++) {
-            if (_signal_samples[i].key[0] == pub_key[0] &&
-                _signal_samples[i].key[1] == pub_key[1]) {
+            if (memcmp(_signal_samples[i].key, pub_key, 4) == 0) {
                 _signal_samples[i].rssi = rssi;
                 _signal_samples[i].snr = snr;
                 _signal_samples[i].updated_at = now;
@@ -41,8 +40,7 @@ namespace mesh {
             }
         }
         if (_n_signal_samples < SIGNAL_SAMPLES_MAX) {
-            _signal_samples[_n_signal_samples].key[0] = pub_key[0];
-            _signal_samples[_n_signal_samples].key[1] = pub_key[1];
+            memcpy(_signal_samples[_n_signal_samples].key, pub_key, 4);
             _signal_samples[_n_signal_samples].rssi = rssi;
             _signal_samples[_n_signal_samples].snr = snr;
             _signal_samples[_n_signal_samples].updated_at = now;
@@ -54,8 +52,7 @@ namespace mesh {
     int SigurdMeshV2::getContactRSSI(const uint8_t* pub_key) const {
         if (!pub_key) return 0;
         for (int i = 0; i < _n_signal_samples; i++)
-            if (_signal_samples[i].key[0] == pub_key[0] &&
-                _signal_samples[i].key[1] == pub_key[1])
+            if (memcmp(_signal_samples[i].key, pub_key, 4) == 0)
                 return _signal_samples[i].rssi;
         return 0;
     }
@@ -63,8 +60,7 @@ namespace mesh {
     float SigurdMeshV2::getContactSNR(const uint8_t* pub_key) const {
         if (!pub_key) return 0.0f;
         for (int i = 0; i < _n_signal_samples; i++)
-            if (_signal_samples[i].key[0] == pub_key[0] &&
-                _signal_samples[i].key[1] == pub_key[1])
+            if (memcmp(_signal_samples[i].key, pub_key, 4) == 0)
                 return _signal_samples[i].snr;
         return 0.0f;
     }
