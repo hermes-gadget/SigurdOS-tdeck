@@ -355,7 +355,7 @@ bool sigurdos_keyboard_init()
     if (initialized) return true;
 
     // I2C bus must already be initialized (TDeckBoard::begin does this)
-    Wire.setClock(100000);  // keyboard MCU uses 100kHz
+    Wire.setClock(200000);  // Compromise speed for shared I2C bus (GT911 + keyboard)
 
     // Probe the keyboard MCU — request 1 byte, should ACK
     Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
@@ -405,8 +405,7 @@ void sigurdos_keyboard_scan()
     if (now - last_poll_ms < KB_POLL_INTERVAL_MS) return;
     last_poll_ms = now;
 
-    // Ensure I2C clock is 100kHz for keyboard MCU (touch may have set it to 400kHz)
-    Wire.setClock(100000);
+    // I2C clock is set once at init (200kHz compromise for shared bus)
 
     if (raw_mode_active) {
         uint8_t matrix[KB_RAW_COLS] = {0};
@@ -498,7 +497,6 @@ bool sigurdos_keyboard_consume_event()
 
 void sigurdos_keyboard_set_brightness(uint8_t duty)
 {
-    Wire.setClock(100000);
     Wire.beginTransmission(KB_I2C_ADDR);
     Wire.write(CMD_BRIGHTNESS);
     Wire.write(duty);
@@ -510,7 +508,6 @@ void sigurdos_keyboard_set_brightness(uint8_t duty)
 void sigurdos_keyboard_set_default_brightness(uint8_t duty)
 {
     if (duty < 30) duty = 30;  // minimum for Alt+B toggle
-    Wire.setClock(100000);
     Wire.beginTransmission(KB_I2C_ADDR);
     Wire.write(CMD_DEFAULT_BRIGHTNESS);
     Wire.write(duty);

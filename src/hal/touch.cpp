@@ -109,7 +109,7 @@ bool sigurdos_touch_init()
 
     // I2C bus is already initialized by TDeckBoard::begin()
     // with correct pins and 400kHz clock
-    Wire.setClock(400000);  // GT911 supports 400 kHz
+    Wire.setClock(200000);  // Compromise speed for shared I2C bus (GT911 + keyboard)
 
     // Configure INT pin
     pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
@@ -169,9 +169,7 @@ void sigurdos_touch_loop()
     if (now - last_poll < GT911_POLL_INTERVAL) return;
     last_poll = now;
 
-    // Ensure I2C clock is 400kHz for GT911 touch controller
-    // (keyboard scan may have set it to 100kHz)
-    Wire.setClock(400000);
+    // I2C clock is set once at init (200kHz compromise for shared bus)
 
     // Check INT pin — GT911 pulls it LOW when new data is ready.
     // When HIGH, there may be no new data, but the GT911 can buffer
