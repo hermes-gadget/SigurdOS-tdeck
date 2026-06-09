@@ -741,7 +741,11 @@ static void append_channel_message(int idx, const char* sender, const char* text
     ensure_channel_buffer(idx);
     if (!has_channel_buffer(idx)) return;
 
-    const uint16_t cap = chat_msg_cap();
+    const uint16_t user_cap = chat_msg_cap();
+    const uint16_t buf_cap = ch_msg_capacity[idx];
+    // Use actual buffer capacity if it's smaller than the user-configured cap
+    // Prevents OOB write when PSRAM exhausted and DRAM fallback provides only CHAT_MSGS_MIN_CAP (#542)
+    const uint16_t cap = (buf_cap > 0 && buf_cap < user_cap) ? buf_cap : user_cap;
     trim_channel_history(idx, cap);
 
     uint16_t pos = ch_msg_count[idx];
