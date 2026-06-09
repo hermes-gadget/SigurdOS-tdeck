@@ -1082,18 +1082,29 @@ uint32_t sendMessage(const char* dest, const char* text) {
 
 bool sendChannelMessage(const char* channel_name, const char* text) {
     if (!g_mesh) return false;
+    bool sent = false;
     for (int i = 0; i < g_mesh->getChannelCount(); i++) {
         auto* ch = g_mesh->getChannel(i);
         if (ch && strcmp(ch->name, channel_name) == 0) {
-            bool ok = g_mesh->sendGroupText(i, text);
-            if (ok) {
+            sent = g_mesh->sendGroupText(i, text);
+            if (sent) {
                 storeOutgoingMessageForCompanion(channel_name, text, getCurrentTime(), true);
                 pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
             }
-            return ok;
+            break;
         }
     }
-    return false;
+    // Also forward the message to any logged-in room server contacts.
+    // This ensures room servers receive messages posted in their channels.
+    int n_room = getLoggedInRoomServerCount();
+    for (int ri = 0; ri < n_room; ri++) {
+        const char* room_name = getLoggedInRoomServerName(ri);
+        if (room_name && room_name[0]) {
+            uint32_t room_ts = sendRoomMessage(room_name, channel_name, text);
+            if (room_ts != 0) sent = true;
+        }
+    }
+    return sent;
 }
 
 uint32_t sendMessageWithScopeKey(const char* dest_name, const char* text, const uint8_t* key16) {
