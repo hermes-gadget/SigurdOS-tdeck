@@ -1,6 +1,6 @@
 # Launcher Compatibility Roadmap
 
-**Status:** Phase 1/4 code complete, awaiting hardware test (PR #573)
+**Status:** Phase 1/4 code complete, Phase 2a detection validated, Phase 3 C6 keyboard hardening implemented (PR #573 + follow-up)
 **Tracking issue:** [#567](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/567)
 **External project:** [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) (analyzed at v2.7.2, June 2026)
 **Related:** `docs/KNOWN_ISSUES.md` → "SigurdOS Launcher compatibility", `docs/MISSING_FEATURES.md` → "Launcher compatibility — M"
@@ -360,9 +360,9 @@ Hardware notes: T4/T9 specifically exercise the physical input layer and **must*
 - Soak: 24 h mesh operation under Launcher install (identity stability, saveState cycle, heap)
 - **Exit:** matrix recorded in the PR(s)/release notes; standalone rows byte-for-byte behavior-identical to baseline
 
-### Phase 6 — Release integration and maintainer handoff
+### Phase 6 — Release integration and maintainer handoff *(catalog info gathered)*
 - Tagged release including the Launcher artifact; release-notes section for Launcher users
-- LauncherHub submission (Q5); verify on-device OTA-menu install once listed
+- LauncherHub submission (Q5): **API researched (2026-06-10).** LauncherHub at `api.launcherhub.net` has 16 T-Deck firmwares; format is `{fid, name, author, star}`. **Submission requires opening an issue on [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) or contacting the maintainer via Discord** — the catalog is curated (no self-service API). Our release assets are ready: `SigurdOS-tdeck-launcher.bin` with range-request support at `…/releases/latest/download/SigurdOS-tdeck-launcher.bin`.
 - Update this document to "supported" status with the validated Launcher version range; hand off the re-verification checklist (risk table) to the release process
 - **Exit:** Launcher install path documented, released, and reproducible by users without maintainer involvement
 

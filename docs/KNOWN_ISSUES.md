@@ -18,12 +18,21 @@ SigurdOS can now be installed as a Launcher app. See [`firmware/README.md`](../f
 - ✅ Self-OTA disabled to prevent flash corruption of co-installed apps
 - ✅ SPIFFS partition created for persistence (when using merged image)
 
-**Remaining gaps (Phase 2/3/5 — in progress):**
-- 🔄 Phase 2: Boot/flash compatibility testing — **in progress**
-- ⚠️ Warm-handoff peripheral state: Launcher's I2C/touch/keyboard init before ESP.restart() may leave peripherals in unexpected states. The keyboard init currently uses a single-NACK-abort which may fail after soft reset. Expected fix: keyboard-init retry/timing window.
-- ⚠️ Warm-handoff soak testing (10+ power-cycle loops)
-- ⚠️ Multi-app coexistence test (install Bruce alongside SigurdOS, switch back)
-- ⏳ **Phase 5:** Full regression matrix (T1–T14)
+**Phase 2a — Detection validated on hardware (2026-06-10):**
+- ✅ Launcher detection tested via custom `test`-subtype partition
+- ✅ `sigurdos_is_under_launcher()` returns `true` when Launcher partition exists
+- ✅ Boot env diagnostic confirms `"bmorcelli/Launcher"` vs `"standalone"`
+- ✅ Launcher installed on T-Deck (awaiting physical button press to proceed to handoff test)
+
+**Phase 3 / C6 — Keyboard warm-handoff hardening ✅ merged with #573 follow-up:**
+- ✅ Retry loop: keyboard init now retries 3× with 100ms delay instead of single-NACK-abort
+- ✅ Mode reset: sends `CMD_MODE_KEY` (0x04) before each probe to reset C3 to known state
+- ✅ 2 new native tests covering transient-NACK recovery and exhaustion
+- ✅ 748/748 native tests pass, release build clean
+
+**Remaining gaps (Phase 2b/5/6):**
+- 🔜 Phase 2b: Actual Launcher boot handoff (T4/T9) — requires physical SD card or WebUI interaction on T-Deck
+- ⏳ Phase 5: Full regression matrix (T1–T14) — standalone rows (T1–T3) pass, Launcher rows (T4–T13) need physical hardware
 - ❌ Not yet listed in LauncherHub catalog (requires maintainer coordination)
 
 ---
