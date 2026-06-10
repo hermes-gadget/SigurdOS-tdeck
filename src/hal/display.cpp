@@ -446,11 +446,16 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
     if (sigurdos::debug::get_level() >= 2 && sigurdos::debug::feat_get_display())
 #endif
     {
-        Serial.printf("[flush] #%lu  area=(%ld,%ld,%ld,%ld) w=%ld h=%ld pixels=%ld\n",
-                      (unsigned long)dbg_flush_count,
-                      (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
-                      (long)(area->x2 - area->x1 + 1), (long)(area->y2 - area->y1 + 1),
-                      (long)((area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1)));
+        // Non-blocking flush logging: skip if USB CDC TX buffer is near full,
+        // otherwise Serial.printf() can block indefinitely (the buffer is only
+        // ~256 bytes on ESP32-S3 and continuous full-frame flushes fill it fast).
+        if (Serial.availableForWrite() >= 96) {
+            Serial.printf("[flush] #%lu  area=(%ld,%ld,%ld,%ld) w=%ld h=%ld pixels=%ld\n",
+                          (unsigned long)dbg_flush_count,
+                          (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
+                          (long)(area->x2 - area->x1 + 1), (long)(area->y2 - area->y1 + 1),
+                          (long)((area->x2 - area->x1 + 1) * (area->y2 - area->y1 + 1)));
+        }
     }
 #endif
     uint32_t w = area->x2 - area->x1 + 1;
