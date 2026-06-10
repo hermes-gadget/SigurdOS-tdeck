@@ -36,6 +36,8 @@ void setup()
     delay(250);  // Let WebSerial port close before claiming USB CDC endpoint
     Serial.begin(115200);
     delay(500);
+    Serial.println("[boot] HELLO FROM REMOTE_TEST BUILD -v2");
+    Serial.flush();
 #if SIGURDOS_DEBUG_UI
     Serial.println("SigurdOS T-Deck — booting...");
     Serial.println("[boot] step 1: serial OK");

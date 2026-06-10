@@ -289,7 +289,7 @@ static lv_obj_t* make_screen_full(const char* title)
 
 static void show_screen(lv_obj_t* scr)
 {
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
+    lv_scr_load(scr);
 }
 
 static void show_contact_memory_error(lv_obj_t* scr)
