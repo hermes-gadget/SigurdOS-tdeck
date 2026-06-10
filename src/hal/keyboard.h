@@ -85,6 +85,11 @@ bool sigurdos_keyboard_is_alt();
 // Useful for testing and on device wake from deep sleep.
 void sigurdos_keyboard_reset_scan_state();
 
+// Reset the static initialized flag. Used by tests to isolate
+// warm-handoff retry tests from other keyboard init tests.
+// No-op in production builds — the flag is never reset at runtime.
+void sigurdos_keyboard_reset_init_for_test();
+
 // Consume/clear the current key event (used by LVGL indev after reporting a press).
 // Prevents the same character from being fed again on the next read.
 void sigurdos_keyboard_consume_key();

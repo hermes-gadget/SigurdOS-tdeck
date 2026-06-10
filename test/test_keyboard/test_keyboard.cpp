@@ -45,6 +45,7 @@ protected:
     void SetUp() override {
         arduino_mock::reset();
         Wire = TwoWire();
+        sigurdos_keyboard_reset_init_for_test();
     }
 
     void init_with_ack() {
@@ -85,11 +86,25 @@ protected:
 };
 
 // ════════════════════════════════════════════════════════
-// INIT TESTS (must run first — static initialized flag)
+// INIT TESTS
 // ════════════════════════════════════════════════════════
 
 TEST_F(KeyboardTest, InitFailsWhenKeyboardNotResponding) {
     EXPECT_FALSE(sigurdos_keyboard_init());
+}
+
+TEST_F(KeyboardTest, InitRetriesUpToLimitThenFails) {
+    // Never ACKs — should fail after all retries exhausted
+    Wire.mock_set_nack_count(99);
+    EXPECT_FALSE(sigurdos_keyboard_init());
+}
+
+TEST_F(KeyboardTest, InitRecoversFromTransientNack) {
+    // Warm-handoff scenario: first beginTransmission NACKs (C3 slow to
+    // respond after Launcher ESP.restart()), second retry succeeds.
+    Wire.mock_set_nack_count(1);
+    Wire.mock_queue_rx_byte(0x00);
+    EXPECT_TRUE(sigurdos_keyboard_init());
 }
 
 TEST_F(KeyboardTest, InitSendsDefaultBrightnessOnFirstSuccess) {

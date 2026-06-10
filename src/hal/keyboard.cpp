@@ -136,6 +136,9 @@ static constexpr RawKeyDef RAW_KEYS[KB_RAW_COLS][KB_RAW_ROWS] = {
 };
 
 static bool     initialized     = false;
+
+void sigurdos_keyboard_reset_init_for_test() { initialized = false; }
+
 static uint32_t last_poll_ms    = 0;
 static bool     shift_held      = false;
 static bool     ctrl_held       = false;
@@ -355,13 +358,32 @@ bool sigurdos_keyboard_init()
     if (initialized) return true;
 
     // I2C bus must already be initialized (TDeckBoard::begin does this)
-    Wire.setClock(200000);  // Compromise speed for shared I2C bus (GT911 + keyboard)
+    Wire.setClock(200000);
 
-    // Probe the keyboard MCU — request 1 byte, should ACK
-    Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
-    if (Wire.available() == 0 || Wire.read() == -1) {
-        // Keyboard MCU not responding — may need firmware flash or
-        // peripheral power not enabled
+    // Warm-handoff probe: after Launcher's ESP.restart(), the C3 keyboard
+    // MCU may be slow to respond or in an unexpected mode. Retry with
+    // a bounded window and explicitly reset to key mode before probing.
+    constexpr int WARM_KBD_RETRIES = 3;
+    constexpr int WARM_KBD_RETRY_DELAY_MS = 100;
+
+    bool probe_ok = false;
+    for (int retry = 0; retry < WARM_KBD_RETRIES; retry++) {
+        if (retry > 0) delay(WARM_KBD_RETRY_DELAY_MS);
+
+        // Push C3 into key mode (the default after C3 cold boot) to
+        // establish a known state regardless of what Launcher left behind.
+        Wire.beginTransmission(KB_I2C_ADDR);
+        Wire.write(CMD_MODE_KEY);
+        Wire.endTransmission();  // ignore NACK — C3 may not be ready yet
+
+        Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
+        if (Wire.available() > 0 && Wire.read() >= 0) {
+            probe_ok = true;
+            break;
+        }
+    }
+
+    if (!probe_ok) {
         return false;
     }
 

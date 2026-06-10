@@ -231,6 +231,10 @@ public:
     }
     uint8_t endTransmission(bool stopBit = true) {
         (void)stopBit;
+        if (_nack_remaining > 0) {
+            _nack_remaining--;
+            return 1;  // NACK — simulate I2C no-ACK for warm-handoff testing
+        }
         return _end_error;
     }
 
@@ -255,6 +259,9 @@ public:
 
     // ── Test control ──────────────────────────────────
     void mock_set_error(uint8_t err) { _end_error = err; }
+    // How many endTransmission calls to NACK before allowing success.
+    // Used to test warm-handoff retry logic after Launcher handoff.
+    void mock_set_nack_count(uint8_t n) { _nack_count = n; _nack_remaining = n; }
     void mock_queue_rx_byte(uint8_t val) {
         if (_q_len < 32) _q_buf[_q_len++] = val;
     }
@@ -269,6 +276,8 @@ private:
     uint8_t _tx_buf[32] = {};
     size_t  _tx_len = 0;
     uint8_t _end_error = 0;
+    uint8_t _nack_count = 0;
+    uint8_t _nack_remaining = 0;
 
     uint8_t _rx_addr = 0;
     uint8_t _rx_buf[32] = {};
