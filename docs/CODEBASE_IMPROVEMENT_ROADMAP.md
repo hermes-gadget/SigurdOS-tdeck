@@ -208,6 +208,18 @@ pio pkg list -e SigurdOS_TDeck   # all four libraries at the exact pinned versio
 **First PR or later?** Safe first PR — config-only, reverts cleanly.
 **Depends on**: nothing.
 
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T1-pin-deps`.
+> Files changed: `platformio.ini` (four caret ranges → exact pins: RadioLib 7.7.1,
+> Crypto 0.4.0, LovyanGFX 1.2.21, Adafruit BusIO 1.17.4; re-resolved on a clean
+> `.pio` before pinning, matching the versions recorded above).
+> Validation: `rm -rf .pio && pio run -e SigurdOS_TDeck` SUCCESS — RAM 40.7%
+> (133,472 B) / Flash 39.2% (2,569,853 B), byte-identical to the pre-change
+> baseline; `pio test -e native_test` 749 cases (748 pass / 1 skip);
+> `pio pkg list -e SigurdOS_TDeck` resolves all four at the exact pins
+> (RadioLib appears nested under MeshCore @ 1.10.0, as the Evidence predicted —
+> 7.7.1 satisfies the submodule's `^7.6.0`). Hardware: not applicable — build
+> configuration only, resolved versions unchanged.
+
 ---
 
 #### T2: Add a `.clang-format` config (no reformat)
