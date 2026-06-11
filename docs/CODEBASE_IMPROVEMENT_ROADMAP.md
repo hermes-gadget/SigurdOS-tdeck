@@ -251,6 +251,15 @@ passes (nothing compiled changed).
 **Depends on**: nothing. (Note: `CONTRIBUTING.md` itself is protected — do *not* edit it
 in this PR; if its prose should mention the config, file that as an owner follow-up.)
 
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T2-clang-format`.
+> Files changed: `.clang-format` (new file only — zero code diffs; config keys
+> per the task plus comments stating the new/changed-lines-only intent and the
+> `SortIncludes: false` rationale). No repo-wide reformat performed and no CI
+> format check added, per the task. Validation: exactly one added file;
+> `pio test -e native_test` 749 cases (748 pass / 1 skip — nothing compiled
+> changed). Hardware: not applicable. Owner follow-up: CONTRIBUTING.md's
+> "no `.clang-format` file" prose is now stale — protected file, owner edit.
+
 ---
 
 #### T3: Deprecate the blocking `wifi_sta::connect()`
