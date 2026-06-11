@@ -76,7 +76,21 @@ jobs:
         run: python -m pip install --upgrade platformio
 
       - name: Build firmware
-        run: pio run -e SigurdOS_TDeck
+        run: |
+          set -o pipefail
+          pio run -e SigurdOS_TDeck | tee build.log
+
+      - name: Report firmware size
+        if: always()
+        run: |
+          if [ -f build.log ] && grep -qE '^(RAM|Flash):' build.log; then
+            {
+              echo '### Firmware size (SigurdOS_TDeck)'
+              echo '```'
+              grep -E '^(RAM|Flash):' build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   lint:
     name: Static analysis + logging policy (advisory)
@@ -125,3 +139,27 @@ jobs:
             exit 1
           fi
           echo "Logging policy: OK"
+
+      - name: Doc reference check
+        run: |
+          # Verify src/... file paths cited in docs/*.md exist in this repo
+          # or in the MeshCore submodule (some docs cite submodule-relative
+          # paths). Excluded docs: planning docs citing not-yet-created files
+          # (CODEBASE_IMPROVEMENT_ROADMAP), docs describing external repos
+          # (LAUNCHER_ROADMAP), and docs already flagged OUT OF DATE
+          # (TELEMETRY_ARCHITECTURE) — re-include the last after its rewrite.
+          status=0
+          for doc in docs/*.md; do
+            case "$doc" in
+              docs/CODEBASE_IMPROVEMENT_ROADMAP.md|docs/LAUNCHER_ROADMAP.md|docs/TELEMETRY_ARCHITECTURE.md) continue;;
+            esac
+            for ref in $(grep -ohE 'src/[A-Za-z0-9_/.-]+\.(cpp|h|c)' "$doc" | sort -u); do
+              case "$ref" in */.*) continue;; esac
+              if [ ! -f "$ref" ] && [ ! -f "lib/meshcore/$ref" ]; then
+                echo "::warning file=$doc::cites missing file $ref"
+                status=1
+              fi
+            done
+          done
+          [ "$status" -eq 0 ] && echo "Doc references: OK"
+          exit "$status"

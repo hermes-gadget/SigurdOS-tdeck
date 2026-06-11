@@ -1243,7 +1243,18 @@ doesn't exist (start advisory); (b) a step that parses `pio run` output
 (`RAM:`/`Flash:` lines) into the job summary so reviewers see deltas per PR.
 **Risk level**: Low. **First PR or later?** Later. **Depends on**: T20.
 
----
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T25-ci-guards` (stacked on
+> `roadmap/T23-static-analysis`; merge T23's PR first — both edit `pr-ci.yml`).
+> (a) `Doc reference check` step added to the advisory `lint` job: verifies cited
+> `src/...` paths exist in the repo or `lib/meshcore/` (docs cite submodule-relative
+> paths); excludes `CODEBASE_IMPROVEMENT_ROADMAP.md` (planning doc, cites
+> not-yet-created files), `LAUNCHER_ROADMAP.md` (describes the external Launcher
+> repo), and `TELEMETRY_ARCHITECTURE.md` (already flagged OUT OF DATE — re-include
+> after rewrite); also skips composite `.h/.cpp` notation. Verified green on `dev`.
+> (b) `Report firmware size` step in the `build` job: `pio run` output tees to
+> `build.log` (with `set -o pipefail` so the build's exit code is preserved) and the
+> `RAM:`/`Flash:` lines land in the job summary. Pure reporting — never fails.
+> Existing jobs/triggers/permissions untouched beyond those two steps.
 
 #### T26: Firmware-binary distribution decision — **Blocked on OQ-5 (owner)**
 
