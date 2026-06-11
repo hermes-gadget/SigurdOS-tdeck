@@ -28,6 +28,9 @@ namespace sigurdos::ui {
 // time, signal dots) and bottom bar (device name, WiFi icon, battery).
 lv_obj_t* make_screen_full(const char* title);
 
+// Load a fully built screen object (lv_scr_load wrapper).
+void show_screen(lv_obj_t* scr);
+
 // Device PIN gate — true while a previous unlock is within the grace window.
 bool pin_grace_active();
 // Show the PIN entry screen; loads target_screen on successful entry.
