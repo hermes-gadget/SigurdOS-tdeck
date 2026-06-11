@@ -1,7 +1,7 @@
 # Launcher Compatibility Roadmap
 
-**Status:** C1/C2/C4-C7 are implemented; C3 otadata confirmation is in progress; LauncherHub and return-to-Launcher work remain external/hardware-gated.
-**Tracking issues:** [#567](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/567), [#610](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/610)
+**Status:** C1-C7 are implemented or ready in focused PRs; O3 is audited; LauncherHub and return-to-Launcher work remain external/hardware-gated.
+**Tracking issues:** [#567](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/567), [#610](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/610), [#612](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/612), [#614](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/614)
 **External project:** [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) (analyzed at v2.7.2, June 2026)
 **Related:** `docs/KNOWN_ISSUES.md` → "SigurdOS Launcher compatibility", `docs/MISSING_FEATURES.md` → "Launcher compatibility — M"
 
@@ -46,14 +46,14 @@ Last audited: 2026-06-11.
 | ------------ | ------ | ----- |
 | C1 — Launcher-install release artifact | Already Implemented | `.github/workflows/build-release.yml` uploads `SigurdOS-tdeck-launcher.bin`; `scripts/merge_bin.py` also emits a local Launcher-named copy/manifest entry. |
 | C2 — Launcher install documentation | Already Implemented | `firmware/README.md` documents SD/WebUI/direct-URL Launcher installs and warns against app-only `firmware.bin` for Launcher persistence. |
-| C3 — Runtime Launcher detection | Partially Complete | `src/hal/launcher_env.*` detects Launcher's `test` app partition; PR #609 adds the roadmap's missing `otadata @ 0xD000` confirmation and native false-positive tests. |
+| C3 — Runtime Launcher detection | Complete | PR #609 completes the missing `otadata @ 0xD000` confirmation and native false-positive tests; pending review/merge. |
 | C4 — Gate self-OTA under Launcher | Already Implemented | WiFi OTA, GitHub OTA, and Settings System refuse self-OTA under Launcher with an "update through Launcher" explanation. |
 | C5 — Boot-time persistence diagnostic | Already Implemented | `src/main.cpp` prints a Launcher-specific app-only install warning when SPIFFS mount fails under Launcher. |
 | C6 — Warm-handoff keyboard hardening | Already Implemented | Keyboard init now uses bounded probe retry and explicit C3 mode reset; further warm-handoff work must be driven by physical hardware evidence. |
 | C7 — Migration note | Already Implemented | `firmware/README.md`, `docs/KNOWN_ISSUES.md`, and `docs/MISSING_FEATURES.md` document Launcher support caveats and mode-switch reset behavior. |
 | O1 — LauncherHub catalog listing | Blocked | External maintainer/catalog process; direct URL and SD/WebUI install remain the documented path until LauncherHub listing is accepted. |
 | O2 — Reboot to Launcher Settings entry | Blocked | Requires bench validation of return-to-Launcher semantics and whether a stock-framework app can safely write Launcher `otadata`; do not implement speculatively. |
-| O3 — Shrink-audit app image | In Progress | PR #613 adds the measured size audit and confirms no shrink work is required for Launcher compatibility right now. |
+| O3 — Shrink-audit app image | Complete | PR #613 adds the measured size audit and confirms no shrink work is required for Launcher compatibility right now; pending review/merge. |
 | O4 — Launcher PlatformIO env alias | Complete | Intentionally skipped as a separate env: C1's CI copy and the local `scripts/merge_bin.py` copy provide the Launcher artifact name with zero firmware delta. |
 
 ---
