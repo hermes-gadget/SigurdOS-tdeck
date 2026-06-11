@@ -439,6 +439,9 @@ git status --short                            # platformio.local.ini no longer l
 **First PR or later?** Safe first PR once unblocked.
 **Depends on**: OQ-1.
 
+> **Status (2026-06-11): ⛔ Blocked on OQ-1** — no PR opened. The owner must decide
+> whether `SIGURDOS_DEBUG_MESH=1` becomes canonical before the file can be untracked.
+
 ---
 
 ### Phase 2 — Error handling and recovery hardening
@@ -726,6 +729,10 @@ Unknown stall budget; changing anything before measuring would be guesswork.
 **Risk level**: Low. **First PR or later?** Later (needs hardware; maintainer-run).
 **Depends on**: nothing.
 
+> **Status (2026-06-11): ⛔ Blocked — hardware measurement only** — no PR opened
+> (none is expected; the task merges nothing). Requires maintainer-run timing on a
+> physical device.
+
 ---
 
 ### Phase 3 — Performance and memory improvements
@@ -910,6 +917,10 @@ hardware matrix from step 1 after the change.
 **First PR or later?** Later PR; step 2 only after step 1's data is posted.
 **Depends on**: OQ-2 for the serial delays.
 
+> **Status (2026-06-11): ⛔ Blocked — OQ-2 + hardware-gated measurement** — no PR
+> opened. Step 1 (10-boot timing matrix) needs a physical device; the serial-delay
+> changes need the OQ-2 answer.
+
 ---
 
 ### Phase 4 — Architecture / module cleanup
@@ -974,6 +985,10 @@ reports the expected name and the top/bottom bars render.
 **Depends on**: T20 merged (CI safety net); T11 merged (so `update_wifi_status` usage is
 stable before moving).
 
+> **Status (2026-06-11): ✅ Complete** — merged as PR #580
+> ("refactor: extract screens_common from screens.cpp", commit `11f2e7e`).
+> `src/ui/screens_common.{h,cpp}` exist; `screens.cpp` is down to 84 lines.
+
 ---
 
 #### T15–T18: Split `screens.cpp` one screen per PR
@@ -1032,6 +1047,11 @@ screen + `back` + re-enter (catches delete-callback regressions).
 **First PR or later?** Later PRs, strictly after T14.
 **Depends on**: T14; T20.
 
+> **Status (2026-06-11): ✅ Complete** — merged as PRs #585 (Advertise, `55e3b49`),
+> #586 (Packets, `3aeebe7`), #587 (Signal, `f7b282b`), and #588 (all remaining
+> screens, `53a3f63`). `src/ui/screens/` now holds 22 per-screen files;
+> `screens.cpp` retains only shared glue (84 lines).
+
 ---
 
 #### T19: Extract persistence/boundaries from `mesh_wrapper.cpp` and `chat_screen.cpp` (outline)
@@ -1047,6 +1067,11 @@ state vs rendering only after a dedicated design note.
 **Risk level**: Medium–High. **First PR or later?** Later (Phase 4 tail); requires a
 short design note in the PR description and maintainer sign-off before implementation.
 **Depends on**: T8a, T8b, T14 pattern established.
+
+> **Status (2026-06-11): ⛔ Blocked — needs design note + maintainer sign-off** —
+> no PR opened, per the task's own gate. Prerequisites are now in flight: T8a (#598)
+> and T8b (#603) are open PRs; T14 is merged. Next step is a design note for the
+> owner to approve before any implementation.
 
 ---
 
@@ -1119,6 +1144,10 @@ confirm the real PR is green.
 **First PR or later?** Safe first PR (dedicated protected-file PR). **Recommended to be
 the first CI PR merged overall** — Phases 2–4 rely on it.
 **Depends on**: nothing.
+
+> **Status (2026-06-11): ✅ Complete** — merged as PR #579
+> ("ci: compile firmware on every PR", commit `0250fbf`). `pr-ci.yml` has the
+> parallel `build` job exactly as specified.
 
 ---
 
@@ -1249,6 +1278,9 @@ constraint: must not break the web-flasher flow documented in `firmware/README.m
 No agent should attempt this without the OQ-5 answer.
 **Risk level**: Medium. **First PR or later?** Later, owner-led. **Depends on**: OQ-5.
 
+> **Status (2026-06-11): ⛔ Blocked on OQ-5 (owner-led)** — no PR opened, per the
+> task's own rule ("No agent should attempt this without the OQ-5 answer").
+
 ---
 
 ### Phase 6 — Regression and hardware validation
@@ -1267,6 +1299,26 @@ No agent should attempt this without the OQ-5 answer.
   commit `5bc7842`). Implement in a telemetry-build iteration; panic-path code must be
   minimal and IRAM-safe. **Risk: Medium–High; Later PR; depends on**: telemetry build
   hardware access.
+
+> **Status (2026-06-11): ◑ Software regression pass complete; hardware items blocked.**
+> Branch `roadmap/T27-final-sweep`. Regression re-run on `dev` (`53a3f63`) matches the
+> Phase 0 baseline exactly:
+>
+> - Native tests: 749 cases — 748 passed, 1 skipped (baseline: identical).
+> - Release build: RAM 40.7% (133,472 B), Flash 39.2% (2,569,853 B) — byte-identical
+>   to baseline.
+> - Env smoke matrix (`--profile roadmap`): 4/4 PASS (`SigurdOS_TDeck`, `_telemetry`,
+>   `_remote_test`, `_remote_test_radio`).
+>
+> Remaining items are hardware-gated and **blocked on owner**: boot-log step
+> sequence/timing diff (needs a flashed debug build), remote-test smoke across all
+> screens (needs consent for the radio-disabling `remote_test` build, Rule 10), and
+> the crash-handler FIXME (telemetry-build hardware iteration; no PR opened for it).
+> This sweep also recorded final statuses on T6/T10/T13/T19/T26 (blocked, see each
+> section) and T14/T15–T18/T20 (merged). Open roadmap PRs at sweep time:
+> #589 (T1), #590 (T3), #591 (T4), #592 (T5), #593 (T2), #594 (T11), #596 (T21),
+> #598 (T8a), #600 (T9), #601 (T22), #602 (T7), #603 (T8b, stacked on #598),
+> #604 (T12), #605 (T24), #606 (T23), #607 (T25, stacked on #606).
 
 ---
 
