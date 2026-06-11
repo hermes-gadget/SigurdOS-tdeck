@@ -8,7 +8,7 @@ The Network screen (internally called **Finder**) is SigurdOS's node discovery a
 
 | File | Purpose |
 |------|---------|
-| `src/ui/screens.cpp` | Implementation — `finder_screen_show()` at line 566 |
+| `src/ui/screens/screen_finder.cpp` | Implementation — `finder_screen_show()` |
 | `src/ui/screens.h` | Public API — `finder_screen_show()` declaration |
 | `src/mesh/mesh_wrapper.h` / `.cpp` | Ping API — `sendPingNearby()`, `pingIsActive()`, `pingOnCooldown()`, `pingCooldownRemaining()`, `getPingResultCount()`, `getPingResult()` |
 | `src/mesh/sigurd_mesh_v2.h` | BaseChatMesh subclass — `sendPingNearby()`, `onControlDataRecv()` for PING/PONG and Node Discovery handling |
@@ -153,7 +153,7 @@ This signals that the radio is active and awaiting incoming adverts or a manual 
 
 ## Implementation Details
 
-### `finder_screen_show()` (line 566)
+### `finder_screen_show()` (`src/ui/screens/screen_finder.cpp`)
 
 1. Calls `make_screen_full("Finder")` to construct standard chrome.
 2. Checks `getPingResultCount()` to decide between ping mode and fallback mode.

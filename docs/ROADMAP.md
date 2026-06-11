@@ -80,7 +80,7 @@ Priority tasks:
 
 - Keep this roadmap as the planning source of truth and use [AUDIT.md](AUDIT.md) for findings.
 - Open follow-up issues for stale or superseded feature docs instead of mixing fixes into feature PRs.
-- Reconcile [MISSING_FEATURES.md](MISSING_FEATURES.md), [FEATURES_OVERVIEW.md](FEATURES_OVERVIEW.md), [TELEMETRY_ARCHITECTURE.md](TELEMETRY_ARCHITECTURE.md), and [TELEMETRY_EXPANSION_PLAN.md](TELEMETRY_EXPANSION_PLAN.md) with the current implementation in dedicated docs PRs.
+- Reconcile [MISSING_FEATURES.md](MISSING_FEATURES.md) and [FEATURES_OVERVIEW.md](FEATURES_OVERVIEW.md) with the current implementation in dedicated docs PRs. (Done for the telemetry plans: `TELEMETRY_ARCHITECTURE.md` and `TELEMETRY_EXPANSION_PLAN.md` were retired in #617 after the telemetry implementation landed — `src/diagnostics/` is the authoritative reference.)
 - Add a short capability matrix to the README that points to feature docs, tests, hardware docs, and this roadmap.
 - Tag issues by workstream: `stability`, `performance`, `test`, `debug`, `mesh-parity`, `ui`, `hardware`, `docs`.
 - Keep protected process files, contribution rules, and known-issues updates in their own PRs.

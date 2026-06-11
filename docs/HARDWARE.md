@@ -556,8 +556,11 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 | Type     | Active-low buzzer  |
 | Default  | HIGH (off)         |
 
-> The buzzer is driven as a simple GPIO output. Pull LOW to activate, HIGH to
-> silence. No PWM tone generation is implemented in the current firmware.
+> The buzzer is driven as a GPIO output — no PWM tone generation is implemented.
+> Notification patterns (short/double beep) are played back **non-blocking**:
+> `buzzer_loop()` is called once per main-loop iteration and steps through the
+> active pattern's level/duration table (`src/hal/buzzer.h`). A `buzzer_quiet`
+> preference mutes message-arrival beeps.
 
 ---
 
@@ -607,32 +610,39 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 
 ## Appendix A — Boot Sequence
 
+Numbers in brackets are the `[boot] step N` markers printed by debug builds.
+
 ```
-1. Serial.begin(115200)
-2. TDeckBoard::begin()
+1. Serial.begin(115200)                 [step 1]
+2. TDeckBoard::begin()                  [step 2]
      → PIN_PERIPH_PWR HIGH
      → Trackball GPIO INPUT
      → LoRa DIO1 INPUT_PULLUP
      → ADC resolution 12-bit
      → Wire.begin(18, 8)
      → Deep sleep wake detection
-3. sigurdos_battery_init()
-4. SPIFFS.begin()
-5. sigurdos_gps_init()
-6. sigurdos_display_init()
+3. sigurdos_battery_init() + buzzer_init()
+4. SPIFFS.begin()                       [step 3]
+     → Launcher-aware warning if the mount fails
+5. sigurdos_gps_init() (if GPS enabled) [step 4]
+6. sigurdos_display_init()              [step 5]
      → LovyanGFX init (rotation 1, 320×240)
      → LVGL init
      → Touch init (GT911 I2C)
      → Keyboard init (ESP32-C3 I2C)
      → Trackball init (GPIO)
-7. sigurdos::mesh::init()
-     → LoRa SPI bus init
+     → On failure: restart (no hang)
+7. sigurdos::mesh::init()               [step 6]
+     → Shared SPI bus init
      → SX1262 hard reset + std_init
      → Radio config from prefs or defaults
      → MeshCore SigurdMeshV2 init
-8. sigurdos::ui::init()
-9. sigurdos_sdcard_init()
-10. sigurdos_map_init()
+8. sigurdos::ui::init()                 [step 7]
+9. Debug diagnostics (debug builds)     [step 8]
+10. sigurdos_sdcard_init()              [step 9]
+11. sigurdos_map_init()
+12. WiFi STA auto-connect (non-blocking, if credentials saved)
+13. telemetry::init() (telemetry builds)
 ```
 
 ---

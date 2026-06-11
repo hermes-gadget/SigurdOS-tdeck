@@ -37,6 +37,7 @@ pio run -e SigurdOS_TDeck
 | `test_chat_truncation` | Chat message truncation, long text handling |
 | `test_companion_protocol` | Companion device protocol frames, sync, message enqueue/drain |
 | `test_contact_paging` | Contact list pagination, page count, start/end calculations |
+| `test_contact_store` | Contact persistence format, magic header, version/bounds checks |
 | `test_controller` | RF parameter parsing, frequency/SF/bandwidth/coding rate validation |
 | `test_debug` | Debug level clamping, serial debug command stubs, non-debug build guards |
 | `test_emoji` | Emoji font rendering, fallback logic, sizing |
@@ -48,8 +49,10 @@ pio run -e SigurdOS_TDeck
 | `test_home_screen` | Home screen layout, icon grid, status bars |
 | `test_input_contract` | Trackball/keyboard input event types, remote hook signatures |
 | `test_keyboard` | Matrix scan, keymap, debounce, ghost detection, LVGL mapping |
+| `test_launcher_env` | Launcher runtime detection, partition/otadata probing, false-positive guards |
 | `test_layout` | Adaptive layout helpers, responsive grid calculations, screen size adjustments |
 | `test_lodepng_alloc` | lodepng PSRAM allocator, malloc/realloc fallback, heap caps delegation |
+| `test_log` | Logging macro level prefixes, debug-build compile-time gating |
 | `test_map` | Tile math, zoom levels, bounding box |
 | `test_map_renderer` | Map tile mercator math, zoom validation, lat/lon/tile round-trip |
 | `test_mesh_contract` | Mesh advert types, contact flags, login status, wire format stability |
@@ -122,9 +125,18 @@ SigurdOS-tdeck/
 │   │   └── github_ota.cpp/h ← GitHub-release OTA downloader
 │   ├── mesh/
 │   │   ├── mesh_wrapper.cpp/h  ← SX1262 radio init, RTC, mesh API
-│   │   └── sigurd_mesh_v2.h ← SigurdMeshV2 : BaseChatMesh subclass
+│   │   ├── message_store.cpp/h ← Shared persistent message store (dedup, ACK flags)
+│   │   ├── contact_store.cpp/h ← Versioned contact persistence
+│   │   ├── regions.cpp/h       ← Region map / flood-scope support
+│   │   └── sigurd_mesh_v2.cpp/h ← SigurdMeshV2 : BaseChatMesh subclass
+│   ├── comms/
+│   │   └── companion_bridge.cpp/h ← BLE companion protocol (official MeshCore app)
+│   ├── diagnostics/
+│   │   ├── log.h               ← SIG_LOG* logging macros
+│   │   ├── debug.cpp/h         ← Debug dumps (SIGURDOS_DEBUG builds)
+│   │   └── telemetry*.cpp/h    ← Structured telemetry (heartbeat ring, crash capture)
 │   ├── app/
-│   │   ├── map_renderer.cpp/h  ← Offline map tile renderer (PNG/JPEG, PSRAM canvas)
+│   │   ├── map_renderer.cpp/h  ← Offline map tile renderer (PNG, PSRAM canvas)
 │   │   ├── tile_cache.cpp/h    ← Tile caching layer (LRU, PSRAM)
 │   │   └── qr_show.cpp/h       ← QR code display for contact sharing
 │   ├── fonts/
@@ -133,17 +145,19 @@ SigurdOS-tdeck/
 │   │   ├── emoji_data.cpp/h     ← Emoji unicode character tables
 │   │   └── emoji_images/        ← Emoji picker image assets
 │   └── ui/
-│       ├── theme.h         ← Discord-inspired dark palette
+│       ├── theme.cpp/h     ← Discord-inspired dark palette
 │       ├── responsive.h    ← Adaptive layout helpers (bars, grids, dialogs)
 │       ├── home_screen.cpp/h   ← 4×3 icon grid + top/bottom bars
 │       ├── chat_screen.cpp/h   ← Discord-like chat (channels, bubbles, input)
-│       ├── screens.cpp/h   ← Heard, Map, Settings, Terminals, etc.
+│       ├── screens_common.cpp/h ← Shared screen chrome (make_screen_full, PIN gate)
+│       ├── screens.cpp/h   ← Slim dispatch shim + shared declarations
+│       ├── screens/        ← One module per screen (screen_map, screen_settings_*, …)
 │       ├── onboarding_screen.cpp/h  ← First-boot setup wizard
 │       ├── navigation.cpp/h    ← Screen routing with animations
 │       └── ui.cpp/h        ← Splash → Home transition
 ├── boards/t-deck.json      ← PlatformIO board definition
 ├── platformio.ini          ← Build config (ESP32-S3 + LVGL + MeshCore)
-+-- test/                   <- Native test suite and mocks
+└── test/                   ← Native test suite and mocks
 ```
 
 ## Build & Flash
@@ -276,7 +290,7 @@ All screens from the SigurdOS T-Deck UI, captured from a live device running the
 | **Repeaters** | ![Repeaters](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/repeaters.png) | Lists infrastructure relay nodes (ADV_TYPE_REPEATER) heard on the mesh. Repeaters extend network range and are filtered separately from contacts. |
 | **Finder** | ![Finder](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/network.png) | Ping Nearby interface — press the button to discover nodes on the local mesh. Shows ping results and known repeaters. |
 | **Heard / Packets** | ![Heard](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/heard.png) | Packet log showing all received mesh packets with timestamp, source, RSSI, SNR, and type columns. Useful for network diagnostics. |
-| **Map** | ![Map](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/map.png) | Offline tile map renderer showing node locations (from GPS) with pan and zoom. Renders PNG/JPEG tiles from SD card or PSRAM cache. |
+| **Map** | ![Map](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/map.png) | Offline tile map renderer showing node locations (from GPS) with pan and zoom. Renders PNG tiles from SD card or PSRAM cache. |
 | **Advertise** | ![Advertise](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/advertise.png) | Send an advert (presence beacon) to the mesh so other nodes discover you. Shows advert type, cooldown, and last advertised timestamp. |
 | **Settings** | ![Settings](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/settings.png) | Device configuration: node name, radio params (frequency, SF, power, gain), display timeout, backlight, GPS toggle, and factory reset. |
 | **Trace** | ![Trace](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/trace.png) | Real-time routing trace showing packet paths through the mesh — source → hops → destination with per-hop RSSI/SNR. |

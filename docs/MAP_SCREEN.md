@@ -9,7 +9,7 @@ The Map screen renders **offline map tiles** from the SD card onto an LVGL canva
 | File | Purpose |
 |------|---------|
 | `src/app/map_renderer.h` | Public API — init, render, pan, zoom, reparent, deinit, pixel-to-lat/lon |
-| `src/app/map_renderer.cpp` | Full implementation (~935 lines) — Web Mercator math, tile loading, draw pipeline, tile discovery, metadata parsing |
+| `src/app/map_renderer.cpp` | Full implementation — Web Mercator math, tile loading, draw pipeline, tile discovery, metadata parsing |
 | `src/app/tile_cache.h` | `CachedTile` struct, `TILE_CACHE_SIZE`, function declarations for LRU cache |
 | `src/app/tile_cache.cpp` | LRU cache implementation — init, lookup, evict-slot |
 | `src/app/lodepng_alloc.cpp` | lodepng memory allocator with PSRAM-fallback (for PNG decode) |
@@ -26,7 +26,7 @@ The Map screen is invoked from the **MAP tile** on the home screen:
 |---------|----------|--------------|
 | Home "MAP" tile | `navigate_to(Screen::Map)` → `map_screen_show()` | Opens the offline map view with pan/zoom controls |
 
-### `map_screen_show()` (`src/ui/screens.cpp:740`)
+### `map_screen_show()` (`src/ui/screens/screen_map.cpp`)
 
 ```
 ┌──────────────────────────────────┐
@@ -314,7 +314,7 @@ The original implementation used `uint32_t` for the cache clock, which wraps aft
 | Time to wrap at 1 kHz | ~49.7 days | ~584 million years |
 | Impact of wrap | LRU eviction broken (wrong entry selected) | No practical wrap |
 
-The fix also extracted the tile cache into its own reusable module (`tile_cache.h` / `tile_cache.cpp`) with 11 unit tests.
+The fix also extracted the tile cache into its own reusable module (`tile_cache.h` / `tile_cache.cpp`) with its own unit tests (see [Test Coverage](#test-coverage)).
 
 ---
 
@@ -533,7 +533,7 @@ Where `center_tx` / `center_ty` are the floating-point tile coordinates of the m
 
 ## Test Coverage
 
-The map system has **14 dedicated tests** in `test/test_map/test_map.cpp` plus 11 LRU cache tests:
+The map system has **28 dedicated tests** in `test/test_map/test_map.cpp` — 14 tile-math tests plus 14 LRU cache tests:
 
 ### Tile Math Tests (`class MapTest`)
 
@@ -559,11 +559,14 @@ The map system has **14 dedicated tests** in `test/test_map/test_map.cpp` plus 1
 | Test | What it validates |
 |------|-------------------|
 | `InitClearsAllSlots` | `tile_cache_init()` zeros every entry |
+| `InitIgnoresInvalidInputs` | Null cache / non-positive count are no-ops |
 | `LookupEmptyCacheReturnsNull` | Miss on empty cache returns nullptr, clock unchanged |
+| `LookupRejectsInvalidInputs` | Null cache/clock or bad count returns nullptr |
 | `LookupReturnsEntryOnHit` | Match on all 3 coordinates returns correct pointer |
 | `LookupUpdatesLastUsed` | Hit updates `last_used` to current clock value |
 | `LookupNoMatchReturnsNull` | Partial match (e.g. same zoom, different tx) is a miss |
 | `EvictReturnsEmptySlotFirst` | Nullptr slots are preferred over eviction |
+| `EvictRejectsInvalidInputs` | Null cache / bad count returns nullptr |
 | `EvictReturnsFirstNullAmongOccupied` | First null slot is returned (not last) |
 | `EvictFullCacheReturnsLRU` | When full, returns entry with lowest `last_used` |
 | `EvictFullCacheReturnsLRUAfterLookups` | Recent lookups correctly re-order LRU chain |

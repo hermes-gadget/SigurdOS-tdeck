@@ -9,7 +9,7 @@ The Home screen is SigurdOS's main launcher — a 4×3 icon grid that provides a
 | File | Purpose |
 |------|---------|
 | `src/ui/home_screen.h` | Public API — `home_screen_create()`, `home_screen_show()`, `home_screen_handle_trackball()`, runtime update functions (battery, time, signal, channels) |
-| `src/ui/home_screen.cpp` | Full implementation (~502 lines) — top bar, bottom bar, adaptive icon grid, tile creation, selection rendering, trackball handler |
+| `src/ui/home_screen.cpp` | Full implementation — top bar, bottom bar, adaptive icon grid, tile creation, selection rendering, trackball handler |
 | `src/ui/responsive.h` | Display-size-agnostic layout constants — `TOP_BAR_H`, `BOT_BAR_H`, `CONTENT_H`, `compute_grid()`, `HASHTAG_LABEL_W()` |
 | `src/ui/theme.h` | Pixel theme colours, helpers — `apply_dark_bg()`, `create_signal_dots()`, `rssi_to_bars()` |
 | `src/ui/navigation.cpp` | Screen routing — `navigate_to(Screen)` dispatches to the target screen when a tile is activated |
@@ -25,11 +25,11 @@ The Home screen is composed of three stacked regions:
 │ ≡  #general  #random  #help 14:32│  ← top bar (TOP_BAR_H px, BG_SECONDARY)
 ├──────────────────────────────────┤  ← divider (DIVIDER_H = 1px)
 │ ┌─────┬─────┬─────┬─────┐        │
-│ │CHATS│CONTA│REPEA│FINDE│        │  ← icon grid
+│ │CHATS│ DMs │ROOMS│CONTA│        │  ← icon grid
 │ ├─────┼─────┼─────┼─────┤        │    (4 columns × 3 rows
-│ │PACKE│  MAP│ADVER│SETTI│        │     filling CONTENT_H)
+│ │REPEA│ADVER│  MAP│TERMI│        │     filling CONTENT_H)
 │ ├─────┼─────┼─────┼─────┤        │
-│ │ TRAC│TERMI│ SETU│SIGNA│        │
+│ │PACKE│SETTI│SETUP│SIGNA│        │
 │ └─────┴─────┴─────┴─────┘        │
 ├──────────────────────────────────┤  ← divider (DIVIDER_H = 1px)
 │ SigurdOS T-Deck   ▂▄▆█       72%  │  ← bottom bar (BOT_BAR_H px, BG_SECONDARY)
@@ -38,7 +38,7 @@ The Home screen is composed of three stacked regions:
 
 ### Top Bar
 
-Created by `create_top_bar()` at line 203 of `home_screen.cpp`. A horizontal bar at the top with:
+Created by `create_top_bar()` in `home_screen.cpp`. A horizontal bar at the top with:
 
 | Element | Position | Details |
 |---------|----------|---------|
@@ -54,7 +54,7 @@ A 1px horizontal line at `CONTENT_Y` (immediately below the top bar). `BG_COLOR`
 
 ### Icon Grid
 
-Created by `create_icon_grid()` at line 327 of `home_screen.cpp`. An adaptive grid container sized to `CONTENT_H` (display height minus bars and dividers). The grid is fully tiled with 12 icon tiles, no scrolling.
+Created by `create_icon_grid()` in `home_screen.cpp`. An adaptive grid container sized to `CONTENT_H` (display height minus bars and dividers). The grid is fully tiled with 12 icon tiles, no scrolling.
 
 **Tile dimensions are computed dynamically**:
 - `GRID_PAD` = 3px padding around and between tiles
@@ -70,7 +70,7 @@ A 1px horizontal line at `CONTENT_Y + CONTENT_H` (immediately below the grid). S
 
 ### Bottom Bar
 
-Created by `create_bottom_bar()` at line 247 of `home_screen.cpp`. Slightly shorter than the top bar.
+Created by `create_bottom_bar()` in `home_screen.cpp`. Slightly shorter than the top bar.
 
 | Element | Position | Details |
 |---------|----------|---------|
@@ -95,28 +95,28 @@ struct IconDef {
 };
 ```
 
-The 12 icons are defined in the `icons[]` array at line 60:
+The 12 icons are defined in the `icons[]` array in `home_screen.cpp`:
 
 | # | Label | Symbol | Badge | Target Screen | Description |
 |---|-------|--------|-------|---------------|-------------|
 | 0 | **CHATS** | `LV_SYMBOL_ENVELOPE` (✉) | ✅ Yes | `Screen::Chat` | Open the messaging interface — channel list, DMs, message history |
-| 1 | **CONTACTS** | `LV_SYMBOL_CALL` (📞) | No | `Screen::Contacts` | Browse known mesh nodes, view contact details, start DMs |
-| 2 | **REPEATERS** | `LV_SYMBOL_WIFI` (📶) | No | `Screen::Network` | View and manage mesh network repeaters |
-| 3 | **FINDER** | `LV_SYMBOL_EYE_OPEN` (👁) | No | `Screen::Network` | Locate nearby nodes (reuses Network screen) |
-| 4 | **PACKETS** | `LV_SYMBOL_LIST` (☰) | No | `Screen::Heard` | Show heard-node packet log |
-| 5 | **MAP** | `LV_SYMBOL_GPS` (⌂) | No | `Screen::Map` | Open the offline PNG-tile map renderer |
-| 6 | **ADVERTISE** | `LV_SYMBOL_AUDIO` (♪) | No | `Screen::Advertise` | Broadcast node presence / custom advertisements |
-| 7 | **SETTINGS** | `LV_SYMBOL_SETTINGS` (⚙) | No | `Screen::Settings` | Device configuration, preferences, radio settings |
-| 8 | **TRACE** | `LV_SYMBOL_SHUFFLE` (⇄) | No | `Screen::Trace` | Mesh packet trace / route debugging |
-| 9 | **TERMINAL** | `LV_SYMBOL_KEYBOARD` (⌨) | No | `Screen::Terminal` | Developer serial terminal / debug console |
-| 10 | **SETUP** | `LV_SYMBOL_SETTINGS` (⚙) | No | `Screen::Onboarding` | First-boot / reset onboarding wizard |
+| 1 | **DMs** | `LV_SYMBOL_FILE` | No | `Screen::Chat` | Direct messages (same Chat screen, DM conversations) |
+| 2 | **ROOMS** | `LV_SYMBOL_DIRECTORY` | No | `Screen::Contacts` | Room servers (listed on the Contacts screen) |
+| 3 | **CONTACTS** | `LV_SYMBOL_CALL` (📞) | No | `Screen::Contacts` | Browse known mesh nodes, view contact details, start DMs |
+| 4 | **REPEATERS** | `LV_SYMBOL_WIFI` (📶) | No | `Screen::Repeaters` | View infrastructure repeater nodes heard on the mesh |
+| 5 | **ADVERTISE** | `LV_SYMBOL_BELL` | No | `Screen::Advertise` | Broadcast node presence / custom advertisements |
+| 6 | **MAP** | `LV_SYMBOL_GPS` | No | `Screen::Map` | Open the offline PNG-tile map renderer |
+| 7 | **TERMINAL** | `LV_SYMBOL_KEYBOARD` (⌨) | No | `Screen::Terminal` | Developer terminal / diagnostics console |
+| 8 | **PACKETS** | `LV_SYMBOL_LIST` (☰) | No | `Screen::Heard` | Show heard-packet log |
+| 9 | **SETTINGS** | `LV_SYMBOL_SETTINGS` (⚙) | No | `Screen::Settings` | Settings category hub (WiFi, Bluetooth, Radio, GPS, Display, System, Node Stats) |
+| 10 | **SETUP** | `LV_SYMBOL_HOME` | No | `Screen::Onboarding` | First-boot / reset onboarding wizard |
 | 11 | **SIGNAL** | `LV_SYMBOL_BARS` (▂▄▆█) | No | `Screen::Signal` | Signal strength viewer / RF metrics |
 
-**Note:** REPEATERS and FINDER both route to `Screen::Network` — they share the same screen handler but could be distinguished at the destination if needed.
+**Note:** Screens not on the grid are reached from within related screens (e.g. Trace from Contact Detail, the Settings sub-screens from the Settings hub) or via the remote-test `nav` command — all dispatched through `navigate_to()` in `src/ui/navigation.cpp`.
 
 ### Tile Rendering
 
-Each tile is created by `create_icon_tile()` at line 282 of `home_screen.cpp`:
+Each tile is created by `create_icon_tile()` in `home_screen.cpp`:
 
 1. **Background**: `BG_TERTIARY` (`#1E1E1E`), full opacity, zero radius
 2. **Border**: 2px (`PIXEL_BORDER`), default colour `BG_PRIMARY` (`#0F0F0F`) — changes to `ACCENT` cyan when selected
@@ -124,7 +124,7 @@ Each tile is created by `create_icon_tile()` at line 282 of `home_screen.cpp`:
 4. **Pressed state**: `#2A2A2A` background (`LV_STATE_PRESSED`)
 5. **Symbol**: LVGL symbol character, `montserrat_14`, `ACCENT` cyan, centred vertically at `y=-8` (slightly above midline)
 6. **Label**: All-caps tile name, `montserrat_10`, `TEXT_PRIMARY` (`#F2F3F5`), centred at `y=12` (below the symbol)
-7. **Badge** (CHATS only): A 10×10px zero-radius red square (`ACCENT_RED` `#ED4245`), aligned top-right of the tile at offset `(-4, 4)`
+7. **Badge** (CHATS only): An 18×12px zero-radius red counter (`ACCENT_RED` `#ED4245`), aligned top-right of the tile
 
 ### Badge (CHATS Tile)
 
@@ -134,7 +134,7 @@ Only the CHATS tile has `badge = true`. This creates an **18×12px red unread co
 
 ## Trackball Navigation
 
-The 5-direction trackball provides full keyboard-less navigation of the icon grid via `home_screen_handle_trackball()` at line 410.
+The 5-direction trackball provides full keyboard-less navigation of the icon grid via `home_screen_handle_trackball()`.
 
 ### Movement Rules
 
@@ -169,7 +169,7 @@ When the last row has fewer tiles than `active_cols` (e.g. 4 columns × 3 rows =
 
 ## Selection & Highlight
 
-Selection is rendered by `apply_selection()` at line 120:
+Selection is rendered by `apply_selection()`:
 
 - The **previously selected** tile gets its border colour reset to `BG_PRIMARY` (`#0F0F0F`)
 - The **newly selected** tile gets its border colour set to `ACCENT` (`#00BFFF`)
@@ -231,7 +231,7 @@ Brings the Home screen to the foreground with a **slide-in from right** animatio
 
 ### Construction details (`build_home_screen()`)
 
-Both `create()` and `show()` call the internal `build_home_screen()` function at line 371, which:
+Both `create()` and `show()` call the internal `build_home_screen()` function, which:
 
 1. Clears all cached pointer references (`hashtag_label`, `time_label`, `batt_label`, `signal_label`, all `icon_tiles[]`) to prevent stale-pointer use
 2. Clears the back-button reference via `screens_clear_back_btn()`
@@ -296,7 +296,7 @@ All tiles use zero border radius, `PIXEL_BORDER` (2px) minimum border width, no 
 
 ## Safety: Stale-Pointer Handling
 
-The home screen uses **static cached pointers** to LVGL objects for efficient runtime updates of time, battery, signal, and channel text. Since the screen is recreated fresh each time (Home is not persisted in the nav stack), a `LV_EVENT_DELETE` callback is registered at line 387:
+The home screen uses **static cached pointers** to LVGL objects for efficient runtime updates of time, battery, signal, and channel text. Since the screen is recreated fresh each time (Home is not persisted in the nav stack), a `LV_EVENT_DELETE` callback is registered in `build_home_screen()`:
 
 ```cpp
 lv_obj_add_event_cb(scr, [](lv_event_t*) {
@@ -314,6 +314,5 @@ Additionally, `build_home_screen()` explicitly resets all pointers to `nullptr` 
 
 ## Known Issues
 
-- **Badge is static**: The red notification dot on CHATS is always rendered — there is currently no logic to dynamically show/hide it based on actual unread message count. True unread badge logic would require cross-screen communication from the Chat screen's message append flow to the Home screen.
 - **No scroll**: The grid is fixed-size with no scroll. On very small displays or landscape orientations with more rows than fit, tiles may be clipped.
 - **Theme symbol rendering**: LVGL symbol characters are used for tile icons rather than custom bitmap sprites. On builds with limited font compression, these may render as fallback boxes if the symbol font is not correctly linked.

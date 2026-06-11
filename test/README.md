@@ -42,6 +42,7 @@ test/
 |-- test_chat_truncation/           UTF-8 safe chat truncation
 |-- test_companion_protocol/        Companion protocol frame shapes and sync behavior
 |-- test_contact_paging/            Contact list paging bounds and page clamp logic
+|-- test_contact_store/             Contact persistence format, magic header, bounds checks
 |-- test_controller/                RF parameter parsing and validation
 |-- test_debug/                     Debug level bounds and stubs
 |-- test_emoji/                     Emoji font, lookup, fallback, and data checks
@@ -53,8 +54,10 @@ test/
 |-- test_home_screen/               Home tile routing contract
 |-- test_input_contract/            Trackball, keyboard, and input event encoding stability
 |-- test_keyboard/                  Keyboard scan, event, brightness, injection logic
+|-- test_launcher_env/              Launcher detection, partition probing, false-positive guards
 |-- test_layout/                    Screen layout overlap regression checks
 |-- test_lodepng_alloc/             LodePNG PSRAM allocator with DRAM fallback
+|-- test_log/                       Logging macro levels and compile-time gating
 |-- test_map/                       Map projection, tile math, tile cache behavior
 |-- test_map_renderer/              Map renderer constants, zoom validation, and tile math
 |-- test_mesh_contract/             Mesh advert types, contact flags, and buffer capacity stability

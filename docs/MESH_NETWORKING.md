@@ -395,7 +395,7 @@ After a ping completes (or its 3-second window expires), `pingOnCooldown()` retu
 
 ### Usage
 
-The Finder screen (`src/ui/screens.cpp:564`) provides the "Ping Nearby" UI:
+The Finder screen (`src/ui/screens/screen_finder.cpp`) provides the "Ping Nearby" UI:
 - Button to initiate a ping
 - Shows active listening state during the 3-second window
 - Displays results sorted by RSSI
@@ -464,7 +464,7 @@ The wrapper layer (`mesh_wrapper.cpp:512`) maintains a monotonic `trace_tag_coun
 
 ### UI — Trace Screen
 
-The Trace screen (`src/ui/screens.cpp:1436`) presents:
+The Trace screen (`src/ui/screens/screen_trace.cpp`) presents:
 - A list of contacts with known paths (marked with path indicator)
 - Tapping a contact sends a trace probe
 - The returned path is displayed as hop-by-hop SNR values and node hashes
@@ -518,7 +518,7 @@ Each `PacketLogEntry` stores:
 
 ### UI — Heard Screen
 
-The Heard screen (also called Packets screen, `heard_screen_show()` at `screens.cpp:411`) renders a live-updating list:
+The Heard screen (also called Packets screen, `heard_screen_show()` in `src/ui/screens/screen_packets.cpp`) renders a live-updating list:
 - Timestamp column
 - Source column (node name or "RADIO")
 - RSSI column (dBm)
@@ -541,7 +541,7 @@ Navigated to via `Screen::Network`, calls `finder_screen_show()`. Shows:
 
 ### Signal Screen
 
-`signal_screen_show()` (in `screens.cpp`) provides real-time radio metrics:
+`signal_screen_show()` (in `src/ui/screens/screen_signal.cpp`) provides real-time radio metrics:
 
 | Metric | API | Description |
 |--------|-----|-------------|

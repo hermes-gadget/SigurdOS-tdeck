@@ -5,7 +5,7 @@ Pre-built firmware for the LilyGo T-Deck (ESP32-S3, 16 MB flash).
 | File | Use |
 |------|-----|
 | `firmware-merged.bin` | **Full flash at 0x0** — recommended for standalone first install (bootloader + partitions + boot_app0 + firmware) |
-| `SigurdOS-tdeck-launcher.bin` | Same bytes as merged — feed to [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) for install as a Launcher app |
+| `SigurdOS-tdeck-launcher.bin` | Same bytes as merged — feed to [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) for install as a Launcher app. Published as a [release asset](https://github.com/hermes-gadget/SigurdOS-tdeck/releases/latest); local builds emit it as `webflasher/sigurdos-tdeck-launcher.bin` |
 | `sigurdos-tdeck-merged.bin` | Full flash at 0x0 — legacy merged build (older format) |
 | `sigurdos-tdeck.bin` | App update only — flash at 0x10000 (preserves bootloader/partitions) |
 
@@ -35,6 +35,7 @@ After a successful firmware build, `merge_bin.py`:
     - `sigurdos-tdeck-boot_app0.bin`
     - `sigurdos-tdeck-firmware.bin`
     - `sigurdos-tdeck-full.bin` (identical to `firmware-merged.bin`)
+    - `sigurdos-tdeck-launcher.bin` (identical to `firmware-merged.bin` — the Launcher install artifact)
 3.  Generates `webflasher/manifest.json` containing firmware version, Git SHA,
     artifact SHA-256 checksums, flash offsets, and build metadata.
 

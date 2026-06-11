@@ -9,7 +9,7 @@ The Chat screen is SigurdOS's primary messaging interface — a Discord-inspired
 | File | Purpose |
 |------|---------|
 | `src/ui/chat_screen.h` | Public API — `chat_screen_show()`, `chat_screen_open_dm()`, `chat_screen_add_msg()`, `chat_screen_handle_trackball()`, message cap get/set, SPIFFS persistence functions |
-| `src/ui/chat_screen.cpp` | Full implementation (~1613 lines) — channel list, messaging view, message bubbles, input bar, emoji picker, send logic, trackball handler, SPIFFS persistence |
+| `src/ui/chat_screen.cpp` | Full implementation — channel list, messaging view, message bubbles, input bar, emoji picker, send logic, trackball handler, SPIFFS persistence |
 | `src/ui/navigation.cpp` | Screen routing — `navigate_to(Screen::Chat)` dispatches to `chat_screen_show()` |
 
 ---
@@ -279,7 +279,7 @@ Messages are persisted to the SPIFFS filesystem at `/msgs` for survival across r
 Called from:
 - `ui::loop()` every 5 minutes (every 10th 30-second tick → `save_counter >= 10`)
 - `onboarding_screen.cpp` before `ESP.restart()` during onboarding completion
-- `screens.cpp` before `ESP.restart()` in settings
+- `src/ui/screens/screen_settings_system.cpp` before `ESP.restart()` in Settings → System
 
 **Binary format**:
 ```
@@ -482,8 +482,13 @@ Loads persisted message history from SPIFFS at boot. Validates file header and m
 
 ## Known Issues
 
-See `docs/KNOWN_ISSUES.md` for:
+See `docs/KNOWN_ISSUES.md` for the current tracker.
 
-- **Navigation history stack**: The 8-entry circular buffer wraps incorrectly after overflow, which can affect the back button behavior when deep in the Chat screen's sub-views
-- **Onboarding ESP.restart()**: `chat_save_messages()` is called immediately before `ESP.restart()` on the onboarding screen, but SPIFFS write caching may cause data loss — a small `delay(100)` is needed after save
-- **LVGL tick starvation**: During LoRa TX/RX (100-500ms), LVGL timer handler is not serviced, causing visible UI stuttering including scroll jerks and frozen button feedback
+Still open:
+
+- **Onboarding ESP.restart()**: `chat_save_messages()` is called immediately before `ESP.restart()` at the end of onboarding (`src/ui/onboarding_screen.cpp`) with no flash-settle delay — SPIFFS write caching may cause data loss
+
+Previously listed here, since fixed:
+
+- **Navigation history stack**: now a linear 8-entry stack (`src/ui/navigation.cpp`) that drops the oldest entry when full — no circular wrap
+- **LVGL tick starvation**: the mesh loop now services `lv_timer_handler()` periodically during long radio operations (`src/mesh/mesh_wrapper.cpp`)

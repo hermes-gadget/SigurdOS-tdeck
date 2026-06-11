@@ -1514,6 +1514,11 @@ No agent should attempt this without the OQ-5 answer.
 > #589 (T1), #590 (T3), #591 (T4), #592 (T5), #593 (T2), #594 (T11), #596 (T21),
 > #598 (T8a), #600 (T9), #601 (T22), #602 (T7), #603 (T8b, stacked on #598),
 > #604 (T12), #605 (T24), #606 (T23), #607 (T25, stacked on #606).
+>
+> **Update (post-sweep):** all of the PRs listed above have since been merged into
+> `dev`. Every roadmap task that could be done without owner input or hardware is
+> now complete; the only remaining items are the blocked tasks (T6/OQ-1, T10,
+> T13/OQ-2, T19, T26/OQ-5) and the hardware-gated validations listed above.
 
 ---
 

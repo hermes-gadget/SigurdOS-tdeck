@@ -1,6 +1,6 @@
 # Terminal Screen
 
-> **Source**: `src/ui/screens.cpp` (lines 1271–1425)
+> **Source**: `src/ui/screens/screen_terminal.cpp`
 > **Navigation**: Home screen → **TERMINAL** icon (`LV_SYMBOL_KEYBOARD`)
 
 The Terminal is a built-in, keyboard-driven command-line interface on the T-Deck. It provides direct access to mesh radio diagnostics and utility functions without leaving the LVGL UI. Designed for developers, field testing, and power users.
@@ -310,7 +310,7 @@ The emoji font is wired up as a fallback at boot time in `emoji_font_register_fa
 
 ## Unknown Command Handling
 
-Any input that does not match one of the five recognised commands (`help`, `status`, `advert`, `ping`, `emoji-list`) is treated as an unknown command.
+Any input that does not match one of the recognised commands listed in [Current command set](#current-command-set) is treated as an unknown command.
 
 **Behaviour**:
 1. The input is echoed to the log prefixed with `>`
@@ -376,11 +376,11 @@ The radio configuration line reads from `sigurdos::prefs_get()` at the moment th
 
 1. User types text in the input textarea and presses Enter
 2. `LV_EVENT_READY` fires on the textarea
-3. The callback function `lv_event_cb_t` (lambda at line 1372) executes:
+3. The textarea's event callback (in `screen_terminal.cpp`) executes:
    - Reads text via `lv_textarea_get_text(ta)`
    - Returns early if text is empty (`nullptr` or `""`)
    - Echoes `> <command>` to the log in `TEXT_PRIMARY`
-   - Compares against the five known command strings
+   - Compares against the known command strings
    - Prints the result line (with appropriate colour classification)
    - Clears the input field via `lv_textarea_set_text(ta, "")`
 

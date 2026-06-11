@@ -8,7 +8,7 @@ The Signal screen is a read-only dashboard displaying real-time radio statistics
 
 | File | Purpose |
 |------|---------|
-| `src/ui/screens.cpp` | Implementation — `signal_screen_show()` at line 691 |
+| `src/ui/screens/screen_signal.cpp` | Implementation — `signal_screen_show()` |
 | `src/ui/screens.h` | Public API — `signal_screen_show()` declaration |
 | `src/mesh/mesh_wrapper.h` / `.cpp` | Runtime mesh queries — `getLastRSSI()`, `getLastSNR()`, `getNoiseFloor()` |
 | `src/hal/prefs.h` / `.cpp` | Persisted `NodePrefs` (frequency, bandwidth, SF, CR, TX power) |
@@ -80,7 +80,7 @@ The user must navigate to **Settings > Radio** (`radio_setup_screen_show()`) to 
 
 ## Implementation Details
 
-### `signal_screen_show()` (line 691)
+### `signal_screen_show()` (`src/ui/screens/screen_signal.cpp`)
 
 1. Calls `make_screen_full("Signal")` to construct the standard top bar + bottom bar chrome.
 2. Queries three runtime metrics via the mesh wrapper:
