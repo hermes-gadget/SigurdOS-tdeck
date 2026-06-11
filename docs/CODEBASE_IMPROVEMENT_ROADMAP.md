@@ -706,9 +706,20 @@ upgrade flash.
 **First PR or later?** Later PR.
 **Depends on**: T8a (hard dependency).
 
----
-
-#### T9: Logging macros — header + pilot migration
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T8b-contacts-format-v1`
+> (stacked on `roadmap/T8a-contact-store`; merge T8a's PR first).
+> New write format: magic `{'S','G','C',0xB1}` (4) + version `uint8 = 1` + count
+> `int32` + unchanged 66-byte records. Loader reads the first 4 bytes: magic match →
+> version check (reject > 1), count clamped to `[0, MAX_CONTACTS]`; otherwise the
+> bytes are the legacy count and the legacy parse runs unchanged, so existing devices
+> upgrade seamlessly. The magic's little-endian int32 value is negative, so a firmware
+> downgrade rejects the new file via the old `n <= 0` check instead of ingesting
+> garbage (documented in a header comment + downgrade-simulation test). Tests added:
+> versioned golden bytes, legacy file loads, unknown version rejected, count clamp,
+> truncated versioned file, downgrade negative-count simulation. mesh_wrapper API
+> untouched. **Downgrade note for release notes**: after this ships, rolling back
+> firmware loses saved contacts (re-discovered via mesh adverts). Hardware check
+> (contacts survive the upgrade flash) **blocked on owner** — requires flashing.
 
 **Evidence**
 

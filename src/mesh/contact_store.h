@@ -29,6 +29,14 @@ static constexpr size_t CONTACT_STORE_RECORD_SIZE =
     1 +  // type
     1;   // perm
 
+// File-format magic. Read as a little-endian int32 these bytes are
+// 0xB1434753 — negative — so firmware older than the versioned format
+// reads them as the legacy contact count and rejects the file via its
+// existing `n <= 0` check: a downgrade after upgrade loses saved
+// contacts but cannot ingest garbage.
+static constexpr uint8_t CONTACT_STORE_MAGIC[4] = {'S', 'G', 'C', 0xB1};
+static constexpr uint8_t CONTACT_STORE_VERSION = 1;
+
 void writeContactRecord(const StoredContact& contact, uint8_t* rec, size_t len);
 bool readContactRecord(StoredContact& contact, const uint8_t* rec, size_t len);
 } // namespace detail

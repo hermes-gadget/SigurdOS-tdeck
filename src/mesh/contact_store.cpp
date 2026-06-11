@@ -152,11 +152,17 @@ bool contactStoreSave(int count, ContactStoreReadFn read, void* ctx)
 #if defined(ESP32_PLATFORM)
     File f = SPIFFS.open(STORE_PATH, "w");
     if (!f) return false;
-    bool ok = f.write((const uint8_t*)&count, sizeof(count)) == sizeof(count);
+    bool ok = f.write(detail::CONTACT_STORE_MAGIC, sizeof(detail::CONTACT_STORE_MAGIC)) ==
+              sizeof(detail::CONTACT_STORE_MAGIC);
+    ok = ok && f.write(&detail::CONTACT_STORE_VERSION, 1) == 1;
+    ok = ok && f.write((const uint8_t*)&count, sizeof(count)) == sizeof(count);
 #else
     FILE* f = std::fopen(g_native_path, "wb");
     if (!f) return false;
-    bool ok = std::fwrite(&count, 1, sizeof(count), f) == sizeof(count);
+    bool ok = std::fwrite(detail::CONTACT_STORE_MAGIC, 1, sizeof(detail::CONTACT_STORE_MAGIC), f) ==
+              sizeof(detail::CONTACT_STORE_MAGIC);
+    ok = ok && std::fwrite(&detail::CONTACT_STORE_VERSION, 1, 1, f) == 1;
+    ok = ok && std::fwrite(&count, 1, sizeof(count), f) == sizeof(count);
 #endif
 
     uint8_t rec[detail::CONTACT_STORE_RECORD_SIZE];
@@ -186,14 +192,35 @@ int contactStoreLoad(ContactStoreWriteFn write, void* ctx)
 #if defined(ESP32_PLATFORM)
     File f = SPIFFS.open(STORE_PATH, "r");
     if (!f) return 0;
-    int count = 0;
-    bool ok = f.read((uint8_t*)&count, sizeof(count)) == sizeof(count);
+    uint8_t head[sizeof(detail::CONTACT_STORE_MAGIC)] = {};
+    bool ok = f.read(head, sizeof(head)) == sizeof(head);
 #else
     FILE* f = std::fopen(g_native_path, "rb");
     if (!f) return 0;
-    int count = 0;
-    bool ok = std::fread(&count, 1, sizeof(count), f) == sizeof(count);
+    uint8_t head[sizeof(detail::CONTACT_STORE_MAGIC)] = {};
+    bool ok = std::fread(head, 1, sizeof(head), f) == sizeof(head);
 #endif
+
+    int count = 0;
+    if (ok && std::memcmp(head, detail::CONTACT_STORE_MAGIC, sizeof(head)) == 0) {
+        // Versioned format: magic + version + count + records.
+        uint8_t version = 0;
+#if defined(ESP32_PLATFORM)
+        ok = f.read(&version, 1) == 1;
+        ok = ok && version <= detail::CONTACT_STORE_VERSION;
+        ok = ok && f.read((uint8_t*)&count, sizeof(count)) == sizeof(count);
+#else
+        ok = std::fread(&version, 1, 1, f) == 1;
+        ok = ok && version <= detail::CONTACT_STORE_VERSION;
+        ok = ok && std::fread(&count, 1, sizeof(count), f) == sizeof(count);
+#endif
+        if (ok && count > MAX_CONTACTS) count = MAX_CONTACTS;
+    } else if (ok) {
+        // Legacy format: bare count + records. A legacy count can never
+        // collide with the magic — read as an int32 the magic is negative,
+        // and legacy counts were only ever written positive.
+        std::memcpy(&count, head, sizeof(count));
+    }
 
     if (!ok || count <= 0) {
 #if defined(ESP32_PLATFORM)

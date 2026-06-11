@@ -59,6 +59,15 @@ void appendRecord(std::vector<uint8_t>& bytes, const StoredContact& contact)
     bytes.push_back(contact.perm);
 }
 
+void appendVersionedHeader(std::vector<uint8_t>& bytes, int count, uint8_t version)
+{
+    bytes.insert(bytes.end(), sigurdos::mesh::detail::CONTACT_STORE_MAGIC,
+                 sigurdos::mesh::detail::CONTACT_STORE_MAGIC +
+                     sizeof(sigurdos::mesh::detail::CONTACT_STORE_MAGIC));
+    bytes.push_back(version);
+    appendInt(bytes, count);
+}
+
 class ContactStoreTest : public ::testing::Test {
 protected:
     char path[128]{};
@@ -86,7 +95,7 @@ TEST_F(ContactStoreTest, EmptyStoreRemovesExistingFile) {
     EXPECT_FALSE(fileExists(path));
 }
 
-TEST_F(ContactStoreTest, SaveWritesLegacyBytes) {
+TEST_F(ContactStoreTest, SaveWritesVersionedBytes) {
     StoredContact contacts[2] = {
         makeContact(0x10, "Alice", 2, 1),
         makeContact(0x40, "Bob", 3, 2),
@@ -95,11 +104,92 @@ TEST_F(ContactStoreTest, SaveWritesLegacyBytes) {
     ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(contacts, 2));
 
     std::vector<uint8_t> expected;
-    appendInt(expected, 2);
+    appendVersionedHeader(expected, 2, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
     appendRecord(expected, contacts[0]);
     appendRecord(expected, contacts[1]);
 
     EXPECT_EQ(readFile(path), expected);
+}
+
+TEST_F(ContactStoreTest, LegacyFileLoadsUnchanged) {
+    StoredContact contacts[2] = {
+        makeContact(0x10, "Alice", 2, 1),
+        makeContact(0x40, "Bob", 3, 2),
+    };
+
+    // Hand-written legacy file: bare count + records, no magic/version.
+    std::vector<uint8_t> legacy;
+    appendInt(legacy, 2);
+    appendRecord(legacy, contacts[0]);
+    appendRecord(legacy, contacts[1]);
+    writeBytes(path, legacy);
+
+    StoredContact out[2]{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 2), 2);
+    EXPECT_EQ(std::memcmp(out[0].pub_key, contacts[0].pub_key, SIGURDOS_CONTACT_PUBKEY_LEN), 0);
+    EXPECT_STREQ(out[0].name, "Alice");
+    EXPECT_EQ(out[0].type, 2);
+    EXPECT_EQ(out[0].perm, 1);
+    EXPECT_STREQ(out[1].name, "Bob");
+    EXPECT_EQ(out[1].type, 3);
+    EXPECT_EQ(out[1].perm, 2);
+}
+
+TEST_F(ContactStoreTest, MagicParsesAsNegativeCountOnOldFirmware) {
+    // Downgrade simulation: firmware older than the versioned format reads
+    // the first 4 bytes of the file as the contact count. The magic was
+    // chosen so that value is negative, tripping the legacy `n <= 0` check.
+    // The converse collision — a legacy file whose count equals the magic —
+    // is impossible for the same reason: legacy counts are always positive.
+    StoredContact contact = makeContact(0x10, "Alice", 2, 1);
+    ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(&contact, 1));
+
+    std::vector<uint8_t> raw = readFile(path);
+    ASSERT_GE(raw.size(), sizeof(int));
+    int legacy_count = 0;
+    std::memcpy(&legacy_count, raw.data(), sizeof(legacy_count));
+    EXPECT_LT(legacy_count, 0);
+}
+
+TEST_F(ContactStoreTest, UnknownVersionRejected) {
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, 1, sigurdos::mesh::detail::CONTACT_STORE_VERSION + 1);
+    appendRecord(raw, makeContact(0x10, "Alice", 2, 1));
+    writeBytes(path, raw);
+
+    StoredContact out[2]{};
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 2), 0);
+}
+
+TEST_F(ContactStoreTest, VersionedCountClampedToMaxContacts) {
+    const int over = MAX_CONTACTS + 5;
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, over, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
+    for (int i = 0; i < over; i++) {
+        appendRecord(raw, makeContact((uint8_t)i, "Contact", 1, 0));
+    }
+    writeBytes(path, raw);
+
+    std::vector<StoredContact> out((size_t)over);
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out.data(), over), MAX_CONTACTS);
+}
+
+TEST_F(ContactStoreTest, TruncatedVersionedFileKeepsCompleteRecords) {
+    StoredContact first = makeContact(0x20, "First", 1, 1);
+    StoredContact second = makeContact(0x60, "Second", 2, 2);
+
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, 2, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
+    appendRecord(raw, first);
+    appendRecord(raw, second);
+    raw.resize(raw.size() - 12);  // cut the second record short
+    writeBytes(path, raw);
+
+    StoredContact out[4]{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 4), 1);
+    EXPECT_STREQ(out[0].name, "First");
+    EXPECT_EQ(out[0].type, 1);
+    EXPECT_EQ(out[0].perm, 1);
 }
 
 TEST_F(ContactStoreTest, RoundTripPreservesOrderAndTerminatesName) {
