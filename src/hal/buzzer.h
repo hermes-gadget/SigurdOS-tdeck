@@ -51,6 +51,9 @@ inline const BuzzerPatternStep* sigurdos_buzzer_pattern(BuzzerPatternKind kind,
 // Initialize buzzer GPIO
 void buzzer_init();
 
+// Advance non-blocking pattern playback — call once per main loop iteration
+void buzzer_loop();
+
 // Short beep (~100ms) - for DM arrival
 void buzzer_beep_short();
 

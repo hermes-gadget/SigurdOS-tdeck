@@ -951,6 +951,22 @@ no input/animation hitch.
 **First PR or later?** Later PR (Phase 3).
 **Depends on**: nothing (but merge after T11 to keep `main.cpp` churn serialized).
 
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T12-nonblocking-buzzer`.
+> `buzzer.cpp` now holds the spec'd file-static state machine (`s_pattern`, `s_count`,
+> `s_idx`, `s_step_started_ms`, `s_active`); `buzzer_beep_*()` applies step 0 and
+> returns immediately with restart semantics; new `buzzer_loop()` (declared in
+> `buzzer.h`) advances steps and idles the pin LOW after the terminal marker.
+> `src/main.cpp` calls it right after `sigurdos_display_loop()`. Pattern tables,
+> `buzzer_init()`, polarity (OQ-11), and the `buzzer_quiet` gating at the
+> `ui.cpp:143` call site are untouched. The `#ifndef PLATFORMIO_UNIT_TESTING` guard
+> structure is preserved (stub branch gained a no-op `buzzer_loop()`); note that
+> macro is defined nowhere, so the real implementation also serves the new native
+> tests — `+<hal/buzzer.cpp>` added to the `native_test` filter. Tests: 3 new
+> playback cases drive `buzzer_loop()` with the mock `millis` (sequence + timing for
+> both patterns, restart-while-playing, and a non-blocking proof: the mock `delay()`
+> advances the clock, so an unchanged clock after `buzzer_beep_*()` pins the fix).
+> Hardware check (DM beep + no input hitch) **blocked on owner** — needs flashing.
+
 ---
 
 #### T13: Boot-delay measurement and reduction — **hardware-gated**
