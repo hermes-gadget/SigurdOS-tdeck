@@ -295,6 +295,16 @@ python scripts/smoke_build_matrix.py --profile roadmap
 **First PR or later?** Safe first PR.
 **Depends on**: nothing.
 
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T3-deprecate-connect`.
+> Files changed: `src/hal/wifi_ota.h` (one `[[deprecated(...)]]` line above the
+> `bool connect(...)` declaration; definition in `wifi_ota.cpp` untouched per step 2).
+> Validation: `pio run -e SigurdOS_TDeck 2>&1 | grep -ci deprecat` → **0** (no
+> callers, warning output unchanged); RAM 40.7% / Flash 39.2% byte-identical;
+> `pio test -e native_test` 749 cases (748 pass / 1 skip);
+> `smoke_build_matrix --profile roadmap` all 4 envs PASS (includes the
+> validation-build edge case). Hardware: not applicable — attribute-only change,
+> binary identical. Deleting the function remains gated on OQ-6.
+
 ---
 
 #### T4: Source hygiene — duplicate include + boot-step renumbering
