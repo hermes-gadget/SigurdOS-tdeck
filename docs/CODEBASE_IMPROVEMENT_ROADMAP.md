@@ -1207,7 +1207,15 @@ baseline is triaged; existing jobs untouched.
 **Risk level**: Low. **First PR or later?** Later (after T9 pilot merges; dedicated
 protected-file PR). **Depends on**: T9, T20.
 
----
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T23-static-analysis`.
+> New advisory `lint` job in `pr-ci.yml` (`continue-on-error: true`): runs
+> `pio check -e SigurdOS_TDeck --skip-packages`, then the logging-policy grep
+> failing on raw `Serial.print` in `*.cpp` outside the whitelist. Whitelist lives in
+> the workflow as two regexes: policy dirs (`src/diagnostics|test|validation/`) and
+> the 13 not-yet-migrated files — shrink the second list per T9 migration PR (the
+> T9 pilot migrates `hal/wifi_ota.cpp`; its entry becomes removable once that
+> merges). Grep verified green against current `dev`. Existing `test`/`build` jobs,
+> triggers, permissions, and concurrency group untouched.
 
 #### T24: Nightly env smoke matrix
 
