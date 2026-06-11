@@ -1136,6 +1136,21 @@ its jobs and adopt pr-ci's cache `path`/`key` block verbatim.
 green; artifacts present. **First PR or later?** Safe first PR (dedicated).
 **Depends on**: T20 merged first (so the cache layout settles once).
 
+**Implementation note (2026-06-11)**:
+
+- status: complete
+- files changed: `.github/workflows/build-release.yml`,
+  `docs/CODEBASE_IMPROVEMENT_ROADMAP.md`
+- validation results: `pio test -e native_test -v` passed
+  (748 succeeded, 1 skipped); `pio run -e SigurdOS_TDeck` passed
+  (RAM 40.7%, flash 39.2%); relocation grep confirmed both workflows now use Python
+  `3.12` and the same PlatformIO cache paths/key prefix; `workflow_dispatch` passed on
+  the branch with `sigurdos-tdeck-firmware` artifact present
+- RAM/flash delta: not relevant; CI-only workflow change
+- hardware status: not applicable; no firmware behavior change and no hardware flashed
+- PR branch/name: `roadmap/T21-workflow-align` / `T21: Align the two workflows
+  (Python version + cache)`
+
 ---
 
 #### T22: Release checksums + version-consistency check
