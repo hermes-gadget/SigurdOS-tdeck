@@ -37,7 +37,9 @@ typedef enum {
 } esp_partition_subtype_t;
 
 typedef enum {
-    ESP_PARTITION_SUBTYPE_DATA_OTA = 0x01,
+    ESP_PARTITION_SUBTYPE_DATA_OTA = 0x00,
+    ESP_PARTITION_SUBTYPE_DATA_PHY = 0x01,
+    ESP_PARTITION_SUBTYPE_DATA_NVS = 0x02,
     ESP_PARTITION_SUBTYPE_DATA_SPIFFS = 0x82,
     ESP_PARTITION_SUBTYPE_DATA_FAT = 0x81,
 } esp_partition_subtype_data_t;
@@ -75,6 +77,10 @@ namespace test {
 // Set whether esp_partition_find should return a non-NULL result
 // when called with ESP_PARTITION_TYPE_APP / ESP_PARTITION_SUBTYPE_APP_TEST / NULL.
 void mock_launcher_partition(bool present);
+
+// Set whether esp_partition_find should return an otadata partition and which
+// address esp_partition_get should expose for it.
+void mock_otadata_partition(bool present, uint32_t address);
 
 } // namespace test
 } // namespace sigurdos

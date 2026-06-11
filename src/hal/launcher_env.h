@@ -6,11 +6,10 @@
 // Detection mechanism:
 //   Primary: Launcher's resident app partition uses the `test` subtype
 //   (ESP_PARTITION_SUBTYPE_APP_TEST = 0x20), which never appears in the
-//   standard Arduino default_16MB.csv layout. If this partition subtype
-//   exists at runtime, the device is running under Launcher.
+//   standard Arduino default_16MB.csv layout.
 //
 //   Confirmatory: Under Launcher, otadata lives at 0xD000 (vs 0xE000 in
-//   the standalone layout). Both signals together give high confidence.
+//   the standalone layout). Both signals must be present.
 //
 //   Standalone devices always return false — no false positives possible
 //   with the standard partition table (no `test` app partition exists).
@@ -19,9 +18,8 @@
 #include <cstdint>
 
 // Returns true when the current firmware is installed under bmorcelli/Launcher.
-// Detection is based on the presence of a `test`-subtype app partition
-// (Launcher's resident slot), which never exists in the standard
-// default_16MB.csv partition layout used by standalone builds.
+// Detection requires Launcher's `test`-subtype resident app partition and
+// the Launcher otadata location at 0xD000.
 bool sigurdos_is_under_launcher();
 
 // Returns a human-readable description of the detected environment.
