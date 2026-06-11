@@ -8,6 +8,7 @@
 #include "channel_validation.h"
 #include "public_channel.h"
 #include "message_store.h"
+#include "contact_store.h"
 #include "comms/companion_bridge.h"
 #include "comms/observed_ble_interface.h"
 #include "hal/tdeck_board.h"
@@ -1538,59 +1539,44 @@ void saveState() {
 }
 
 // ── Contact persistence ─────────────────────────
-static const char* CONTACTS_FILE = "/contacts";
+static bool readStoredContact(int index, sigurdos::mesh::StoredContact* out, void*)
+{
+    if (!g_mesh || !out) return false;
+    ::ContactInfo c;
+    if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
+
+    memcpy(out->pub_key, c.id.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
+    memcpy(out->name, c.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
+    out->type = c.type;
+    out->perm = (c.flags >> 1) & 0x03;
+    return true;
+}
+
+static bool writeStoredContact(const sigurdos::mesh::StoredContact& stored, void*)
+{
+    if (!g_mesh) return false;
+
+    ::ContactInfo c{};
+    memcpy(c.id.pub_key, stored.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
+    memcpy(c.name, stored.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
+    c.type = stored.type;
+    c.flags = (c.flags & 0x01) | ((stored.perm & 0x03) << 1);
+    c.name[31] = '\0';
+    c.out_path_len = OUT_PATH_UNKNOWN;
+    c.shared_secret_valid = false;
+    g_mesh->addContact(c);
+    return true;
+}
 
 void saveContacts() {
     if (!g_mesh) return;
-    if (!SPIFFS.begin(false)) return;
     int n = g_mesh->getNumContacts();
-    if (n <= 0) { SPIFFS.remove(CONTACTS_FILE); return; }
-
-    File f = SPIFFS.open(CONTACTS_FILE, "w");
-    if (!f) return;
-
-    // Write contact count
-    f.write((uint8_t*)&n, sizeof(n));
-
-    for (int i = 0; i < n; i++) {
-        ::ContactInfo c;
-        if (!g_mesh->getContactByIdx((uint32_t)i, c)) continue;
-        f.write(c.id.pub_key, PUB_KEY_SIZE);  // 32 bytes
-        f.write((uint8_t*)c.name, 32);         // 32 bytes
-        f.write(&c.type, 1);                    // 1 byte
-        uint8_t perm = (c.flags >> 1) & 0x03;  // extract from flags bits 1-2
-        f.write(&perm, 1);                      // perm byte
-    }
-    f.close();
+    sigurdos::mesh::contactStoreSave(n, readStoredContact, nullptr);
 }
 
 void loadContacts() {
     if (!g_mesh) return;
-    if (!SPIFFS.begin(false)) return;
-    if (!SPIFFS.exists(CONTACTS_FILE)) return;
-
-    File f = SPIFFS.open(CONTACTS_FILE, "r");
-    if (!f) return;
-
-    int n = 0;
-    if (f.read((uint8_t*)&n, sizeof(n)) != sizeof(n) || n <= 0) { f.close(); return; }
-
-    for (int i = 0; i < n; i++) {
-        ::ContactInfo c{};
-        if (f.read(c.id.pub_key, PUB_KEY_SIZE) != PUB_KEY_SIZE) break;
-        if (f.read((uint8_t*)c.name, 32) != 32) break;
-        if (f.read(&c.type, 1) != 1) break;
-        // Read perm byte (format: [count:4][pub_key:32][name:32][type:1][perm:1])
-        uint8_t perm_byte = 0;
-        if (f.read(&perm_byte, 1) != 1) break;
-        // Pack perm into flags bits 1-2, preserving bit 0 (favourite)
-        c.flags = (c.flags & 0x01) | ((perm_byte & 0x03) << 1);
-        c.name[31] = '\0';
-        c.out_path_len = OUT_PATH_UNKNOWN;
-        c.shared_secret_valid = false;
-        g_mesh->addContact(c);
-    }
-    f.close();
+    sigurdos::mesh::contactStoreLoad(writeStoredContact, nullptr);
 }
 
 void shutdown()

@@ -647,6 +647,20 @@ Hardware (maintainer): flash, confirm existing contacts still listed after reboo
 **First PR or later?** Later PR (Phase 2; first Phase 2 persistence PR).
 **Depends on**: nothing (but read T8b before designing the API so you don't paint it in).
 
+**T8a implementation note (roadmap/T8a-contact-store / PR: T8a: Extract contact
+persistence into a testable module (no format change))**
+
+- Status: complete.
+- Files changed: `src/mesh/contact_store.{h,cpp}`, `src/mesh/mesh_wrapper.cpp`,
+  `platformio.ini`, `test/test_contact_store/`, `docs/CODEBASE_IMPROVEMENT_ROADMAP.md`.
+- Validation: `pio test -e native_test -f test_contact_store -v` passed (6/6);
+  `pio test -e native_test -v` passed (755 test cases: 1 skipped, 754 succeeded);
+  `pio run -e SigurdOS_TDeck` passed.
+- RAM/flash delta: RAM unchanged at 133,472 bytes; flash +612 bytes (2,569,853 ->
+  2,570,465 bytes).
+- Hardware status: skipped; maintainer follow-up is to flash and confirm existing
+  contacts still list after reboot.
+
 ---
 
 #### T8b: Version the contacts file format (magic header + bounds check)
@@ -1455,7 +1469,7 @@ Recommended merge order. "Gate" = what must be true before starting.
 | 10 | T22 checksums + version guard | `ci/T22-release-checksums` | Yes | T21 merged |
 | 11 | T7 display-init recovery | `fix/T7-display-init-retry` | No | hardware check planned |
 | 12 | T9 log macros + pilot | `refactor/T9-log-macros` | No | — |
-| 13 | T8a contact store extraction | `refactor/T8a-contact-store` | No | — |
+| 13 | T8a contact store extraction | `roadmap/T8a-contact-store` | No | — |
 | 14 | T8b versioned contacts format | `feat/T8b-contacts-format-v1` | No | T8a merged |
 | 15 | T12 non-blocking buzzer | `perf/T12-buzzer-nonblocking` | No | T11 merged |
 | 16 | T24 nightly smoke | `ci/T24-nightly-smoke` | Yes | T20 merged |
