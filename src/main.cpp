@@ -75,7 +75,7 @@ void setup()
         while (1) delay(1000);
     }
 #if SIGURDOS_DEBUG_UI
-    Serial.println("[boot] step 6: display init OK");
+    Serial.println("[boot] step 5: display init OK");
 #endif
 
     {
@@ -99,27 +99,27 @@ void setup()
         Serial.println("[boot] WARNING: Radio init failed");
 #if SIGURDOS_DEBUG_UI
     else
-        Serial.println("[boot] step 7: mesh radio initialized");
+        Serial.println("[boot] step 6: mesh radio initialized");
 #endif
 #endif
 
     sigurdos::ui::init();
 #if SIGURDOS_DEBUG_UI
-    Serial.println("[boot] step 8: UI splash screen shown");
+    Serial.println("[boot] step 7: UI splash screen shown");
 #endif
 #if SIGURDOS_DEBUG_DIAG
     sigurdos::debug::init();
-    Serial.println("[boot] step 9: debug diagnostics enabled");
+    Serial.println("[boot] step 8: debug diagnostics enabled");
 #endif
 
     // SD card init after radio init so SPI bus is already configured
     if (!sigurdos_sdcard_init()) {
 #if SIGURDOS_DEBUG_UI
-        Serial.println("[boot] step 10: no SD card detected");
+        Serial.println("[boot] step 9: no SD card detected");
 #endif
     } else {
 #if SIGURDOS_DEBUG_UI
-        Serial.println("[boot] step 10: SD card mounted");
+        Serial.println("[boot] step 9: SD card mounted");
 #endif
     }
 

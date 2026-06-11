@@ -35,7 +35,6 @@
 #include "../hal/prefs.h"
 #include "../hal/display.h"
 #include "../hal/keyboard.h"
-#include "../hal/display.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../mesh/regions.h"
 #include "../mesh/channel_validation.h"

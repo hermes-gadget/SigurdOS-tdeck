@@ -348,6 +348,18 @@ Then (maintainer, hardware): debug-build boot log shows `step 1..9` in order.
 **First PR or later?** Safe first PR.
 **Depends on**: nothing.
 
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T4-hygiene`.
+> Files changed: `src/ui/screens.cpp` (deleted the second duplicate
+> `#include "../hal/display.h"`, kept the first), `src/main.cpp` (boot-step
+> strings renumbered 6→5, 7→6, 8→7, 9→8, 10→9 — string literals only).
+> Pre-edit check: no script/test/doc consumes step numbers (step-parse grep
+> empty). Validation: `pio test -e native_test` 749 cases (748 pass / 1 skip);
+> `pio run -e SigurdOS_TDeck` RAM 40.7% / Flash 39.2% **byte-identical**
+> (strings are compiled only under `SIGURDOS_DEBUG_UI`/`_DIAG`);
+> `pio run -e SigurdOS_TDeck_debug` SUCCESS (compiles the renumbered strings).
+> Hardware: boot-log sequence check (`step 1..9` in order) left to the
+> maintainer's next debug-build flash — release behavior unchanged.
+
 ---
 
 #### T5: Refresh drifted non-protected docs + owner action list
