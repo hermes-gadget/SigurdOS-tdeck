@@ -64,6 +64,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
 
+      - name: Check version fallback matches tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          FALLBACK=$(grep -oP '#define SIGURDOS_VERSION\s+"\K[^"]+' src/hal/tdeck_pins.h)
+          if [ "$TAG" != "$FALLBACK" ]; then
+            echo "::error::Tag $TAG != tdeck_pins.h fallback $FALLBACK — bump SIGURDOS_VERSION before tagging"
+            exit 1
+          fi
+
       - name: Build firmware
         run: pio run -e SigurdOS_TDeck
 
@@ -94,6 +104,11 @@ jobs:
         with:
           name: sigurdos-tdeck-firmware
           path: firmware
+
+      - name: Generate checksums
+        run: |
+          cd firmware
+          sha256sum *.bin > SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -127,3 +142,4 @@ jobs:
             firmware/firmware.bin
             firmware/firmware-merged.bin
             firmware/SigurdOS-tdeck-launcher.bin
+            firmware/SHA256SUMS.txt

@@ -1191,6 +1191,18 @@ file produced in artifacts); next real tag exercises the guard.
 **First PR or later?** Safe first PR (dedicated). **Depends on**: T21 (same file —
 serialize edits).
 
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T22-release-checksums`.
+> Added to `.github/workflows/build-release.yml`: (1) `Generate checksums` step in the
+> release job (`sha256sum *.bin > SHA256SUMS.txt` over the downloaded artifacts) with
+> `firmware/SHA256SUMS.txt` appended to the release `files:` list; (2) tag-gated
+> `Check version fallback matches tag` guard in the build job (string equality between
+> `GITHUB_REF_NAME` and the `SIGURDOS_VERSION` fallback in `src/hal/tdeck_pins.h` —
+> grep expression verified locally, extracts `beta-0.1.40`). Guard is skipped on
+> `workflow_dispatch` via the `if:` condition, so non-tag runs are unaffected.
+> Artifact names, release body, triggers, and permissions unchanged. Hunks do not
+> overlap T21's (Python/cache) edits — merge in either order. Validation: YAML parses;
+> CI-only change (no firmware delta). Full `workflow_dispatch` run is owner-triggered.
+
 ---
 
 #### T23: Static analysis + logging-policy grep (non-blocking at first)
