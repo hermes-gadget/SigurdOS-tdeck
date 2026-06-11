@@ -1224,6 +1224,16 @@ checkout/python/cache/install steps as T20, then
 **Risk level**: Low. **Validation**: `workflow_dispatch` run green.
 **First PR or later?** Later (dedicated PR). **Depends on**: T20 (cache layout).
 
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T24-nightly-smoke`.
+> New `.github/workflows/nightly-smoke.yml` exactly per spec: `schedule` cron
+> `0 3 * * *` + `workflow_dispatch`, one job, `permissions: contents: read`, and the
+> same checkout/python(3.12)/cache/install steps as `pr-ci.yml` (T20), then
+> `python scripts/smoke_build_matrix.py --profile roadmap` (builds `SigurdOS_TDeck`,
+> `_telemetry`, `_remote_test`, `_remote_test_radio` — these are CI compile checks
+> only; no device is flashed). No existing workflow touched; no PR-blocking effect.
+> The same matrix passed locally this session (4/4 PASS). Final validation
+> (`workflow_dispatch` run green) is owner-triggered after merge.
+
 ---
 
 #### T25: Doc-reference and size-regression guards (optional, later)
