@@ -1,7 +1,7 @@
 # Launcher Compatibility Roadmap
 
-**Status:** Phase 1/4 code complete, Phase 2a detection validated, Phase 3 C6 keyboard hardening implemented (PR #573 + follow-up)
-**Tracking issue:** [#567](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/567)
+**Status:** C1/C2/C4-C7 are implemented; C3 otadata confirmation is in progress; LauncherHub and return-to-Launcher work remain external/hardware-gated.
+**Tracking issues:** [#567](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/567), [#610](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/610)
 **External project:** [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) (analyzed at v2.7.2, June 2026)
 **Related:** `docs/KNOWN_ISSUES.md` → "SigurdOS Launcher compatibility", `docs/MISSING_FEATURES.md` → "Launcher compatibility — M"
 
@@ -16,12 +16,12 @@ SigurdOS today is **standalone-only firmware**: it assumes it owns the whole 16 
 The key findings of this analysis:
 
 1. **Launcher can already structurally install SigurdOS.** Our existing `firmware-merged.bin` contains a partition table at file offset 0x8000, which Launcher parses: it extracts the app image, creates a fresh SPIFFS partition for it, keeps its own bootloader, and boots SigurdOS from a dynamically allocated OTA partition. ESP32-S3 app images are MMU-mapped per partition, so running from a non-0x10000 offset is not itself a problem.
-2. **App-only `firmware.bin` installs lose persistence.** Launcher's app-only install path creates *no* SPIFFS partition, so `SPIFFS.begin(true)` fails and the mesh identity regenerates on every boot — contacts and channels never persist. The merged binary is the only viable install source today, and nothing documents that.
-3. **Self-OTA is broken or dangerous under Launcher.** With Launcher's single-app layout, `Update.begin()` fails (feature dead but graceful). With multiple installed apps, Arduino `Update` would flash SigurdOS *over another installed firmware's partition* and desync Launcher's app registry. This is the highest-risk runtime issue and needs a Launcher-detection gate.
+2. **App-only `firmware.bin` installs lose persistence.** Launcher's app-only install path creates *no* SPIFFS partition, so `SPIFFS.begin(true)` fails and the mesh identity regenerates on every boot — contacts and channels never persist. The merged/Launcher artifact is the viable install source, and `firmware/README.md` now documents that path.
+3. **Self-OTA is broken or dangerous under Launcher unless gated.** With Launcher's single-app layout, `Update.begin()` fails (feature dead but graceful). With multiple installed apps, Arduino `Update` would flash SigurdOS *over another installed firmware's partition* and desync Launcher's app registry. Current firmware gates WiFi and GitHub self-OTA when Launcher is detected; PR #609 tightens the detection signal.
 4. **The reported breakage ("keyboard doesn't work, many things break") is a warm-handoff problem.** Launcher initializes I2C, GT911 touch, trackball interrupts, the display, and the keyboard backlight before chaining to the installed app via `ESP.restart()` — a software reset that does **not** reset external peripherals (ST7789 has no reset line on the T-Deck; the keyboard is a separate always-running ESP32-C3; GT911 latches its I2C address at its own reset). The exact failure mechanism is unverified and requires physical-hardware debugging (remote-test mode cannot exercise the physical layer — see `CLAUDE.md` / `AGENTS.md`).
 5. **No catalog presence.** Launcher's OTA menu is fed by LauncherHub (`api.launcherhub.net`) filtered by board tag `t-deck`. SigurdOS is not listed; users would have to sideload via SD card or a direct GitHub URL (which works — GitHub release assets support HTTP range requests, which Launcher's online installer requires).
 
-Compatibility is achievable **without changing any standalone behavior**: the work is (a) packaging/documentation, (b) a small runtime "running under Launcher" detection used only to gate self-OTA and adjust boot-time persistence messaging, and (c) hardware validation of the warm handoff. Standalone installs remain byte-identical and behaviorally unchanged.
+Compatibility is achievable **without changing any standalone behavior**. The packaging, documentation, self-OTA gate, persistence diagnostic, and keyboard hardening are in place; the remaining work is tightening the runtime detection confirmation signal, physical hardware validation of the warm handoff, and external LauncherHub catalog coordination. Standalone installs remain byte-identical and behaviorally unchanged.
 
 ---
 
@@ -33,10 +33,28 @@ Compatibility is achievable **without changing any standalone behavior**: the wo
 | SigurdOS chip/flash matches Launcher's T-Deck build | ✅ Yes | Both esp32s3 / 16 MB / QIO / OPI PSRAM (`boards/t-deck.json` here; `boards/_jsonfiles/lilygo-t-deck.json` there) |
 | `firmware-merged.bin` parseable by Launcher's installer | ✅ Yes (by source inspection, untested on hardware) | Launcher `src/sd_functions.cpp::updateFromSD` detects the partition table at 0x8000 and extracts app + SPIFFS spec |
 | `firmware.bin` (app-only) install preserves identity | ❌ No — no SPIFFS partition is created | Launcher `updateFromSD` app-only path passes `spiffs=false`; `src/main.cpp:50-52` here |
-| Self-OTA (WiFi AP / GitHub) under Launcher | ❌ Broken or dangerous | `src/hal/wifi_ota.*`, `src/hal/github_ota.cpp` assume `default_16MB.csv` dual OTA slots |
+| Self-OTA (WiFi AP / GitHub) under Launcher | ✅ Gated off with explanation | `src/hal/wifi_ota.cpp`, `src/hal/github_ota.cpp`, and Settings System refuse OTA when `sigurdos_is_under_launcher()` fires |
 | Boot-to-UI after Launcher handoff | ⚠️ Reported broken (keyboard + more) | `docs/KNOWN_ISSUES.md` — user report, root cause unverified |
 | Listed in Launcher catalog (LauncherHub) | ❌ No | `api.launcherhub.net/firmwares?category=t-deck` |
-| Documented install path for Launcher users | ❌ None | `firmware/README.md` documents standalone flashing only |
+| Documented install path for Launcher users | ✅ Yes | `firmware/README.md` documents `SigurdOS-tdeck-launcher.bin`, app-only caveats, OTA gating, and mode-switch reset behavior |
+
+## Implementation Progress
+
+Last audited: 2026-06-11.
+
+| Roadmap Item | Status | Notes |
+| ------------ | ------ | ----- |
+| C1 — Launcher-install release artifact | Already Implemented | `.github/workflows/build-release.yml` uploads `SigurdOS-tdeck-launcher.bin`; `scripts/merge_bin.py` also emits a local Launcher-named copy/manifest entry. |
+| C2 — Launcher install documentation | Already Implemented | `firmware/README.md` documents SD/WebUI/direct-URL Launcher installs and warns against app-only `firmware.bin` for Launcher persistence. |
+| C3 — Runtime Launcher detection | Partially Complete | `src/hal/launcher_env.*` detects Launcher's `test` app partition; PR #609 adds the roadmap's missing `otadata @ 0xD000` confirmation and native false-positive tests. |
+| C4 — Gate self-OTA under Launcher | Already Implemented | WiFi OTA, GitHub OTA, and Settings System refuse self-OTA under Launcher with an "update through Launcher" explanation. |
+| C5 — Boot-time persistence diagnostic | Already Implemented | `src/main.cpp` prints a Launcher-specific app-only install warning when SPIFFS mount fails under Launcher. |
+| C6 — Warm-handoff keyboard hardening | Already Implemented | Keyboard init now uses bounded probe retry and explicit C3 mode reset; further warm-handoff work must be driven by physical hardware evidence. |
+| C7 — Migration note | Already Implemented | `firmware/README.md`, `docs/KNOWN_ISSUES.md`, and `docs/MISSING_FEATURES.md` document Launcher support caveats and mode-switch reset behavior. |
+| O1 — LauncherHub catalog listing | Blocked | External maintainer/catalog process; direct URL and SD/WebUI install remain the documented path until LauncherHub listing is accepted. |
+| O2 — Reboot to Launcher Settings entry | Blocked | Requires bench validation of return-to-Launcher semantics and whether a stock-framework app can safely write Launcher `otadata`; do not implement speculatively. |
+| O3 — Shrink-audit app image | Not Started | Optional and intentionally deferred: current app size fits comfortably, and the roadmap states shrink work is not required for compatibility. |
+| O4 — Launcher PlatformIO env alias | Complete | Intentionally skipped as a separate env: C1's CI copy and the local `scripts/merge_bin.py` copy provide the Launcher artifact name with zero firmware delta. |
 
 ---
 
