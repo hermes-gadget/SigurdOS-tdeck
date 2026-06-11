@@ -53,7 +53,7 @@ Last audited: 2026-06-11.
 | C7 — Migration note | Already Implemented | `firmware/README.md`, `docs/KNOWN_ISSUES.md`, and `docs/MISSING_FEATURES.md` document Launcher support caveats and mode-switch reset behavior. |
 | O1 — LauncherHub catalog listing | Blocked | External maintainer/catalog process; direct URL and SD/WebUI install remain the documented path until LauncherHub listing is accepted. |
 | O2 — Reboot to Launcher Settings entry | Blocked | Requires bench validation of return-to-Launcher semantics and whether a stock-framework app can safely write Launcher `otadata`; do not implement speculatively. |
-| O3 — Shrink-audit app image | Not Started | Optional and intentionally deferred: current app size fits comfortably, and the roadmap states shrink work is not required for compatibility. |
+| O3 — Shrink-audit app image | In Progress | PR #613 adds the measured size audit and confirms no shrink work is required for Launcher compatibility right now. |
 | O4 — Launcher PlatformIO env alias | Complete | Intentionally skipped as a separate env: C1's CI copy and the local `scripts/merge_bin.py` copy provide the Launcher artifact name with zero firmware delta. |
 
 ---
