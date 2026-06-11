@@ -31,6 +31,10 @@ lv_obj_t* make_screen_full(const char* title);
 // Load a fully built screen object (lv_scr_load wrapper).
 void show_screen(lv_obj_t* scr);
 
+// Update the text inside a settings row button (used after live value set).
+// Shared by the Bluetooth and Settings screens.
+void update_row_label(lv_obj_t* row, const char* new_text);
+
 // Device PIN gate — true while a previous unlock is within the grace window.
 bool pin_grace_active();
 // Show the PIN entry screen; loads target_screen on successful entry.
