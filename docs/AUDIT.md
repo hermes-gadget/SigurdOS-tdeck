@@ -1,5 +1,12 @@
 # SigurdOS T-Deck End-To-End Audit
 
+> **Historical note (2026-06-11):** the dedicated BLE build environment
+> `SigurdOS_TDeck_ble` cited in the validation tables below no longer exists —
+> BLE was folded into the default env (`[env:SigurdOS_TDeck]` sets
+> `-D SIGURDOS_COMPANION_BLE=1`); only `SigurdOS_TDeck_ble_validation` remains
+> as a separate env. Historical command citations are preserved exactly as
+> they were run at audit time.
+
 Date: 2026-06-07
 Refreshed: 2026-06-07 source review against `f74ee234c5a1f0f5ad5ad3a8f1ef17e3b7c2f5f5`
 Validation refreshed: 2026-06-07 upstream-aligned release build, BLE build, and native suite

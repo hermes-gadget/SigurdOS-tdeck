@@ -395,6 +395,22 @@ still finds historical mentions plus the new note; native tests pass (nothing ch
 **First PR or later?** Safe first PR.
 **Depends on**: nothing.
 
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T5-doc-refresh`.
+> Scope drift found by relocation grep (flagged per Rule 4):
+> `docs/BLE_HARDWARE_VALIDATION.md` was deleted in PR #574, so only
+> `docs/AUDIT.md` received the historical note; `docs/FEATURES_OVERVIEW.md:248`
+> carried the same stale `[env:SigurdOS_TDeck_ble]` citation and was corrected
+> (one line — same drift class, non-protected). Historical evidence tables left
+> verbatim. The four `CLAUDE.md`/`AGENTS.md` corrections (owner-only) were
+> re-verified at current dev and listed in the PR description for an owner PR:
+> `slop_mesh.h` (line 89, file doesn't exist), "Main + dev branch model"
+> (line 379, contradicts CONTRIBUTING.md), `hermes-gadget/SlopOS-tdeck` repo
+> references (lines 27/43/51/396/496/503; origin is SigurdOS-tdeck), and the
+> "GPS NMEA — no checksum validation" gotcha (implemented at
+> `src/hal/gps.cpp:269-299`, counter at `:403`).
+> Validation: `pio test -e native_test` 749 cases (748 pass / 1 skip) — docs
+> only. Hardware: not applicable.
+
 ---
 
 #### T6: Untrack `platformio.local.ini` — **Blocked on OQ-1**

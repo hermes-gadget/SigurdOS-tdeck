@@ -245,7 +245,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Dual-consumer hook** — `companion_adapter.inc` fans out message/advert/ack events to both UI and BLE simultaneously
 - **SPIFFS message store** — persistent, append-only, dedup-keyed by (conversation, sender, timestamp); survives reboot; shared between chat UI and BLE sync
 - **Bluetooth UI screen** — enable/disable toggle, PIN display, connection status indicator, Settings → Network entry
-- **Build envs** — `[env:SigurdOS_TDeck_ble]` with `-D SIGURDOS_COMPANION_BLE=1`; 53 companion protocol + 5 message store native tests
+- **Build envs** — BLE is in the default env (`[env:SigurdOS_TDeck]` sets `-D SIGURDOS_COMPANION_BLE=1`; `SigurdOS_TDeck_ble_validation` adds the validation harness); 53 companion protocol + 5 message store native tests
 - **PIN pairing** — static PIN from `NodePrefs.device_pin` with MITM bonding
 - **Phased implementation** — Phase 0 (message store persistence), Phase 1 (MVP: handshake, contact sync, DM send/recv), Phase 2 (channels, adverts, radio config), Phase 3 (repeater login, trace, telemetry, private-key export)
 **Sources:** [`src/comms/companion_bridge.h`](../src/comms/companion_bridge.h), [`src/comms/companion_bridge.cpp`](../src/comms/companion_bridge.cpp), [`src/comms/companion_adapter.inc`](../src/comms/companion_adapter.inc), [`src/mesh/message_store.h`](../src/mesh/message_store.h), [`src/mesh/message_store.cpp`](../src/mesh/message_store.cpp), [`src/ui/screens.cpp`](../src/ui/screens.cpp), [`platformio.ini`](../platformio.ini), [`test/test_companion_protocol/`](../test/test_companion_protocol/), [`test/test_message_store/`](../test/test_message_store/)
