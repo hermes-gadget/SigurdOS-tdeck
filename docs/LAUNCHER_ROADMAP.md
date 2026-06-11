@@ -216,7 +216,7 @@ Everything here is additive; standalone behavior is untouched. Items marked **[d
 |---|---|---|
 | O1 | LauncherHub catalog listing under category `t-deck` (see Release Integration) | One-tap install from the device's OTA menu |
 | O2 | A "Reboot to Launcher" Settings entry, shown only when C3 detection fires (sets boot back to Launcher's resident partition if the partition-table APIs allow it from a stock app, then restarts; needs investigation — Launcher's own writes rely on `CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED`, which we do not enable). If infeasible, document "power-cycle to return to Launcher". | UX parity with other Launcher-aware firmware |
-| O3 | Shrink-audit of the app image (~2.6 MB today, `webflasher/manifest.json`) | Faster Launcher installs, smaller dynamic partition; not required |
+| O3 | Shrink-audit of the app image (~2.6 MB today, `webflasher/manifest.json`; see `docs/LAUNCHER_SIZE_AUDIT.md`) | Complete: no shrink work required for Launcher compatibility right now |
 | O4 | A `SigurdOS_TDeck_launcher` PlatformIO env alias (identical build, different `PROGNAME`) if we want the artifact name baked in rather than copied in CI | Cleaner CI; zero firmware delta |
 
 **Explicitly rejected:** building SigurdOS against Launcher's partition scheme, removing self-OTA from standalone builds, or making Launcher the primary distribution. Standalone remains the first-class product (`docs/MISSING_FEATURES.md` calls Launcher support a niche target).
