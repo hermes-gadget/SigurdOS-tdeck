@@ -164,7 +164,13 @@ void loop()
     sigurdos::ota::loop();         // WiFi OTA web server
     sigurdos::github_ota::loop();  // GitHub OTA downloader
     sigurdos::wifi_sta::loop();    // WiFi STA maintenance
-    sigurdos::ui::update_wifi_status();  // bottom bar WiFi icon
+    {   // WiFi icon refresh — 1 Hz is plenty for an RSSI readout
+        static uint32_t last_wifi_ui = 0;
+        if (millis() - last_wifi_ui >= 1000) {
+            last_wifi_ui = millis();
+            sigurdos::ui::update_wifi_status();  // bottom bar WiFi icon
+        }
+    }
     {   // GPS enabled + interval gate
         static uint32_t last_gps_poll = 0;
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();

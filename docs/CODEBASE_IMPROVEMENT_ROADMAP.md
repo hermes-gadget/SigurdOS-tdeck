@@ -880,6 +880,18 @@ Optional before/after loop-time comparison on a telemetry build.
 early).
 **Depends on**: nothing.
 
+> **Status (2026-06-11): ✅ Complete** — branch `roadmap/T11-wifi-status-interval`.
+> Files changed: `src/main.cpp` only — the bare per-loop call (relocated to
+> line 167 since the anchor was recorded) is now wrapped in the wrap-safe
+> 1 Hz `millis()` gate from the task snippet; first loop iteration still runs
+> the update (`last_wifi_ui = 0`). The creation-time call (now at
+> `src/ui/screens_common.cpp:142` after the T14 extraction) and
+> `update_wifi_status()` itself are untouched. Validation:
+> `pio test -e native_test` 749 cases (748 pass / 1 skip);
+> `pio run -e SigurdOS_TDeck` SUCCESS — RAM +8 B (static gate variable),
+> Flash +44 B vs baseline. Hardware: connect/disconnect ≤1 s icon check and
+> optional telemetry loop-time comparison left to the maintainer's next flash.
+
 ---
 
 #### T12: Non-blocking buzzer pattern playback
