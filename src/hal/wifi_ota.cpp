@@ -4,6 +4,7 @@
 // WiFi OTA implementation — WebServer-based firmware upload.
 
 #include "wifi_ota.h"
+#include "../diagnostics/log.h"
 #include "launcher_env.h"
 #include "prefs.h"
 #include <WiFi.h>
@@ -74,7 +75,7 @@ bool start(const char* ssid, const char* password) {
     if (active) return true;
 
     if (sigurdos_is_under_launcher()) {
-        Serial.println("[ota] REFUSED: OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
+        SIG_LOGW("[ota] REFUSED: OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
         return false;
     }
 
@@ -83,7 +84,7 @@ bool start(const char* ssid, const char* password) {
         // Already connected to a WiFi network — keep STA, bind on local IP
         ip = WiFi.localIP();
         snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-        Serial.printf("[ota] Using STA IP: %s\n", server_ip);
+        SIG_LOGW("[ota] Using STA IP: %s", server_ip);
     } else {
         // Not connected — start AP mode
         WiFi.mode(WIFI_AP);
@@ -95,7 +96,7 @@ bool start(const char* ssid, const char* password) {
 
         ip = WiFi.softAPIP();
         snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-        Serial.printf("[ota] WiFi AP started: %s @ %s\n", ssid, server_ip);
+        SIG_LOGW("[ota] WiFi AP started: %s @ %s", ssid, server_ip);
     }
 
     // Set up web server
@@ -135,29 +136,29 @@ bool start(const char* ssid, const char* password) {
                     pin_valid = true;
                 }
                 if (!pin_valid) {
-                    Serial.printf("[ota] Upload rejected: invalid PIN\n");
+                    SIG_LOGW("[ota] Upload rejected: invalid PIN");
                     // Reject by setting a zero-length update so the write/end
                     // callbacks become no-ops. The completion handler will
                     // report the error.
                     Update.abort();
                     return;
                 }
-                Serial.printf("[ota] Update start: %s (%u bytes)\n",
-                              upload.filename.c_str(), upload.totalSize);
+                SIG_LOGD("[ota] Update start: %s (%u bytes)",
+                         upload.filename.c_str(), upload.totalSize);
                 if (!Update.begin(upload.totalSize)) {
-                    Serial.printf("[ota] Update.begin failed: %s\n", Update.errorString());
+                    SIG_LOGW("[ota] Update.begin failed: %s", Update.errorString());
                     Update.printError(Serial);
                 }
             } else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-                    Serial.printf("[ota] Update.write failed: %s\n", Update.errorString());
+                    SIG_LOGW("[ota] Update.write failed: %s", Update.errorString());
                     Update.printError(Serial);
                 }
             } else if (upload.status == UPLOAD_FILE_END) {
                 if (Update.end(true)) {
-                    Serial.printf("[ota] Update success: %u bytes\n", upload.totalSize);
+                    SIG_LOGW("[ota] Update success: %u bytes", upload.totalSize);
                 } else {
-                    Serial.printf("[ota] Update.end failed: %s\n", Update.errorString());
+                    SIG_LOGW("[ota] Update.end failed: %s", Update.errorString());
                     Update.printError(Serial);
                 }
             }
@@ -261,7 +262,7 @@ void beginConnect(const char* ssid, const char* password) {
     s_conn_start = millis();
     s_connected = false;
     s_rssi = 0;
-    Serial.printf("[wifi-sta] connecting to %s...\n", ssid);
+    SIG_LOGD("[wifi-sta] connecting to %s...", ssid);
 }
 
 Status getStatus() {
@@ -271,7 +272,7 @@ Status getStatus() {
         s_status = Status::Connected;
         s_connected = true;
         s_rssi = WiFi.RSSI();
-        Serial.printf("[wifi-sta] connected! (%d dBm)\n", s_rssi);
+        SIG_LOGD("[wifi-sta] connected! (%d dBm)", s_rssi);
         return Status::Connected;
     }
 
@@ -282,7 +283,7 @@ Status getStatus() {
         s_status = Status::Failed;
         s_connected = false;
         s_rssi = 0;
-        Serial.printf("[wifi-sta] connection timed out\n");
+        SIG_LOGW("[wifi-sta] connection timed out");
         return Status::Failed;
     }
 
@@ -301,7 +302,7 @@ bool connect(const char* ssid, const char* password) {
         if (WiFi.status() == WL_CONNECTED) {
             s_connected = true;
             s_rssi = WiFi.RSSI();
-            Serial.printf("[wifi-sta] connected to %s (%d dBm)\n", ssid, s_rssi);
+            SIG_LOGD("[wifi-sta] connected to %s (%d dBm)", ssid, s_rssi);
             return true;
         }
         delay(200);
@@ -311,7 +312,7 @@ bool connect(const char* ssid, const char* password) {
     WiFi.mode(WIFI_OFF);
     s_connected = false;
     s_rssi = 0;
-    Serial.printf("[wifi-sta] failed to connect to %s\n", ssid);
+    SIG_LOGW("[wifi-sta] failed to connect to %s", ssid);
     return false;
 }
 
@@ -358,13 +359,13 @@ void loop() {
         s_connected = true;
         s_rssi = WiFi.RSSI();
         s_status = Status::Connected;
-        Serial.printf("[wifi-sta] reconnected externally (%d dBm)\n", s_rssi);
+        SIG_LOGD("[wifi-sta] reconnected externally (%d dBm)", s_rssi);
     } else if (!hw && (s_connected || s_status == Status::Connected)) {
         // Was connected, now not.
         s_connected = false;
         s_rssi = 0;
         s_status = Status::Idle;
-        Serial.printf("[wifi-sta] disconnected\n");
+        SIG_LOGW("[wifi-sta] disconnected");
     }
 
     // ── Auto-reconnect ──────────────────────────────────────
@@ -376,8 +377,8 @@ void loop() {
             last_reconnect = millis();
             const NodePrefs& p = sigurdos::prefs_get();
             if (p.wifi_ssid[0]) {
-                Serial.printf("[wifi-sta] auto-reconnecting to %s...\n",
-                              p.wifi_ssid);
+                SIG_LOGD("[wifi-sta] auto-reconnecting to %s...",
+                         p.wifi_ssid);
                 beginConnect(p.wifi_ssid, p.wifi_password);
             }
         }

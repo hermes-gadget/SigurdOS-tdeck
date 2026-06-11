@@ -785,6 +785,21 @@ build before/after.
 **First PR or later?** Later PR (Phase 2).
 **Depends on**: nothing.
 
+**Implementation status (2026-06-11)**: Complete on branch
+`roadmap/T9-log-macros`; PR title `T9: Logging macros — header + pilot migration`;
+issue [#599](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/599).
+Files changed: `src/diagnostics/log.h`, `src/hal/wifi_ota.cpp`,
+`test/test_log/main.cpp`, and this roadmap entry.
+Validation: baseline `pio test -e native_test -v` passed (748 succeeded, 1 skipped);
+baseline `pio run -e SigurdOS_TDeck` passed (RAM 133,472; flash 2,569,853);
+post-change `pio test -e native_test -f test_log -v` passed (2 succeeded);
+post-change `pio test -e native_test -v` passed (750 succeeded, 1 skipped);
+post-change `pio run -e SigurdOS_TDeck` passed (RAM 133,472; flash 2,569,621);
+post-change `pio run -e SigurdOS_TDeck_debug` passed (RAM 134,152; flash 2,578,389);
+`rg -n "Serial\\.print" src/hal/wifi_ota.cpp` returned no matches. Release RAM delta:
+0 bytes; release flash delta: -232 bytes. Hardware status: not run; maintainer still
+needs to boot a debug build with saved WiFi credentials and compare `[wifi-sta]` lines.
+
 ---
 
 #### T10: Measure WDT/stall exposure of long flash operations (measurement only)
@@ -1479,8 +1494,8 @@ Recommended merge order. "Gate" = what must be true before starting.
 | 9 | T21 workflow alignment | `ci/T21-workflow-align` | Yes | T20 merged |
 | 10 | T22 checksums + version guard | `ci/T22-release-checksums` | Yes | T21 merged |
 | 11 | T7 display-init recovery | `fix/T7-display-init-retry` | No | hardware check planned |
-| 12 | T9 log macros + pilot | `refactor/T9-log-macros` | No | — |
-| 13 | T8a contact store extraction | `roadmap/T8a-contact-store` | No | — |
+| | 12 | T9 log macros + pilot | `roadmap/T9-log-macros` | No | — |
+| | 13 | T8a contact store extraction | `roadmap/T8a-contact-store` | No | — |
 | 14 | T8b versioned contacts format | `feat/T8b-contacts-format-v1` | No | T8a merged |
 | 15 | T12 non-blocking buzzer | `perf/T12-buzzer-nonblocking` | No | T11 merged |
 | 16 | T24 nightly smoke | `ci/T24-nightly-smoke` | Yes | T20 merged |
