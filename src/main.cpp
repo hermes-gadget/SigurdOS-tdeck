@@ -71,8 +71,13 @@ void setup()
 #endif
 
     if (!sigurdos_display_init()) {
-        Serial.println("[boot] FATAL: Display init failed");
-        while (1) delay(1000);
+        // Single attempt only — sigurdos_display_init() is not re-entrant
+        // (unconditional lv_init(), indev creation, draw-buffer alloc).
+        // Restart instead of hanging: a transient SPI/display fault
+        // self-recovers; a dead display reboot-loops visibly on serial.
+        Serial.println("[boot] FATAL: Display init failed — restarting in 5 s");
+        delay(5000);
+        ESP.restart();
     }
 #if SIGURDOS_DEBUG_UI
     Serial.println("[boot] step 5: display init OK");

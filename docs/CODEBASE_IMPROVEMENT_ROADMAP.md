@@ -580,6 +580,18 @@ confirm a normal boot.
 check.
 **Depends on**: Phase 0 baseline boot log.
 
+> **Status (2026-06-11): ✅ Complete (variant 2)** — branch `roadmap/T7-display-init-restart`.
+> Shipped the reduced-scope variant: single init attempt, `while (1) delay(1000);`
+> replaced with `delay(5000); ESP.restart();`. The re-entrancy inspection mandated by
+> step 2 found `sigurdos_display_init()` (`src/hal/display.cpp:662`) unconditionally
+> calls `lv_init()`, creates a new LVGL display + three indevs + default group, and
+> allocates the draw buffer — a second call would double-init LVGL and leak, so the
+> 3-attempt retry loop (variant 1) is unsafe without a display.cpp refactor that this
+> task explicitly forbids. Success path unchanged (zero added delay); FATAL serial
+> message preserved with a "— restarting in 5 s" suffix. Validation: native tests +
+> release/debug builds green. Hardware check (forced-false init in a debug build)
+> remains **blocked on owner** — requires flashing physical hardware.
+
 ---
 
 #### T8a: Extract contact persistence into a testable module (no format change)
