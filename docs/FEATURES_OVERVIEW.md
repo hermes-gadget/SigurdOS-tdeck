@@ -379,7 +379,7 @@ A dedicated app-level feature bridging the display, SD card, and GPS systems.
 
 ## Test Suite
 
-While not a user-facing feature, the comprehensive native test suite (749 cases — 748 passing, 1 always-skipped — across 57 `test/test_<name>/` suites as of 2026-06-11) validates every subsystem: HAL drivers, mesh wrapper and protocol contracts, regions, companion BLE protocol, message/contact stores, navigation, layout, theme, telemetry, emoji fonts, OTA contracts, and the Launcher detection helper.
+While not a user-facing feature, the comprehensive native test suite (768 cases — 767 passing, 1 always-skipped — across 56 `test/test_<name>/` suites as of 2026-06-11) validates every subsystem: HAL drivers, mesh wrapper and protocol contracts, regions, companion BLE protocol, message/contact stores, navigation, layout, theme, telemetry, emoji fonts, OTA contracts, and the Launcher detection helper.
 
 Run it with `pio test -e native_test`. See [`test/README.md`](../test/README.md) for the full per-suite listing and mock structure — per-module counts are not duplicated here because they change with nearly every PR.
 
