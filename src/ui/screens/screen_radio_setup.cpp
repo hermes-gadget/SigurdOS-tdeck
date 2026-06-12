@@ -538,6 +538,8 @@ void radio_setup_screen_show()
         sigurdos::prefs_set(np);
         sigurdos::mesh::saveChannels();
         chat_save_messages();
+        // Give flash writes time to complete before restart
+        delay(200);
         ESP.restart();
     }, LV_EVENT_CLICKED, nullptr);
 
