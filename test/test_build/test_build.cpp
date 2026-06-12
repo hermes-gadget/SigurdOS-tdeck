@@ -77,7 +77,9 @@ TEST_F(BuildIntegrationTest, DisplayAPIExists) {
     using ms_fn = uint32_t (*)();
 
     (void)static_cast<init_fn>(sigurdos_display_init);
+    (void)static_cast<loop_fn>(sigurdos_display_init_inputs);
     (void)static_cast<loop_fn>(sigurdos_display_loop);
+    (void)static_cast<loop_fn>(sigurdos_display_render_now);
     (void)static_cast<ms_fn>(sigurdos_display_millis);
     SUCCEED();
 }

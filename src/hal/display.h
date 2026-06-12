@@ -22,7 +22,9 @@
 
 // ── Display lifecycle ───────────────────────────────────
 bool sigurdos_display_init();
+void sigurdos_display_init_inputs();
 void sigurdos_display_loop();
+void sigurdos_display_render_now();
 uint32_t sigurdos_display_millis();
 
 // ── Auto-off (power saving) ─────────────────────────────

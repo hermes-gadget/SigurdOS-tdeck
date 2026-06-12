@@ -35,6 +35,8 @@ inline bool ui_splash_transition_elapsed(uint32_t now_ms,
 }
 
 void init();
+void set_boot_status(const char* status);
+void load_persisted_state();
 void loop();
 bool handle_trackball_event(SigurdOSTrackballEvent event);
 void update_wifi_status();

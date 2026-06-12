@@ -99,6 +99,9 @@ static lv_display_t* lv_disp = nullptr;
 // Full rendering mode flushes the entire frame in one go,
 // which eliminates the multiple tear lines caused by partial flushes.
 static uint8_t* draw_buf = nullptr;
+static bool input_initialized = false;
+static constexpr uint8_t BOOT_DISPLAY_BRIGHTNESS = 200;
+static constexpr uint16_t BOOT_AUTO_OFF_TIMEOUT_SEC = 30;
 
 // ── Debug: expose last flush area for diagnostics ────────
 #if SIGURDOS_DEBUG_DISPLAY
@@ -393,6 +396,10 @@ static void reset_auto_off() {
     auto_off_at = (sec > 0) ? (millis() + (uint32_t)sec * 1000) : UINT32_MAX;
 }
 
+static void reset_auto_off_default() {
+    auto_off_at = millis() + (uint32_t)BOOT_AUTO_OFF_TIMEOUT_SEC * 1000;
+}
+
 static void restore_display_after_sleep()
 {
     tft.setRotation(1);  // Reassert ST7789 landscape state after display auto-off.
@@ -663,7 +670,7 @@ bool sigurdos_display_init()
 {
     tft.init();
     tft.setRotation(1);  // 90° CW: native portrait (240×320) → landscape (320×240)
-    tft.setBrightness(sigurdos::prefs_get().display_brightness);
+    tft.setBrightness(BOOT_DISPLAY_BRIGHTNESS);
     tft.fillScreen(TFT_BLACK);
 
     lv_init();
@@ -712,6 +719,16 @@ bool sigurdos_display_init()
     Serial.println("[debug] LVGL invalidate area tracking enabled");
 #endif
 
+    display_on = true;
+    reset_auto_off_default();
+
+    return true;
+}
+
+void sigurdos_display_init_inputs()
+{
+    if (input_initialized || !lv_disp) return;
+
     lv_indev_t* touch = lv_indev_create();
     lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(touch, lvgl_touch_cb);
@@ -744,18 +761,8 @@ bool sigurdos_display_init()
     // Initialize trackball GPIO input
     sigurdos_trackball_init();
 
-    display_on = true;
+    input_initialized = true;
     reset_auto_off();
-
-    // Backlight pulse: brief off→on to confirm display is alive
-    uint8_t saved_brightness = sigurdos::prefs_get().display_brightness;
-    tft.setBrightness(0);
-    delay(50);
-    tft.setBrightness(255);
-    // Restore saved brightness after the pulse
-    sigurdos_display_set_brightness(saved_brightness);
-
-    return true;
 }
 
 void sigurdos_display_loop()
@@ -840,10 +847,12 @@ void sigurdos_display_loop()
     }
 #endif
 
-    sigurdos_touch_loop();
-    sigurdos_keyboard_scan();
-    sigurdos_trackball_scan();
-    dispatch_trackball_events();
+    if (input_initialized) {
+        sigurdos_touch_loop();
+        sigurdos_keyboard_scan();
+        sigurdos_trackball_scan();
+        dispatch_trackball_events();
+    }
 
     if (wake_refresh_pending) {
         wake_refresh_pending = false;
@@ -865,6 +874,12 @@ void sigurdos_display_loop()
 
     uint32_t next = lv_timer_handler();
     delay(next > 5 ? 5 : next);
+}
+
+void sigurdos_display_render_now()
+{
+    if (!lv_disp) return;
+    lv_refr_now(lv_disp);
 }
 
 uint32_t sigurdos_display_millis()

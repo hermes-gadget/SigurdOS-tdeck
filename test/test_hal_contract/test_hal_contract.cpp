@@ -33,7 +33,9 @@ TEST(HalContractTest, DisplayLifecycleAndPowerApisStayStable) {
     using bool_fn = bool (*)();
 
     (void)static_cast<init_fn>(sigurdos_display_init);
+    (void)static_cast<void_fn>(sigurdos_display_init_inputs);
     (void)static_cast<void_fn>(sigurdos_display_loop);
+    (void)static_cast<void_fn>(sigurdos_display_render_now);
     (void)static_cast<millis_fn>(sigurdos_display_millis);
     (void)static_cast<void_fn>(sigurdos_display_wake);
     (void)static_cast<bool_fn>(sigurdos_display_is_on);

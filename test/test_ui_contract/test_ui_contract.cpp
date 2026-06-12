@@ -20,8 +20,22 @@
 
 #include "ui/home_screen.h"
 #include "ui/screens.h"
+#include "ui/ui.h"
 
 namespace {
+
+TEST(UIContractTest, StartupApisStayStable) {
+    using void_fn = void (*)();
+    using status_fn = void (*)(const char*);
+    using event_fn = bool (*)(SigurdOSTrackballEvent);
+
+    (void)static_cast<void_fn>(sigurdos::ui::init);
+    (void)static_cast<status_fn>(sigurdos::ui::set_boot_status);
+    (void)static_cast<void_fn>(sigurdos::ui::load_persisted_state);
+    (void)static_cast<void_fn>(sigurdos::ui::loop);
+    (void)static_cast<event_fn>(sigurdos::ui::handle_trackball_event);
+    SUCCEED();
+}
 
 TEST(UIContractTest, HomeScreenApisStayStable) {
     using void_fn = void (*)();

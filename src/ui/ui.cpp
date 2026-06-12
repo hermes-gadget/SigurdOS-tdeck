@@ -37,8 +37,10 @@ namespace sigurdos {
 namespace ui {
 
 static lv_obj_t* splash_scr = nullptr;
+static lv_obj_t* splash_status = nullptr;
 static uint32_t splash_start = 0;
 static bool home_shown = false;
+static bool persisted_state_loaded = false;
 
 void init()
 {
@@ -61,6 +63,14 @@ void init()
     lv_obj_set_style_text_font(sub, emoji_wrapped_montserrat_14, 0);
     lv_obj_align(sub, LV_ALIGN_CENTER, 0, 16);
 
+    splash_status = lv_label_create(splash_scr);
+    lv_label_set_text(splash_status, "Starting display...");
+    lv_obj_set_width(splash_status, DISPLAY_W - 32);
+    lv_obj_set_style_text_align(splash_status, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(splash_status, lv_color_hex(theme::TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(splash_status, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(splash_status, LV_ALIGN_BOTTOM_MID, 0, -56);
+
     // Loading bar
     lv_obj_t* bar = lv_obj_create(splash_scr);
     lv_obj_set_size(bar, DISPLAY_W * 2 / 3, 4);
@@ -81,9 +91,20 @@ void init()
     lv_scr_load(splash_scr);
     splash_start = millis();
     home_shown = false;
+    persisted_state_loaded = false;
+}
 
-    // Restore persisted message history from SPIFFS
+void set_boot_status(const char* status)
+{
+    if (!splash_status || !lv_obj_is_valid(splash_status) || !status) return;
+    lv_label_set_text(splash_status, status);
+}
+
+void load_persisted_state()
+{
+    if (persisted_state_loaded) return;
     chat_load_messages();
+    persisted_state_loaded = true;
 }
 
 void loop()
@@ -99,6 +120,7 @@ void loop()
         }
         home_shown = true;
         splash_scr = nullptr;
+        splash_status = nullptr;
     }
 
     // Periodic status bar updates (every 30s)
