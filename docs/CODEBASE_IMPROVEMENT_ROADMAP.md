@@ -498,13 +498,13 @@ git status --short                            # platformio.local.ini no longer l
 **First PR or later?** Safe first PR once unblocked.
 **Depends on**: OQ-1.
 
-> **Status (2026-06-13): ✅ OQ-1 answered + flag canonicalized (PR #642)**
-> - OQ-1 decision: `SIGURDOS_DEBUG_MESH=1` is canonical in `platformio.ini`
+> **Status (2026-06-13): ✅ Complete (PR #642)**
+> - OQ-1 decision: `SIGURDOS_DEBUG_MESH=1` canonical in `platformio.ini`
 >   `[env:SigurdOS_TDeck_remote_test_radio]` build_flags — every tester gets mesh debug.
-> - Flag added to `platformio.ini` in PR #642 (step 1 of proposed fix is done).
-> - Steps 2 + 3 (`git rm --cached platformio.local.ini` + `.gitignore`) still pending —
->   need to ensure no active working tree has local changes in that file before untracking.
->   Can be done as a follow-up or bundled into PR #642.
+> - Flag added to `platformio.ini` (step 1 ✅).
+> - `git rm --cached platformio.local.ini` done (step 2 ✅).
+> - Added `platformio.local.ini` to `.gitignore` (step 3 ✅).
+> - File stays on existing developer machines but won't track in new clones.
 
 ---
 
