@@ -141,7 +141,7 @@ void loop()
             home_screen_update_time(tbuf);
         }
         // Persist state every 5 min (catches unexpected power loss)
-        static uint8_t save_counter = 0;
+        static uint16_t save_counter = 0;
         if (++save_counter >= 10) {
             save_counter = 0;
             sigurdos::mesh::saveState();

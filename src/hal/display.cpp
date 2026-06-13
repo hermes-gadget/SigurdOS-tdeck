@@ -668,7 +668,10 @@ static void lvgl_invalidate_cb(lv_event_t* e)
 
 bool sigurdos_display_init()
 {
-    tft.init();
+    if (!tft.init()) {
+        Serial.println("[disp] FATAL: tft.init() failed");
+        return false;
+    }
     tft.setRotation(1);  // 90° CW: native portrait (240×320) → landscape (320×240)
     tft.setBrightness(BOOT_DISPLAY_BRIGHTNESS);
     tft.fillScreen(TFT_BLACK);

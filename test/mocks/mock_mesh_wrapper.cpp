@@ -72,7 +72,7 @@ bool getContactByName(const char* name, ContactInfo* out) {
     (void)name; (void)out; return false;
 }
 int getChannelCount() { return 0; }
-int exportChannels(char names[][32], int max) { return 0; }
+int exportChannels(char names[][37], int max) { return 0; }
 bool addChannel(const char* name, const char* psk) { return false; }
 bool removeChannel(int idx) { (void)idx; return true; }
 

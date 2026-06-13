@@ -66,6 +66,8 @@ static int  nmea_pos = 0;
 static uint8_t gps_baud_index = 0;
 
 static constexpr uint32_t GPS_BAUD_PROBE_INTERVAL_MS = 3000;
+static constexpr uint32_t GPS_PROBE_TIMEOUT_MS = 60000;  // stop cycling after 60s with no valid sentences
+static uint32_t gps_probe_start_ms = 0;
 static constexpr uint8_t GPS_BAUD_CANDIDATE_COUNT =
     (GPS_PRIMARY_BAUD_RATE == GPS_FALLBACK_BAUD_RATE) ? 1 : 2;
 
@@ -92,6 +94,13 @@ static void gps_maybe_cycle_baud()
     if (gps.valid_sentences > 0) return;
 
     uint32_t now = millis();
+
+    // Latch probe start on first invocation
+    if (gps_probe_start_ms == 0) gps_probe_start_ms = now;
+
+    // Stop cycling after the probe timeout expires
+    if ((uint32_t)(now - gps_probe_start_ms) > GPS_PROBE_TIMEOUT_MS) return;
+
     if ((uint32_t)(now - gps.last_baud_switch_ms) < GPS_BAUD_PROBE_INTERVAL_MS) return;
 
     gps_begin_uart((uint8_t)(gps_baud_index + 1), true);
@@ -326,6 +335,7 @@ void sigurdos_gps_init() {
     memset(&gps, 0, sizeof(gps));
     nmea_pos = 0;
     gps_baud_index = 0;
+    gps_probe_start_ms = 0;
     gps_begin_uart(gps_baud_index, false);
     gps.initialized = true;
 }

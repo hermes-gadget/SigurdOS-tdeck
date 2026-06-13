@@ -146,7 +146,7 @@ void channels_screen_show()
 
     std::function<void()> rebuild = [list, &rebuild]() {
         lv_obj_clean(list);
-        char names[8][32];
+        char names[8][37];
         int n = sigurdos::mesh::exportChannels(names, 8);
         if (n == 0) {
             auto* item = lv_list_add_btn(list, LV_SYMBOL_WARNING, "No channels joined");

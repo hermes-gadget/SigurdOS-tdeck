@@ -124,7 +124,7 @@ static constexpr int LIST_ROW_H  = 44;
 
 // ── Channel state ──────────────────────────────────────────
 static constexpr int MAX_CHANNELS = 16;
-static char  dyn_channels[MAX_CHANNELS][32];
+static char  dyn_channels[MAX_CHANNELS][37];  // max "DM: " (4) + contact name (31) + null = 36 → 37 for safety
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
 static int   active_channel = 0;
@@ -710,7 +710,7 @@ static void populate_channel_rows(lv_obj_t* list) {
 
 static int find_channel_idx(const char* channel)
 {
-    if (!channel || !channel[0]) return active_channel;
+    if (!channel || !channel[0]) return -1;  // reject empty/null — don't silently route to active channel
     for (int i = 0; i < dyn_count; i++) {
         if (strcmp(dyn_channels[i], channel) == 0) return i;
     }

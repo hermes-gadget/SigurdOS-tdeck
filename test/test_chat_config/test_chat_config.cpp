@@ -110,9 +110,9 @@ TEST(ChatScreenDmName, NullTerminatorCheck) {
 }
 
 TEST(ChatScreenDmName, ChannelCopyFits) {
-    // Verify DM name fits in dyn_channels[32] buffer
-    // "DM: " uses 4 bytes, leaving 27 bytes for name within 32-byte channel buffer
-    // Longer names will be truncated by strncpy — this documents the limitation
+    // Verify DM name fits in dyn_channels[37] buffer
+    // "DM: " uses 4 bytes, leaving 32 bytes for name within 37-byte channel buffer
+    // 31-char names fit fully; names at MAX_NAME_LEN (31) produce "DM: " + 31 = 35 chars
     char max_name[32];
     memset(max_name, 'A', MAX_NAME_LEN);
     max_name[MAX_NAME_LEN] = '\0';

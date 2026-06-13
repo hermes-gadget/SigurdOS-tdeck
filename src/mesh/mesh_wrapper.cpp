@@ -1232,7 +1232,7 @@ void setContactFavourite(const char* name, bool favourite) {
 
 int getChannelCount() { return g_mesh ? g_mesh->getChannelCount() : 0; }
 
-int exportChannels(char names[][32], int max) {
+int exportChannels(char names[][37], int max) {
     if (!g_mesh) return 0;
     int n = 0;
     for (int i = 0; i < g_mesh->getChannelCount() && n < max; i++) {

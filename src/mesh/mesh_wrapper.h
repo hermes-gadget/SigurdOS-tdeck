@@ -115,7 +115,7 @@ bool isContactFavourite(const char* name);
 void setContactFavourite(const char* name, bool favourite);
 
 int  getChannelCount();
-int  exportChannels(char names[][32], int max);
+int  exportChannels(char names[][37], int max);
 bool addChannel(const char* name, const char* psk_base64);
 bool addHashtagChannel(const char* name);
 bool joinPublicChannel();

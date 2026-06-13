@@ -261,7 +261,7 @@ static void emit_mesh_chan_stats() {
     int nch = sigurdos::mesh::getChannelCount();
     if (nch <= 0) return;
     constexpr int MAX_CH = 32;
-    char names[MAX_CH][32];
+    char names[MAX_CH][37];
     int got = sigurdos::mesh::exportChannels(names, MAX_CH);
     for (int i = 0; i < got; i++) {
         emit_tag(tag::MESH_CHAN);
