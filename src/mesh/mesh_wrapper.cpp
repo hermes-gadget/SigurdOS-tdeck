@@ -802,16 +802,18 @@ bool init(bool spiffs_ok)
     int     cr       = p.configured ? p.cr    : LORA_CR;
     int     tx_power = p.configured ? p.tx_power_dbm : LORA_TX_PWR;
 
-#if SIGURDOS_DEBUG
-    // Debug builds: override NVS with compile-time radio defaults.
+#ifdef SIGURDOS_DEBUG_FORCE_RADIO_PARAMS
+    // Remote-test / automation builds: override NVS with compile-time radio defaults.
     // This ensures consistent behavior regardless of stale NVS values
     // from previous firmware versions or manual configuration.
+    // NOTE: NOT enabled by SIGURDOS_DEBUG — that's for diagnostic logging only.
+    // Use SIGURDOS_DEBUG_FORCE_RADIO_PARAMS in remote_test environments.
     freq = LORA_FREQ;
     bw   = LORA_BW;
     sf   = LORA_SF;
     cr   = LORA_CR;
     tx_power = LORA_TX_PWR;
-    Serial.println("[mesh] DEBUG — forcing compile-time radio params");
+    Serial.println("[mesh] DEBUG_FORCE_RADIO — overriding with compile-time params");
 #endif
 
     if (!p.configured) {
@@ -821,9 +823,11 @@ bool init(bool spiffs_ok)
     }
 
     // If still not configured (non-debug builds), keep SX1262 off.
-    // In debug builds, the SIGURDOS_DEBUG block below saves configured=true
-    // to NVS — but it can only do that if we don't early-return here.
-    // Debug builds always init the radio with compile-time defaults.
+    // In debug/remote_test builds we init the radio anyway — debug for diagnostic
+    // access, remote_test because the FORCE_RADIO_PARAMS block below writes
+    // configured=true. Debug builds without FORCE_RADIO_PARAMS will use NVS values.
+    // In production builds, we hold the radio in reset until the user configures it
+    // via Settings → Radio Setup.
 #if !SIGURDOS_DEBUG
     {
         const auto& cp = sigurdos::prefs_get();
@@ -911,9 +915,9 @@ bool init(bool spiffs_ok)
     // even if persisted NVS contains other channels from older firmware.
     ensurePublicChannelPresent(true);
 
-    // Debug builds: auto-join the #testingsigurdos test channel for RF testing on
+    // Automation builds: auto-join the #testingsigurdos test channel for RF testing on
     // 869.525/SF10/BW250/CR5. addChannelBool() is a no-op if already present.
-#if SIGURDOS_DEBUG
+#ifdef SIGURDOS_DEBUG_FORCE_RADIO_PARAMS
     g_mesh->addChannelBool("testingsigurdos", "Si/tjXzmnwmPBA43Fw4b3Q==");
     saveChannels();
     // is fully operational without requiring Settings → Radio Setup.
@@ -927,7 +931,7 @@ bool init(bool spiffs_ok)
             dp.cr = LORA_CR;
             dp.tx_power_dbm = LORA_TX_PWR;
             sigurdos::prefs_set(dp);
-            Serial.println("[mesh] DEBUG: forced configured=true for testing");
+            Serial.println("[mesh] DEBUG_FORCE_RADIO: forced configured=true for testing");
         }
     }
 #endif
