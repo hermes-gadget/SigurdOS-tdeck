@@ -9,6 +9,7 @@
 #include "public_channel.h"
 #include "message_store.h"
 #include "contact_store.h"
+#include "persistence_store.h"
 #include "comms/companion_bridge.h"
 #include "comms/observed_ble_interface.h"
 #include "hal/tdeck_board.h"
@@ -299,14 +300,7 @@ static bool loadIdentity(::mesh::LocalIdentity& id) {
 static void saveIdentity(::mesh::LocalIdentity& id) {
     uint8_t buf[128];
     size_t len = id.writeTo(buf, sizeof(buf));
-    File f = SPIFFS.open("/mesh_id", "w");
-    if (!f) return;
-    size_t written = f.write(buf, len);
-    f.close();
-    if (written != len) {
-        // Partial write — file may be corrupted, remove it
-        SPIFFS.remove("/mesh_id");
-    }
+    sigurdos::mesh::identityStoreSave(buf, len);
 }
 
 // ════════════════════════════════════════════════════
@@ -1499,43 +1493,39 @@ const PingResult* getPingResult(int i) {
 
 void saveChannels() {
     if (!g_mesh) return;
-    Preferences nvs;
-    if (!nvs.begin("sigurdos", false)) return;
     int n = g_mesh->getChannelCount();
-    nvs.putUChar("ch_cnt", (uint8_t)n);
-    for (int i = 0; i < n; i++) {
-        auto* ch = g_mesh->getChannel(i);
-        if (!ch) continue;
-        char key[16];
-        snprintf(key, sizeof(key), "ch_%d_name", i);
-        nvs.putString(key, ch->name);
-        snprintf(key, sizeof(key), "ch_%d_sec", i);
-        nvs.putBytes(key, ch->channel.secret, sizeof(ch->channel.secret));
-        snprintf(key, sizeof(key), "ch_%d_hash", i);
-        nvs.putBytes(key, ch->channel.hash, sizeof(ch->channel.hash));
-    }
-    nvs.end();
+
+    // Channel read callback for the store
+    auto read_fn = [](int idx, char* name_out, size_t name_len,
+                      uint8_t* secret_out, size_t secret_len,
+                      uint8_t* hash_out, size_t hash_len, void* ctx) -> bool {
+        auto* mesh = static_cast<mesh_impl_t*>(ctx);
+        auto* ch = mesh->getChannel(idx);
+        if (!ch) return false;
+        strncpy(name_out, ch->name, name_len);
+        name_out[name_len - 1] = '\0';
+        memcpy(secret_out, ch->channel.secret,
+               secret_len < sizeof(ch->channel.secret) ? secret_len : sizeof(ch->channel.secret));
+        memcpy(hash_out, ch->channel.hash,
+               hash_len < sizeof(ch->channel.hash) ? hash_len : sizeof(ch->channel.hash));
+        return true;
+    };
+
+    sigurdos::mesh::channelStoreSave(n, read_fn, g_mesh);
 }
 
 void loadChannels() {
     if (!g_mesh) return;
-    Preferences nvs;
-    if (!nvs.begin("sigurdos", true)) return;
-    int n = nvs.getUChar("ch_cnt", 0);
-    for (int i = 0; i < n; i++) {
-        char key[16];
-        char name[32] = {0};
-        uint8_t secret[32] = {0};
-        uint8_t hash[32] = {0};
-        snprintf(key, sizeof(key), "ch_%d_name", i);
-        if (nvs.getString(key, name, sizeof(name)) <= 0) continue;
-        snprintf(key, sizeof(key), "ch_%d_sec", i);
-        if (nvs.getBytes(key, secret, sizeof(secret)) <= 0) continue;
-        snprintf(key, sizeof(key), "ch_%d_hash", i);
-        if (nvs.getBytes(key, hash, sizeof(hash)) <= 0) continue;
-        if (name[0]) g_mesh->loadChannel(secret, sizeof(secret), hash, name);
-    }
-    nvs.end();
+
+    // Channel load callback for the store
+    auto load_fn = [](const uint8_t* secret, size_t secret_len,
+                      const uint8_t* hash, const char* name, void* ctx) -> bool {
+        auto* mesh = static_cast<mesh_impl_t*>(ctx);
+        mesh->loadChannel(secret, secret_len, hash, name);
+        return true;  // count all successfully-decoded channels
+    };
+
+    sigurdos::mesh::channelStoreLoad(load_fn, g_mesh);
 }
 
 void saveState() {

@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ben
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+namespace sigurdos {
+namespace mesh {
+
+// Callbacks for channel store to read/write individual channels without
+// depending on the MeshCore type. The store owns the NVS format; callers
+// provide data access.
+using ChannelCountFn   = int  (*)(void* ctx);
+using ChannelReadFn    = bool (*)(int index, char* name_out, size_t name_len,
+                                  uint8_t* secret_out, size_t secret_len,
+                                  uint8_t* hash_out, size_t hash_len, void* ctx);
+using ChannelLoadFn    = bool (*)(const uint8_t* secret, size_t secret_len,
+                                  const uint8_t* hash, const char* name, void* ctx);
+
+// Save channels list to NVS.
+// Returns true on success (NVS write committed).
+bool channelStoreSave(int count, ChannelReadFn read, void* ctx);
+
+// Load channels list from NVS.
+// Returns the number of channels loaded (0 if NVS unavailable or empty).
+int  channelStoreLoad(ChannelLoadFn load, void* ctx);
+
+// Identity persistence — saves/loads the raw bytes of a LocalIdentity
+// to/from SPIFFS at "/mesh_id".
+bool identityStoreSave(const uint8_t* data, size_t len);
+bool identityStoreLoad(uint8_t* buf, size_t buf_len, size_t* out_len);
+
+} // namespace mesh
+} // namespace sigurdos
