@@ -1732,11 +1732,10 @@ Answers should be recorded here (or in the linked issue) before dependent tasks 
   ~~retained intentionally for any validation build?~~ **No callers exist anywhere in the codebase.**
   **Build matrix verified: SigurdOS_TDeck, SigurdOS_TDeck_gps_validation, SigurdOS_TDeck_debug all compile**
   **cleanly after removal. Function deleted in PR #642 — no compile errors, no linker issues.**
-- **OQ-7**: Where does the `AGENT_GUIDE.md` auto-sync run (commit `23c4751` is tagged
-  `[auto]` but no workflow in-repo produces it)? Should the sync job be documented or
-  brought in-repo? **Investigation: 22 `[auto]` commits by `hermes-gadget` since Jan 2026.**
-  **Likely a Hermes cron job or webhook→agent pattern running on the user's infrastructure,**
-  **not a GitHub Action in-repo. Owner should decide whether to document or bring in-repo.**
+- **OQ-7**: ~~Where does the `AGENT_GUIDE.md` auto-sync run~~ — **Answered**
+  ~~Should the sync job be documented or brought in-repo?~~ **Owner's personal Hermes cron — nightly**
+  **automated repo cleanup, just for the owner. Not meant to be shared or converted to a**
+  **GitHub Action. Documented as such — no further action.**
 - **OQ-8**: Is there a CI time budget for the native suite (4.4–8.3 min observed across
   machines)? At what duration should suite sharding be introduced?
 - **OQ-9**: Are 8 MB-flash T-Deck variants in scope? `boards/t-deck.json` hard-codes
