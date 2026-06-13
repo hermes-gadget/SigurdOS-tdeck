@@ -38,21 +38,39 @@ static bool mounted = false;
 static uint64_t capacity_bytes = 0;
 static uint64_t free_bytes = 0;
 
+static int sdcard_retry_count = 0;  // total additional retry attempts
+
 bool sigurdos_sdcard_init()
 {
     sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
 
-    for (int attempt = 0; attempt < 3; attempt++) {
-        if (attempt > 0) delay(500);
-        if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
-            capacity_bytes = (uint64_t)SD.totalBytes();
-            free_bytes     = (uint64_t)(SD.totalBytes() - SD.usedBytes());
-            mounted = true;
-            return true;
-        }
+    // Single attempt at boot — retries are lazy via sigurdos_sdcard_retry()
+    if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
+        capacity_bytes = (uint64_t)SD.totalBytes();
+        free_bytes     = (uint64_t)(SD.totalBytes() - SD.usedBytes());
+        mounted = true;
+        sdcard_retry_count = 0;
+        return true;
     }
 
     mounted = false;
+    return false;
+}
+
+bool sigurdos_sdcard_retry()
+{
+    if (mounted) return true;  // already mounted
+    if (sdcard_retry_count >= 3) return false;  // cap: 3 total retries
+
+    sdcard_retry_count++;
+
+    if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
+        capacity_bytes = (uint64_t)SD.totalBytes();
+        free_bytes     = (uint64_t)(SD.totalBytes() - SD.usedBytes());
+        mounted = true;
+        return true;
+    }
+
     return false;
 }
 

@@ -36,9 +36,14 @@ inline bool sigurdos_sdcard_path_valid(const char* path)
     return true;
 }
 
-// Initialize SD card over SPI
-// Returns true if card detected and mounted
+// Initialize SD card over SPI (single attempt — fast boot)
+// Call sigurdos_sdcard_retry() lazily when a consumer needs the card
 bool sigurdos_sdcard_init();
+
+// Retry SD mount (called lazily from consumers like the map renderer)
+// Caps total retries at 3 to avoid unbounded re-probing of a broken card.
+// Returns true if mounted (either already or after this attempt).
+bool sigurdos_sdcard_retry();
 
 // Check if SD card is currently mounted
 bool sigurdos_sdcard_mounted();

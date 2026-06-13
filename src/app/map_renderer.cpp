@@ -510,8 +510,11 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
 
 static void discover_tiles() {
     if (!sigurdos_sdcard_mounted()) {
-        MAP_DEBUG_PRINTLN("[map] discover: SD not mounted");
-        return;
+        // Lazy retry — SD may have been absent at boot but inserted since
+        if (!sigurdos_sdcard_retry()) {
+            MAP_DEBUG_PRINTLN("[map] discover: SD not mounted");
+            return;
+        }
     }
 
     reset_tile_coverage();
@@ -563,7 +566,10 @@ static void discover_tiles() {
 
 // ── Metadata auto-center (from metadata.json, fallback to discover) ──
 static void load_metadata() {
-    if (!sigurdos_sdcard_mounted()) return;
+    if (!sigurdos_sdcard_mounted()) {
+        // Lazy retry — SD may have been absent at boot but inserted since
+        if (!sigurdos_sdcard_retry()) return;
+    }
 
     // Always discover tiles first — this correctly sets zoom_level = best_zoom
     discover_tiles();
