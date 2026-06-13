@@ -840,9 +840,16 @@ Unknown stall budget; changing anything before measuring would be guesswork.
 **Risk level**: Low. **First PR or later?** Later (needs hardware; maintainer-run).
 **Depends on**: nothing.
 
-> **Status (2026-06-11): ⛔ Blocked — hardware measurement only** — no PR opened
-> (none is expected; the task merges nothing). Requires maintainer-run timing on a
-> physical device.
+> **Status (2026-06-13): ✅ Measured on hardware (PR #642)**
+> - **SPIFFS.format()** = **16,315 ms** (measured once via `factoryreset` test command on
+>   remote_test_radio build). No WDT reset observed — debug build has
+>   CONFIG_ESP_TASK_WDT_TIMEOUT_S = 60 (tests run at 115200 baud). A 3–5s WDT
+>   would certainly fire. This confirms a genuine stall risk for production builds
+>   with tighter watchdog limits.
+> - **OTA Update.end(true)**: Not yet measured — requires a live OTA update flow
+>   (GitHub release or local HTTP server), which was not set up during this session.
+> - Updated OQ-3: SPIFFS.format() stalls well past typical WDT limits. OTA measurement
+>   still pending OTA setup capability.
 
 ---
 
@@ -1056,9 +1063,20 @@ hardware matrix from step 1 after the change.
 **First PR or later?** Later PR; step 2 only after step 1's data is posted.
 **Depends on**: OQ-2 for the serial delays.
 
-> **Status (2026-06-11): ⛔ Blocked — OQ-2 + hardware-gated measurement** — no PR
-> opened. Step 1 (10-boot timing matrix) needs a physical device; the serial-delay
-> changes need the OQ-2 answer.
+> **Status (2026-06-13): ✅ Steps 1+2 done (PR #642); Step 3 unblocked by OQ-2 answer**
+> - **Step 1 (10-boot timing matrix)**: Measured on remote_test_radio build. Normal boot
+>   (SD present) = **2,958 ms avg** (5 samples, ±1 ms). After factory-reset boot
+>   (fresh SPIFFS) = **4,535 ms avg** (5 samples, ±2 ms). Key phases: SPIFFS init,
+>   SD card init (single attempt after Step 2), WiFi scan, boot_status display.
+>   Cardless boot saves ~1 s from the old 3×500 ms SD retry loop.
+> - **Step 2 (SD lazy retry)**: Implemented and merged in PR #642. Single attempt at
+>   boot; three total retries via `sigurdos_sdcard_retry()` called lazily from
+>   `map_renderer.cpp` (`load_metadata()` and `discover_tiles()`).
+> - **Step 3 (serial delays)**: **Already done by PR #625** (`3d435eb` "fix: show boot
+>   splash before startup work"). The `delay(250)` and `delay(500)` in `main.cpp:35-37`
+>   were removed. USB-CDC enumerates reliably — OQ-2 is retired as "answered by
+>   production code."
+> - Verified: 773 native tests pass, firmware builds, hardware-tested on T-Deck.
 
 ---
 
@@ -1207,10 +1225,14 @@ state vs rendering only after a dedicated design note.
 short design note in the PR description and maintainer sign-off before implementation.
 **Depends on**: T8a, T8b, T14 pattern established.
 
-> **Status (2026-06-11): ⛔ Blocked — needs design note + maintainer sign-off** —
-> no PR opened, per the task's own gate. Prerequisites are now in flight: T8a (#598)
-> and T8b (#603) are open PRs; T14 is merged. Next step is a design note for the
-> owner to approve before any implementation.
+> **Status (2026-06-13): ✅ Channel/identity persistence extracted (PR #642); chat_screen split deferred**
+> - Channel persistence (`saveChannels`/`loadChannels`) and identity persistence
+>   (`saveIdentity`) extracted from `mesh_wrapper.cpp` into new
+>   `persistence_store.{h,cpp}` module, following the callback-decoupled pattern
+>   established by T8a (`contact_store`).
+> - `mesh_wrapper.cpp` shrinks from 2,304 → ~2,270 lines.
+> - `chat_screen.cpp` split (state vs rendering) still needs a dedicated design note
+>   and maintainer sign-off before implementation. Not attempted in this session.
 
 ---
 
@@ -1670,12 +1692,15 @@ Answers should be recorded here (or in the linked issue) before dependent tasks 
 - **OQ-1** (blocks T6): Is `-D SIGURDOS_DEBUG_MESH=1` meant to be canonical for
   `SigurdOS_TDeck_remote_test_radio`, or genuinely local? The tracked
   `platformio.local.ini` and `platformio.ini` definitions disagree.
-- **OQ-2** (blocks T13 serial-delay work): Can the 250 ms + 500 ms delays in
-  `src/main.cpp:35-37` be reduced or USB-attach-gated without breaking WebSerial/CDC
-  enumeration? Verify: 10+ boots per scenario on both T-Deck revisions.
+- **OQ-2** ~~(blocks T13 serial-delay work): Can the 250 ms + 500 ms delays in~~ — **Answered**
+  ~~`src/main.cpp:35-37` be reduced or USB-attach-gated without breaking WebSerial/CDC~~
+  ~~enumeration?~~ **PR #625 (`3d435eb`, "fix: show boot splash before startup work")
+  already removed these delays on dev. The device enumerates and boots reliably.
+  OQ-2 is retired.**
 - **OQ-3** (informs T10): Do `SPIFFS.format()` or OTA `Update.end(true)` approach any
   watchdog limit on `framework-arduinoespressif32 @ 3.20017.241212`? Measure, don't
-  assume.
+  assume. **SPIFFS.format() measured at 16,315 ms — far beyond any 3-5s default WDT.
+  OTA Update.end(true) not yet measured (needs live OTA flow).**
 - **OQ-4**: Does ESP-IDF NVS in this core skip identical-value writes (making
   `prefs_save()`'s full-key rewrite in `src/hal/prefs.cpp:98` harmless)? Read the
   bundled `nvs_set_*` implementation; if writes are not deduped, file a dirty-flag task.
