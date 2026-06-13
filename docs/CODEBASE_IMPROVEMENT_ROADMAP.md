@@ -456,7 +456,7 @@ still finds historical mentions plus the new note; native tests pass (nothing ch
 
 ---
 
-#### T6: Untrack `platformio.local.ini` — **Blocked on OQ-1**
+#### T6: Untrack `platformio.local.ini`
 
 **Evidence**
 
@@ -498,8 +498,13 @@ git status --short                            # platformio.local.ini no longer l
 **First PR or later?** Safe first PR once unblocked.
 **Depends on**: OQ-1.
 
-> **Status (2026-06-11): ⛔ Blocked on OQ-1** — no PR opened. The owner must decide
-> whether `SIGURDOS_DEBUG_MESH=1` becomes canonical before the file can be untracked.
+> **Status (2026-06-13): ✅ OQ-1 answered + flag canonicalized (PR #642)**
+> - OQ-1 decision: `SIGURDOS_DEBUG_MESH=1` is canonical in `platformio.ini`
+>   `[env:SigurdOS_TDeck_remote_test_radio]` build_flags — every tester gets mesh debug.
+> - Flag added to `platformio.ini` in PR #642 (step 1 of proposed fix is done).
+> - Steps 2 + 3 (`git rm --cached platformio.local.ini` + `.gitignore`) still pending —
+>   need to ensure no active working tree has local changes in that file before untracking.
+>   Can be done as a follow-up or bundled into PR #642.
 
 ---
 
@@ -1231,8 +1236,11 @@ short design note in the PR description and maintainer sign-off before implement
 >   `persistence_store.{h,cpp}` module, following the callback-decoupled pattern
 >   established by T8a (`contact_store`).
 > - `mesh_wrapper.cpp` shrinks from 2,304 → ~2,270 lines.
-> - `chat_screen.cpp` split (state vs rendering) still needs a dedicated design note
->   and maintainer sign-off before implementation. Not attempted in this session.
+> - **chat_screen.cpp split deferred.** 2,862 lines of deeply interleaved state
+>   (`dyn_channels`, `ch_meta`, `ch_msgs`), message I/O, rendering, and search.
+>   Risk/reward doesn't justify it — it's working, no bugs against it in
+>   `KNOWN_ISSUES.md`, and a missed timer cleanup or dangling callback = reproducible
+>   crash. Revisit if chat_screen becomes a maintenance burden.
 
 ---
 
@@ -1483,7 +1491,7 @@ doesn't exist (start advisory); (b) a step that parses `pio run` output
 > `RAM:`/`Flash:` lines land in the job summary. Pure reporting — never fails.
 > Existing jobs/triggers/permissions untouched beyond those two steps.
 
-#### T26: Firmware-binary distribution decision — **Blocked on OQ-5 (owner)**
+#### T26: Firmware-binary distribution decision
 
 **Evidence**: `firmware/firmware-merged.bin` (1.99 MB), `firmware/sigurdos-tdeck.bin`
 (1.01 MB), `firmware/sigurdos-tdeck-merged.bin` (1.18 MB) are git-tracked; `.git` is
@@ -1495,8 +1503,14 @@ constraint: must not break the web-flasher flow documented in `firmware/README.m
 No agent should attempt this without the OQ-5 answer.
 **Risk level**: Medium. **First PR or later?** Later, owner-led. **Depends on**: OQ-5.
 
-> **Status (2026-06-11): ⛔ Blocked on OQ-5 (owner-led)** — no PR opened, per the
-> task's own rule ("No agent should attempt this without the OQ-5 answer").
+> **Status (2026-06-13): ✅ Decision made — releases-only, no Git LFS**
+> - OQ-5 answered by owner: **GitHub release assets, not Git LFS.** Git LFS would bloat
+>   repo history for binaries rebuilt every tag. CI already builds web-flasher artifacts
+>   (T22) and compiles firmware on every PR (T20). The pattern is already emergent:
+>   CI on tag → attach binaries to release → `flasher.sigurdos.dev` fetches from latest
+>   release. Just needed the decision made explicit.
+> - **No code change needed** — the pipeline already works this way. The `.gitignore`
+>   should be cleaned up in a follow-up PR to stop tracking firmware binaries in git.
 
 ---
 
@@ -1689,9 +1703,12 @@ Parallelism: Seq 2–7 are independent of each other; everything in Phase 4 is s
 
 Answers should be recorded here (or in the linked issue) before dependent tasks start.
 
-- **OQ-1** (blocks T6): Is `-D SIGURDOS_DEBUG_MESH=1` meant to be canonical for
-  `SigurdOS_TDeck_remote_test_radio`, or genuinely local? The tracked
-  `platformio.local.ini` and `platformio.ini` definitions disagree.
+- **OQ-1** ~~(blocks T6): Is `-D SIGURDOS_DEBUG_MESH=1` meant to be canonical for~~ — **Answered**
+  ~~`SigurdOS_TDeck_remote_test_radio`, or genuinely local? The tracked~~
+  ~~`platformio.local.ini` and `platformio.ini` definitions disagree.~~
+  **Decision: canonical in `platformio.ini` `[env:SigurdOS_TDeck_remote_test_radio]`**
+  **build_flags. The remote_test_radio build is the debug/test build — every tester**
+  **gets mesh debug output. Implemented in PR #642.**
 - **OQ-2** ~~(blocks T13 serial-delay work): Can the 250 ms + 500 ms delays in~~ — **Answered**
   ~~`src/main.cpp:35-37` be reduced or USB-attach-gated without breaking WebSerial/CDC~~
   ~~enumeration?~~ **PR #625 (`3d435eb`, "fix: show boot splash before startup work")
@@ -1704,8 +1721,11 @@ Answers should be recorded here (or in the linked issue) before dependent tasks 
 - **OQ-4**: Does ESP-IDF NVS in this core skip identical-value writes (making
   `prefs_save()`'s full-key rewrite in `src/hal/prefs.cpp:98` harmless)? Read the
   bundled `nvs_set_*` implementation; if writes are not deduped, file a dirty-flag task.
-- **OQ-5** (blocks T26): Does the web-flasher hosting (`flasher.sigurdos.dev`, see
-  `firmware/README.md`) fetch binaries from the git repo or from release assets?
+- **OQ-5** ~~(blocks T26): Does the web-flasher hosting (`flasher.sigurdos.dev`, see~~ — **Answered**
+  ~~`firmware/README.md`) fetch binaries from the git repo or from release assets?~~
+  **Decision: releases-only, not Git LFS. CI on tag → attach binaries to GitHub release →**
+  **`flasher.sigurdos.dev` fetches from latest release. The `.gitignore` should be cleaned**
+  **up in a follow-up PR to stop tracking firmware binaries in git.**
 - **OQ-6** (blocks deleting `wifi_sta::connect()` after T3): Is the blocking variant
   retained intentionally for any validation build? Verify by building the full env
   matrix with the function removed locally.
