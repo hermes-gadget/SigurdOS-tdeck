@@ -178,7 +178,16 @@ void contacts_screen_show()
     int page_start = contact_page_start(g_contacts_page, n);
     int page_end = contact_page_end(g_contacts_page, n);
     int page_n = page_end - page_start;
-    sigurdos::mesh::ContactInfo page_contacts[CONTACT_LIST_PAGE_SIZE];
+    // Heap-allocate the per-page buffer rather than placing ~1.8 KB on the
+    // stack — this runs in the LVGL task context (navigation + pager clicks).
+    sigurdos::mesh::ContactInfo* page_contacts =
+        new(std::nothrow) sigurdos::mesh::ContactInfo[CONTACT_LIST_PAGE_SIZE];
+    if (!page_contacts) {
+        delete[] all_contacts;
+        show_contact_memory_error(scr);
+        show_screen(scr);
+        return;
+    }
     for (int i = 0; i < page_n; i++) {
         page_contacts[i] = contacts[page_start + i];
     }
@@ -204,6 +213,7 @@ void contacts_screen_show()
 
     lv_obj_t* list = lv_obj_create(scr);
     if (!list) {
+        delete[] page_contacts;
         show_contact_memory_error(scr);
         show_screen(scr);
         return;
@@ -293,6 +303,7 @@ void contacts_screen_show()
         }, LV_EVENT_DELETE, nullptr);
     }
 
+    delete[] page_contacts;
     show_screen(scr);
 }
 
