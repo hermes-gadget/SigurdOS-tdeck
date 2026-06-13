@@ -1718,29 +1718,38 @@ Answers should be recorded here (or in the linked issue) before dependent tasks 
   watchdog limit on `framework-arduinoespressif32 @ 3.20017.241212`? Measure, don't
   assume. **SPIFFS.format() measured at 16,315 ms — far beyond any 3-5s default WDT.
   OTA Update.end(true) not yet measured (needs live OTA flow).**
-- **OQ-4**: Does ESP-IDF NVS in this core skip identical-value writes (making
-  `prefs_save()`'s full-key rewrite in `src/hal/prefs.cpp:98` harmless)? Read the
-  bundled `nvs_set_*` implementation; if writes are not deduped, file a dirty-flag task.
+- **OQ-4**: ~~Does ESP-IDF NVS in this core skip identical-value writes (making~~ — **Answered**
+  ~~`prefs_save()`'s full-key rewrite in `src/hal/prefs.cpp:98` harmless)?~~ **No — every call writes.
+  Preferences.cpp (`putBytes`, `putInt`, etc) always does `nvs_set_*` + `nvs_commit` unconditionally.**
+  **No dirty-flag, no read-before-write dedup. `prefs_save()` does unnecessary flash writes on**
+  **every save, even when values are unchanged. A dirty-flag task is warranted.**
 - **OQ-5** ~~(blocks T26): Does the web-flasher hosting (`flasher.sigurdos.dev`, see~~ — **Answered**
   ~~`firmware/README.md`) fetch binaries from the git repo or from release assets?~~
   **Decision: releases-only, not Git LFS. CI on tag → attach binaries to GitHub release →**
   **`flasher.sigurdos.dev` fetches from latest release. The `.gitignore` should be cleaned**
   **up in a follow-up PR to stop tracking firmware binaries in git.**
-- **OQ-6** (blocks deleting `wifi_sta::connect()` after T3): Is the blocking variant
-  retained intentionally for any validation build? Verify by building the full env
-  matrix with the function removed locally.
+- **OQ-6** ~~(blocks deleting `wifi_sta::connect()` after T3): Is the blocking variant~~ — **Answered**
+  ~~retained intentionally for any validation build?~~ **No callers exist anywhere in the codebase.**
+  **Build matrix verified: SigurdOS_TDeck, SigurdOS_TDeck_gps_validation, SigurdOS_TDeck_debug all compile**
+  **cleanly after removal. Function deleted in PR #642 — no compile errors, no linker issues.**
 - **OQ-7**: Where does the `AGENT_GUIDE.md` auto-sync run (commit `23c4751` is tagged
   `[auto]` but no workflow in-repo produces it)? Should the sync job be documented or
-  brought in-repo?
+  brought in-repo? **Investigation: 22 `[auto]` commits by `hermes-gadget` since Jan 2026.**
+  **Likely a Hermes cron job or webhook→agent pattern running on the user's infrastructure,**
+  **not a GitHub Action in-repo. Owner should decide whether to document or bring in-repo.**
 - **OQ-8**: Is there a CI time budget for the native suite (4.4–8.3 min observed across
   machines)? At what duration should suite sharding be introduced?
 - **OQ-9**: Are 8 MB-flash T-Deck variants in scope? `boards/t-deck.json` hard-codes
   16 MB/`default_16MB.csv`; supporting 8 MB needs partition-table variants and OTA-slot
   sizing.
-- **OQ-10**: `update_wifi_status()` is declared in both `src/ui/ui.h:40` and
-  `src/ui/screens.h:57` (same namespace). Intentional convenience or accident? If
-  accident, remove one declaration in a T4-style hygiene PR.
-- **OQ-11**: `CLAUDE.md`'s hardware table says the buzzer is "active low" (GPIO 46), but
-  `src/hal/buzzer.h` pattern tables treat `level_high == true` as "sounding" and
-  `buzzer_init()` idles the pin LOW. Which matches the hardware? Affects T12's comments
-  only (do not change polarity without hardware verification).
+- **OQ-10**: ~~`update_wifi_status()` is declared in both `src/ui/ui.h:40` and~~ — **Answered + Fixed**
+  ~~`src/ui/screens.h:57` (same namespace).~~ **Accident — the `ui.h` copy was the leftover after**
+  **T14 extracted screens_common. Fixed in PR #642: removed duplicate from `ui.h`, added**
+  **`#include "screens.h"` to `ui.h` so `main.cpp` still sees the declaration transitively.**
+  **Build verified — no regressions.**
+- **OQ-11**: ~~`CLAUDE.md`'s hardware table says the buzzer is "active low"~~ — **Answered: CLAUDE.md is wrong**
+  ~~`src/hal/buzzer.h` pattern tables treat `level_high == true` as "sounding" and~~
+  ~~`buzzer_init()` idles the pin LOW.~~ **The code is correct (active-high). Evidence:**
+  **`buzzer_init()` idles `LOW` → sound when `HIGH` → terminal marker returns to `LOW`.**
+  **Device beeps work in production → `CLAUDE.md` doc is incorrect. No code change needed;**
+  **fix the doc only.**

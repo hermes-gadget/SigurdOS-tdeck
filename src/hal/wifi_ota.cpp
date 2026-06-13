@@ -290,32 +290,6 @@ Status getStatus() {
     return Status::Connecting;
 }
 
-bool connect(const char* ssid, const char* password) {
-    if (!ssid || !ssid[0]) return false;
-
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-
-    // Wait up to 15 seconds for connection
-    unsigned long start = millis();
-    while (millis() - start < 15000) {
-        if (WiFi.status() == WL_CONNECTED) {
-            s_connected = true;
-            s_rssi = WiFi.RSSI();
-            SIG_LOGD("[wifi-sta] connected to %s (%d dBm)", ssid, s_rssi);
-            return true;
-        }
-        delay(200);
-    }
-
-    WiFi.disconnect();
-    WiFi.mode(WIFI_OFF);
-    s_connected = false;
-    s_rssi = 0;
-    SIG_LOGW("[wifi-sta] failed to connect to %s", ssid);
-    return false;
-}
-
 void disconnect() {
     if (s_connected || s_status == Status::Connecting) {
         WiFi.disconnect();
