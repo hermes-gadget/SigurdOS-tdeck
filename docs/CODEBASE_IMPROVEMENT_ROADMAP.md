@@ -1736,19 +1736,16 @@ Answers should be recorded here (or in the linked issue) before dependent tasks 
   ~~Should the sync job be documented or brought in-repo?~~ **Owner's personal Hermes cron — nightly**
   **automated repo cleanup, just for the owner. Not meant to be shared or converted to a**
   **GitHub Action. Documented as such — no further action.**
-- **OQ-8**: Is there a CI time budget for the native suite (4.4–8.3 min observed across
-  machines)? At what duration should suite sharding be introduced?
-- **OQ-9**: Are 8 MB-flash T-Deck variants in scope? `boards/t-deck.json` hard-codes
-  16 MB/`default_16MB.csv`; supporting 8 MB needs partition-table variants and OTA-slot
-  sizing.
+- **OQ-8**: ~~Is there a CI time budget for the native suite~~ — **Answered**
+  ~~At what duration should suite sharding be introduced?~~ **Current ~8 min is fine. No sharding**
+  **needed — free runners, wait is acceptable. Revisit if it creeps past 15 min.**
+- **OQ-9**: ~~Are 8 MB-flash T-Deck variants in scope?~~ — **Answered**
+  **Not in scope. 16 MB-only.**
 - **OQ-10**: ~~`update_wifi_status()` is declared in both `src/ui/ui.h:40` and~~ — **Answered + Fixed**
   ~~`src/ui/screens.h:57` (same namespace).~~ **Accident — the `ui.h` copy was the leftover after**
   **T14 extracted screens_common. Fixed in PR #642: removed duplicate from `ui.h`, added**
   **`#include "screens.h"` to `ui.h` so `main.cpp` still sees the declaration transitively.**
   **Build verified — no regressions.**
-- **OQ-11**: ~~`CLAUDE.md`'s hardware table says the buzzer is "active low"~~ — **Answered: CLAUDE.md is wrong**
-  ~~`src/hal/buzzer.h` pattern tables treat `level_high == true` as "sounding" and~~
-  ~~`buzzer_init()` idles the pin LOW.~~ **The code is correct (active-high). Evidence:**
-  **`buzzer_init()` idles `LOW` → sound when `HIGH` → terminal marker returns to `LOW`.**
-  **Device beeps work in production → `CLAUDE.md` doc is incorrect. No code change needed;**
-  **fix the doc only.**
+- **OQ-11**: ~~`CLAUDE.md`'s hardware table says the buzzer is "active low"~~ — **Answered + Fixed**
+  ~~`buzzer_init()` idles LOW~~ **Code is correct (active-high): idles LOW, sounds at HIGH.**
+  **Fixed in CLAUDE.md and AGENTS.md — "Active low" → "Active high".**

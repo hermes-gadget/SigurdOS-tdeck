@@ -122,7 +122,7 @@ src/
 | **Battery ADC** | GPIO 4 | Voltage divider, ADC_MULTIPLIER = 2 × 3.3 × 1000 |
 | **Peripheral Power** | GPIO 10 | HIGH = peripherals on |
 | **GPS** | UART (Serial1) | RX=43, TX=44, baud 38400 |
-| **Buzzer** | GPIO 46 | Active low |
+| **Buzzer** | GPIO 46 | Active high |
 | **SD Card** | SPI (shared bus) | CS=39, shares SCK(40)/MOSI(41)/MISO(38) with LoRa/display. VFS at `/sdcard` via SPI+FATFS. T-Deck v1.0 uses CS=21; if your board has no SD detect, try pin 21. |
 
 **Shared SPI bus:** Display, LoRa, and microSD all share SCK(40)/MOSI(41)/MISO(38) with different CS lines (display=12, LoRa=9, SD=39). SPI is initialized separately per device from their respective drivers — no single `SPI.begin()` call covers all three.
