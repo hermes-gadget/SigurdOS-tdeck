@@ -1118,6 +1118,137 @@ TEST_F(ReqResponseTest, NonMatchingTagDoesNotClearWrongPending) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  PendingAck table tests (audit beta-0.1.41 RC3 Finding 1)
+// ═══════════════════════════════════════════════════════════════
+//
+// Replicates SigurdMeshV2::PendingAck and the addPendingAck()/processAck()
+// slot logic from src/mesh/sigurd_mesh_v2.{h,cpp}. The production array
+// PendingAck _pending_acks[16] is a default-constructed member; these tests
+// lock in the contract that every slot starts fully zeroed so a fresh table
+// never matches an ACK against garbage. (The mesh classes link MeshCore and
+// are not part of native_test, so the logic is mirrored here — same approach
+// as the ReqResponseTest cases above.)
+
+namespace {
+
+struct AckSlot {
+    char dest_name[32] = {};
+    uint32_t timestamp = 0;
+    uint32_t expected_ack = 0;
+    uint32_t sent_at_ms = 0;
+    bool in_use = false;
+};
+
+static constexpr int ACK_TABLE_SIZE = 16;
+
+struct AckTable {
+    AckSlot slots[ACK_TABLE_SIZE];   // default-constructed, mirrors _pending_acks[16]
+    uint32_t now_ms = 0;
+
+    void addPendingAck(const char* name, uint32_t ts, uint32_t expected_ack) {
+        for (int i = 0; i < ACK_TABLE_SIZE; i++) {
+            if (!slots[i].in_use) {
+                strncpy(slots[i].dest_name, name, sizeof(slots[i].dest_name) - 1);
+                slots[i].dest_name[sizeof(slots[i].dest_name) - 1] = '\0';
+                slots[i].timestamp = ts;
+                slots[i].expected_ack = expected_ack;
+                slots[i].sent_at_ms = now_ms;
+                slots[i].in_use = true;
+                return;
+            }
+        }
+        // Table full — evict oldest entry by sent_at_ms.
+        int oldest = 0;
+        uint32_t oldest_ms = slots[0].sent_at_ms;
+        for (int i = 1; i < ACK_TABLE_SIZE; i++) {
+            if (slots[i].sent_at_ms < oldest_ms) {
+                oldest = i;
+                oldest_ms = slots[i].sent_at_ms;
+            }
+        }
+        strncpy(slots[oldest].dest_name, name, sizeof(slots[oldest].dest_name) - 1);
+        slots[oldest].dest_name[sizeof(slots[oldest].dest_name) - 1] = '\0';
+        slots[oldest].timestamp = ts;
+        slots[oldest].expected_ack = expected_ack;
+        slots[oldest].sent_at_ms = now_ms;
+        slots[oldest].in_use = true;
+    }
+
+    // Returns matched slot index, or -1 if none.
+    int processAck(uint32_t ack_val) {
+        for (int i = 0; i < ACK_TABLE_SIZE; i++) {
+            if (slots[i].in_use && slots[i].expected_ack == ack_val) {
+                slots[i].in_use = false;
+                return i;
+            }
+        }
+        return -1;
+    }
+};
+
+} // namespace
+
+TEST(PendingAckTest, FreshTableIsFullyZeroed) {
+    AckTable t;
+    for (int i = 0; i < ACK_TABLE_SIZE; i++) {
+        EXPECT_FALSE(t.slots[i].in_use) << "slot " << i << " must start free";
+        EXPECT_EQ(t.slots[i].timestamp, 0u);
+        EXPECT_EQ(t.slots[i].expected_ack, 0u);
+        EXPECT_EQ(t.slots[i].sent_at_ms, 0u);
+        EXPECT_EQ(t.slots[i].dest_name[0], '\0');
+    }
+}
+
+TEST(PendingAckTest, FreshTableMatchesNothing) {
+    AckTable t;
+    // A fresh table must not match any ACK value — including 0, which is
+    // exactly what a zeroed-but-falsely-in-use slot would collide with.
+    EXPECT_EQ(t.processAck(0), -1) << "fresh table must not match ack 0";
+    EXPECT_EQ(t.processAck(0x12345678), -1);
+    EXPECT_EQ(t.processAck(0xFFFFFFFF), -1);
+}
+
+TEST(PendingAckTest, AddThenMatchClearsSlot) {
+    AckTable t;
+    t.now_ms = 100;
+    t.addPendingAck("Alice", 1000, 0xAABBCCDD);
+
+    int idx = t.processAck(0xAABBCCDD);
+    ASSERT_GE(idx, 0) << "expected ack should match";
+    EXPECT_STREQ(t.slots[idx].dest_name, "Alice");
+    EXPECT_EQ(t.slots[idx].timestamp, 1000u);
+    EXPECT_FALSE(t.slots[idx].in_use) << "matched slot must be freed";
+
+    // Second match for the same value must fail — slot already cleared.
+    EXPECT_EQ(t.processAck(0xAABBCCDD), -1);
+}
+
+TEST(PendingAckTest, UnknownAckDoesNotMatch) {
+    AckTable t;
+    t.addPendingAck("Bob", 2000, 0xDEADBEEF);
+    EXPECT_EQ(t.processAck(0xCAFEBABE), -1) << "non-pending value must not match";
+    // The real pending ack is untouched.
+    EXPECT_EQ(t.processAck(0xDEADBEEF), 0);
+}
+
+TEST(PendingAckTest, FullTableEvictsOldest) {
+    AckTable t;
+    // Fill all 16 slots with strictly increasing send times and ack values.
+    for (int i = 0; i < ACK_TABLE_SIZE; i++) {
+        t.now_ms = 1000 + i;                 // slot 0 is oldest
+        t.addPendingAck("peer", 0, 0x1000 + i);
+    }
+    // A 17th add must evict the oldest (slot 0, ack 0x1000).
+    t.now_ms = 9999;
+    t.addPendingAck("late", 0, 0xBEEF);
+
+    EXPECT_EQ(t.processAck(0x1000), -1) << "oldest ack should have been evicted";
+    EXPECT_GE(t.processAck(0xBEEF), 0) << "newest ack must be present";
+    // The second-oldest (0x1001) must still be tracked.
+    EXPECT_GE(t.processAck(0x1001), 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  Status request tests (Phase 4.2)
 // ═══════════════════════════════════════════════════════════════
 

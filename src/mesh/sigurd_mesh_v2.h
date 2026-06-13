@@ -274,10 +274,14 @@ public:
 
     // ── ACK tracking ──────────────────────────────
     struct PendingAck {
-        char dest_name[32];
-        uint32_t timestamp;
-        uint32_t expected_ack;
-        uint32_t sent_at_ms;
+        // All members carry in-class default initializers so that the
+        // default-constructed _pending_acks[] array below is fully zeroed.
+        // Without these, dest_name/timestamp/expected_ack/sent_at_ms hold
+        // garbage until first write, which is fragile for ACK matching.
+        char dest_name[32] = {};
+        uint32_t timestamp = 0;
+        uint32_t expected_ack = 0;
+        uint32_t sent_at_ms = 0;
         bool in_use = false;
     };
     static constexpr int MAX_PENDING_ACKS = 16;
