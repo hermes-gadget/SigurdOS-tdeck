@@ -158,5 +158,5 @@ static constexpr uint64_t SIGURDOS_LORA_DIO1_WAKE_MASK =
 // Firmware version — displayed in Settings > About
 // Can be overridden at build time by scripts/build_metadata.py (git describe --tags)
 #ifndef SIGURDOS_VERSION
-#define SIGURDOS_VERSION  "beta-0.1.41"
+#define SIGURDOS_VERSION  "beta-0.1.41.1"
 #endif
