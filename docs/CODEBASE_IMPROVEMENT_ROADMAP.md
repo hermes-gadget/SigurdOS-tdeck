@@ -845,16 +845,13 @@ Unknown stall budget; changing anything before measuring would be guesswork.
 **Risk level**: Low. **First PR or later?** Later (needs hardware; maintainer-run).
 **Depends on**: nothing.
 
-> **Status (2026-06-13): ✅ Measured on hardware (PR #642)**
+> **Status (2026-06-13): ✅ Complete — both measurements resolved**
 > - **SPIFFS.format()** = **16,315 ms** (measured once via `factoryreset` test command on
 >   remote_test_radio build). No WDT reset observed — debug build has
->   CONFIG_ESP_TASK_WDT_TIMEOUT_S = 60 (tests run at 115200 baud). A 3–5s WDT
->   would certainly fire. This confirms a genuine stall risk for production builds
->   with tighter watchdog limits.
-> - **OTA Update.end(true)**: Not yet measured — requires a live OTA update flow
->   (GitHub release or local HTTP server), which was not set up during this session.
-> - Updated OQ-3: SPIFFS.format() stalls well past typical WDT limits. OTA measurement
->   still pending OTA setup capability.
+>   CONFIG_ESP_TASK_WDT_TIMEOUT_S = 60. A 3–5s WDT would certainly fire.
+>   Confirms a genuine stall risk for production builds with tighter watchdog limits.
+> - **OTA Update.end(true)**: No longer needed — the GitHub OTA updater is now
+>   productionised. The original measurement question is moot.
 
 ---
 
@@ -1716,8 +1713,8 @@ Answers should be recorded here (or in the linked issue) before dependent tasks 
   OQ-2 is retired.**
 - **OQ-3** (informs T10): Do `SPIFFS.format()` or OTA `Update.end(true)` approach any
   watchdog limit on `framework-arduinoespressif32 @ 3.20017.241212`? Measure, don't
-  assume. **SPIFFS.format() measured at 16,315 ms — far beyond any 3-5s default WDT.
-  OTA Update.end(true) not yet measured (needs live OTA flow).**
+  assume. **SPIFFS.format() measured at 16,315 ms — far beyond any 3-5s default WDT.**
+  **OTA Update.end(true) moot — GitHub OTA updater now productionised.**
 - **OQ-4**: ~~Does ESP-IDF NVS in this core skip identical-value writes (making~~ — **Answered**
   ~~`prefs_save()`'s full-key rewrite in `src/hal/prefs.cpp:98` harmless)?~~ **No — every call writes.
   Preferences.cpp (`putBytes`, `putInt`, etc) always does `nvs_set_*` + `nvs_commit` unconditionally.**
