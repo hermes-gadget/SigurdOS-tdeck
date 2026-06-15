@@ -550,7 +550,7 @@ namespace mesh {
         if (colon && colon > text) {
             size_t nlen = colon - text;
             if (nlen > 31) nlen = 31;
-            static char sender_buf[32];
+            char sender_buf[32];
             memcpy(sender_buf, text, nlen);
             sender_buf[nlen] = '\0';
             sender_name = sender_buf;
@@ -726,10 +726,12 @@ namespace mesh {
                 // Send minimal discovery request
                 uint8_t req_data[5] = {0x04, 0x00, 0x00, 0x00, 0x00};
                 int r = BaseChatMesh::sendRequest(*c, req_data, sizeof(req_data), tag, est_timeout);
-                // Restore original path
-                c->out_path_len = saved_len;
-                if (saved_len != OUT_PATH_UNKNOWN && saved_len <= 32)
-                    memcpy(c->out_path, saved_path, saved_len);
+                // Restore original path ONLY if it wasn't legitimately updated during send
+                if (c->out_path_len == OUT_PATH_UNKNOWN) {
+                    c->out_path_len = saved_len;
+                    if (saved_len != OUT_PATH_UNKNOWN && saved_len <= 32)
+                        memcpy(c->out_path, saved_path, saved_len);
+                }
                 if (r != MSG_SEND_FAILED) {
                     for (int j = 0; j < MAX_DISCOVERY_PENDING; j++) {
                         if (!_discovery_pending[j].in_use) {
