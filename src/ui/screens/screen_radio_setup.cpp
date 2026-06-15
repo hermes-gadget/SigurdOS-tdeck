@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include <SPIFFS.h>
 #include "../chat_screen.h"
 #include "../theme.h"
 #include "../responsive.h"
@@ -184,15 +185,22 @@ void custom_rf_screen_show()
         s_rf_cr   = cr;
         s_rf_pwr  = pwr;
 
-        // Persist to NVS immediately so settings survive reboot
-        sigurdos::NodePrefs np = sigurdos::prefs_get();
-        np.freq         = freq;
-        np.bw           = bw;
-        np.sf           = (uint8_t)sf;
-        np.cr           = (uint8_t)cr;
-        np.tx_power_dbm = (int8_t)pwr;
-        np.configured   = true;
-        sigurdos::prefs_set(np);
+        // Persist to NVS only if values actually changed
+        const sigurdos::NodePrefs& cur = sigurdos::prefs_get();
+        bool changed = (cur.freq != freq || cur.bw != bw ||
+                        (uint8_t)cur.sf != (uint8_t)sf ||
+                        (uint8_t)cur.cr != (uint8_t)cr ||
+                        (int8_t)cur.tx_power_dbm != (int8_t)pwr);
+        if (changed) {
+            sigurdos::NodePrefs np = sigurdos::prefs_get();
+            np.freq         = freq;
+            np.bw           = bw;
+            np.sf           = (uint8_t)sf;
+            np.cr           = (uint8_t)cr;
+            np.tx_power_dbm = (int8_t)pwr;
+            np.configured   = true;
+            sigurdos::prefs_set(np);
+        }
 
         // Reload Radio Setup screen with updated values
         radio_setup_screen_show();
@@ -538,7 +546,8 @@ void radio_setup_screen_show()
         sigurdos::prefs_set(np);
         sigurdos::mesh::saveChannels();
         chat_save_messages();
-        // Give flash writes time to complete before restart
+        // Flush and wait for flash writes to complete before restart
+        SPIFFS.flush();
         delay(200);
         ESP.restart();
     }, LV_EVENT_CLICKED, nullptr);

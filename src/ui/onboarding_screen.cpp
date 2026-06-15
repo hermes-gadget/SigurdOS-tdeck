@@ -9,6 +9,7 @@
 #include "../mesh/mesh_wrapper.h"
 #include <Arduino.h>
 #include <lvgl.h>
+#include <SPIFFS.h>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -409,7 +410,8 @@ static void build_step3()
         sigurdos::mesh::joinPublicChannel();
         sigurdos::mesh::saveChannels();
         chat_save_messages();
-        // Give flash writes time to complete before restart
+        // Flush and wait for flash writes to complete before restart
+        SPIFFS.flush();
         delay(200);
         ESP.restart();
     }, LV_EVENT_CLICKED, nullptr);
