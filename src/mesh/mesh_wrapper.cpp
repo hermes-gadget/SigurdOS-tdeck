@@ -1692,12 +1692,16 @@ bool companionBleAvailable() {
 }
 
 bool companionBleSetEnabled(bool enabled) {
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    CompanionBridge* b = companionBridge();
+    if (!b || !b->setEnabled(enabled)) return false;
+#endif
+    // Only persist after successful enablement to avoid state mismatch
     sigurdos::NodePrefs p = sigurdos::prefs_get();
     p.ble_enabled = enabled;
     sigurdos::prefs_set(p);
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-    CompanionBridge* b = companionBridge();
-    return b && b->setEnabled(enabled);
+    return true;
 #else
     return false;
 #endif

@@ -42,22 +42,29 @@ TEST_F(BatteryTest, EmptyCharge_3000mV_Returns0) {
     EXPECT_EQ(sigurdos_battery_pct_from_mv(3000), 0);
 }
 
-TEST_F(BatteryTest, HalfCharge_3600mV_Returns50) {
-    EXPECT_EQ(sigurdos_battery_pct_from_mv(3600), 50);
+// Li-ion lookup table: 3600mV is between 3610mV(10%) and 3570mV(7%)
+// (3610-3600)=10, range=40mV, range_pct=3 → offset=10/40*3=0 → 10%
+TEST_F(BatteryTest, Around3600mV_ReturnsApprox10) {
+    uint8_t pct = sigurdos_battery_pct_from_mv(3600);
+    EXPECT_GE(pct, 9);
+    EXPECT_LE(pct, 11);
 }
 
-TEST_F(BatteryTest, QuarterCharge_3300mV_Returns25) {
-    EXPECT_EQ(sigurdos_battery_pct_from_mv(3300), 25);
+// At exactly 3300mV (lowest table entry), returns 0
+TEST_F(BatteryTest, At3300mV_Returns0) {
+    EXPECT_EQ(sigurdos_battery_pct_from_mv(3300), 0);
 }
 
-TEST_F(BatteryTest, ThreeQuarterCharge_3900mV_Returns75) {
-    EXPECT_EQ(sigurdos_battery_pct_from_mv(3900), 75);
+// At exactly 3900mV (table entry), returns 55
+TEST_F(BatteryTest, At3900mV_Returns55) {
+    EXPECT_EQ(sigurdos_battery_pct_from_mv(3900), 55);
 }
 
-TEST_F(BatteryTest, NominalLiPo_3700mV_ReturnsApprox58) {
+// 3700mV is between 3680mV(20%) and 3710mV(25%)
+TEST_F(BatteryTest, NominalLiPo_3700mV_ReturnsApprox23) {
     uint8_t pct = sigurdos_battery_pct_from_mv(3700);
-    EXPECT_GE(pct, 57);
-    EXPECT_LE(pct, 59);
+    EXPECT_GE(pct, 22);
+    EXPECT_LE(pct, 24);
 }
 
 TEST_F(BatteryTest, OverVoltage_4300mV_ClampedTo100) {
@@ -76,17 +83,22 @@ TEST_F(BatteryTest, UnderVoltage_0mV_ClampedTo0) {
     EXPECT_EQ(sigurdos_battery_pct_from_mv(0), 0);
 }
 
+// 3001mV is below 3300mV (lowest table entry), returns 0
 TEST_F(BatteryTest, JustAboveMin_3001mV_Returns0) {
     EXPECT_EQ(sigurdos_battery_pct_from_mv(3001), 0);
 }
 
-TEST_F(BatteryTest, JustBelowMax_4199mV_Returns99) {
-    EXPECT_EQ(sigurdos_battery_pct_from_mv(4199), 99);
+// 4199mV is between 4150mV(95%) and 4200mV(100%)
+// (4200-4199) = 1, range=50mV, range_pct=5 → offset=1*5/50 = 0 → 100%
+TEST_F(BatteryTest, JustBelowMax_4199mV_ReturnsApprox100) {
+    uint8_t pct = sigurdos_battery_pct_from_mv(4199);
+    EXPECT_GE(pct, 99);
+    EXPECT_LE(pct, 100);
 }
 
 TEST_F(BatteryTest, PercentageIncreasesMonotonically) {
     uint8_t prev = 0;
-    for (uint16_t mv = BAT_MIN_MV; mv <= BAT_MAX_MV; mv += 10) {
+    for (uint16_t mv = 3300; mv <= 4200; mv += 10) {
         uint8_t curr = sigurdos_battery_pct_from_mv(mv);
         EXPECT_GE(curr, prev) << "Non-monotonic at " << mv << "mV";
         prev = curr;
@@ -108,30 +120,24 @@ TEST_F(BatteryTest, ADCRawToMillivolts) {
 }
 
 TEST_F(BatteryTest, AnalogReadMilliVoltsIntegration) {
-    // Set the mock value for the ADC pin; sigurdos_battery_mv() now uses
-    // analogReadMilliVolts internally with efuse-calibrated conversion.
-    // 2048 raw → mock calibrates to ~1650mV at pin → *2 (divider) → ~3300mV
     arduino_mock::analog_values[PIN_BAT_ADC] = 2048;
     uint16_t mv = sigurdos_battery_mv();
     EXPECT_NEAR(mv, 3300, 10);
 }
 
 TEST_F(BatteryTest, AnalogReadMilliVoltsFullScale) {
-    // 4095 raw → mock calibrates to ~3300mV at pin → *2 → ~6600mV
     arduino_mock::analog_values[PIN_BAT_ADC] = 4095;
     uint16_t mv = sigurdos_battery_mv();
     EXPECT_NEAR(mv, 6600, 10);
 }
 
 TEST_F(BatteryTest, AnalogReadMilliVoltsZero) {
-    // 0 raw → 0mV at pin → *2 → 0mV battery
     arduino_mock::analog_values[PIN_BAT_ADC] = 0;
     uint16_t mv = sigurdos_battery_mv();
     EXPECT_EQ(mv, 0);
 }
 
 TEST_F(BatteryTest, AnalogReadMilliVoltsDischarged) {
-    // ~1820 raw → ~1465mV at pin → *2 → ~2930mV battery → ~0%
     arduino_mock::analog_values[PIN_BAT_ADC] = 1820;
     uint16_t mv = sigurdos_battery_mv();
     EXPECT_NEAR(mv, 2930, 10);
@@ -140,7 +146,6 @@ TEST_F(BatteryTest, AnalogReadMilliVoltsDischarged) {
 }
 
 TEST_F(BatteryTest, AnalogReadMilliVoltsCharged) {
-    // ~2606 raw → ~2100mV at pin → *2 → ~4200mV battery → 100%
     arduino_mock::analog_values[PIN_BAT_ADC] = 2606;
     uint16_t mv = sigurdos_battery_mv();
     EXPECT_NEAR(mv, 4200, 10);

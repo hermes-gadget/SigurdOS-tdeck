@@ -10,6 +10,7 @@
 
 static constexpr uint32_t CLICK_DEBOUNCE_MS = 20;
 static constexpr uint32_t DIRECTION_DEADTIME_MS = 150;
+static constexpr uint32_t LEFT_DEADTIME_MS = 80;  // shorter for responsive back-navigation
 static constexpr uint32_t DIRECTION_SETTLE_MS = 250;
 static constexpr uint8_t EVENT_QUEUE_SIZE = 8;
 
@@ -32,7 +33,7 @@ struct ButtonState {
 static ButtonState buttons[] = {
     {PIN_TRACKBALL_UP,    SigurdOSTrackballEvent::Up,    true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
     {PIN_TRACKBALL_DOWN,  SigurdOSTrackballEvent::Down,  true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
-    {PIN_TRACKBALL_LEFT,  SigurdOSTrackballEvent::Left,  true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
+    {PIN_TRACKBALL_LEFT,  SigurdOSTrackballEvent::Left,  true,  HIGH, false, false, 0, 0, LEFT_DEADTIME_MS},
     {PIN_TRACKBALL_RIGHT, SigurdOSTrackballEvent::Right, true,  HIGH, false, false, 0, 0, DIRECTION_DEADTIME_MS},
     {PIN_TRACKBALL_BTN,   SigurdOSTrackballEvent::Click, false, HIGH, false, false, 0, 0, CLICK_DEBOUNCE_MS},
 };
