@@ -88,6 +88,15 @@ static void storeIncomingMessageForCompanion(const char* sender, const char* cha
     if (is_channel) {
         strncpy(msg.conversation, channel, sizeof(msg.conversation) - 1);
         snprintf(msg.text, sizeof(msg.text), "%s: %s", sender ? sender : "", text ? text : "");
+        // Don't split a multi-byte UTF-8 character at the truncation boundary.
+        // Walk back from the last byte; if it's a continuation byte (0x80-0xBF),
+        // find and truncate at the character start (0xC0-0xFD or 0x00-0x7F).
+        {
+            size_t tlen = strlen(msg.text);
+            while (tlen > 0 && (msg.text[tlen - 1] & 0xC0) == 0x80) {
+                msg.text[--tlen] = '\0';
+            }
+        }
     } else {
         formatDmConversation(msg.conversation, sizeof(msg.conversation), sender);
         strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
