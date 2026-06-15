@@ -65,6 +65,10 @@ bool can_go_back();
 // Return the screen currently owned by the navigation stack.
 Screen current_screen();
 
+// Re-dispatch the current screen without modifying history.
+// Used after theme/style changes to rebuild widgets with new globals.
+void refresh_current_screen();
+
 // Universal back-swipe gesture (two-swipe commit).
 // Call this from the trackball dispatch loop for screens that don't have
 // their own Left handler. The first Left event is consumed (neutralise),

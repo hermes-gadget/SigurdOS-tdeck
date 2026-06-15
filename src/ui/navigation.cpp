@@ -152,6 +152,11 @@ Screen current_screen()
     return current;
 }
 
+void refresh_current_screen()
+{
+    dispatch_screen(current);
+}
+
 // ════════════════════════════════════════════════════
 // Universal back-swipe (two-swipe commit)
 // ════════════════════════════════════════════════════

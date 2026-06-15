@@ -547,12 +547,7 @@ void settings_display_show()
             np.theme_id = (np.theme_id + 1) % NUM_THEMES;
             theme_apply(np.theme_id);
             sigurdos::prefs_set(np);
-            char row_buf[64];
-            snprintf(row_buf, sizeof(row_buf), "  Theme: %s", THEMES[np.theme_id].name);
-            lv_obj_t* lbl = lv_obj_get_child(target, 1);
-            if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
-                lv_label_set_text(lbl, row_buf);
-            }
+            refresh_current_screen();
         }, LV_EVENT_CLICKED, nullptr);
         row++;
     }
