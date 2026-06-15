@@ -615,6 +615,9 @@ static bool delete_cb_registered = false;
 void sigurdos_map_init() {
     if (initialized) return;
 
+    // Reset monotonic clock for fresh cache entries
+    cache_clock = 0;
+
     // Allocate draw buffer (320×240×2 = 153KB for RGB565).
     // PSRAM first: DRAM is scarce (~320KB free) and a 153KB allocation there
     // stresses the heap. LVGL canvas draw ops work fine with PSRAM on ESP32-S3
