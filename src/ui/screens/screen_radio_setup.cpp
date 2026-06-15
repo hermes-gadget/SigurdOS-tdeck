@@ -547,7 +547,7 @@ void radio_setup_screen_show()
         sigurdos::mesh::saveChannels();
         chat_save_messages();
         // Flush and wait for flash writes to complete before restart
-        SPIFFS.flush();
+        SPIFFS.end();
         delay(200);
         ESP.restart();
     }, LV_EVENT_CLICKED, nullptr);

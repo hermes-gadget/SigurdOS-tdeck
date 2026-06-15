@@ -364,7 +364,7 @@ void loop() {
                                   s_downloaded);
                     setStatus(GitHubOTAState::Success, 100,
                               "Update complete — rebooting...");
-                    SPIFFS.flush();
+                    SPIFFS.end();
                     delay(500);
                     ESP.restart();
                 } else {
