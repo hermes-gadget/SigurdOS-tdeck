@@ -14,6 +14,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Update.h>
+#include <SPIFFS.h>
 #include <esp_heap_caps.h>
 #include <cstring>
 #include <cstdlib>
