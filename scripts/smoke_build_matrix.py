@@ -30,6 +30,9 @@ PROFILES = {
         "SigurdOS_TDeck_telemetry",
         "SigurdOS_TDeck_remote_test",
         "SigurdOS_TDeck_remote_test_radio",
+        "SigurdOS_TDeck_meshv2",
+        "SigurdOS_TDeck_ble_validation",
+        "SigurdOS_TDeck_gps_validation",
     ],
 }
 
