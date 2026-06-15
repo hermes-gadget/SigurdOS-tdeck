@@ -32,7 +32,7 @@ namespace sigurdos::ui {
 static Screen current = Screen::Home;
 
 // ── Back history stack (circular, max 8 entries) ─────────
-static constexpr int MAX_HISTORY = 8;
+static constexpr int MAX_HISTORY = 16;
 static Screen history[MAX_HISTORY];
 static int   history_top = -1;  // index of top (empty stack before any nav)
 

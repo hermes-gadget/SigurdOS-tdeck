@@ -35,8 +35,13 @@ using namespace responsive;
 // Trace — path tracing
 // ════════════════════════════════════════════════════════
 static lv_obj_t* trace_result_label = nullptr;
+static lv_timer_t* g_trace_poll_timer = nullptr;
 
 static void trace_screen_delete_cb(lv_event_t*) {
+    if (g_trace_poll_timer) {
+        lv_timer_del(g_trace_poll_timer);
+        g_trace_poll_timer = nullptr;
+    }
     trace_result_label = nullptr;
 }
 
@@ -138,7 +143,7 @@ void trace_screen_show()
                     }
                     trace_result_label = result_lbl;
 
-                    lv_timer_create([](lv_timer_t* t) {
+                    g_trace_poll_timer = lv_timer_create([](lv_timer_t* t) {
                         if (!trace_result_label) { lv_timer_del(t); return; }
                         if (sigurdos::mesh::hasTraceResult()) {
                             uint8_t len = sigurdos::mesh::getTracePathLen();

@@ -86,7 +86,7 @@ void signal_screen_show()
             lv_chart_set_all_value(chart, rssi_ser, LV_CHART_POINT_NONE);
             for (int i = 0; i < hist_count && i < 64; i++) {
                 int rssi_val = sigurdos::mesh::getSignalHistoryRSSI(i);
-                lv_chart_set_value_by_id(chart, rssi_ser, i, rssi_val + 120);
+                lv_chart_set_value_by_id(chart, rssi_ser, i, rssi_val);
             }
 
             lv_obj_t* ch_label = lv_label_create(scr);
@@ -173,7 +173,7 @@ void signal_screen_show()
             lv_chart_set_all_value(chart, rssi_ser, LV_CHART_POINT_NONE);
             for (int i = 0; i < hist_count && i < 64; i++) {
                 int rssi_val = sigurdos::mesh::getSignalHistoryRSSI(i);
-                lv_chart_set_value_by_id(chart, rssi_ser, i, rssi_val + 120);
+                lv_chart_set_value_by_id(chart, rssi_ser, i, rssi_val);
             }
 
             // Add label

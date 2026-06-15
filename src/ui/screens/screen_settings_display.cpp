@@ -427,8 +427,8 @@ static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 
     lv_obj_add_event_cb(minus_btn, [](lv_event_t* e) {
         auto* c = (DisplayBrightnessCtx*)lv_event_get_user_data(e);
-        if (c->brightness > 20) c->brightness -= 25;
-        if (c->brightness < 20) c->brightness = 20;
+        int val = (int)c->brightness - 25;
+        c->brightness = (uint8_t)(val < 20 ? 20 : val);
         sigurdos_display_set_brightness(c->brightness);
         char b[24];
         snprintf(b, sizeof(b), "%d (%d%%)", c->brightness, c->brightness * 100 / 255);
@@ -437,8 +437,8 @@ static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 
     lv_obj_add_event_cb(plus_btn, [](lv_event_t* e) {
         auto* c = (DisplayBrightnessCtx*)lv_event_get_user_data(e);
-        if (c->brightness < 240) c->brightness += 25;
-        if (c->brightness > 240) c->brightness = 240;
+        int val = (int)c->brightness + 25;
+        c->brightness = (uint8_t)(val > 240 ? 240 : val);
         sigurdos_display_set_brightness(c->brightness);
         char b[24];
         snprintf(b, sizeof(b), "%d (%d%%)", c->brightness, c->brightness * 100 / 255);

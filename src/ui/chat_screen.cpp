@@ -1807,6 +1807,8 @@ static void open_channel_messaging(int idx)
         search_bar = nullptr;
         search_input = nullptr;
         search_active = false;
+        search_match_count = 0;
+        search_current_match = -1;
     }, LV_EVENT_DELETE, nullptr);
 
     // Reset search state
