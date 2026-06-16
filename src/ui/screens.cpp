@@ -63,7 +63,23 @@ using namespace responsive;
 
 void show_screen(lv_obj_t* scr)
 {
+    // lv_scr_load() performs an immediate (auto_del=false) screen load, which
+    // does NOT free the previously active screen. Every make_screen_full()
+    // screen is built fresh via lv_obj_create(nullptr) and is never reused, so
+    // without an explicit delete the outgoing screen — and any periodic timers
+    // it owns — leaked into LVGL's fixed 48 KB object pool on each navigation.
+    // (Only the animated home/chat loads, which pass auto_del=true, freed the
+    // outgoing screen.) Capture the outgoing screen and release it after the
+    // load. Deletion is deferred with lv_obj_del_async() so it runs once the
+    // current input event has finished dispatching on the outgoing screen's
+    // widgets, avoiding a use-after-free. Releasing the screen also lets its
+    // LV_EVENT_DELETE handlers fire, which is what nulls the per-screen global
+    // pointers and stops its timers.
+    lv_obj_t* prev = lv_scr_act();
     lv_scr_load(scr);
+    if (prev && prev != scr) {
+        lv_obj_del_async(prev);
+    }
 }
 
 // Update the text inside a settings row button (used after live time set)

@@ -207,6 +207,7 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
 }
 
 inline void lv_obj_del(lv_obj_t*) {}
+inline void lv_obj_del_async(lv_obj_t*) {}
 
 // ── Object properties ────────────────────────────────────
 inline void lv_obj_set_size(lv_obj_t*, lv_coord_t, lv_coord_t) {}
