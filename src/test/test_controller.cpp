@@ -36,6 +36,7 @@
 #include "ui/chat_screen.h"
 #include "fonts/emoji_font.h"
 #include "fonts/emoji_data.h"
+#include <lvgl.h>
 #include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
@@ -449,9 +450,15 @@ static void cmd_screen() {
 }
 
 static void cmd_status() {
-    Serial.printf("[test] heap=%u psram=%u\n",
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    Serial.printf("[test] heap=%u psram=%u lvmem_used_pct=%u lvmem_free=%u lvmem_total=%u lvmem_frag=%u\n",
                   (unsigned)ESP.getFreeHeap(),
-                  (unsigned)ESP.getFreePsram());
+                  (unsigned)ESP.getFreePsram(),
+                  (unsigned)mon.used_pct,
+                  (unsigned)mon.free_size,
+                  (unsigned)mon.total_size,
+                  (unsigned)mon.frag_pct);
 }
 
 static void cmd_contactstats() {
