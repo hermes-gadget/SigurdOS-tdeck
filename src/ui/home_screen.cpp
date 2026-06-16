@@ -19,6 +19,7 @@
 
 #include "home_screen.h"
 #include "screens.h"
+#include "screens_common.h"
 #include "chat_screen.h"
 #include "navigation.h"
 #include "theme.h"
@@ -392,21 +393,23 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
     apply_dark_bg(scr);
     disable_scroll(scr);
 
-    // When any other screen replaces Home (auto_del=true), LVGL frees all
-    // children — null the static pointers so periodic update functions
-    // in ui::loop() don't dereference freed objects.
+    // When any other screen replaces Home, LVGL frees all children. Null only
+    // Home-owned pointers; shared screen pointers may already belong to the
+    // replacement screen when this delayed delete callback runs.
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         scr = top_bar = bottom_bar = grid = nullptr;
         time_label = batt_label = hashtag_label = badge_obj = nullptr;
         for (int i = 0; i < ICON_COUNT; i++) icon_tiles[i] = nullptr;
-        screens_clear_back_btn();
-        screens_clear_wifi_icon();
     }, LV_EVENT_DELETE, nullptr);
 
     create_top_bar();
     create_bottom_bar();
     create_icon_grid();
-    lv_scr_load_anim(scr, anim, duration, 0, true);
+    if (duration == 0 && anim == LV_SCR_LOAD_ANIM_NONE) {
+        show_screen(scr);
+    } else {
+        lv_scr_load_anim(scr, anim, duration, 0, true);
+    }
 }
 
 // ── Public API ───────────────────────────────────────────
@@ -418,7 +421,7 @@ void home_screen_create()
 
 void home_screen_show()
 {
-    build_home_screen(LV_SCR_LOAD_ANIM_MOVE_RIGHT, 200);
+    build_home_screen(LV_SCR_LOAD_ANIM_NONE, 0);
     home_screen_update_badges();
 }
 
