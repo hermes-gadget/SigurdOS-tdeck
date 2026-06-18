@@ -218,6 +218,20 @@ static void scan_button(ButtonState& btn, uint32_t now)
 
 bool sigurdos_trackball_init()
 {
+    // Detach any ISRs left by Launcher's warm-handoff (ESP.restart()).
+    // Launcher registers FALLING-edge ISRs on every trackball GPIO
+    // (UP=3, DOWN=15, LEFT=1, RIGHT=2, CLICK=0). After ESP.restart()
+    // these ISR vectors survive and fire in the app's context, corrupting
+    // memory when the GPIOs change state (touch I2C noise, button press).
+    // detachInterrupt() on an unattached pin is a no-op on cold boot.
+#ifdef ESP32_PLATFORM
+    detachInterrupt(PIN_TRACKBALL_UP);
+    detachInterrupt(PIN_TRACKBALL_DOWN);
+    detachInterrupt(PIN_TRACKBALL_LEFT);
+    detachInterrupt(PIN_TRACKBALL_RIGHT);
+    detachInterrupt(PIN_TRACKBALL_BTN);
+#endif
+
     for (ButtonState& btn : buttons) {
         pinMode(btn.pin, INPUT_PULLUP);
     }

@@ -439,9 +439,7 @@ void settings_radio_show()
         lv_obj_set_style_bg_opa(btn_reg, LV_OPA_COVER, 0);
         lv_obj_set_style_text_color(btn_reg, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_reg, [](lv_event_t*) {
-            lv_async_call([](void*) {
-                navigate_to(Screen::Regions);
-            }, nullptr);
+            navigate_to(Screen::Regions);
         }, LV_EVENT_CLICKED, nullptr);
         row++;
     }

@@ -74,9 +74,7 @@ void settings_screen_show()
         Screen target = cats[i].target;
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
             Screen s = (Screen)(intptr_t)lv_event_get_user_data(e);
-            lv_async_call([](void* ptr) {
-                navigate_to((Screen)(intptr_t)ptr);
-            }, (void*)(intptr_t)s);
+            navigate_to(s);
         }, LV_EVENT_CLICKED, (void*)(intptr_t)target);
     }
 
