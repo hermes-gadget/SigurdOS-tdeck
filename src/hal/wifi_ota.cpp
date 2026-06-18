@@ -79,6 +79,15 @@ bool start(const char* ssid, const char* password) {
         return false;
     }
 
+    // Require a device PIN — it is the only authentication on the upload
+    // endpoint. Without one, the AP-mode path below is an open network with an
+    // unauthenticated firmware-flash endpoint (#687). Refuse to start so the
+    // exposure can never be opened by default.
+    if (prefs_get().device_pin == 0) {
+        SIG_LOGW("[ota] REFUSED: no device PIN set — set a PIN before using WiFi OTA");
+        return false;
+    }
+
     IPAddress ip;
     if (wifi_sta::isConnected()) {
         // Already connected to a WiFi network — keep STA, bind on local IP
@@ -128,13 +137,10 @@ bool start(const char* ssid, const char* password) {
                 // Validate device PIN before accepting upload
                 const NodePrefs& p = prefs_get();
                 String pin_arg = server->arg("pin");
-                bool pin_valid = false;
-                if (p.device_pin != 0 && pin_arg.length() > 0) {
-                    pin_valid = ((uint32_t)pin_arg.toInt() == p.device_pin);
-                } else if (p.device_pin == 0) {
-                    // No PIN configured — accept upload (PIN field is ignored)
-                    pin_valid = true;
-                }
+                // A PIN is mandatory: start() refuses to run without one, so
+                // device_pin is always non-zero here. Treat a missing/zero PIN
+                // as unauthenticated rather than silently accepting (#687).
+                bool pin_valid = otaPinAccepts(p.device_pin, pin_arg.c_str());
                 if (!pin_valid) {
                     SIG_LOGW("[ota] Upload rejected: invalid PIN");
                     // Reject by setting a zero-length update so the write/end

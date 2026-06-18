@@ -404,6 +404,42 @@ void settings_system_show()
             return;
         }
 
+        // Require a device PIN before exposing the OTA flash endpoint. The web
+        // upload form authenticates with the device PIN; without one set, the
+        // endpoint would accept unauthenticated firmware over an open AP (#687).
+        if (sigurdos::prefs_get().device_pin == 0) {
+            auto dlg_sz = dialog_size(260, 96);
+            lv_obj_t* dlg = lv_obj_create(scr_ota);
+            lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+            lv_obj_center(dlg);
+            lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+            lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT_RED), 0);
+            lv_obj_set_style_border_width(dlg, 2, 0);
+            lv_obj_set_style_radius(dlg, 0, 0);
+            lv_obj_set_style_pad_all(dlg, 8, 0);
+
+            lv_obj_t* msg = lv_label_create(dlg);
+            lv_label_set_text(msg,
+                "Set a device PIN first\n(System > Device PIN).\n"
+                "OTA upload requires it.");
+            lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_PRIMARY), 0);
+            lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
+            lv_obj_align(msg, LV_ALIGN_CENTER, 0, 0);
+
+            lv_obj_t* close_btn = lv_btn_create(dlg);
+            lv_obj_set_size(close_btn, 80, 24);
+            lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -4);
+            lv_obj_set_style_bg_color(close_btn, lv_color_hex(BG_INPUT), 0);
+            lv_obj_set_style_radius(close_btn, 0, 0);
+            lv_obj_t* cl = lv_label_create(close_btn);
+            lv_label_set_text(cl, "OK");
+            lv_obj_center(cl);
+            lv_obj_add_event_cb(close_btn, [](lv_event_t* ev) {
+                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
+            }, LV_EVENT_CLICKED, nullptr);
+            return;
+        }
+
         auto dlg_sz = dialog_size(260, 120);
         lv_obj_t* dlg = lv_obj_create(scr_ota);
         lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
@@ -414,7 +450,26 @@ void settings_system_show()
         lv_obj_set_style_radius(dlg, 0, 0);
         lv_obj_set_style_pad_all(dlg, 8, 0);
 
-        sigurdos::ota::start("SigurdOS-OTA");
+        if (!sigurdos::ota::start("SigurdOS-OTA")) {
+            lv_obj_t* err = lv_label_create(dlg);
+            lv_label_set_text(err, "OTA failed to start");
+            lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
+            lv_obj_set_style_text_font(err, emoji_wrapped_montserrat_10, 0);
+            lv_obj_align(err, LV_ALIGN_TOP_MID, 0, 4);
+
+            lv_obj_t* eclose = lv_btn_create(dlg);
+            lv_obj_set_size(eclose, 80, 24);
+            lv_obj_align(eclose, LV_ALIGN_BOTTOM_MID, 0, -4);
+            lv_obj_set_style_bg_color(eclose, lv_color_hex(BG_INPUT), 0);
+            lv_obj_set_style_radius(eclose, 0, 0);
+            lv_obj_t* ecl = lv_label_create(eclose);
+            lv_label_set_text(ecl, "OK");
+            lv_obj_center(ecl);
+            lv_obj_add_event_cb(eclose, [](lv_event_t* ev) {
+                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
+            }, LV_EVENT_CLICKED, nullptr);
+            return;
+        }
         const char* ip = sigurdos::ota::getIP();
 
         lv_obj_t* title = lv_label_create(dlg);
@@ -423,11 +478,11 @@ void settings_system_show()
         lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
-        char info[80];
+        char info[96];
         snprintf(info, sizeof(info),
             "WiFi: SigurdOS-OTA\n"
             "IP: %s\n"
-            "Open browser, upload firmware.bin", ip);
+            "Browser: enter device PIN,\nupload firmware.bin", ip);
         lv_obj_t* msg = lv_label_create(dlg);
         lv_label_set_text(msg, info);
         lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_PRIMARY), 0);
