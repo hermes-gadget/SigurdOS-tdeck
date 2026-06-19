@@ -2700,7 +2700,13 @@ static constexpr size_t   MSG_MAX_FILE_SIZE =
 
 void chat_save_messages()
 {
-    if (!SPIFFS.begin(false)) return;
+    {
+        static bool mounted = false;
+        if (!mounted) {
+            if (!SPIFFS.begin(false)) return;
+            mounted = true;
+        }
+    }
     File f = SPIFFS.open("/msgs", "w");
     if (!f) return;
 
@@ -2760,9 +2766,15 @@ void chat_load_messages()
         }
     }
 
-    if (!SPIFFS.begin(false)) {
-        chat_load_companion_messages();
-        return;
+    {
+        static bool mounted = false;
+        if (!mounted) {
+            if (!SPIFFS.begin(false)) {
+                chat_load_companion_messages();
+                return;
+            }
+            mounted = true;
+        }
     }
     if (!SPIFFS.exists("/msgs")) {
         chat_load_companion_messages();

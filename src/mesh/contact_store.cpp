@@ -35,7 +35,12 @@ static void copyZ(char* dest, size_t dest_sz, const char* src)
 #if defined(ESP32_PLATFORM)
 static bool ensureFs()
 {
-    return SPIFFS.begin(false);
+    static bool mounted = false;
+    if (!mounted) {
+        if (!SPIFFS.begin(false)) return false;
+        mounted = true;
+    }
+    return true;
 }
 
 static bool existsStore()

@@ -63,23 +63,19 @@ using namespace responsive;
 
 void show_screen(lv_obj_t* scr)
 {
-    // lv_scr_load() performs an immediate (auto_del=false) screen load, which
-    // does NOT free the previously active screen. Every make_screen_full()
-    // screen is built fresh via lv_obj_create(nullptr) and is never reused, so
-    // without an explicit delete the outgoing screen — and any periodic timers
-    // it owns — leaked into LVGL's fixed 48 KB object pool on each navigation.
-    // (Only the animated home/chat loads, which pass auto_del=true, freed the
-    // outgoing screen.) Capture the outgoing screen and release it after the
-    // load. Deletion is deferred with lv_obj_del_async() so it runs once the
-    // current input event has finished dispatching on the outgoing screen's
-    // widgets, avoiding a use-after-free. Releasing the screen also lets its
-    // LV_EVENT_DELETE handlers fire, which is what nulls the per-screen global
-    // pointers and stops its timers.
-    lv_obj_t* prev = lv_scr_act();
-    lv_scr_load(scr);
-    if (prev && prev != scr) {
-        lv_obj_del_async(prev);
-    }
+    // Use lv_scr_load_anim with auto_del=true for ALL screen loads so LVGL
+    // consistently manages the outgoing screen lifecycle. The previous
+    // lv_scr_load() (auto_del=false) + manual lv_obj_del_async() conflicted
+    // with lv_scr_load_anim() (auto_del=true) used by the animated Home/Chat
+    // transitions. On rapid navigation between instant and animated screens,
+    // LVGL's internal screen-load state machine (d->scr_to_load, d->prev_scr,
+    // d->del_prev) deadlocked — the device hung silently after ~4 round-trips
+    // with no crash/reboot. (#672)
+    //
+    // With auto_del=true, LVGL frees the outgoing screen, triggers its
+    // LV_EVENT_DELETE handlers to null global pointers and stop timers, and
+    // reclaims the LVGL object-pool memory — same result, single code path.
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 }
 
 // Update the text inside a settings row button (used after live time set)
