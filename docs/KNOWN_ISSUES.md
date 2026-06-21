@@ -40,3 +40,44 @@ SigurdOS can now be installed as a Launcher app. See [`firmware/README.md`](../f
 ## How to Help
 
 Pick any item from the list above and open a PR against the `dev` branch. See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full contribution workflow.
+
+---
+
+## Potential Bugs (from 2026-06-21 audit)
+
+These code defects could cause crashes or corruption but aren't yet user-visible. See [`AUDIT-2026-06-21.md`](./AUDIT-2026-06-21.md) for the full report.
+
+### Latent div-by-zero in battery percentage lookup
+
+**File:Line:** `src/hal/battery.h:49-53`  
+**Severity:** MEDIUM  
+**Status:** FIXED (guard added)  
+If two consecutive entries in `mv_table` have the same value, `range_mv` becomes 0 causing division-by-zero. A guard was added: `if (range_mv == 0) return pct_table[i];`.
+
+### I2C speed compromise at 200kHz
+
+**File:Line:** `src/hal/touch.cpp:112`, `src/hal/keyboard.cpp:361`  
+**Severity:** MEDIUM  
+**Status:** UNFIXED  
+Both touch (GT911) and keyboard MCU (ESP32-C3) support 400kHz I2C. Currently capped at 200kHz as a "compromise." Consider trying 400kHz first with fallback, and move `setClock()` to a single shared init point (currently called in 3 places).
+
+### Garbage GPS data can stall Serial1.readBytesUntil
+
+**File:Line:** `src/hal/gps.cpp:211`  
+**Severity:** MEDIUM  
+**Status:** UNFIXED  
+`Serial1.readBytesUntil('\n', ...)` blocks until newline or buffer fill. If GPS sends garbage without newlines, the poll task stalls for the full buffer wait. Consider `Serial1.setTimeout()` or character-by-character read.
+
+### Undocumented firmware binaries
+
+**File:Line:** `firmware/sigurdos-tdeck.bin`, `firmware/sigurdos-tdeck-merged.bin`  
+**Severity:** LOW  
+**Status:** UNFIXED  
+These files exist on disk but are not documented in `firmware/README.md`. The stale `firmware/firmware-merged.bin` (pre-rename) has been removed.
+
+### Auto-off dialog static pointer fragility
+
+**File:Line:** `src/ui/screens/screen_settings_display.cpp:285-362`  
+**Severity:** LOW  
+**Status:** UNFIXED (correct but fragile)  
+The `static lv_obj_t* selected` pointer in `auto_off_dialog()` is correctly nulled by `LV_EVENT_DELETE`, but a per-dialog context struct would be more robust against future UI changes.
