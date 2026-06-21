@@ -188,7 +188,7 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     m.channel[sizeof(m.channel) - 1] = '\0';
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
-    m.timestamp = rtc_clock.getCurrentTime();
+    m.timestamp = sender_timestamp ? sender_timestamp : rtc_clock.getCurrentTime();
     m.is_self = false;
     if (strcmp(sender, own_name) != 0) unread_count++;
     msg_head = (msg_head + 1) % MAX_QUEUED;
