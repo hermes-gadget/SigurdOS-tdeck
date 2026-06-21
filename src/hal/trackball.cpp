@@ -205,6 +205,7 @@ static void scan_click(ButtonState& btn, uint32_t now)
         btn.stable_active = raw;
         if (btn.stable_active) {
             queue_event(btn.event);
+            btn.last_event_at = now;
         }
         return;
     }
