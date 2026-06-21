@@ -48,6 +48,7 @@ inline uint8_t sigurdos_battery_pct_from_mv(uint16_t mv)
     for (int i = 0; i < table_size - 1; i++) {
         if (mv >= mv_table[i + 1]) {
             uint16_t range_mv = mv_table[i] - mv_table[i + 1];
+            if (range_mv == 0) return pct_table[i];
             uint8_t range_pct = pct_table[i] - pct_table[i + 1];
             uint16_t offset_mv = mv_table[i] - mv;
             return pct_table[i] - (uint8_t)((uint32_t)offset_mv * range_pct / range_mv);
