@@ -357,8 +357,7 @@ bool sigurdos_keyboard_init()
 {
     if (initialized) return true;
 
-    // I2C bus must already be initialized (TDeckBoard::begin does this)
-    Wire.setClock(200000);
+    // I2C bus is already initialized by TDeckBoard::begin() at 400 kHz.
 
     // Warm-handoff probe: after Launcher's ESP.restart(), the C3 keyboard
     // MCU may be slow to respond or in an unexpected mode. Retry with

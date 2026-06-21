@@ -107,9 +107,8 @@ bool sigurdos_touch_init()
 {
     if (initialized) return true;
 
-    // I2C bus is already initialized by TDeckBoard::begin()
-    // Initialize GT911 with correct pins and 200kHz clock
-    Wire.setClock(200000);  // Compromise speed for shared I2C bus (GT911 + keyboard)
+    // I2C bus is already initialized by TDeckBoard::begin() at 400 kHz.
+    // Initialize GT911 with correct pins
 
     // Configure INT pin
     pinMode(PIN_TOUCH_INT, INPUT_PULLUP);

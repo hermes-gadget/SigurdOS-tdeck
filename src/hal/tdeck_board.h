@@ -67,8 +67,9 @@ public:
         analogReadResolution(12);
         adcAttachPin(PIN_BAT_ADC);
 
-        // I2C for touch / RTC
+        // I2C for touch / keyboard — both GT911 and ESP32-C3 support 400 kHz
         Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL);
+        Wire.setClock(400000);
 
         // Detect wake from deep sleep (matches MeshCore TDeckBoard pattern)
         esp_reset_reason_t reason = esp_reset_reason();
