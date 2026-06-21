@@ -143,6 +143,10 @@ void trace_screen_show()
                     }
                     trace_result_label = result_lbl;
 
+                    if (g_trace_poll_timer) {
+                        lv_timer_del(g_trace_poll_timer);
+                        g_trace_poll_timer = nullptr;
+                    }
                     g_trace_poll_timer = lv_timer_create([](lv_timer_t* t) {
                         if (!trace_result_label) { lv_timer_del(t); return; }
                         if (sigurdos::mesh::hasTraceResult()) {
