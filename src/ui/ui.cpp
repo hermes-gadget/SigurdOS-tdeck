@@ -141,9 +141,9 @@ void loop()
             home_screen_update_time(tbuf);
         }
         // Persist state every 5 min (catches unexpected power loss)
+        // modulo avoids the 22-day gap after uint16_t overflow (follow-up to #637)
         static uint16_t save_counter = 0;
-        if (++save_counter >= 10) {
-            save_counter = 0;
+        if (++save_counter % 10 == 0) {
             sigurdos::mesh::saveState();
             sigurdos::mesh::saveChannels();
             sigurdos::mesh::saveContacts();
