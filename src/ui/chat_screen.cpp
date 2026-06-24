@@ -2487,7 +2487,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
 
     const uint16_t cap = chat_msg_cap();
     if (lv_obj_get_child_cnt(msg_list) > cap)
-        lv_obj_del(lv_obj_get_child(msg_list, 0));
+        lv_obj_del_async(lv_obj_get_child(msg_list, 0));
 
     // Only auto-scroll if user was already at the bottom
     if (at_bottom) {
@@ -2564,13 +2564,13 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
             return true;
         case SigurdOSTrackballEvent::Right:
-            if (input_field) {
+            if (input_field && lv_obj_is_valid(input_field)) {
                 lv_group_t* g = lv_group_get_default();
                 if (g) lv_group_focus_obj(input_field);
             }
             return true;
         case SigurdOSTrackballEvent::Click:
-            if (input_field) {
+            if (input_field && lv_obj_is_valid(input_field)) {
                 lv_group_t* g = lv_group_get_default();
                 if (g) lv_group_focus_obj(input_field);
             }

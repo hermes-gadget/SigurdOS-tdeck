@@ -142,8 +142,7 @@ void loop()
         }
         // Persist state every 5 min (catches unexpected power loss)
         static uint16_t save_counter = 0;
-        if (++save_counter >= 10) {
-            save_counter = 0;
+        if (++save_counter % 10 == 0) {
             sigurdos::mesh::saveState();
             sigurdos::mesh::saveChannels();
             sigurdos::mesh::saveContacts();
