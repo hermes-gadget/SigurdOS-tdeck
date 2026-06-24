@@ -755,8 +755,9 @@ namespace mesh {
 #if defined(ESP32_PLATFORM)
     int SigurdMeshV2::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
         char path[48];
-        snprintf(path, sizeof(path), "/blob_%02x%02x",
-                 key_len > 0 ? key[0] : 0, key_len > 1 ? key[1] : 0);
+        snprintf(path, sizeof(path), "/blob_%02x%02x%02x%02x",
+                 key_len > 0 ? key[0] : 0, key_len > 1 ? key[1] : 0,
+                 key_len > 2 ? key[2] : 0, key_len > 3 ? key[3] : 0);
         if (!SPIFFS.exists(path)) return 0;
         File f = SPIFFS.open(path, "r");
         if (!f) return 0;
@@ -769,8 +770,9 @@ namespace mesh {
 #if defined(ESP32_PLATFORM)
     bool SigurdMeshV2::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], int len) {
         char path[48];
-        snprintf(path, sizeof(path), "/blob_%02x%02x",
-                 key_len > 0 ? key[0] : 0, key_len > 1 ? key[1] : 0);
+        snprintf(path, sizeof(path), "/blob_%02x%02x%02x%02x",
+                 key_len > 0 ? key[0] : 0, key_len > 1 ? key[1] : 0,
+                 key_len > 2 ? key[2] : 0, key_len > 3 ? key[3] : 0);
         if (SPIFFS.exists(path)) SPIFFS.remove(path);
         File f = SPIFFS.open(path, "w");
         if (!f) return false;
