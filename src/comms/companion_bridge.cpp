@@ -83,6 +83,16 @@ bool CompanionBridge::setEnabled(bool enabled)
 void CompanionBridge::loop()
 {
     if (!_serial || !_host || !_serial->isEnabled()) return;
+
+    // Clear in-progress signing state on BLE disconnect to prevent
+    // cross-session signature injection (#712).  Check before we
+    // consume frames so a disconnect + reconnect + malicious FINISH
+    // sees a clean slate.
+    if (_was_connected && !_serial->isConnected()) {
+        _sign_active = false;
+        _sign_len = 0;
+    }
+    _was_connected = _serial->isConnected();
     size_t len = _serial->checkRecvFrame(_cmd_frame);
     if (len > 0) {
         handleFrame(_cmd_frame, len);

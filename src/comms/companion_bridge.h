@@ -405,6 +405,7 @@ private:
     uint8_t _sign_buf[SIGURDOS_COMPANION_MAX_SIGN_DATA];
     size_t  _sign_len = 0;
     bool    _sign_active = false;
+    bool    _was_connected = false;  // detect BLE disconnect to clear signing state (#712)
 
     bool pushContactFrame(uint8_t code, const CompanionContact& contact);
 };
