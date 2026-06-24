@@ -96,6 +96,11 @@ static void storeIncomingMessageForCompanion(const char* sender, const char* cha
             while (tlen > 0 && (msg.text[tlen - 1] & 0xC0) == 0x80) {
                 msg.text[--tlen] = '\0';
             }
+            // Strip any orphaned multi-byte start byte (0xC0–0xFD)
+            // left after continuation-byte cleanup (follow-up to #653).
+            if (tlen > 0 && (msg.text[tlen - 1] & 0xC0) == 0xC0) {
+                msg.text[--tlen] = '\0';
+            }
         }
     } else {
         formatDmConversation(msg.conversation, sizeof(msg.conversation), sender);
