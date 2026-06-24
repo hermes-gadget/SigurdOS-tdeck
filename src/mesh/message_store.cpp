@@ -307,22 +307,86 @@ static bool messageExists(const StoredMessage& msg)
     return false;
 }
 
+// Atomically replace the entire message store with the given records.
+// Writes to a temp file first, then uses rename() to swap it in —
+// power loss after the initial write leaves the original file intact.
+static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count)
+{
+    if (!ensureFs()) return false;
+    if (!msgs || count == 0) return messageStoreClear();
+
+#if defined(ESP32_PLATFORM)
+    static constexpr const char* TMP_PATH = "/companion_msgs.tmp";
+    SPIFFS.remove(TMP_PATH);
+    File f = SPIFFS.open(TMP_PATH, "w");
+    if (!f) return false;
+    uint32_t magic = detail::MESSAGE_STORE_MAGIC;
+    uint8_t version = detail::MESSAGE_STORE_VERSION;
+    bool ok = f.write((const uint8_t*)&magic, 4) == 4 &&
+              f.write(&version, 1) == 1 &&
+              f.write((const uint8_t*)&count, 4) == 4;
+    if (ok) {
+        uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
+        for (uint32_t i = 0; ok && i < count; i++) {
+            writeRecordRaw(msgs[i], rec, sizeof(rec));
+            ok = f.write(rec, sizeof(rec)) == sizeof(rec);
+        }
+    }
+    f.close();
+    if (!ok) {
+        SPIFFS.remove(TMP_PATH);
+        return false;
+    }
+    SPIFFS.remove(STORE_PATH);
+    if (!SPIFFS.rename(TMP_PATH, STORE_PATH)) {
+        SPIFFS.remove(TMP_PATH);
+        return false;
+    }
+    return true;
+#else
+    char tmp_path[180];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", g_native_path);
+    std::remove(tmp_path);
+    FILE* f = std::fopen(tmp_path, "wb");
+    if (!f) return false;
+    uint32_t magic = detail::MESSAGE_STORE_MAGIC;
+    uint8_t version = detail::MESSAGE_STORE_VERSION;
+    bool ok = std::fwrite(&magic, 1, 4, f) == 4 &&
+              std::fwrite(&version, 1, 1, f) == 1 &&
+              std::fwrite(&count, 1, 4, f) == 4;
+    if (ok) {
+        uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
+        for (uint32_t i = 0; ok && i < count; i++) {
+            writeRecordRaw(msgs[i], rec, sizeof(rec));
+            ok = std::fwrite(rec, 1, sizeof(rec), f) == sizeof(rec);
+        }
+    }
+    std::fclose(f);
+    if (!ok) {
+        std::remove(tmp_path);
+        return false;
+    }
+    std::remove(g_native_path);
+    if (std::rename(tmp_path, g_native_path) != 0) {
+        std::remove(tmp_path);
+        return false;
+    }
+    return true;
+#endif
+}
+
 static bool trimStoreToRecent(uint32_t max_records)
 {
     if (max_records == 0) return messageStoreClear();
     StoredMessage* recent = (StoredMessage*)std::malloc(sizeof(StoredMessage) * max_records);
     if (!recent) return false;
     int n = messageStoreLoadRecent(nullptr, recent, (int)max_records);
-    if (!messageStoreClear()) {
+    if (!atomicReplaceStore(recent, (uint32_t)n)) {
         std::free(recent);
         return false;
     }
-    bool ok = true;
-    for (int i = 0; i < n; i++) {
-        if (!messageStoreAppend(recent[i])) ok = false;
-    }
     std::free(recent);
-    return ok;
+    return true;
 }
 
 } // namespace
@@ -448,14 +512,7 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
         return false;
     }
 
-    if (!messageStoreClear()) {
-        std::free(msgs);
-        return false;
-    }
-    bool ok = true;
-    for (int i = 0; i < n; i++) {
-        if (!messageStoreAppend(msgs[i])) ok = false;
-    }
+    bool ok = atomicReplaceStore(msgs, (uint32_t)n);
     std::free(msgs);
     return ok;
 }
@@ -480,14 +537,7 @@ bool messageStoreMarkAllCompanionSent()
         std::free(msgs);
         return true;
     }
-    if (!messageStoreClear()) {
-        std::free(msgs);
-        return false;
-    }
-    bool ok = true;
-    for (int i = 0; i < n; i++) {
-        if (!messageStoreAppend(msgs[i])) ok = false;
-    }
+    bool ok = atomicReplaceStore(msgs, (uint32_t)n);
     std::free(msgs);
     return ok;
 }
