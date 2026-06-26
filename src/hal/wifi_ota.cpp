@@ -10,6 +10,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <esp_random.h>
 
 namespace sigurdos {
 namespace ota {
@@ -17,59 +18,7 @@ namespace ota {
 static WebServer* server = nullptr;
 static bool active = false;
 static char server_ip[16] = "";
-
-static const char OTA_HTML[] PROGMEM = R"rawliteral(
-<!DOCTYPE html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SigurdOS OTA</title>
-<style>
-body{background:#0F0F0F;color:#00BFFF;font-family:monospace;text-align:center;padding:20px}
-h1{font-size:20px;margin-bottom:10px}
-input[type=file],input[type=password]{margin:20px 0;padding:10px;background:#1A1A2E;color:#00BFFF;border:2px solid #00BFFF;width:80%;max-width:300px;box-sizing:border-box}
-input[type=password]::placeholder{color:#4A4A6E}
-input[type=submit]{padding:10px 30px;background:#00BFFF;color:#0F0F0F;border:none;font-weight:bold;cursor:pointer}
-#progress{width:80%;height:20px;background:#1A1A2E;border:2px solid #00BFFF;margin:20px auto;display:none}
-#bar{width:0;height:100%;background:#00BFFF}
-#status{margin-top:10px;font-size:14px}
-#error{color:#FF4444;margin-top:10px;display:none}
-</style></head><body>
-<h1>SigurdOS Firmware Update</h1>
-<p>Enter device PIN and select firmware.bin.</p>
-<form method="POST" action="/update" enctype="multipart/form-data" id="otaform">
-<input type="password" name="pin" placeholder="Device PIN" required><br>
-<input type="file" name="firmware" accept=".bin" required><br>
-<input type="submit" value="Update">
-</form>
-<div id="progress"><div id="bar"></div></div>
-<div id="error"></div>
-<div id="status"></div>
-<script>
-document.getElementById('otaform').addEventListener('submit',function(e){
-e.preventDefault();
-var pin=document.querySelector('input[name=pin]').value;
-var file=document.querySelector('input[type=file]').files[0];
-if(!file||!pin)return;
-var formData=new FormData();
-formData.append('pin',pin);
-formData.append('firmware',file);
-var xhr=new XMLHttpRequest();
-xhr.open('POST','/update',true);
-xhr.onload=function(){
-if(xhr.status==200){
-document.getElementById('status').textContent='Update OK — rebooting...';
-}else{
-document.getElementById('error').textContent='Update FAILED: '+xhr.responseText;
-document.getElementById('error').style.display='block';
-}
-};
-xhr.onerror=function(){
-document.getElementById('error').textContent='Network error';
-document.getElementById('error').style.display='block';
-};
-xhr.send(formData);
-});
-</script></body></html>
-)rawliteral";
+static String csrf_token;  // regenerated per OTA session
 
 bool start(const char* ssid, const char* password) {
     if (active) return true;
@@ -111,10 +60,71 @@ bool start(const char* ssid, const char* password) {
     // Set up web server
     server = new WebServer(80);
 
-    // Root page — OTA upload form
+    // Root page — OTA upload form with CSRF token
     server->on("/", HTTP_GET, []() {
         server->sendHeader("Connection", "close");
-        server->send(200, "text/html", OTA_HTML);
+        // Regenerate CSRF token per session (ESP32 hardware RNG)
+        csrf_token = "";
+        for (int i = 0; i < 16; i++) {
+            char hex[3];
+            snprintf(hex, sizeof(hex), "%02x", (uint8_t)esp_random());
+            csrf_token += hex;
+        }
+        // Build page dynamically with embedded CSRF token
+        String html = F("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>SigurdOS OTA</title>"
+            "<style>"
+            "body{background:#0F0F0F;color:#00BFFF;font-family:monospace;text-align:center;padding:20px}"
+            "h1{font-size:20px;margin-bottom:10px}"
+            "input[type=file],input[type=password]{margin:20px 0;padding:10px;background:#1A1A2E;color:#00BFFF;border:2px solid #00BFFF;width:80%;max-width:300px;box-sizing:border-box}"
+            "input[type=password]::placeholder{color:#4A4A6E}"
+            "input[type=submit]{padding:10px 30px;background:#00BFFF;color:#0F0F0F;border:none;font-weight:bold;cursor:pointer}"
+            "#progress{width:80%;height:20px;background:#1A1A2E;border:2px solid #00BFFF;margin:20px auto;display:none}"
+            "#bar{width:0;height:100%;background:#00BFFF}"
+            "#status{margin-top:10px;font-size:14px}"
+            "#error{color:#FF4444;margin-top:10px;display:none}"
+            "</style></head><body>"
+            "<h1>SigurdOS Firmware Update</h1>"
+            "<p>Enter device PIN and select firmware.bin.</p>"
+            "<form method=\"POST\" action=\"/update\" enctype=\"multipart/form-data\" id=\"otaform\">");
+        html += F("<input type=\"hidden\" name=\"csrf\" value=\"");
+        html += csrf_token;
+        html += F("\">"
+            "<input type=\"password\" name=\"pin\" placeholder=\"Device PIN\" required><br>"
+            "<input type=\"file\" name=\"firmware\" accept=\".bin\" required><br>"
+            "<input type=\"submit\" value=\"Update\">"
+            "</form>"
+            "<div id=\"progress\"><div id=\"bar\"></div></div>"
+            "<div id=\"error\"></div>"
+            "<div id=\"status\"></div>"
+            "<script>"
+            "document.getElementById('otaform').addEventListener('submit',function(e){"
+            "e.preventDefault();"
+            "var pin=document.querySelector('input[name=pin]').value;"
+            "var file=document.querySelector('input[type=file]').files[0];"
+            "if(!file||!pin)return;"
+            "var formData=new FormData();"
+            "formData.append('pin',pin);"
+            "formData.append('csrf',document.querySelector('input[name=csrf]').value);"
+            "formData.append('firmware',file);"
+            "var xhr=new XMLHttpRequest();"
+            "xhr.open('POST','/update',true);"
+            "xhr.onload=function(){"
+            "if(xhr.status==200){"
+            "document.getElementById('status').textContent='Update OK — rebooting...';"
+            "}else{"
+            "document.getElementById('error').textContent='Update FAILED: '+xhr.responseText;"
+            "document.getElementById('error').style.display='block';"
+            "}};"
+            "xhr.onerror=function(){"
+            "document.getElementById('error').textContent='Network error';"
+            "document.getElementById('error').style.display='block';"
+            "};"
+            "xhr.send(formData);"
+            "});"
+            "</script></body></html>");
+        server->send(200, "text/html", html);
     });
 
     // Firmware upload handler
@@ -137,6 +147,13 @@ bool start(const char* ssid, const char* password) {
                 // Validate device PIN before accepting upload
                 const NodePrefs& p = prefs_get();
                 String pin_arg = server->arg("pin");
+                // CSRF token must match the token served with the form
+                String csrf_arg = server->arg("csrf");
+                if (csrf_arg.length() == 0 || csrf_arg != csrf_token) {
+                    SIG_LOGW("[ota] Upload rejected: invalid CSRF token");
+                    Update.abort();
+                    return;
+                }
                 // A PIN is mandatory: start() refuses to run without one, so
                 // device_pin is always non-zero here. Treat a missing/zero PIN
                 // as unauthenticated rather than silently accepting (#687).
