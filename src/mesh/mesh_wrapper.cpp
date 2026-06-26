@@ -977,8 +977,14 @@ bool init(bool spiffs_ok)
             bleValidationStartLog();
         }
     }
-#else
-    if (CompanionBridge* b = companionBridge()) b->begin(nullptr, &g_companion_host);
+#elif defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
+    {
+        g_usb_serial.begin(Serial);
+        if (CompanionBridge* b = companionBridge()) {
+            b->begin(&g_usb_serial, &g_companion_host);
+            b->setEnabled(true);
+        }
+    }
 #endif
 
     // Auto-advert is now exclusively duration-limited and user-enabled:

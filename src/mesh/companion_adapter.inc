@@ -39,6 +39,9 @@ static CompanionBridge* companionBridge()
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 static sigurdos::comms::ObservedSerialBLEInterface g_ble_serial;
+#elif defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
+#include <helpers/ArduinoSerialInterface.h>
+static ArduinoSerialInterface g_usb_serial;
 #endif
 
 static constexpr uint32_t SIGURDOS_DEFAULT_BLE_PIN = 123456;
