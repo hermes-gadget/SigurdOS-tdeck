@@ -1589,6 +1589,15 @@ void loadContacts() {
     sigurdos::mesh::contactStoreLoad(writeStoredContact, nullptr);
 }
 
+void reloadContactsAfterIdentityChange() {
+    if (!g_mesh) return;
+    // Invalidate cached ECDH shared secrets from old identity,
+    // then reload contacts from persistent storage.
+    g_mesh->reloadContactsAfterIdentityChange();
+    loadContacts();
+    saveContacts();
+}
+
 void shutdown()
 {
     if (!initialized) return;

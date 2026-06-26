@@ -58,6 +58,9 @@ public:
     }
     const char* getOwnName() const { return _own_name; }
 
+    // Expose protected BaseChatMesh::resetContacts for the identity-import path.
+    void reloadContactsAfterIdentityChange() { resetContacts(); }
+
     // _message_cb and setMessageCallback() were removed in 2026-06 — dead code
     // after the RX double-queue fix removed _message_cb(...) invocations from all
     // message handlers. See mesh_wrapper.cpp for removal history.

@@ -70,6 +70,12 @@ bool prefs_load(NodePrefs& p) {
     // saved user preference still controls later boots.
     p.ble_enabled = nvs.getBool("ble_en", DEFAULT_BLE_ENABLED);
     p.device_pin = nvs.getULong("dev_pin", 0);
+    p.telemetry_modes = nvs.getUChar("tele_mod", 0);
+    p.manual_add_contacts = nvs.getUChar("man_add", 0);
+    // default scope key (hex-encoded)
+    size_t dsk_len = nvs.getString("scope_key", p.default_scope_key_hex, sizeof(p.default_scope_key_hex));
+    if (dsk_len == 0 || dsk_len > sizeof(p.default_scope_key_hex)) { p.default_scope_key_hex[0] = '\0'; }
+    else { p.default_scope_key_hex[sizeof(p.default_scope_key_hex) - 1] = '\0'; }
     // WiFi credentials (GitHub OTA) — use getString guard matching node_name pattern
     size_t ssid_len = nvs.getString("wifi_ssid", p.wifi_ssid, sizeof(p.wifi_ssid));
     if (ssid_len == 0 || ssid_len > sizeof(p.wifi_ssid)) { p.wifi_ssid[0] = '\0'; }
@@ -104,7 +110,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putFloat("bw", p.bw);
     nvs.putUChar("sf", p.sf);
     nvs.putUChar("cr", p.cr);
-    nvs.putChar("txpwr", p.tx_power_dbm < 2 ? (int8_t)2 : (p.tx_power_dbm > 22 ? (int8_t)22 : p.tx_power_dbm));
+    nvs.putChar("txpwr", p.tx_power_dbm < -9 ? (int8_t)(-9) : (p.tx_power_dbm > 22 ? (int8_t)22 : p.tx_power_dbm));
     nvs.putBool("cfg", p.configured);
     nvs.putUChar("kbd_bl", p.kbd_backlight);
     nvs.putUChar("disp_bl", p.display_brightness);
@@ -133,6 +139,9 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putUChar("clirep", p.client_repeat);
     nvs.putBool("ble_en", p.ble_enabled);
     nvs.putULong("dev_pin", p.device_pin);
+    nvs.putUChar("tele_mod", p.telemetry_modes);
+    nvs.putUChar("man_add", p.manual_add_contacts);
+    nvs.putString("scope_key", p.default_scope_key_hex);
     nvs.putString("wifi_ssid", p.wifi_ssid);
     nvs.putString("wifi_pw", p.wifi_password);
     nvs.putString("act_reg", p.active_region);

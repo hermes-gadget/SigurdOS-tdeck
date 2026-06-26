@@ -300,6 +300,8 @@ public:
         return {last_send_ok, false, tag, 4000};
     }
     void selfTelemetry(uint8_t*, size_t* out_len) const override { if (out_len) *out_len = 0; }
+    int getCustomVars(char*, size_t) const override { return 0; }  // empty by default
+    bool setCustomVar(const char*, const char*) override { return false; }  // fail by default
     int signData(const uint8_t*, size_t len, uint8_t* sig_out) override {
         sign_len_seen = (int)len;
         std::memset(sig_out, 0xAB, 64);

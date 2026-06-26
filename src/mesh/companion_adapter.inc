@@ -221,8 +221,8 @@ public:
         }
         out.multi_acks = p.multi_acks;
         out.advert_loc_policy = p.share_location ? 1 : 0;
-        out.telemetry_modes = 0;
-        out.manual_add_contacts = 0;
+        out.telemetry_modes = p.telemetry_modes;
+        out.manual_add_contacts = p.manual_add_contacts;
         out.freq_khz = (uint32_t)(p.freq * 1000.0f);
         out.bw_hz = (uint32_t)(p.bw * 1000.0f);
         out.sf = p.sf;
@@ -230,7 +230,12 @@ public:
     }
 
     uint32_t currentTime() const override { return sigurdos::mesh::getCurrentTime(); }
-    bool setCurrentTime(uint32_t epoch) override { return sigurdos::mesh::setSystemTime(epoch); }
+    bool setCurrentTime(uint32_t epoch) override {
+        // Reject backwards time changes to protect replay/timestamp logic
+        uint32_t now = sigurdos::mesh::getCurrentTime();
+        if (epoch < now && now > 0) return false;
+        return sigurdos::mesh::setSystemTime(epoch);
+    }
     uint16_t batteryMilliVolts() const override { return sigurdos_battery_mv(); }
     uint32_t storageUsedKb() const override { return (uint32_t)(SPIFFS.usedBytes() / 1024); }
     uint32_t storageTotalKb() const override { return (uint32_t)(SPIFFS.totalBytes() / 1024); }
@@ -401,14 +406,14 @@ public:
                         uint8_t sf,
                         uint8_t cr,
                         uint8_t client_repeat) override {
-        if (freq_khz < 400000 || freq_khz > 1000000) return false;
+        if (freq_khz < 150000 || freq_khz > 2500000) return false;
         if (bw_hz < 7800 || bw_hz > 500000) return false;
-        if (sf < 6 || sf > 12) return false;
+        if (sf < 5 || sf > 12) return false;
         if (cr < 5 || cr > 8) return false;
         if (client_repeat > 1) return false;
 
         sigurdos::NodePrefs p = sigurdos::prefs_get();
-        const int tx_power = (p.tx_power_dbm >= 2 && p.tx_power_dbm <= 22)
+        const int8_t tx_power = (p.tx_power_dbm >= -9 && p.tx_power_dbm <= 22)
             ? p.tx_power_dbm
             : LORA_TX_PWR;
         const float freq = (float)freq_khz / 1000.0f;
@@ -430,7 +435,7 @@ public:
     }
 
     bool setRadioTxPower(int8_t tx_power_dbm) override {
-        if (tx_power_dbm < 2 || tx_power_dbm > 22) return false;
+        if (tx_power_dbm < -9 || tx_power_dbm > 22) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
 
         const float freq = p.configured ? p.freq : LORA_FREQ;
@@ -466,7 +471,7 @@ public:
     }
 
     bool setBlePin(uint32_t pin) override {
-        if (pin != 0 && (pin < 1000 || pin > 999999)) return false;
+        if (pin != 0 && (pin < 100000 || pin > 999999)) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         p.device_pin = pin;
         sigurdos::prefs_set(p);
@@ -493,10 +498,10 @@ public:
 
     void setOtherParams(const CompanionOtherParams& op) override {
         sigurdos::NodePrefs p = sigurdos::prefs_get();
-        // SigurdOS has no manual_add_contacts / telemetry-mode store; only the
-        // fields with a backing pref are applied.
+        if (op.telemetry_present) p.telemetry_modes = op.telemetry_modes;
         if (op.loc_policy_present) p.share_location = (op.advert_loc_policy != 0);
         if (op.multi_acks_present) p.multi_acks = (op.multi_acks != 0);
+        p.manual_add_contacts = op.manual_add_contacts;
         sigurdos::prefs_set(p);
     }
     bool setPathHashMode(uint8_t mode) override {
@@ -629,8 +634,15 @@ public:
         s.recv_direct = sigurdos::mesh::getNumRecvDirect();
         s.recv_errors = radio_driver ? radio_driver->getPacketsRecvErrors() : 0;
     }
-    size_t allowedRepeatFreqRanges(uint32_t*, size_t) const override {
-        return 0;  // SigurdOS does not gate client-repeat by frequency
+    size_t allowedRepeatFreqRanges(uint32_t* pairs, size_t max_pairs) const override {
+        // Return the actual supported frequency range(s) for client-repeat.
+        // For SX1262 on T-Deck: 150 MHz – 960 MHz (usable range).
+        if (pairs && max_pairs >= 1) {
+            pairs[0] = 150000;   // 150 MHz in kHz (lower)
+            pairs[1] = 960000;   // 960 MHz in kHz (upper)
+            return 1;            // 1 range pair
+        }
+        return 0;
     }
 
     // ── Flood scope (companion regions) ──────────────────────
@@ -649,7 +661,27 @@ public:
         if (nk <= 0) return false;
 
         if (name_out) { memset(name_out, 0, 31); strncpy(name_out, r->name, 30); }
-        if (key_out) memcpy(key_out, keys[0].key, 16);
+        if (key_out) {
+            // Check if a persisted private key exists (for $private scopes)
+            const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+            if (p.default_scope_key_hex[0] != '\0' && active[0] == '$') {
+                // Hex-decode the stored key
+                for (int i = 0; i < 16; i++) {
+                    char hi = p.default_scope_key_hex[i * 2];
+                    char lo = p.default_scope_key_hex[i * 2 + 1];
+                    uint8_t b = 0;
+                    if (hi >= '0' && hi <= '9') b = (hi - '0') << 4;
+                    else if (hi >= 'a' && hi <= 'f') b = (hi - 'a' + 10) << 4;
+                    else if (hi >= 'A' && hi <= 'F') b = (hi - 'A' + 10) << 4;
+                    if (lo >= '0' && lo <= '9') b |= (lo - '0');
+                    else if (lo >= 'a' && lo <= 'f') b |= (lo - 'a' + 10);
+                    else if (lo >= 'A' && lo <= 'F') b |= (lo - 'A' + 10);
+                    key_out[i] = b;
+                }
+            } else {
+                memcpy(key_out, keys[0].key, 16);
+            }
+        }
         return true;
     }
     void setDefaultFloodScope(const char* name, const uint8_t* key) override {
@@ -664,16 +696,22 @@ public:
             r = sigurdos::mesh::addRegion(name);
         }
 
-        // If a key was provided for a $private region, store it via TransportKeyStore
-        // (The companion app sends the raw key bytes; we trust it)
+        // If a key was provided for a $private region, persist it in NVS
+        // so it survives reboot. The companion app provides it again on connect.
         if (key && name[0] == '$') {
-            RegionMap* map = sigurdos::mesh::getRegionMap();
-            if (map && r) {
-                TransportKey tk;
-                memcpy(tk.key, key, 16);
-                // Note: TransportKeyStore::putKey would be needed here
-                // For now, we rely on the companion app re-sending the key
+            sigurdos::NodePrefs p = sigurdos::prefs_get();
+            static const char hex[] = "0123456789abcdef";
+            for (int i = 0; i < 16; i++) {
+                p.default_scope_key_hex[i * 2] = hex[key[i] >> 4];
+                p.default_scope_key_hex[i * 2 + 1] = hex[key[i] & 0x0F];
             }
+            p.default_scope_key_hex[32] = '\0';
+            sigurdos::prefs_set(p);
+        } else if (key) {
+            // Public or #hashtag key — clear any persisted $private key
+            sigurdos::NodePrefs p = sigurdos::prefs_get();
+            p.default_scope_key_hex[0] = '\0';
+            sigurdos::prefs_set(p);
         }
 
         sigurdos::mesh::setActiveRegion(name);
@@ -732,9 +770,42 @@ public:
         return r;
     }
     void selfTelemetry(uint8_t* out, size_t* out_len) const override {
-        // SigurdOS has no companion telemetry-blob builder yet; report empty.
-        (void)out;
-        if (out_len) *out_len = 0;
+        // Build a minimal CayenneLPP-compatible telemetry blob.
+        // Format: [channel=2, type=2 (analog), value=uint16 LE * 100]
+        // This encodes battery voltage in hundredths of a volt.
+        if (!out || !out_len) return;
+        uint16_t batt_mv = batteryMilliVolts();
+        if (batt_mv == 0) { *out_len = 0; return; }
+        // CayenneLPP analog output: battery voltage in 0.01V units
+        uint16_t val = (uint16_t)(batt_mv / 10);  // mV → 0.01V
+        out[0] = 2;        // channel 2 (battery)
+        out[1] = 2;        // type 2 = analog output (signed 0.01 units)
+        out[2] = (uint8_t)(val >> 8);
+        out[3] = (uint8_t)(val & 0xFF);
+        *out_len = 4;
+    }
+    int getCustomVars(char* out, size_t out_cap) const override {
+        const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+        int n = snprintf(out, out_cap, "gps=%d,gps_interval=%d",
+                         p.gps_enabled ? 1 : 0, (int)p.gps_interval);
+        return (n > 0 && (size_t)n < out_cap) ? n : 0;
+    }
+    bool setCustomVar(const char* name, const char* value) override {
+        if (!name || !value) return false;
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        if (strcmp(name, "gps") == 0) {
+            p.gps_enabled = (value[0] == '1');
+            sigurdos::prefs_set(p);
+            return true;
+        } else if (strcmp(name, "gps_interval") == 0) {
+            int iv = atoi(value);
+            if (iv >= 0 && iv <= 86400) {
+                p.gps_interval = (uint16_t)iv;
+                sigurdos::prefs_set(p);
+                return true;
+            }
+        }
+        return false;
     }
     int signData(const uint8_t* data, size_t len, uint8_t* sig_out) override {
         if (!g_mesh || !sig_out) return 0;

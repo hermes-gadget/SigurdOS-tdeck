@@ -59,6 +59,7 @@ enum CompanionCommand : uint8_t {
     CMD_SET_OTHER_PARAMS = 38,
     CMD_SEND_TELEMETRY_REQ = 39,
     CMD_GET_CUSTOM_VARS = 40,
+    CMD_SET_CUSTOM_VAR = 41,
     CMD_GET_ADVERT_PATH = 42,
     CMD_GET_TUNING_PARAMS = 43,
     CMD_SEND_BINARY_REQ = 50,
@@ -341,6 +342,11 @@ public:
     // selfTelemetry fills a MeshCore telemetry blob (CayenneLPP-style). out_len
     // is set to bytes written (0 if unsupported).
     virtual void selfTelemetry(uint8_t* out, size_t* out_len) const = 0;
+    // getCustomVars writes companion custom-variable key=value pairs to out,
+    // returns bytes written (excluding null terminator). 0 = no variables.
+    virtual int getCustomVars(char* out, size_t out_cap) const = 0;
+    // setCustomVar sets a named companion custom variable. Returns true on success.
+    virtual bool setCustomVar(const char* name, const char* value) = 0;
     // signData signs len bytes with the node key; returns signature length.
     virtual int signData(const uint8_t* data, size_t len, uint8_t* sig_out) = 0;
     // getAdvertPath fills path bytes and timestamp for a contact pubkey.

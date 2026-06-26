@@ -162,6 +162,7 @@ uint32_t companionBlePin();
 // ── Contact persistence ─────────────────────────
 void saveContacts();
 void loadContacts();
+void reloadContactsAfterIdentityChange();  // after private key import
 
 // RTC time for UI comparisons
 uint32_t getCurrentTime();
