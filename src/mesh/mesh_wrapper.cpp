@@ -169,7 +169,11 @@ static void bleValidationEmit(bool) {}
 // (sigurdos::mesh) — SigurdMeshV2 calls it as sigurdos::mesh::mesh_v2_queue_push().
 void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
                          const char* text, int rssi, float snr,
-                         uint32_t sender_timestamp, uint8_t path_len) {
+                         uint32_t sender_timestamp, uint8_t path_len,
+                         const uint8_t* sender_prefix,
+                         uint8_t txt_type,
+                         const uint8_t* extra,
+                         uint8_t extra_len) {
     if (!sender || !text) return;
     if (msg_count >= MAX_QUEUED) {
         msg_drop_count++;
@@ -196,7 +200,8 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
     const char* ptype = (channel && channel[0]) ? "CHANNEL" : "DM";
     sigurdos::mesh::pushPacketLog(sender, rssi, snr, ptype);
     storeIncomingMessageForCompanion(sender, channel, text, rssi, snr,
-                                     sender_timestamp, path_len);
+                                     sender_timestamp, path_len,
+                                     sender_prefix, txt_type, extra, extra_len);
 #if SIGURDOS_DEBUG_MESH
     SIGURDOS_RUNTIME_FEAT(mesh) {
     Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",

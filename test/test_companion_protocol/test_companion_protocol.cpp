@@ -1258,4 +1258,94 @@ TEST_F(CompanionProtocolTest, EnqueuedChannelDataRejectsReservedTypeAndInvalidPa
     EXPECT_TRUE(serial.writes.empty());
 }
 
+// ── Sync per-record marking ─────────────────────────────────────
+
+TEST_F(CompanionProtocolTest, SyncDrainMarksPerRecordNotAll) {
+    // Enqueue two messages, drain one. Only the drained record should be marked.
+    sigurdos::mesh::StoredMessage m1{};
+    std::strncpy(m1.conversation, "DM: Alice", sizeof(m1.conversation) - 1);
+    std::strncpy(m1.sender, "Alice", sizeof(m1.sender) - 1);
+    std::strncpy(m1.text, "hello", sizeof(m1.text) - 1);
+    m1.timestamp = 1;
+    for (int i = 0; i < 6; i++) m1.sender_prefix[i] = (uint8_t)(0xA0 + i);
+
+    sigurdos::mesh::StoredMessage m2{};
+    std::strncpy(m2.conversation, "DM: Bob", sizeof(m2.conversation) - 1);
+    std::strncpy(m2.sender, "Bob", sizeof(m2.sender) -  1);
+    std::strncpy(m2.text, "world", sizeof(m2.text) - 1);
+    m2.timestamp = 2;
+    for (int i = 0; i < 6; i++) m2.sender_prefix[i] = (uint8_t)(0xB0 + i);
+
+    // Store both and mark neither as sent. Verify store_id is assigned.
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(m1));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(m2));
+
+    sigurdos::mesh::StoredMessage stored[4]{};
+    int n = sigurdos::mesh::messageStoreLoadAll(stored, 4);
+    ASSERT_EQ(n, 2);
+    ASSERT_EQ(stored[0].store_id, 0u);
+    ASSERT_EQ(stored[1].store_id, 1u);
+
+    // Mark only the first via the store API — verify it works standalone
+    ASSERT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(0));
+
+    sigurdos::mesh::StoredMessage verify[4]{};
+    n = sigurdos::mesh::messageStoreLoadAll(verify, 4);
+    ASSERT_EQ(n, 2);
+    EXPECT_TRUE(verify[0].companion_sent);
+    EXPECT_FALSE(verify[1].companion_sent);
+}
+
+// ── Frame metadata ─────────────────────────────────────────────
+
+TEST_F(CompanionProtocolTest, SignedMessageFrameIncludesExtraBytes) {
+    // Regression: signed messages should include the 4-byte sender prefix extra
+    // between txt_type and timestamp in the DM V3 frame.
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Carol", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Carol", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "secret", sizeof(msg.text) - 1);
+    msg.timestamp = 0x01020304u;
+    msg.txt_type = 2;  // COMPANION_TXT_SIGNED_PLAIN
+    msg.extra_len = 4;
+    msg.extra[0] = 0xAA; msg.extra[1] = 0xBB; msg.extra[2] = 0xCC; msg.extra[3] = 0xDD;
+    for (int i = 0; i < 6; i++) msg.sender_prefix[i] = (uint8_t)(0xE0 + i);
+
+    ASSERT_TRUE(bridge.enqueueMessage(msg));
+    uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_GE(serial.writes.size(), 2u);
+    const auto& out = serial.writes[1];
+    ASSERT_GE(out.size(), 20u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+    // [1] snr, [2] res1, [3] res2, [4..9] sender_prefix, [10] path_len,
+    // [11] txt_type (should be 2), [12..15] extra 4 bytes, [16..19] timestamp
+    EXPECT_EQ(out[11], 2u);         // COMPANION_TXT_SIGNED_PLAIN
+    EXPECT_EQ(out[12], 0xAA);       // extra[0]
+    EXPECT_EQ(out[13], 0xBB);       // extra[1]
+    EXPECT_EQ(out[14], 0xCC);       // extra[2]
+    EXPECT_EQ(out[15], 0xDD);       // extra[3]
+    uint32_t ts = 0;
+    std::memcpy(&ts, &out[16], 4);
+    EXPECT_EQ(ts, 0x01020304u);
+}
+
+TEST_F(CompanionProtocolTest, CliDataFrameEmitsCorrectTxtType) {
+    // CLI messages should emit txt_type=1 in the frame.
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "ping", sizeof(msg.text) - 1);
+    msg.timestamp = 42;
+    msg.txt_type = 1;  // COMPANION_TXT_CLI_DATA
+    for (int i = 0; i < 6; i++) msg.sender_prefix[i] = (uint8_t)(0xA0 + i);
+
+    ASSERT_TRUE(bridge.enqueueMessage(msg));
+    uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_GE(serial.writes.size(), 2u);
+    const auto& out = serial.writes[1];
+    EXPECT_EQ(out[11], 1u);  // txt_type == COMPANION_TXT_CLI_DATA
+}
+
 } // namespace

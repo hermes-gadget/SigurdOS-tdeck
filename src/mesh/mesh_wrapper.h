@@ -31,9 +31,16 @@ namespace mesh {
 // path-length byte through to the companion bridge so the phone app shows the
 // correct time and hop count. Defaults (0 / 0xFF) suit callers without a packet:
 // the timestamp falls back to the local clock and 0xFF means "direct/unknown".
+// sender_prefix (6 bytes) is the exact pubkey prefix from packet metadata —
+// null falls back to a name-based lookup. txt_type, extra, and extra_len
+// preserve the MeshCore companion text type and signed-message extra.
 void mesh_v2_queue_push(const char* sender, const char* channel,
                          const char* text, int rssi, float snr,
-                         uint32_t sender_timestamp = 0, uint8_t path_len = 0xFF);
+                         uint32_t sender_timestamp = 0, uint8_t path_len = 0xFF,
+                         const uint8_t* sender_prefix = nullptr,
+                         uint8_t txt_type = 0,
+                         const uint8_t* extra = nullptr,
+                         uint8_t extra_len = 0);
 
 // Forwards a delivery ACK to the companion bridge so the phone app marks a
 // message it sent (via the device) as confirmed. ack is the 4-byte ACK hash the

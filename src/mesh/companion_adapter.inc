@@ -81,7 +81,15 @@ static void fillStoredPrefixForName(const char* name, uint8_t* out)
 static void storeIncomingMessageForCompanion(const char* sender, const char* channel,
                                              const char* text, int rssi, float snr,
                                              uint32_t sender_timestamp = 0,
-                                             uint8_t path_len = 0xFF)
+                                             uint8_t path_len = 0xFF,
+                                             // Exact sender pubkey prefix from packet metadata.
+                                             const uint8_t* sender_prefix = nullptr,
+                                             // Companion text type (COMPANION_TXT_PLAIN=0,
+                                             // COMPANION_TXT_CLI_DATA=1, COMPANION_TXT_SIGNED_PLAIN=2).
+                                             uint8_t txt_type = sigurdos::comms::COMPANION_TXT_PLAIN,
+                                             // Extra bytes (e.g. 4-byte sender prefix for signed msgs).
+                                             const uint8_t* extra = nullptr,
+                                             uint8_t extra_len = 0)
 {
     sigurdos::mesh::StoredMessage msg{};
     const bool is_channel = channel && channel[0];
@@ -119,7 +127,18 @@ static void storeIncomingMessageForCompanion(const char* sender, const char* cha
     // Mesh path-length byte for the V3 frame (hop count + hash size). 0xFF from
     // a direct/unknown route; the real pkt->path_len for flood-routed packets.
     msg.path_len = path_len;
-    fillStoredPrefixForName(sender, msg.sender_prefix);
+    msg.txt_type = txt_type;
+    msg.extra_len = (extra_len > 8) ? 8 : extra_len;
+    if (extra && extra_len > 0) {
+        memcpy(msg.extra, extra, msg.extra_len);
+    }
+    // Use the exact sender pubkey prefix from the packet metadata when
+    // available; otherwise fall back to name-based lookup for older callers.
+    if (sender_prefix) {
+        memcpy(msg.sender_prefix, sender_prefix, sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
+    } else {
+        fillStoredPrefixForName(sender, msg.sender_prefix);
+    }
     sigurdos::mesh::messageStoreAppend(msg);
     if (CompanionBridge* b = companionBridge()) b->enqueueMessage(msg);
 }
@@ -249,7 +268,14 @@ public:
         ::ContactInfo* contact = g_mesh->lookupContactByPubKey(prefix, (int)prefix_len);
         if (!contact) return result;
 
-        uint32_t ts = timestamp ? timestamp : rtc_clock.getCurrentTime();
+        uint32_t ts = 0;
+        if (txt_type == sigurdos::comms::COMPANION_TXT_CLI_DATA) {
+            // CLI data: always use the local unique RTC time to avoid replay
+            // protection failures. The app-provided timestamp is ignored.
+            ts = rtc_clock.getCurrentTimeUnique();
+        } else {
+            ts = timestamp ? timestamp : rtc_clock.getCurrentTime();
+        }
         uint32_t expected_ack = 0;
         uint32_t est_timeout = 0;
         int send_result = MSG_SEND_FAILED;

@@ -178,7 +178,7 @@ bool CompanionBridge::offlineFrameExists(const uint8_t* frame, size_t len) const
     return false;
 }
 
-bool CompanionBridge::addToOfflineQueue(const uint8_t* frame, size_t len)
+bool CompanionBridge::addToOfflineQueue(uint32_t store_id, const uint8_t* frame, size_t len)
 {
     if (!frame || len == 0 || len > MAX_FRAME_SIZE) return false;
     if (offlineFrameExists(frame, len)) return false;
@@ -186,15 +186,17 @@ bool CompanionBridge::addToOfflineQueue(const uint8_t* frame, size_t len)
         for (int i = 1; i < _offline_len; i++) _offline[i - 1] = _offline[i];
         _offline_len--;
     }
+    _offline[_offline_len].store_id = store_id;
     _offline[_offline_len].len = (uint8_t)len;
     std::memcpy(_offline[_offline_len].buf, frame, len);
     _offline_len++;
     return true;
 }
 
-int CompanionBridge::getFromOfflineQueue(uint8_t* frame)
+int CompanionBridge::getFromOfflineQueue(uint8_t* frame, uint32_t* store_id)
 {
     if (!frame || _offline_len <= 0) return 0;
+    if (store_id) *store_id = _offline[0].store_id;
     int len = _offline[0].len;
     std::memcpy(frame, _offline[0].buf, len);
     for (int i = 1; i < _offline_len; i++) _offline[i - 1] = _offline[i];
@@ -230,7 +232,7 @@ bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg
         }
         out[i++] = channel_idx;
         out[i++] = msg.path_len;
-        out[i++] = COMPANION_TXT_PLAIN;
+        out[i++] = msg.txt_type;
         std::memcpy(&out[i], &msg.timestamp, 4);
         i += 4;
     } else {
@@ -245,7 +247,13 @@ bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg
         std::memcpy(&out[i], msg.sender_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
         i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
         out[i++] = msg.path_len;
-        out[i++] = COMPANION_TXT_PLAIN;
+        out[i++] = msg.txt_type;
+        // Signed-plain messages carry a 4-byte sender prefix between the
+        // txt_type and the timestamp (exactly as upstream MyMesh queues).
+        if (msg.txt_type == COMPANION_TXT_SIGNED_PLAIN && msg.extra_len >= 4) {
+            std::memcpy(&out[i], msg.extra, 4);
+            i += 4;
+        }
         std::memcpy(&out[i], &msg.timestamp, 4);
         i += 4;
     }
@@ -276,13 +284,15 @@ void CompanionBridge::seedOfflineQueueFromStore()
         if (recent[idx].is_self) continue;
         uint8_t frame[MAX_FRAME_SIZE];
         size_t len = 0;
-        if (buildMessageFrame(recent[idx], frame, &len) && addToOfflineQueue(frame, len)) {
+        if (buildMessageFrame(recent[idx], frame, &len) &&
+            addToOfflineQueue(recent[idx].store_id, frame, len)) {
             added_any = true;
         }
     }
     std::free(recent);
-    // Mark all as sent so they're not re-queued on reboot/reconnect.
-    if (n > 0) sigurdos::mesh::messageStoreMarkAllCompanionSent();
+    // Do NOT mark any records as sent here. Records are marked individually
+    // only when CMD_SYNC_NEXT_MESSAGE successfully writes the frame to the
+    // app (see the SYNC_NEXT_MESSAGE handler below).
     if (added_any && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
         _serial->writeFrame(&tickle, 1);
@@ -296,11 +306,11 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
     uint8_t frame[MAX_FRAME_SIZE];
     size_t len = 0;
     if (!buildMessageFrame(msg, frame, &len)) return false;
-    bool added = addToOfflineQueue(frame, len);
+    bool added = addToOfflineQueue(msg.store_id, frame, len);
     if (added) {
-        // Persistently mark the message as companion-sent so it never gets
-        // re-queued after a reboot or reconnect.
-        sigurdos::mesh::messageStoreMarkAllCompanionSent();
+        // The record is NOT marked companion_sent here — that happens only when
+        // CMD_SYNC_NEXT_MESSAGE successfully writes the frame to the app. This
+        // prevents data loss if the app disconnects before draining the queue.
         if (isConnected()) {
             uint8_t tickle = PUSH_CODE_MSG_WAITING;
             _serial->writeFrame(&tickle, 1);
@@ -335,7 +345,7 @@ bool CompanionBridge::enqueueChannelData(uint8_t channel_index,
         i += (int)payload_len;
     }
 
-    bool added = addToOfflineQueue(_out_frame, (size_t)i);
+    bool added = addToOfflineQueue(0, _out_frame, (size_t)i);
     if (added && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
         _serial->writeFrame(&tickle, 1);
@@ -567,9 +577,16 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 
     if (cmd == CMD_SYNC_NEXT_MESSAGE) {
         _last_sync_time = _host->currentTime();
-        int out_len = getFromOfflineQueue(_out_frame);
+        uint32_t store_id = 0;
+        int out_len = getFromOfflineQueue(_out_frame, &store_id);
         if (out_len > 0) {
-            _serial->writeFrame(_out_frame, out_len);
+            // Only mark the record as delivered if writeFrame succeeds. If BLE
+            // is busy/disconnected and writeFrame returns 0, the frame stays in
+            // the queue and the record remains unsent for the next sync attempt.
+            size_t written = _serial->writeFrame(_out_frame, out_len);
+            if (written == (size_t)out_len && store_id != 0) {
+                sigurdos::mesh::messageStoreMarkCompanionSent(store_id);
+            }
         } else {
             writeNoMoreMessages();
         }

@@ -102,6 +102,8 @@ static bool readRecordRaw(StoredMessage& msg, const uint8_t* rec, size_t len)
 
     size_t pos = 0;
     std::memset(&msg, 0, sizeof(msg));
+    std::memcpy(&msg.store_id, rec + pos, 4); pos += 4;
+
     std::memcpy(msg.conversation, rec + pos, SIGURDOS_MSG_CONVERSATION_LEN);
     msg.conversation[SIGURDOS_MSG_CONVERSATION_LEN - 1] = '\0';
     pos += SIGURDOS_MSG_CONVERSATION_LEN;
@@ -125,6 +127,9 @@ static bool readRecordRaw(StoredMessage& msg, const uint8_t* rec, size_t len)
 
     msg.snr_quarters = (int8_t)rec[pos++];
     msg.path_len = rec[pos++];
+    msg.txt_type = rec[pos++];
+    msg.extra_len = rec[pos++];
+    std::memcpy(msg.extra, rec + pos, 8); pos += 8;
     applyFlags(msg, rec[pos++]);
     return true;
 }
@@ -161,6 +166,7 @@ static void writeRecordRaw(const StoredMessage& msg, uint8_t* rec, size_t len)
 
     size_t pos = 0;
     std::memset(rec, 0, len);
+    std::memcpy(rec + pos, &norm.store_id, 4); pos += 4;
     std::memcpy(rec + pos, norm.conversation,
                 strnlen(norm.conversation, SIGURDOS_MSG_CONVERSATION_LEN - 1));
     pos += SIGURDOS_MSG_CONVERSATION_LEN;
@@ -184,6 +190,9 @@ static void writeRecordRaw(const StoredMessage& msg, uint8_t* rec, size_t len)
 
     rec[pos++] = (uint8_t)norm.snr_quarters;
     rec[pos++] = norm.path_len;
+    rec[pos++] = norm.txt_type;
+    rec[pos++] = norm.extra_len;
+    std::memcpy(rec + pos, norm.extra, 8); pos += 8;
     rec[pos++] = flagsFor(norm);
 }
 
@@ -437,6 +446,13 @@ bool messageStoreAppend(const StoredMessage& msg)
 
     if (messageExists(norm)) return true;
 
+    // Assign a monotonic store_id from the current record count.
+    {
+        uint32_t count = 0;
+        readHeader(&count);
+        norm.store_id = count;
+    }
+
     uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
     writeRecordRaw(norm, rec, sizeof(rec));
 
@@ -517,25 +533,26 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
     return ok;
 }
 
-bool messageStoreMarkAllCompanionSent()
+bool messageStoreMarkCompanionSent(uint32_t store_id)
 {
     uint32_t count = 0;
     if (!readHeader(&count)) return false;
-    if (count == 0) return true;
+    if (count == 0) return false;
     if (count > 256) return false;
     StoredMessage* msgs = (StoredMessage*)std::malloc(sizeof(StoredMessage) * count);
     if (!msgs) return false;
     int n = messageStoreLoadAll(msgs, (int)count);
-    bool changed = false;
+    bool found = false;
     for (int i = 0; i < n; i++) {
-        if (!msgs[i].companion_sent) {
+        if (msgs[i].store_id == store_id) {
             msgs[i].companion_sent = true;
-            changed = true;
+            found = true;
+            break;
         }
     }
-    if (!changed) {
+    if (!found) {
         std::free(msgs);
-        return true;
+        return false;
     }
     bool ok = atomicReplaceStore(msgs, (uint32_t)n);
     std::free(msgs);

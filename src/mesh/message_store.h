@@ -15,6 +15,10 @@ static constexpr size_t SIGURDOS_MSG_TEXT_LEN = 160;
 static constexpr size_t SIGURDOS_MSG_PREFIX_LEN = 6;
 
 struct StoredMessage {
+    // Monotonic store ID assigned at append time — used for per-record
+    // companion delivery tracking (a CMD_SYNC_NEXT_MESSAGE that successfully
+    // writes the frame marks only this specific record as sent).
+    uint32_t store_id;
     char conversation[SIGURDOS_MSG_CONVERSATION_LEN];
     char sender[SIGURDOS_MSG_SENDER_LEN];
     char text[SIGURDOS_MSG_TEXT_LEN];
@@ -26,6 +30,14 @@ struct StoredMessage {
     // (low 6 bits) and hash size (high 2 bits) exactly as MeshCore expects:
     // pkt->isRouteFlood() ? pkt->path_len : 0xFF. 0xFF means "direct/unknown".
     uint8_t path_len;
+    // MeshCore companion text type — COMPANION_TXT_PLAIN (0),
+    // COMPANION_TXT_CLI_DATA (1), or COMPANION_TXT_SIGNED_PLAIN (2).
+    uint8_t txt_type;
+    // Length of the extra bytes (e.g. 4 for signed message sender prefix).
+    uint8_t extra_len;
+    // Extra data for the companion frame (signed message: 4-byte sender prefix
+    // before text; CLI: unused). Zero-padded.
+    uint8_t extra[8];
     bool is_self;
     bool is_channel;
     bool acked;
@@ -34,10 +46,13 @@ struct StoredMessage {
 
 namespace detail {
 static constexpr uint32_t MESSAGE_STORE_MAGIC = 0x534d5347; // "SMSG"
-// v2 added the path_len byte. Old v1 records are rejected by readHeader (version
-// mismatch) and the store is rebuilt — acceptable for a persisted message cache.
-static constexpr uint8_t MESSAGE_STORE_VERSION = 3;
+// v4 added store_id (4), txt_type (1), extra_len (1), and extra[8] (8) for
+// exact companion message metadata. Old v3 records are rejected by readHeader
+// (version mismatch) and the store is rebuilt — acceptable for a persisted
+// message cache.
+static constexpr uint8_t MESSAGE_STORE_VERSION = 4;
 static constexpr size_t MESSAGE_STORE_RECORD_SIZE =
+    4 +  // store_id
     SIGURDOS_MSG_CONVERSATION_LEN +
     SIGURDOS_MSG_SENDER_LEN +
     SIGURDOS_MSG_TEXT_LEN +
@@ -46,6 +61,9 @@ static constexpr size_t MESSAGE_STORE_RECORD_SIZE =
     2 +
     1 +   // snr_quarters
     1 +   // path_len
+    1 +   // txt_type
+    1 +   // extra_len
+    8 +   // extra
     1;    // flags
 
 bool storedMessageSameIdentity(const StoredMessage& a, const StoredMessage& b);
@@ -58,7 +76,7 @@ bool messageStoreAppend(const StoredMessage& msg);
 int  messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max);
 int  messageStoreLoadAll(StoredMessage* out, int max);
 bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp);
-bool messageStoreMarkAllCompanionSent();
+bool messageStoreMarkCompanionSent(uint32_t store_id);
 int  messageStoreLoadUnsent(StoredMessage* out, int max);
 int  messageStoreCount();
 
