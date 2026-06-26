@@ -286,8 +286,10 @@ void channels_screen_show()
                             return;
                         }
                         char uri[512];
+                        char enc_name[96];
+                        sigurdos::mesh::urlEncodeQueryValue(ch_name, enc_name, sizeof(enc_name));
                         snprintf(uri, sizeof(uri), "meshcore://channel/add?name=%s&secret=%s",
-                                 ch_name, secret_hex);
+                                 enc_name, secret_hex);
                         sigurdos::app::qr_show("Share Channel", uri);
                     }, LV_EVENT_CLICKED, (void*)(intptr_t)qr_idx);
                 }

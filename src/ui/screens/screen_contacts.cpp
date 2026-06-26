@@ -1276,8 +1276,10 @@ void contact_detail_screen_show(const char* contact_name)
 
             // Build URI: meshcore://contact/add?name=<url_encoded>&public_key=<64hex>&type=<type>
             char uri[512];
+            char enc_name[96];  // worst-case 31 * 3 + NUL
+            sigurdos::mesh::urlEncodeQueryValue(name, enc_name, sizeof(enc_name));
             snprintf(uri, sizeof(uri), "meshcore://contact/add?name=%s&public_key=%s&type=%d",
-                     name, pubkey_hex, ctype);
+                     enc_name, pubkey_hex, ctype);
             sigurdos::app::qr_show("Share Contact", uri);
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(qr_btn, [](lv_event_t* e) {

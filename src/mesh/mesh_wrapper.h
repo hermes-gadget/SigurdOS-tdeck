@@ -434,5 +434,10 @@ const char* getActiveRegion();
 // Temporarily send the next message unscoped (resets after one use).
 void setSendUnscopedOnce(bool v);
 
+// Percent-encode a string for a URL query-component value.
+// Returns bytes written (excluding NUL), or 0 on overflow.
+// Worst case: every byte becomes %XX (3x expansion + NUL).
+size_t urlEncodeQueryValue(const char* in, char* out, size_t out_sz);
+
 } // namespace mesh
 } // namespace sigurdos

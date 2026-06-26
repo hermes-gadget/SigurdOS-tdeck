@@ -2059,6 +2059,34 @@ static void urlDecode(char* str) {
     *dst = '\0';
 }
 
+// Percent-encode a string for a URL query component value.
+// Unreserved characters (A-Z a-z 0-9 - _ . ~) pass through;
+// everything else is encoded as %XX.  Returns bytes written
+// (excluding NUL), or 0 on overflow.
+static size_t urlEncode(const char* in, char* out, size_t out_sz) {
+    if (!in || !out || out_sz == 0) return 0;
+    static const char ENC_HEX[] = "0123456789ABCDEF";
+    size_t w = 0;
+    for (const char* p = in; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        bool unreserved = (c >= 'A' && c <= 'Z')
+                       || (c >= 'a' && c <= 'z')
+                       || (c >= '0' && c <= '9')
+                       || c == '-' || c == '_' || c == '.' || c == '~';
+        if (unreserved) {
+            if (w + 1 >= out_sz) return 0;
+            out[w++] = (char)c;
+        } else {
+            if (w + 3 >= out_sz) return 0;
+            out[w++] = '%';
+            out[w++] = ENC_HEX[c >> 4];
+            out[w++] = ENC_HEX[c & 0x0F];
+        }
+    }
+    out[w] = '\0';
+    return w;
+}
+
 // Minimal base64 encoder — returns output length.
 // Caller must provide out buffer sized at least ((inLen + 2) / 3) * 4 + 1.
 static int encodeBase64(const uint8_t* in, int inLen, char* out) {
@@ -2295,6 +2323,10 @@ void setSendUnscopedOnce(bool v) {
     if (g_mesh) {
         g_mesh->setSendUnscopedOnce(v);
     }
+}
+
+size_t urlEncodeQueryValue(const char* in, char* out, size_t out_sz) {
+    return urlEncode(in, out, out_sz);
 }
 
 } // namespace mesh
