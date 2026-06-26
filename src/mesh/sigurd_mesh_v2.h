@@ -42,6 +42,11 @@ public:
         : BaseChatMesh(radio, clock, rng, rtc, pm, mt) {}
     ~SigurdMeshV2() {}
 
+    // ── Identity & contact lifecycle ────────────
+    // Expose protected BaseChatMesh::resetContacts() for companion
+    // identity-import (must invalidate ECDH shared secrets).
+    void resetAllContacts() { resetContacts(); }
+
     // ── Identity & name ─────────────────────────
     char _own_name[32] = "SigurdOS";
 

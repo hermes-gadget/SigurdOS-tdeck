@@ -423,6 +423,11 @@ public:
         if (!::mesh::LocalIdentity::validatePrivateKey(key64)) return false;
         g_mesh->self_id.readFrom(key64, PRV_KEY_SIZE);
         saveIdentity(g_mesh->self_id);
+        // Invalidate ECDH shared secrets derived from the old identity and
+        // reload persisted contacts with the new identity (matches upstream
+        // MyMesh::CMD_IMPORT_PRIVATE_KEY — resetContacts + loadContacts).
+        g_mesh->resetAllContacts();
+        sigurdos::mesh::loadContacts();
         return true;
     }
 

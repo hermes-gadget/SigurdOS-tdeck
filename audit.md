@@ -356,7 +356,9 @@ First-pass audit reconciliation:
 ### Finding 5: Private key import does not reset contact cryptographic state
 
 * Severity: High
-* Status: incompatible
+* Status: **FIXED** (PR #729)
+* Issue: [#728](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/728)
+* PR: [#729](https://github.com/hermes-gadget/SigurdOS-tdeck/pull/729)
 * Confidence: High
 * Our code: `WrapperCompanionHost::importPrivateKey()` in `src/mesh/companion_adapter.inc`; `saveIdentity()` in `src/mesh/mesh_wrapper.cpp`
 * Upstream reference: `CMD_IMPORT_PRIVATE_KEY` handling in `/tmp/meshcore-audit/examples/companion_radio/MyMesh.cpp`
