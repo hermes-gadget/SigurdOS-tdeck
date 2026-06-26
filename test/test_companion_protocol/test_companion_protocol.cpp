@@ -100,14 +100,15 @@ public:
         return getContact(0, out);
     }
 
-    int channelCount() const override { return 1; }
+    int channelCount() const override { return channel_count; }
     bool getChannel(int index, sigurdos::comms::CompanionChannel& out) const override {
-        if (index != 0) return false;
+        if (index < 0 || index >= channel_count) return false;
         std::memset(&out, 0, sizeof(out));
-        std::strncpy(out.name, "#test", sizeof(out.name) - 1);
+        if (index == 0) std::strncpy(out.name, "#test", sizeof(out.name) - 1);
         return true;
     }
     bool setChannel(int, const sigurdos::comms::CompanionChannel&) override { return true; }
+    int channel_count = 1;
 
     sigurdos::comms::CompanionSendResult sendTextByPubKeyPrefix(
         const uint8_t* prefix, size_t prefix_len, uint8_t, uint8_t,
@@ -1351,6 +1352,36 @@ TEST_F(CompanionProtocolTest, CliDataFrameEmitsCorrectTxtType) {
     ASSERT_GE(serial.writes.size(), 2u);
     const auto& out = serial.writes[1];
     EXPECT_EQ(out[11], 1u);  // txt_type == COMPANION_TXT_CLI_DATA
+}
+
+// ── Channel slot semantics ──────────────────────────────────────
+
+TEST_F(CompanionProtocolTest, GetChannelEmptySlotReturnsChannelInfo) {
+    // Fixed-slot semantics: GET_CHANNEL for any valid index should return
+    // CHANNEL_INFO with empty name/secret, not NOT_FOUND.
+    host.channel_count = 40;
+
+    uint8_t cmd[] = {sigurdos::comms::CMD_GET_CHANNEL, 5};
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_GE(out.size(), 50u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_CHANNEL_INFO);
+    EXPECT_EQ(out[1], 5);  // channel_idx
+    // name should be empty for non-zero index (first byte NUL)
+    EXPECT_EQ(out[2], 0);
+}
+
+TEST_F(CompanionProtocolTest, SetChannelEmptyNameClearsSlot) {
+    // Clearing a channel by setting an empty name should succeed, not return
+    // ERR_NOT_FOUND or ERR_ILLEGAL_ARG.
+    uint8_t frame[2 + 32 + 16]{};
+    frame[0] = sigurdos::comms::CMD_SET_CHANNEL;
+    frame[1] = 3;  // channel_idx
+    // name: all zeros (empty), secret: all zeros
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_OK);
 }
 
 } // namespace

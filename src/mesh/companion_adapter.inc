@@ -252,18 +252,23 @@ public:
         return true;
     }
 
-    int channelCount() const override { return g_mesh ? g_mesh->getChannelCount() : 0; }
+    // Companion protocol uses fixed slot indices 0..MAX_GROUP_CHANNELS-1.
+    // Return the full slot count even for empty slots (upstream clients
+    // expect every index to be addressable).
+    int channelCount() const override { return MAX_GROUP_CHANNELS; }
     bool getChannel(int index, CompanionChannel& out) const override {
-        if (!g_mesh) return false;
-        const ChannelDetails* ch = g_mesh->getChannel(index);
-        if (!ch) return false;
+        if (!g_mesh || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
+        ChannelDetails cd{};
+        // Use the slot-based BaseChatMesh accessor — returns true for any
+        // valid index even when the slot is empty (name="" / secret=zeros).
+        if (!g_mesh->BaseChatMesh::getChannel(index, cd)) return false;
         memset(&out, 0, sizeof(out));
-        strncpy(out.name, ch->name, sizeof(out.name) - 1);
-        memcpy(out.secret, ch->channel.secret, sizeof(out.secret));
+        strncpy(out.name, cd.name, sizeof(out.name) - 1);
+        memcpy(out.secret, cd.channel.secret, sizeof(out.secret));
         return true;
     }
     bool setChannel(int index, const CompanionChannel& channel) override {
-        if (!g_mesh || index < 0 || index >= MAX_GROUP_CHANNELS || !channel.name[0]) return false;
+        if (!g_mesh || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
         ChannelDetails cd{};
         strncpy(cd.name, channel.name, sizeof(cd.name) - 1);
         memcpy(cd.channel.secret, channel.secret, sizeof(cd.channel.secret));

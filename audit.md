@@ -399,7 +399,9 @@ First-pass audit reconciliation:
 ### Finding 6: Companion channel slots conflict with the local compact channel model
 
 * Severity: Medium
-* Status: incompatible
+* Status: **FIXED** (PR #731)
+* Issue: [#730](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/730)
+* PR: [#731](https://github.com/hermes-gadget/SigurdOS-tdeck/pull/731)
 * Confidence: High
 * Our code: `WrapperCompanionHost::channelCount()`, `getChannel()`, and `setChannel()` in `src/mesh/companion_adapter.inc`; `SigurdMeshV2::getChannelCount()`, `getChannel()`, and `removeChannel()` in `src/mesh/sigurd_mesh_v2.cpp`
 * Upstream reference: `CMD_GET_CHANNEL`, `CMD_SET_CHANNEL`, and `BaseChatMesh::getChannel()/setChannel()` in `/tmp/meshcore-audit/examples/companion_radio/MyMesh.cpp` and `/tmp/meshcore-audit/src/helpers/BaseChatMesh.cpp`; `docs/companion_protocol.md`
