@@ -624,13 +624,14 @@ public:
     struct AdvertPathEntry {
         uint8_t pubkey_prefix[7];  // first 7 bytes of pub_key
         uint8_t path_len;          // number of hops in the advert path
+        uint8_t path[MAX_PATH_SIZE];  // actual path bytes (MeshCore MAX_PATH_SIZE)
         char    name[32];
         uint32_t recv_timestamp;
     };
     AdvertPathEntry _advert_paths[ADVERT_PATH_TABLE_SIZE] = {};
 
     void storeAdvertPath(const uint8_t* pub_key, const char* name,
-                         uint8_t path_len, const uint8_t* /*path*/) {
+                         uint8_t path_len, const uint8_t* path) {
         if (!pub_key || !name) return;
         // Find existing entry for this pubkey or the oldest slot
         AdvertPathEntry* target = &_advert_paths[0];
@@ -648,6 +649,9 @@ public:
         }
         memcpy(target->pubkey_prefix, pub_key, sizeof(target->pubkey_prefix));
         target->path_len = path_len;
+        if (path && path_len > 0 && path_len <= MAX_PATH_SIZE) {
+            memcpy(target->path, path, path_len);
+        }
         strncpy(target->name, name, sizeof(target->name) - 1);
         target->name[sizeof(target->name) - 1] = '\0';
         target->recv_timestamp = getRTCClock()->getCurrentTime();
@@ -655,6 +659,8 @@ public:
 
     // Returns the inbound advert path length (hops) for a contact, or 0 if unknown.
     uint8_t getAdvertPathLen(const char* name) const;
+    // Look up a stored advert path entry by pubkey prefix. Returns nullptr if not found.
+    const AdvertPathEntry* getAdvertPathByKey(const uint8_t* pub_key) const;
 
 
     // NOTE: airtime/packet-count stats (getTotalAirTime, getReceiveAirTime,

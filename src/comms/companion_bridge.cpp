@@ -1046,8 +1046,34 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     }
 
     if (cmd == CMD_GET_ADVERT_PATH && len >= 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
-        // No advert-path history table on SigurdOS yet.
-        writeErrFrame(ERR_CODE_NOT_FOUND);
+        // Look up stored advert path for this contact's pubkey
+        uint8_t path_buf[SIGURDOS_COMPANION_PATH_SIZE];
+        uint32_t timestamp = 0;
+        uint8_t plen = _host->getAdvertPath(&_cmd_frame[2], path_buf,
+                                            sizeof(path_buf), &timestamp);
+        if (plen == 0) {
+            writeErrFrame(ERR_CODE_NOT_FOUND);
+            return true;
+        }
+        int i = 0;
+        _out_frame[i++] = RESP_CODE_ADVERT_PATH;
+        _out_frame[i++] = plen;
+        if (plen > 0) {
+            std::memcpy(&_out_frame[i], path_buf, plen);
+            i += plen;
+        }
+        std::memcpy(&_out_frame[i], &timestamp, 4);
+        i += 4;
+        _serial->writeFrame(_out_frame, i);
+        return true;
+    }
+
+    if (cmd == CMD_SEND_PATH_DISCOVERY_REQ && len >= 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+        // Initiate path discovery for a contact — sends a flood telemetry request
+        // Results arrive later via onContactPathRecv and are pushed as
+        // PUSH_CODE_PATH_DISCOVERY_RESPONSE.
+        CompanionSendResult r = _host->sendPathDiscovery(&_cmd_frame[2]);
+        writeSentOrErr(r);
         return true;
     }
 
@@ -1199,6 +1225,25 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             writeErrFrame(ERR_CODE_TABLE_FULL);
         }
         return true;
+    }
+
+    // ── Stub handlers for upstream commands not yet implemented ──
+    // These are recognized command IDs but return unsupported error until
+    // full implementations are added. Added for protocol coverage parity.
+    if (cmd == CMD_SEND_RAW_DATA) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
+    }
+    if (cmd == CMD_SEND_BINARY_REQ) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
+    }
+    if (cmd == CMD_SEND_CONTROL_DATA) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
+    }
+    if (cmd == CMD_SEND_ANON_REQ) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
+    }
+    if (cmd == CMD_SEND_RAW_PACKET) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
     }
 
     writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);

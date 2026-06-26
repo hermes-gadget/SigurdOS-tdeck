@@ -310,8 +310,28 @@ public:
     }
 
     bool sendAdvert(bool flood) override {
-        (void)flood;
-        return sigurdos::mesh::sendAdvert();
+        if (flood) {
+            // Flood-scoped advert via existing broadcast path
+            return sigurdos::mesh::sendAdvert();
+        }
+        // Zero-hop self advert — the upstream companion semantics
+        if (!g_mesh) return false;
+        const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+        ::mesh::Packet* pkt;
+        if (p.share_location && sigurdos_gps_has_fix()) {
+            pkt = g_mesh->createSelfAdvert(own_name,
+                (double)sigurdos_gps_latitude(),
+                (double)sigurdos_gps_longitude());
+        } else if (p.share_location && p.advert_location_valid) {
+            pkt = g_mesh->createSelfAdvert(own_name,
+                (double)p.advert_lat / 1000000.0,
+                (double)p.advert_lon / 1000000.0);
+        } else {
+            pkt = g_mesh->createSelfAdvert(own_name);
+        }
+        if (!pkt) return false;
+        g_mesh->sendZeroHop(pkt);
+        return true;
     }
 
     bool setAdvertName(const char* name) override {
@@ -653,6 +673,19 @@ public:
         r.est_timeout = est_timeout;
         return r;
     }
+    CompanionSendResult sendPathDiscovery(const uint8_t* pub_key) override {
+        CompanionSendResult r{};
+        if (!g_mesh || !pub_key) return r;
+        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!c) return r;
+        uint32_t tag = g_mesh->sendPathDiscovery(c->name);
+        if (tag == 0) return r;
+        r.ok = true;
+        r.sent_flood = true;
+        r.expected_ack = tag;
+        r.est_timeout = 0;
+        return r;
+    }
     void selfTelemetry(uint8_t* out, size_t* out_len) const override {
         // SigurdOS has no companion telemetry-blob builder yet; report empty.
         (void)out;
@@ -662,6 +695,19 @@ public:
         if (!g_mesh || !sig_out) return 0;
         g_mesh->self_id.sign(sig_out, data, len);
         return (int)sigurdos::comms::SIGURDOS_COMPANION_SIGNATURE_SIZE;
+    }
+    uint8_t getAdvertPath(const uint8_t* pub_key,
+                          uint8_t* path_out, uint8_t max_path,
+                          uint32_t* timestamp_out) const override {
+        if (!g_mesh || !pub_key) return 0;
+        const auto* entry = g_mesh->getAdvertPathByKey(pub_key);
+        if (!entry) return 0;
+        uint8_t plen = entry->path_len;
+        if (path_out && plen > 0 && max_path > 0) {
+            memcpy(path_out, entry->path, plen < max_path ? plen : max_path);
+        }
+        if (timestamp_out) *timestamp_out = entry->recv_timestamp;
+        return plen;
     }
 
 private:

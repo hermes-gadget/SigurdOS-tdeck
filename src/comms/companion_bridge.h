@@ -43,6 +43,7 @@ enum CompanionCommand : uint8_t {
     CMD_DEVICE_QUERY = 22,
     CMD_EXPORT_PRIVATE_KEY = 23,
     CMD_IMPORT_PRIVATE_KEY = 24,
+    CMD_SEND_RAW_DATA = 25,
     CMD_SEND_LOGIN = 26,
     CMD_SEND_STATUS_REQ = 27,
     CMD_HAS_CONNECTION = 28,
@@ -60,9 +61,13 @@ enum CompanionCommand : uint8_t {
     CMD_GET_CUSTOM_VARS = 40,
     CMD_GET_ADVERT_PATH = 42,
     CMD_GET_TUNING_PARAMS = 43,
+    CMD_SEND_BINARY_REQ = 50,
     CMD_FACTORY_RESET = 51,
+    CMD_SEND_PATH_DISCOVERY_REQ = 52,
     CMD_SET_FLOOD_SCOPE_KEY = 54,
+    CMD_SEND_CONTROL_DATA = 55,
     CMD_GET_STATS = 56,
+    CMD_SEND_ANON_REQ = 57,
     CMD_SET_AUTOADD_CONFIG = 58,
     CMD_GET_AUTOADD_CONFIG = 59,
     CMD_GET_ALLOWED_REPEAT_FREQ = 60,
@@ -70,6 +75,7 @@ enum CompanionCommand : uint8_t {
     CMD_SEND_CHANNEL_DATA = 62,
     CMD_SET_DEFAULT_FLOOD_SCOPE = 63,
     CMD_GET_DEFAULT_FLOOD_SCOPE = 64,
+    CMD_SEND_RAW_PACKET = 65,
 };
 
 // Sub-types for CMD_GET_STATS / RESP_CODE_STATS.
@@ -116,12 +122,17 @@ enum CompanionPush : uint8_t {
     PUSH_CODE_PATH_UPDATED = 0x81,
     PUSH_CODE_SEND_CONFIRMED = 0x82,
     PUSH_CODE_MSG_WAITING = 0x83,
+    PUSH_CODE_RAW_DATA = 0x84,
     PUSH_CODE_LOGIN_SUCCESS = 0x85,
     PUSH_CODE_LOGIN_FAIL = 0x86,
     PUSH_CODE_STATUS_RESPONSE = 0x87,
+    PUSH_CODE_BINARY_RESPONSE = 0x88,
     PUSH_CODE_TRACE_DATA = 0x89,
     PUSH_CODE_NEW_ADVERT = 0x8A,
     PUSH_CODE_TELEMETRY_RESPONSE = 0x8B,
+    PUSH_CODE_PATH_DISCOVERY_RESPONSE = 0x8C,
+    PUSH_CODE_CONTROL_DATA = 0x8D,
+    PUSH_CODE_LOG_RX_DATA = 0x8E,
     PUSH_CODE_CONTACT_DELETED = 0x8F,
     PUSH_CODE_CONTACTS_FULL = 0x90,
 };
@@ -324,11 +335,19 @@ public:
     virtual CompanionSendResult sendTelemetryReq(const uint8_t* pub_key) = 0;
     virtual CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
                                               const uint8_t* path, uint8_t path_len) = 0;
+    // sendPathDiscovery initiates flood path discovery for a contact by pubkey.
+    // Returns a CompanionSendResult with the assigned tag for RESP_CODE_SENT.
+    virtual CompanionSendResult sendPathDiscovery(const uint8_t* pub_key) = 0;
     // selfTelemetry fills a MeshCore telemetry blob (CayenneLPP-style). out_len
     // is set to bytes written (0 if unsupported).
     virtual void selfTelemetry(uint8_t* out, size_t* out_len) const = 0;
     // signData signs len bytes with the node key; returns signature length.
     virtual int signData(const uint8_t* data, size_t len, uint8_t* sig_out) = 0;
+    // getAdvertPath fills path bytes and timestamp for a contact pubkey.
+    // Returns path_len on success, 0 if not found.
+    virtual uint8_t getAdvertPath(const uint8_t* pub_key,
+                                  uint8_t* path_out, uint8_t max_path,
+                                  uint32_t* timestamp_out) const = 0;
 };
 
 class CompanionBridge {

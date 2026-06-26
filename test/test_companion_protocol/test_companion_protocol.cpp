@@ -305,6 +305,11 @@ public:
         std::memset(sig_out, 0xAB, 64);
         return 64;
     }
+    sigurdos::comms::CompanionSendResult sendPathDiscovery(const uint8_t*) override {
+        return {false, false, 0, 0};  // not found by default
+    }
+    uint8_t getAdvertPath(const uint8_t*, uint8_t*, uint8_t,
+                          uint32_t*) const override { return 0; }
 };
 
 class CompanionProtocolTest : public ::testing::Test {

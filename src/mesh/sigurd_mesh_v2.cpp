@@ -1190,6 +1190,19 @@ namespace mesh {
         return 0;
     }
 
+    const SigurdMeshV2::AdvertPathEntry*
+    SigurdMeshV2::getAdvertPathByKey(const uint8_t* pub_key) const {
+        if (!pub_key) return nullptr;
+        for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+            if (_advert_paths[i].recv_timestamp > 0 &&
+                memcmp(_advert_paths[i].pubkey_prefix, pub_key,
+                       sizeof(_advert_paths[i].pubkey_prefix)) == 0) {
+                return &_advert_paths[i];
+            }
+        }
+        return nullptr;
+    }
+
     void SigurdMeshV2::setActiveScope(const uint8_t* key16) {
         if (key16) {
             memcpy(_active_scope.key, key16, 16);
