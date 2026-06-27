@@ -20,9 +20,6 @@
 #include "regions.h"
 #include "../diagnostics/debug_cfg.h"
 #include <helpers/sensors/LPPDataHelpers.h>
-#ifdef ESP32_PLATFORM
-#include <nvs_flash.h>
-#endif
 
 // REQ_TYPE constants not defined in core BaseChatMesh.h (only in examples)
 #ifndef REQ_TYPE_GET_TELEMETRY_DATA
@@ -1620,11 +1617,13 @@ void factoryReset()
     // Reformat SPIFFS to wipe identity, contacts, and any other files
     SPIFFS.format();
 
-    // Erase entire NVS partition (covers all namespaces, PHY calibration, etc.)
-    // nvs_flash_init() will recreate the partition on next boot's ESP-IDF init.
-#ifdef ESP32_PLATFORM
-    nvs_flash_erase();
-#endif
+    // Only erase SigurdOS-owned NVS namespaces — do NOT erase the full
+    // NVS partition (which would destroy PHY calibration data, BLE bonding
+    // keys, and other ESP-IDF system state). A full NVS erase requires an
+    // explicit "deep reset" action with user confirmation.
+    //
+    // Namespace-scoped erase is already done above for 'sigurdos' and
+    // 'sigurdos_pw'. No nvs_flash_erase() here — it was too broad.
 
     // Give flash writes time to complete before restart
     delay(200);

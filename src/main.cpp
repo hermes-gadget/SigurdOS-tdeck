@@ -76,12 +76,15 @@ void setup()
     boot_log("first splash frame flushed");
 
     boot_status("Mounting storage...");
-    bool spiffs_ok = SPIFFS.begin(true);
+    // Try to mount without auto-formatting — a transient corruption
+    // should not destroy identity/contacts silently. Only format when
+    // explicitly requested via factory reset or recovery.
+    bool spiffs_ok = SPIFFS.begin(false);
     if (!spiffs_ok) {
         if (sigurdos_is_under_launcher()) {
             Serial.println("[boot] WARNING: SPIFFS mount failed — installed app-only under Launcher. Reinstall from the Launcher/merged image (SigurdOS-tdeck-launcher.bin) for persistence.");
         } else {
-            Serial.println("[boot] WARNING: SPIFFS mount failed — identity/contacts won't persist across reboots");
+            Serial.println("[boot] WARNING: SPIFFS mount failed — identity/contacts won't persist across reboots. Use factory reset to reformat and recover.");
         }
     }
     boot_status(spiffs_ok ? "Storage ready" : "Storage unavailable");
