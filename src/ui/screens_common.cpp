@@ -214,17 +214,21 @@ void screens_clear_wifi_icon()
 // ════════════════════════════════════════════════════════
 // Device PIN protection
 // ════════════════════════════════════════════════════════
-static uint32_t g_pin_last_unlock = 0;
-static constexpr uint32_t PIN_GRACE_SECONDS = 300; // 5 minutes
+static uint32_t g_pin_last_unlock_ms = 0;
+static constexpr uint32_t PIN_GRACE_MS = 300000; // 5 minutes in milliseconds
 static bool g_pin_entry_active = false;  // set while PIN entry screen is displayed
 
 bool is_pin_entry_active() { return g_pin_entry_active; }
 
 bool pin_grace_active() {
-    if (g_pin_last_unlock == 0) return false;
-    uint32_t now = sigurdos::mesh::getCurrentTime();
-    if (now == 0) return true; // time not synced — keep grace alive
-    return (now - g_pin_last_unlock) < PIN_GRACE_SECONDS;
+    if (g_pin_last_unlock_ms == 0) return false;
+    uint32_t now = millis();
+    // Handle millis() wraparound (~49 days): if now < last_unlock,
+    // the timer wrapped; grace is still valid if within the window.
+    if (now < g_pin_last_unlock_ms) {
+        return (UINT32_MAX - g_pin_last_unlock_ms + now) < PIN_GRACE_MS;
+    }
+    return (now - g_pin_last_unlock_ms) < PIN_GRACE_MS;
 }
 
 struct PinEntryCtx {
@@ -235,8 +239,8 @@ struct PinEntryCtx {
 
 static void pin_entry_success(Screen target) {
     g_pin_entry_active = false;
-    g_pin_last_unlock = sigurdos::mesh::getCurrentTime();
-    if (g_pin_last_unlock == 0) g_pin_last_unlock = 1;
+    g_pin_last_unlock_ms = millis();
+    if (g_pin_last_unlock_ms == 0) g_pin_last_unlock_ms = 1;
     // Direct load — bypass navigate_to's same-screen guard
     if (target == Screen::Settings) {
         settings_screen_show();
