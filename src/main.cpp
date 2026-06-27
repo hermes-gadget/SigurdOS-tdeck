@@ -60,15 +60,26 @@ void setup()
     sigurdos_battery_init();
     sigurdos::hal::buzzer_init();
 
+    // Track display init failures across reboots to detect boot loops.
+    // RTC_NOINIT_ATTR persists through software resets (ESP.restart()).
+    static RTC_NOINIT_ATTR uint8_t display_failures = 0;
+    static constexpr uint8_t MAX_DISPLAY_FAILURES = 3;
+
     if (!sigurdos_display_init()) {
-        // Single attempt only — sigurdos_display_init() is not re-entrant
-        // (unconditional lv_init(), display creation, draw-buffer alloc).
-        // Restart instead of hanging: a transient SPI/display fault
-        // self-recovers; a dead display reboot-loops visibly on serial.
-        Serial.println("[boot] FATAL: Display init failed — restarting in 5 s");
+        display_failures++;
+        Serial.printf("[boot] FATAL: Display init failed (%u/%u attempts)\n",
+                      display_failures, MAX_DISPLAY_FAILURES);
+        if (display_failures >= MAX_DISPLAY_FAILURES) {
+            Serial.println("[boot] SAFE MODE: Too many display failures - staying alive for serial/USB recovery.");
+            Serial.println("[boot] Connect via serial or USB to recover. Reset to retry.");
+            // Stay alive - don't reboot. Serial/USB/BLE remain functional for recovery.
+            while (true) { delay(1000); }
+        }
+        Serial.printf("[boot] Restarting in 5s...\n");
         delay(5000);
         ESP.restart();
     }
+    display_failures = 0;  // success - reset counter
     boot_log("display core init OK");
 
     sigurdos::ui::init();

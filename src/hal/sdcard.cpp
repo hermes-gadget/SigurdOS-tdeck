@@ -128,7 +128,8 @@ size_t sigurdos_sdcard_read(const char* path, uint8_t* buf, size_t max_len)
 
 bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
 {
-    if (!mounted || !sigurdos_sdcard_path_valid(path) || !data || len == 0) return false;
+    if (!mounted || !sigurdos_sdcard_path_valid(path)) return false;
+    if (len > 0 && !data) return false;  // data required only for non-empty writes
 
     // SD.begin() with FILE_WRITE opens for append — remove first so we replace the file
     if (SD.exists(path)) {
@@ -138,7 +139,12 @@ bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
     File f = SD.open(path, FILE_WRITE);
     if (!f) return false;
 
-    size_t written = f.write(data, len);
+    if (len > 0) {
+        size_t written = f.write(data, len);
+        f.close();
+        return written == len;
+    }
+    // Zero-length write — create/truncate an empty file
     f.close();
-    return written == len;
+    return true;
 }
