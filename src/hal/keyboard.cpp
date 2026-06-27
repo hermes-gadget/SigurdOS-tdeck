@@ -162,6 +162,7 @@ static int      key_head  = 0;   // next write position
 static int      key_tail  = 0;   // next read position
 static int      key_count = 0;   // number of entries in buffer
 static uint32_t last_consumed_key = 0; // key returned by most recent consume_event()
+static uint32_t key_overwrites = 0;    // count of keys silently overwritten when buffer full
 
 static bool raw_key_down(const uint8_t matrix[KB_RAW_COLS], uint8_t col, uint8_t row)
 {
@@ -233,6 +234,7 @@ static void enqueue_key(uint32_t key_code)
         key_count++;
     } else {
         key_tail = (key_tail + 1) % KEY_BUF_SIZE;
+        key_overwrites++;
     }
 
 #if SIGURDOS_TELEMETRY
@@ -573,4 +575,9 @@ void sigurdos_keyboard_inject(uint8_t key_code)
 void sigurdos_keyboard_inject_codepoint(uint32_t key_code)
 {
     enqueue_key(key_code);
+}
+
+uint32_t sigurdos_keyboard_overwrite_count()
+{
+    return key_overwrites;
 }

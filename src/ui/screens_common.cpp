@@ -126,11 +126,13 @@ lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_style_pad_all(bot, 0, 0);
     lv_obj_set_style_border_width(bot, 0, 0);
 
-    // Device name (left)
+    // Device name (left) — constrained to avoid overlapping WiFi/battery
     lv_obj_t* dev = lv_label_create(bot);
     lv_label_set_text(dev, sigurdos::mesh::getOwnName());
     lv_obj_set_style_text_color(dev, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(dev, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_width(dev, 200);
+    lv_label_set_long_mode(dev, LV_LABEL_LONG_DOT);
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
 
     // WiFi status icon (next to battery)

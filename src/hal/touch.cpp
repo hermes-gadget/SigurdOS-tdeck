@@ -45,6 +45,8 @@ static int      last_y         = -1;
 static bool     pressed        = false;
 static uint32_t last_poll      = 0;
 static bool     was_pressed     = false;   // for edge detection
+static int      touch_i2c_errors = 0;   // consecutive I2C read failures
+static constexpr int TOUCH_MAX_CONSECUTIVE_ERRORS = 5;
 
 // ── Helpers ───────────────────────────────────────────────
 static bool i2c_write_reg(uint16_t reg, uint8_t val)
@@ -194,8 +196,14 @@ void sigurdos_touch_loop()
     // Read status register
     uint8_t status = 0;
     if (!i2c_read_bytes(GT911_REG_STATUS, &status, 1)) {
+        touch_i2c_errors++;
+        if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS) {
+            // Touch controller may need re-init — clear stale state
+            if (pressed) { pressed = false; was_pressed = true; }
+        }
         return;
     }
+    touch_i2c_errors = 0;  // successful read, reset error counter
 
     // Bit 7 = buffer status (1 = ready, 0 = no data)
     if (!(status & 0x80)) return;
@@ -214,6 +222,12 @@ void sigurdos_touch_loop()
     // Read touch point data (all 5 points, 8 bytes each = 40 bytes)
     static uint8_t point_data[GT911_MAX_POINTS * GT911_POINT_SIZE];  // static avoids repeated stack alloc
     if (!i2c_read_bytes(GT911_REG_STATUS + 1, point_data, sizeof(point_data))) {
+        touch_i2c_errors++;
+        // Clear status to acknowledge even on partial read failure
+        i2c_write_reg(GT911_REG_STATUS, 0);
+        if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS && pressed) {
+            pressed = false; was_pressed = true;
+        }
         return;
     }
 

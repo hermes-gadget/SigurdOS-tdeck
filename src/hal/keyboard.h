@@ -101,3 +101,7 @@ void sigurdos_keyboard_inject(uint8_t key_code);
 // Inject a simulated Unicode codepoint (for tests and future remote input).
 // The display input bridge encodes non-ASCII values for LVGL textareas.
 void sigurdos_keyboard_inject_codepoint(uint32_t key_code);
+
+// Get the count of keyboard events silently overwritten when the
+// ring buffer was full. Useful for diagnostics and input stress testing.
+uint32_t sigurdos_keyboard_overwrite_count();
