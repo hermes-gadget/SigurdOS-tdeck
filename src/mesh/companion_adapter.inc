@@ -4,6 +4,7 @@
 
 #include <new>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 
 static void saveIdentity(::mesh::LocalIdentity& id);
 
@@ -41,7 +42,18 @@ static CompanionBridge* companionBridge()
 static sigurdos::comms::ObservedSerialBLEInterface g_ble_serial;
 #endif
 
-static constexpr uint32_t SIGURDOS_DEFAULT_BLE_PIN = 123456;
+static constexpr uint32_t SIGURDOS_BLE_PIN_MIN = 100000;
+static constexpr uint32_t SIGURDOS_BLE_PIN_MAX = 999999;
+
+static void generate_random_ble_pin() {
+    sigurdos::NodePrefs p = sigurdos::prefs_get();
+    if (p.device_pin != 0) return;  // already configured
+    // Generate a random 6-digit PIN using ESP32 hardware RNG
+    uint32_t pin = SIGURDOS_BLE_PIN_MIN + (esp_random() % (SIGURDOS_BLE_PIN_MAX - SIGURDOS_BLE_PIN_MIN + 1));
+    p.device_pin = pin;
+    sigurdos::prefs_set(p);
+    Serial.printf("[mesh] Generated random BLE PIN: %06lu\n", (unsigned long)pin);
+}
 
 static void queue_push_outgoing(const char* conversation, const char* sender,
                                 const char* text, uint32_t timestamp)
@@ -163,8 +175,7 @@ static void companionContactFromInfo(const ::ContactInfo& c, CompanionContact& o
 class WrapperCompanionHost final : public CompanionBridgeHost {
 public:
     uint32_t blePin() const override {
-        uint32_t pin = sigurdos::prefs_get().device_pin;
-        return pin ? pin : SIGURDOS_DEFAULT_BLE_PIN;
+        return sigurdos::prefs_get().device_pin;
     }
     uint8_t clientRepeat() const override { return sigurdos::prefs_get().client_repeat; }
     uint8_t pathHashMode() const override { return sigurdos::prefs_get().path_hash_mode; }

@@ -954,6 +954,11 @@ bool init(bool spiffs_ok)
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
     {
+        // Generate a random per-device BLE PIN on first boot if not configured.
+        // Replaces the old hardcoded default of 123456 with a unique 6-digit PIN
+        // derived from ESP32 hardware RNG.
+        generate_random_ble_pin();
+
         char ble_name[32];
         strncpy(ble_name, own_name, sizeof(ble_name) - 1);
         ble_name[sizeof(ble_name) - 1] = '\0';
