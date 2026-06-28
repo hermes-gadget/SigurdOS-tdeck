@@ -20,6 +20,7 @@
 #include "display.h"
 #include "touch.h"
 #include "keyboard.h"
+#include "keyboard_layouts.h"
 #include "prefs.h"
 #include "trackball.h"
 #include "tdeck_pins.h"
@@ -386,6 +387,29 @@ static uint32_t keyboard_key_to_lvgl_key(int key)
     if (key == 0x0D) return LV_KEY_ENTER;
     if (key == 0x09) return LV_KEY_NEXT;
     if (key > 0x20 && key != 0x7F) {
+        // Phase 2: apply active keyboard layout mapping (#752).
+        // The mapping may return a multi-byte UTF-8 string for
+        // non-Latin scripts; decode the first codepoint.
+        bool shifted = (key >= 'A' && key <= 'Z');
+        const char* mapped = keyboardLayoutMapHwKey(
+            keyboardLayoutsGetActive(), key, shifted);
+        if (mapped) {
+            uint32_t cp = (uint8_t)mapped[0];
+            if (cp >= 0xC0u) {
+                // Multi-byte UTF-8 leader — decode properly
+                uint8_t extra = 0;
+                if      ((cp & 0xE0u) == 0xC0u) { cp &= 0x1Fu; extra = 1; }
+                else if ((cp & 0xF0u) == 0xE0u) { cp &= 0x0Fu; extra = 2; }
+                else if ((cp & 0xF8u) == 0xF0u) { cp &= 0x07u; extra = 3; }
+                else { cp = '?'; extra = 0; }  // invalid continuation
+                for (uint8_t j = 0; j < extra; ++j) {
+                    uint8_t b = (uint8_t)mapped[1 + j];
+                    if ((b & 0xC0u) != 0x80u) { cp = '?'; break; }
+                    cp = (cp << 6u) | (b & 0x3Fu);
+                }
+            }
+            return sigurdos_display_encode_text_key(cp);
+        }
         return sigurdos_display_encode_text_key((uint32_t)key);
     }
     return (uint32_t)key;

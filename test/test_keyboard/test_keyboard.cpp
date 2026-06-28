@@ -33,6 +33,7 @@
 #include <gtest/gtest.h>
 #include "hal/tdeck_pins.h"
 #include "hal/keyboard.h"
+#include "hal/keyboard_layouts.h"
 #include "Arduino.h"
 #include <cstdint>
 #include <initializer_list>
@@ -664,6 +665,112 @@ TEST_F(KeyboardTest, KeyModeIsDefaultAfterInit) {
     scan_keymode_byte('X');
     EXPECT_EQ(sigurdos_keyboard_get_key(), 'X');
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+// ════════════════════════════════════════════════════════
+// LAYOUT MAPPING TESTS (Phase 2)
+// ════════════════════════════════════════════════════════
+
+TEST_F(KeyboardTest, LayoutNameReturnsTwoLetterCode) {
+    EXPECT_STREQ(keyboardLayoutName(KeyboardLayoutId::EN), "EN");
+    EXPECT_STREQ(keyboardLayoutName(KeyboardLayoutId::BG), "BG");
+    EXPECT_STREQ(keyboardLayoutName(KeyboardLayoutId::RU), "RU");
+    EXPECT_STREQ(keyboardLayoutName(KeyboardLayoutId::FR), "FR");
+    EXPECT_STREQ(keyboardLayoutName(KeyboardLayoutId::DE), "DE");
+}
+
+TEST_F(KeyboardTest, LayoutDefaultIsEnglish) {
+    EXPECT_EQ(keyboardLayoutsGetActive(), KeyboardLayoutId::EN);
+}
+
+TEST_F(KeyboardTest, LayoutSetAndGetActive) {
+    keyboardLayoutsSetActive(KeyboardLayoutId::BG);
+    EXPECT_EQ(keyboardLayoutsGetActive(), KeyboardLayoutId::BG);
+    keyboardLayoutsSetActive(KeyboardLayoutId::EN);
+    EXPECT_EQ(keyboardLayoutsGetActive(), KeyboardLayoutId::EN);
+}
+
+TEST_F(KeyboardTest, LayoutSetInvalidClamps) {
+    keyboardLayoutsSetActive(static_cast<KeyboardLayoutId>(99));
+    EXPECT_EQ(keyboardLayoutsGetActive(), KeyboardLayoutId::EN);  // unchanged
+}
+
+TEST_F(KeyboardTest, LayoutEnglishIsPassThrough) {
+    // EN layout has no mapping tables — all keys pass through
+    const char* m = keyboardLayoutMapHwKey(KeyboardLayoutId::EN, 'a', false);
+    EXPECT_EQ(m, nullptr);
+    m = keyboardLayoutMapHwKey(KeyboardLayoutId::EN, 'A', true);
+    EXPECT_EQ(m, nullptr);
+}
+
+TEST_F(KeyboardTest, LayoutBulgarianLowercase) {
+    const char* m = keyboardLayoutMapHwKey(KeyboardLayoutId::BG, 'a', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "а");  // Cyrillic a
+}
+
+TEST_F(KeyboardTest, LayoutBulgarianUppercase) {
+    const char* m = keyboardLayoutMapHwKey(KeyboardLayoutId::BG, 'A', true);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "А");  // Cyrillic A
+}
+
+TEST_F(KeyboardTest, LayoutBulgarianDigitMapping) {
+    const char* m = keyboardLayoutMapHwKey(KeyboardLayoutId::BG, '1', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "ш");  // sha on digit 1
+}
+
+TEST_F(KeyboardTest, LayoutFrenchAzertyRemap) {
+    // On a US-QWERTY physical keyboard, pressing 'a' in French layout
+    // should produce 'q' (AZERTY swap)
+    const char* m = keyboardLayoutMapHwKey(KeyboardLayoutId::FR, 'a', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "q");
+
+    m = keyboardLayoutMapHwKey(KeyboardLayoutId::FR, 'q', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "a");
+}
+
+TEST_F(KeyboardTest, LayoutGermanQwertzRemap) {
+    const char* m = keyboardLayoutMapHwKey(KeyboardLayoutId::DE, 'y', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "z");
+
+    m = keyboardLayoutMapHwKey(KeyboardLayoutId::DE, 'z', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "y");
+}
+
+TEST_F(KeyboardTest, LayoutRussianCoversAll33LettersViaKeysAndDigits) {
+    // Spot-check a few Russian phonetic mappings
+    const char* m = keyboardLayoutMapHwKey(KeyboardLayoutId::RU, 'a', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "а");
+
+    m = keyboardLayoutMapHwKey(KeyboardLayoutId::RU, 's', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "с");
+
+    // Digit 1 → ч
+    m = keyboardLayoutMapHwKey(KeyboardLayoutId::RU, '1', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "ч");
+
+    // Digit 6 → ю
+    m = keyboardLayoutMapHwKey(KeyboardLayoutId::RU, '6', false);
+    ASSERT_NE(m, nullptr);
+    EXPECT_STREQ(m, "ю");
+}
+
+TEST_F(KeyboardTest, LayoutNonAlphaKeysPassThrough) {
+    // Space, punctuation pass through unchanged
+    const char* m = keyboardLayoutMapHwKey(KeyboardLayoutId::BG, ' ', false);
+    EXPECT_EQ(m, nullptr);
+
+    m = keyboardLayoutMapHwKey(KeyboardLayoutId::BG, '.', false);
+    EXPECT_EQ(m, nullptr);
 }
 
 } // anonymous namespace
