@@ -380,14 +380,15 @@ bool sigurdos_keyboard_init()
     if (initialized) return true;
 
     // I2C bus is already initialized by TDeckBoard::begin() at 400 kHz.
-    // Bound the I2C timeout so a non-responding C3 fails fast.
-    // ESP32 Arduino's default is ~1 s — at that, polling stalls everything.
-    Wire.setTimeOut(20);
+    // Do NOT call Wire.setTimeOut() here — the warm-handoff retry loop
+    // below needs the default ~1 s timeout so the C3 keyboard MCU has
+    // time to finish its cold boot (~500 ms). The 20 ms poll timeout
+    // is applied AFTER init, once we know the C3 is responsive.
 
     // Warm-handoff probe: after Launcher's ESP.restart(), the C3 keyboard
     // MCU may be slow to respond or in an unexpected mode. Retry with
     // a bounded window and explicitly reset to key mode before probing.
-    constexpr int WARM_KBD_RETRIES = 3;
+    constexpr int WARM_KBD_RETRIES = 5;       // bumped from 3 → 5: C3 cold boot ~500 ms
     constexpr int WARM_KBD_RETRY_DELAY_MS = 100;
 
     bool probe_ok = false;
@@ -441,6 +442,13 @@ bool sigurdos_keyboard_init()
 
     raw_mode_active = false;
     initialized = true;
+
+    // Now that the C3 is confirmed responsive, clamp the I2C timeout
+    // so future poll read timeouts (key-mode byte requests) don't stall
+    // the UI loop. The ESP32 Arduino default of ~1 s would block the
+    // entire LVGL render for a second on a transient C3 glitch.
+    Wire.setTimeOut(20);
+
     return true;
 }
 
