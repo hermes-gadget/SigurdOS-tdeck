@@ -380,6 +380,9 @@ bool sigurdos_keyboard_init()
     if (initialized) return true;
 
     // I2C bus is already initialized by TDeckBoard::begin() at 400 kHz.
+    // Bound the I2C timeout so a non-responding C3 fails fast.
+    // ESP32 Arduino's default is ~1 s — at that, polling stalls everything.
+    Wire.setTimeOut(20);
 
     // Warm-handoff probe: after Launcher's ESP.restart(), the C3 keyboard
     // MCU may be slow to respond or in an unexpected mode. Retry with

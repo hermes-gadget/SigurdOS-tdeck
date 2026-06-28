@@ -105,15 +105,37 @@ static void gt911_reset()
 // PUBLIC API
 // ════════════════════════════════════════════════════════
 
+// ── One-shot init probe caching ─────────────────────────
+// The UI retries sigurdos_touch_init() in a loop until the
+// controller responds. Without caching, we re-probe the I2C
+// bus every frame — bounding I2C timeouts prevents stalls,
+// but it's still wasted bus traffic. After the first attempt
+// we return the cached result instantly.
+static bool s_touch_probe_attempted = false;
+
 bool sigurdos_touch_init()
 {
     if (initialized) return true;
+    if (s_touch_probe_attempted) return false;   // cache: don't re-probe
+    s_touch_probe_attempted = true;
 
     // I2C bus is already initialized by TDeckBoard::begin() at 400 kHz.
-    // Initialize GT911 with correct pins
+    // Bound the I2C timeout so a non-responding controller fails fast.
+    // ESP32 Arduino's default is ~1 s — at that, polling stalls everything.
+    Wire.setTimeOut(20);
 
-    // Configure INT pin
+    // ── I2C bus recovery ──────────────────────────────
+    // If a peripheral is wedged mid-byte holding SDA low, clock SCL
+    // up to 9 times so it can finish, then leave the lines idle-high.
     pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
+    pinMode(PIN_TOUCH_SDA, INPUT_PULLUP);
+    for (int i = 0; i < 9 && digitalRead(PIN_TOUCH_SDA) == LOW; ++i) {
+        pinMode(PIN_TOUCH_SCL, OUTPUT);
+        digitalWrite(PIN_TOUCH_SCL, LOW);  delayMicroseconds(6);
+        digitalWrite(PIN_TOUCH_SCL, HIGH); delayMicroseconds(6);
+    }
+
+    // Initialize GT911 with correct pins
 
     // Try to reset the controller
     gt911_reset();
