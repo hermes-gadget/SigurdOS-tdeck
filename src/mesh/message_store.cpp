@@ -8,6 +8,7 @@
 
 #if defined(ESP32_PLATFORM)
 #include <SPIFFS.h>
+#include "hal/storage.h"
 #else
 #include <cstdio>
 #endif
@@ -59,6 +60,7 @@ static bool writeHeaderIfNeeded();
 #if defined(ESP32_PLATFORM)
 static bool ensureFs()
 {
+    if (!sigurdos::storage_available()) return false;
     static bool mounted = false;
     if (!mounted) {
         if (!SPIFFS.begin(false)) return false;

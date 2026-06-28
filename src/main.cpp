@@ -2,7 +2,7 @@
 // Copyright (C) 2025 Ben
 
 #include <Arduino.h>
-#include <SPIFFS.h>
+#include "hal/storage.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/display.h"
@@ -87,10 +87,9 @@ void setup()
     boot_log("first splash frame flushed");
 
     boot_status("Mounting storage...");
-    // Try to mount without auto-formatting — a transient corruption
-    // should not destroy identity/contacts silently. Only format when
-    // explicitly requested via factory reset or recovery.
-    bool spiffs_ok = SPIFFS.begin(false);
+    // Safe SPIFFS init — auto-formats an erased partition (clean flash)
+    // but leaves corrupt data alone (user must factory-reset to recover).
+    bool spiffs_ok = sigurdos::storage_init();
     if (!spiffs_ok) {
         if (sigurdos_is_under_launcher()) {
             Serial.println("[boot] WARNING: SPIFFS mount failed — installed app-only under Launcher. Reinstall from the Launcher/merged image (SigurdOS-tdeck-launcher.bin) for persistence.");

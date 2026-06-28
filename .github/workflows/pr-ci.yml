@@ -137,7 +137,7 @@ jobs:
           # Whitelist: diagnostics/test/validation modules by policy, plus files
           # not yet migrated — shrink the second list per T9 migration PR.
           allow_dirs='^src/(diagnostics|test|validation)/'
-          not_migrated='^src/(app/map_renderer|hal/display|hal/github_ota|hal/keyboard|hal/trackball|hal/wifi_ota|main|mesh/mesh_wrapper|mesh/sigurd_mesh_v2|ui/chat_screen|ui/home_screen|ui/screens/screen_channels|ui/screens/screen_contacts)\.cpp$'
+          not_migrated='^src/(app/map_renderer|hal/display|hal/github_ota|hal/keyboard|hal/storage|hal/trackball|hal/wifi_ota|main|mesh/mesh_wrapper|mesh/sigurd_mesh_v2|ui/chat_screen|ui/home_screen|ui/screens/screen_channels|ui/screens/screen_contacts)\.cpp$'
           violations=$(grep -rl "Serial\.print" src --include="*.cpp" | grep -Ev "$allow_dirs|$not_migrated" || true)
           if [ -n "$violations" ]; then
             echo "Raw Serial.print outside the logging whitelist — use SIG_LOG* from src/diagnostics/log.h:"

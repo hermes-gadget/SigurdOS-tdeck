@@ -7,6 +7,7 @@
 
 #if defined(ESP32_PLATFORM)
 #include <SPIFFS.h>
+#include "hal/storage.h"
 #else
 #include <cstdio>
 #endif
@@ -35,6 +36,7 @@ static void copyZ(char* dest, size_t dest_sz, const char* src)
 #if defined(ESP32_PLATFORM)
 static bool ensureFs()
 {
+    if (!sigurdos::storage_available()) return false;
     static bool mounted = false;
     if (!mounted) {
         if (!SPIFFS.begin(false)) return false;
