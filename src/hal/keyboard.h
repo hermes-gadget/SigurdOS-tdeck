@@ -90,6 +90,12 @@ void sigurdos_keyboard_reset_scan_state();
 // No-op in production builds — the flag is never reset at runtime.
 void sigurdos_keyboard_reset_init_for_test();
 
+// Enter raw matrix mode for testing. Switches the C3 to CMD_MODE_RAW
+// and sets the internal state so subsequent scan() calls read raw bytes.
+// Used by test_keyboard to exercise the raw-matrix path independently
+// of the primary key-mode path.
+void sigurdos_keyboard_enter_raw_mode_for_test();
+
 // Consume/clear the current key event (used by LVGL indev after reporting a press).
 // Prevents the same character from being fed again on the next read.
 void sigurdos_keyboard_consume_key();

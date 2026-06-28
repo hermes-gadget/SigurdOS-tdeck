@@ -62,6 +62,14 @@ protected:
         arduino_mock::current_millis = 11;
     }
 
+    // Enter raw matrix mode for testing the raw-matrix path.
+    // Must be called AFTER init_with_ack() — sets raw_mode_active
+    // so scan() reads 5-byte matrices instead of 1-byte key-mode bytes.
+    void enter_raw_mode() {
+        sigurdos_keyboard_enter_raw_mode_for_test();
+        arduino_mock::current_millis += 6;
+    }
+
     void queue_raw(std::initializer_list<std::pair<uint8_t, uint8_t>> pressed) {
         uint8_t cols[5] = {0};
         for (auto key : pressed) {
@@ -77,6 +85,13 @@ protected:
     void scan_raw(std::initializer_list<std::pair<uint8_t, uint8_t>> pressed) {
         arduino_mock::current_millis += 6;
         queue_raw(pressed);
+        sigurdos_keyboard_scan();
+    }
+
+    // Queue a single key-mode byte and scan (primary path after Phase 1).
+    void scan_keymode_byte(uint8_t key_byte) {
+        arduino_mock::current_millis += 6;
+        Wire.mock_queue_rx_byte(key_byte);
         sigurdos_keyboard_scan();
     }
 
@@ -107,18 +122,18 @@ TEST_F(KeyboardTest, InitRecoversFromTransientNack) {
     EXPECT_TRUE(sigurdos_keyboard_init());
 }
 
-TEST_F(KeyboardTest, InitSendsDefaultBrightnessOnFirstSuccess) {
+TEST_F(KeyboardTest, InitSendsKeyModeOnFirstSuccess) {
     Wire.mock_queue_rx_byte(0x00);
     EXPECT_TRUE(sigurdos_keyboard_init());
 
-    // Init sends two commands:
+    // Init sends three commands:
     //   1. Brightness        (0x01 + prefs value)
     //   2. Default brightness (0x02 + prefs value)
-    //   3. Raw mode switch   (0x03)
+    //   3. Key mode switch   (0x04)
     // The mock only records the LAST transmission.
     EXPECT_EQ(Wire.mock_last_tx_addr(), 0x55u);
-    // Last transmission should be raw-mode command
-    EXPECT_EQ(Wire.mock_last_tx_data(0), 0x03u);
+    // Last transmission should be key-mode command (Phase 1: key mode is primary)
+    EXPECT_EQ(Wire.mock_last_tx_data(0), 0x04u);
 }
 
 TEST_F(KeyboardTest, InitProbesKeyboardAtCorrectAddress) {
@@ -330,6 +345,7 @@ TEST_F(KeyboardTest, InjectedInvalidBytesDoNotDisruptValidOrdering) {
 
 TEST_F(KeyboardTest, RawMatrixMapsNormalLetters) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 0}}); // q
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), 'q');
@@ -338,6 +354,7 @@ TEST_F(KeyboardTest, RawMatrixMapsNormalLetters) {
 
 TEST_F(KeyboardTest, RawMatrixMapsShiftedLetters) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{1, 6}, {3, 0}}); // left shift + u
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), 'U');
@@ -346,6 +363,7 @@ TEST_F(KeyboardTest, RawMatrixMapsShiftedLetters) {
 
 TEST_F(KeyboardTest, RawMatrixMapsSymLayerCharacters) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 2}, {1, 0}}); // sym + e
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), '2');
@@ -354,6 +372,7 @@ TEST_F(KeyboardTest, RawMatrixMapsSymLayerCharacters) {
 
 TEST_F(KeyboardTest, RawMatrixMapsShiftSymLayerCharacters) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 2}, {1, 6}, {2, 6}}); // sym + shift + f
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), '^');
@@ -362,6 +381,7 @@ TEST_F(KeyboardTest, RawMatrixMapsShiftSymLayerCharacters) {
 
 TEST_F(KeyboardTest, RawMatrixKeepsMicKeyUsableAsZeroOnSymLayer) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 2}, {0, 6}}); // sym + mic
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), '0');
@@ -370,6 +390,7 @@ TEST_F(KeyboardTest, RawMatrixKeepsMicKeyUsableAsZeroOnSymLayer) {
 
 TEST_F(KeyboardTest, RawMatrixMapsAltCToCharacterPicker) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 4}, {2, 5}}); // alt + c
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), (int)sigurdos_keyboard_char_picker_key('c'));
@@ -378,6 +399,7 @@ TEST_F(KeyboardTest, RawMatrixMapsAltCToCharacterPicker) {
 
 TEST_F(KeyboardTest, RawMatrixMapsShiftAltCToUpperCharacterPicker) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 4}, {1, 6}, {2, 5}}); // alt + shift + c
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), (int)sigurdos_keyboard_char_picker_key('C'));
@@ -386,6 +408,7 @@ TEST_F(KeyboardTest, RawMatrixMapsShiftAltCToUpperCharacterPicker) {
 
 TEST_F(KeyboardTest, RawMatrixMapsAltSpaceToChannelShortcut) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 4}, {0, 5}}); // alt + space
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x0C);
@@ -394,6 +417,7 @@ TEST_F(KeyboardTest, RawMatrixMapsAltSpaceToChannelShortcut) {
 
 TEST_F(KeyboardTest, RawMatrixLeavesAltBForKeyboardBacklight) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 4}, {3, 4}}); // alt + b
 
     EXPECT_FALSE(sigurdos_keyboard_has_event());
@@ -402,6 +426,7 @@ TEST_F(KeyboardTest, RawMatrixLeavesAltBForKeyboardBacklight) {
 
 TEST_F(KeyboardTest, RawMatrixMapsEnterAndBackspace) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{3, 3}}); // enter
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x0D);
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
@@ -415,6 +440,7 @@ TEST_F(KeyboardTest, RawMatrixMapsEnterAndBackspace) {
 
 TEST_F(KeyboardTest, RawMatrixMapsDedicatedDollarKey) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{4, 4}}); // $
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), '$');
@@ -423,6 +449,7 @@ TEST_F(KeyboardTest, RawMatrixMapsDedicatedDollarKey) {
 
 TEST_F(KeyboardTest, RawMatrixMapsMicLayerToAccentedLatin) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 6}, {3, 0}}); // mic + u
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00FC); // u diaeresis
@@ -431,6 +458,7 @@ TEST_F(KeyboardTest, RawMatrixMapsMicLayerToAccentedLatin) {
 
 TEST_F(KeyboardTest, RawMatrixMapsShiftMicLayerToUpperAccentedLatin) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 6}, {1, 6}, {3, 0}}); // mic + shift + u
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00DC); // U diaeresis
@@ -439,6 +467,7 @@ TEST_F(KeyboardTest, RawMatrixMapsShiftMicLayerToUpperAccentedLatin) {
 
 TEST_F(KeyboardTest, RawMatrixCoversFrenchAccentExamples) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 6}, {2, 2}}); // mic + t = e circumflex
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x00EA);
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
@@ -458,6 +487,7 @@ TEST_F(KeyboardTest, RawMatrixCoversFrenchAccentExamples) {
 
 TEST_F(KeyboardTest, RawMatrixSupportsOneShotMicLayer) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 6}}); // tap mic
     EXPECT_FALSE(sigurdos_keyboard_has_event());
     release_raw();
@@ -469,6 +499,7 @@ TEST_F(KeyboardTest, RawMatrixSupportsOneShotMicLayer) {
 
 TEST_F(KeyboardTest, RawMatrixSupportsOneShotAltLayer) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 4}}); // tap alt
     EXPECT_FALSE(sigurdos_keyboard_has_event());
     release_raw();
@@ -491,6 +522,7 @@ TEST_F(KeyboardTest, CharacterPickerKeyHelpersPreserveBaseCharacter) {
 
 TEST_F(KeyboardTest, RawMatrixSupportsOneShotSymLayer) {
     init_with_ack();
+    enter_raw_mode();
     scan_raw({{0, 2}}); // tap sym
     EXPECT_FALSE(sigurdos_keyboard_has_event());
     release_raw();
@@ -505,6 +537,132 @@ TEST_F(KeyboardTest, InjectCodepointQueuesUnicodeValue) {
     sigurdos_keyboard_inject_codepoint(0x20AC);
 
     EXPECT_EQ(sigurdos_keyboard_get_key(), 0x20AC);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+// ════════════════════════════════════════════════════════
+// KEY-MODE TESTS (Phase 1 — primary path)
+// ════════════════════════════════════════════════════════
+
+TEST_F(KeyboardTest, KeyModeMapsLowercaseLetter) {
+    init_with_ack();
+    scan_keymode_byte('k');
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'k');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeMapsUppercaseLetter) {
+    init_with_ack();
+    scan_keymode_byte('Z');
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'Z');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeMapsDigit) {
+    init_with_ack();
+    scan_keymode_byte('5');
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), '5');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeMapsPunctuation) {
+    init_with_ack();
+    scan_keymode_byte('.');
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), '.');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeMapsEnter) {
+    init_with_ack();
+    scan_keymode_byte(0x0D);
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x0D);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeMapsBackspace) {
+    init_with_ack();
+    scan_keymode_byte(0x08);
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 0x08);
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeMapsSpace) {
+    init_with_ack();
+    scan_keymode_byte(' ');
+
+    EXPECT_EQ(sigurdos_keyboard_get_key(), ' ');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeTracksShiftFromUppercase) {
+    init_with_ack();
+    EXPECT_FALSE(sigurdos_keyboard_is_shift());
+
+    scan_keymode_byte('A');
+    EXPECT_TRUE(sigurdos_keyboard_is_shift());
+
+    scan_keymode_byte('b');
+    EXPECT_FALSE(sigurdos_keyboard_is_shift());
+}
+
+TEST_F(KeyboardTest, KeyModeTracksAltFromLegacyAltC) {
+    init_with_ack();
+    EXPECT_FALSE(sigurdos_keyboard_is_alt());
+
+    scan_keymode_byte(0x0C);   // Alt+C in legacy C3 key-mode firmware
+    EXPECT_TRUE(sigurdos_keyboard_is_alt());
+}
+
+TEST_F(KeyboardTest, KeyModeIgnoresZeroByte) {
+    init_with_ack();
+    scan_keymode_byte(0x00);
+
+    EXPECT_FALSE(sigurdos_keyboard_has_event());
+    EXPECT_FALSE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeIgnores0xFF) {
+    init_with_ack();
+    scan_keymode_byte(0xFF);
+
+    EXPECT_FALSE(sigurdos_keyboard_has_event());
+    EXPECT_FALSE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeMultipleKeysInSequence) {
+    init_with_ack();
+
+    scan_keymode_byte('h');
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'h');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+    sigurdos_keyboard_consume_key();
+
+    scan_keymode_byte('i');
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'i');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+    sigurdos_keyboard_consume_key();
+
+    scan_keymode_byte('!');
+    EXPECT_EQ(sigurdos_keyboard_get_key(), '!');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, KeyModeIsDefaultAfterInit) {
+    // Verify key mode is the default after init (raw_mode_active == false).
+    // In key mode, scan() reads 1 byte. We queue a valid byte and it should
+    // be enqueued, not interpreted as a raw matrix column.
+    init_with_ack();
+
+    // Queue a single byte — in raw mode this would be a partial read and
+    // would NOT enqueue. In key mode it should enqueue directly.
+    scan_keymode_byte('X');
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'X');
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
 }
 

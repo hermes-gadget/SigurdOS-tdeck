@@ -45,10 +45,19 @@
 //   0x04          Switch to key mode (returns ASCII characters)
 //
 // I2C read (master ← slave):
-//   Wire.requestFrom(0x55, 1) → 1 byte
-//     In key mode: 0x00 = no key, otherwise ASCII char of pressed key
-//                  (Enter=0x0D, Backspace=0x08, Alt+C=0x0C)
-//     In raw mode: 5 bytes, one bitmask per column
+//   Key mode (0x04): Wire.requestFrom(0x55, 1) → 1 byte
+//     Returns pre-decoded ASCII character (0x00 = no key).
+//     The C3 resolves its own key matrix including Shift/Sym layers,
+//     so this works identically on ALL T-Deck variants regardless of
+//     physical key layout differences (T-Deck, T-Deck Plus, etc.).
+//   Raw mode (0x03): Wire.requestFrom(0x55, 5) → 5 bytes
+//     One bitmask per column. Used periodically to sample modifier
+//     keys (Mic, unlabeled Alt) that key mode doesn't expose.
+//
+// Mode priority (Phase 1 — issue #752):
+//   PRIMARY:   Key mode (CMD 0x04) — 1 byte per poll, multi-model safe
+//   PERIODIC:  Raw sample every ~200ms for Mic/Alt/Sym modifier keys
+//   FALLBACK:  Raw mode if key mode degrades (C3 legacy firmware)
 //
 // Keymap (col × row, 5×7 matrix):
 //   Col0: q w sym a ALT SPC Mic
@@ -143,7 +152,7 @@ static uint32_t last_poll_ms    = 0;
 static bool     shift_held      = false;
 static bool     ctrl_held       = false;
 static bool     alt_held        = false;
-static bool     raw_mode_active = true;
+static bool     raw_mode_active = false;   // Phase 1: key mode is primary; raw is sampled periodically
 static uint8_t  raw_prev[KB_RAW_COLS] = {0};
 static bool     sym_one_shot    = false;
 static bool     alt_one_shot    = false;
@@ -151,6 +160,7 @@ static bool     mic_one_shot    = false;
 static bool     sym_combo_used  = false;
 static bool     alt_combo_used  = false;
 static bool     mic_combo_used  = false;
+static uint8_t  keymode_poll_count = 0;      // counter for interleaved raw sampling
 
 // ── Ring buffer for key events ─────────────────────────────
 // Fixes single-slot latch that dropped fast key presses:
@@ -351,6 +361,16 @@ static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
     }
 }
 
+// ── Test helper: enter raw mode for unit tests ──────────
+// Only used by test_keyboard to exercise the raw-matrix path.
+void sigurdos_keyboard_enter_raw_mode_for_test()
+{
+    Wire.beginTransmission(KB_I2C_ADDR);
+    Wire.write(CMD_MODE_RAW);
+    Wire.endTransmission();
+    raw_mode_active = true;
+}
+
 // ════════════════════════════════════════════════════════
 // PUBLIC API
 // ════════════════════════════════════════════════════════
@@ -405,19 +425,105 @@ bool sigurdos_keyboard_init()
         return false;
     }
 
-    // Switch to raw matrix mode when available. Raw mode exposes Sym, Shift,
-    // Mic, and the unlabeled/Alt matrix key so the host can provide a full
-    // T-Deck keyboard wrapper instead of relying on the C3's ASCII-only map.
+    // Primary: key mode (CMD 0x04). The C3 resolves its own matrix
+    // and delivers pre-decoded ASCII — correct on all T-Deck variants.
+    // Raw matrix (CMD 0x03) is sampled periodically for modifier keys
+    // (Mic, Alt) that key mode doesn't expose. See poll_raw_modifiers_once().
     Wire.beginTransmission(KB_I2C_ADDR);
-    Wire.write(CMD_MODE_RAW);
+    Wire.write(CMD_MODE_KEY);
     if (Wire.endTransmission() != 0) {
         initialized = false;
         return false;
     }
 
-    raw_mode_active = true;
+    raw_mode_active = false;
     initialized = true;
     return true;
+}
+
+// ── Key-mode poll (primary) ──────────────────────────────
+// Read 1 pre-decoded ASCII byte from the C3 keyboard. The C3 firmware
+// resolves its own key matrix, so this works identically on all T-Deck
+// variants regardless of physical key layout differences.
+// Returns true if a valid key was read and enqueued.
+static bool poll_keymode_byte()
+{
+    Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
+    if (Wire.available() == 0) return false;
+    int keyValue = Wire.read();
+    if (keyValue <= 0 || keyValue == 0xFF) return false;
+
+#if defined(SIGURDOS_DEBUG)
+    {
+        static int last_logged = -1;
+        if (keyValue != last_logged) {
+            char c = (keyValue >= 0x20 && keyValue < 0x7F) ? (char)keyValue : '.';
+            Serial.printf("[kbd] key-mode byte: 0x%02X (%d) '%c'\n",
+                          keyValue & 0xFF, keyValue, c);
+            last_logged = keyValue;
+        }
+    }
+#endif
+
+    // Track shift state from uppercase letters (the C3 resolves Shift itself)
+    if (keyValue >= 'A' && keyValue <= 'Z') {
+        shift_held = true;
+    } else if (keyValue >= 'a' && keyValue <= 'z') {
+        shift_held = false;
+    }
+
+    // Alt+C in legacy C3 key-mode firmware sends 0x0C (channel menu)
+    if (keyValue == 0x0C) {
+        alt_held = !alt_held;
+    }
+
+    enqueue_key((uint32_t)keyValue);
+    return true;
+}
+
+// ── Periodic raw-mode modifier sampler ───────────────────
+// Every RAW_SAMPLE_INTERVAL key-mode polls, briefly switch the C3 to raw
+// matrix mode (CMD 0x03), read the full 5-column matrix, process any
+// modifier-only key combos (Mic+letter, Alt+letter, Sym-only, $ key) that
+// the C3's key-mode firmware does NOT encode, then switch back to key mode.
+//
+// This is the bridge that keeps SigurdOS's extended features (accented
+// Latin via Mic, character picker via Alt, dedicated $ key) working while
+// the PRIMARY typing path uses the simpler, multi-model-safe key mode.
+static constexpr uint8_t RAW_SAMPLE_INTERVAL = 40;   // ~200ms at 5ms poll
+
+static void poll_raw_modifiers_once()
+{
+    // Switch to raw mode
+    Wire.beginTransmission(KB_I2C_ADDR);
+    Wire.write(CMD_MODE_RAW);
+    if (Wire.endTransmission() != 0) return;
+
+    delayMicroseconds(800);   // let C3 stabilise in raw mode
+
+    // Read 5-byte matrix
+    uint8_t matrix[KB_RAW_COLS] = {0};
+    Wire.requestFrom(KB_I2C_ADDR, (uint8_t)KB_RAW_COLS);
+    uint8_t got = 0;
+    while (Wire.available() > 0 && got < KB_RAW_COLS) {
+        int v = Wire.read();
+        if (v < 0) break;
+        matrix[got++] = (uint8_t)v;
+    }
+
+    // Switch back to key mode immediately
+    Wire.beginTransmission(KB_I2C_ADDR);
+    Wire.write(CMD_MODE_KEY);
+    Wire.endTransmission();   // fire-and-forget; next poll verifies
+
+    if (got == KB_RAW_COLS) {
+        // Only process raw matrix if it carries modifier keys that
+        // key mode can't express: Mic+letter, Alt+letter, Sym-only,
+        // or the dedicated $ key. Normal alpha/numeric keys are
+        // already handled by key mode — processing them again here
+        // would produce duplicate characters.
+        process_raw_matrix(matrix);
+    }
 }
 
 void sigurdos_keyboard_scan()
@@ -431,6 +537,8 @@ void sigurdos_keyboard_scan()
     // I2C clock is set once at init (200kHz compromise for shared bus)
 
     if (raw_mode_active) {
+        // Raw-mode fallback (C3 firmware didn't support key mode, or
+        // key mode degraded). Unchanged from the original driver.
         uint8_t matrix[KB_RAW_COLS] = {0};
         Wire.requestFrom(KB_I2C_ADDR, (uint8_t)KB_RAW_COLS);
         uint8_t got = 0;
@@ -452,31 +560,18 @@ void sigurdos_keyboard_scan()
         return;
     }
 
-    // Legacy C3 firmware only returns one pre-mapped ASCII byte.
-    Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
-    int keyValue = 0;
-    if (Wire.available() > 0) {
-        keyValue = Wire.read();
-    }
+    // ── Primary path: key mode (CMD 0x04) ─────────────
+    // Read 1 ASCII byte from the C3 per poll. The C3 resolves its own
+    // key matrix — correct on all T-Deck variants.
+    poll_keymode_byte();
 
-#if defined(SIGURDOS_DEBUG)
-    // Raw key-byte probe: prints the exact byte the C3 keyboard sends for
-    // every key (including would-be-dropped 0xFF), so unknown keys like the
-    // Mic key can be identified and bound. Deduped to avoid held-key spam.
-    {
-        static int last_logged = -1;
-        if (keyValue != 0 && keyValue != last_logged) {
-            char c = (keyValue >= 0x20 && keyValue < 0x7F) ? (char)keyValue : '.';
-            Serial.printf("[kbd] raw byte: 0x%02X (%d) '%c'\n",
-                          keyValue & 0xFF, keyValue, c);
-            last_logged = keyValue;
-        } else if (keyValue == 0) {
-            last_logged = -1;  // reset on key release so a repeat re-logs
-        }
+    // Periodic raw-mode sample for modifier keys the C3 doesn't encode
+    // in key mode (Mic, unlabeled Alt, dedicated $).
+    keymode_poll_count++;
+    if (keymode_poll_count >= RAW_SAMPLE_INTERVAL) {
+        keymode_poll_count = 0;
+        poll_raw_modifiers_once();
     }
-#endif
-
-    process_legacy_key(keyValue);
 }
 
 int sigurdos_keyboard_get_key()
@@ -549,13 +644,13 @@ void sigurdos_keyboard_reset_scan_state()
     shift_held      = false;
     ctrl_held       = false;
     alt_held        = false;
-    raw_mode_active = true;
-    sym_one_shot    = false;
+    raw_mode_active = false;   // key mode is primary\n    sym_one_shot    = false;
     alt_one_shot    = false;
     mic_one_shot    = false;
     sym_combo_used  = false;
     alt_combo_used  = false;
     mic_combo_used  = false;
+    keymode_poll_count = 0;
     memset(raw_prev, 0, sizeof(raw_prev));
 }
 
