@@ -248,7 +248,12 @@ public:
         for (uint8_t i = 0; i < actual; i++) {
             _rx_buf[i] = _q_buf[i];
         }
-        _q_len = 0;  // consume queue
+        // Preserve bytes queued for a subsequent transaction. Keyboard scans
+        // read one key-mode byte and then a five-byte raw modifier sample.
+        for (size_t i = actual; i < _q_len; i++) {
+            _q_buf[i - actual] = _q_buf[i];
+        }
+        _q_len -= actual;
         return _rx_len;
     }
     int available() { return (int)(_rx_len - _rx_pos); }

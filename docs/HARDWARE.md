@@ -231,10 +231,10 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 | Main MCU           | ESP32-S3 (I2C master)         |
 | Interface          | I2C (shared bus)              |
 | I2C Address        | **0x55**                      |
-| Bus Speed          | **100 kHz**                   |
+| Bus Speed          | **400 kHz** (shared with touch) |
 | Protocol           | LilyGo T-Deck Keyboard_ESP32C3 (MIT) |
-| Operating Mode     | **Raw mode** (bitmask per column) |
-| Key mode           | Legacy fallback (ASCII)       |
+| Operating Mode     | **Key mode** (pre-decoded ASCII) |
+| Raw mode           | 20 ms modifier-only sampler   |
 | Poll Interval      | 5 ms                          |
 | Backlight Default  | 127 (mid-brightness)          |
 | Matrix             | 5 columns × 7 rows            |
@@ -250,8 +250,7 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 
 ### I2C Read (Master ← Slave)
 
-- Raw mode: `Wire.requestFrom(0x55, 5)` returns one 7-bit row mask per column.
-- Legacy key mode: `Wire.requestFrom(0x55, 1)` returns one byte:
+- Key mode (primary): `Wire.requestFrom(0x55, 1)` returns one byte:
 
 | Value          | Meaning                        |
 |----------------|--------------------------------|
@@ -261,6 +260,11 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 | `0x09`         | Tab                            |
 | `0x0C`         | Channel-menu shortcut event    |
 | `0x20`–`0x7E`  | ASCII printable character      |
+
+- Raw mode (compatibility sample): `Wire.requestFrom(0x55, 5)` returns one
+  7-bit row mask per column. The host enters this mode briefly after each ASCII
+  byte and every 20 ms for modifier-only taps, then immediately restores key
+  mode.
 
 ### Key Matrix (5 × 7)
 
@@ -275,14 +279,21 @@ Row5   SPC      z        c        n        m
 Row6   Mic      LShift   f        j        k
 ```
 
-### Host Raw-Mode Key Layers
+### Host Compatibility Key Layers
 
-- `Sym` opens the symbol layer; tapping `Sym` arms it for one key.
+- Normal characters, Shift, and held `Sym` are decoded by the keyboard MCU,
+  so physical matrix differences between T-Deck models stay inside the C3.
+- Raw samples preserve the host-only layers without decoding ordinary keys
+  from the model-specific matrix.
+- Tapping `Sym` arms it for one key; Shift+Sym output is repaired for the
+  published C3 firmware's ASCII subtraction behavior.
 - `Alt` opens an on-screen character picker for the pressed base key; tapping
   `Alt` arms the picker for one key.
 - `Mic` is a fast extended-character alias for common accented characters.
 - `Alt+Space` emits the channel-menu shortcut event (`0x0C`).
 - `Alt+B` remains handled by the keyboard MCU for backlight toggling.
+- Each key-mode byte is paired with a raw modifier sample, preventing a chord
+  from producing both its base character and transformed character.
 
 ### Backlight Control
 
@@ -301,13 +312,15 @@ Row6   Mic      LShift   f        j        k
 2. Probe: request 1 byte from address 0x55 (must ACK)
 3. Send `CMD_BRIGHTNESS` (0x01) with stored value
 4. Send `CMD_DEFAULT_BRIGHTNESS` (0x02) with min(30) clamping
-5. Send `CMD_MODE_RAW` (0x03) to expose Sym, Shift, Alt, and Mic layers
+5. Send `CMD_MODE_KEY` (0x04) and keep it as the primary operating mode
+6. During polling, use bounded `CMD_MODE_RAW` (0x03) samples for Alt/Mic/Sym,
+   then restore `CMD_MODE_KEY` before the next ASCII read
 
 ### Known Limitations
 
 - Ctrl state is not available from the current keyboard matrix.
-- Legacy key-mode fallback has best-effort modifier state only because the MCU
-  sends pre-processed ASCII bytes instead of raw scancodes.
+- C3 firmware without raw-mode commands remains usable in key-only mode, but
+  cannot expose the host-side Alt/Mic/Sym one-shot extensions.
 
 ---
 

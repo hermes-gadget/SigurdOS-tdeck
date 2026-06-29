@@ -554,9 +554,8 @@ static void lvgl_kb_cb(lv_indev_t* indev, lv_indev_data_t* data)
     int key = sigurdos_keyboard_get_key();
     if (key > 0 && sigurdos_keyboard_consume_event()) {
         // ── Global shortcut: channel quick-action menu ──
-        // Raw matrix mode maps Alt+Space to 0x0C so Alt+letter can open
-        // the character picker. Legacy key-mode C3 firmware emits 0x0C for
-        // Alt+C, so the display layer only needs to handle the event code.
+        // The keyboard HAL maps Alt+Space to 0x0C while raw modifier sampling
+        // distinguishes the C3's native Alt+C byte for the character picker.
         if (key == 0x0C) {
             lv_obj_t* ci = sigurdos::ui::chat_screen_get_input_field();
             if (ci && lv_obj_is_valid(ci) && lv_obj_get_screen(ci) == lv_scr_act()) {
@@ -756,7 +755,7 @@ void sigurdos_display_init_inputs()
         // Touch init failed — device works with keyboard only
     }
 
-    // Initialize keyboard matrix scanner
+    // Initialize the ESP32-C3 I2C keyboard driver
     if (!sigurdos_keyboard_init()) {
         // Keyboard init failed — device works with touch only
     }

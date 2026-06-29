@@ -309,10 +309,10 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 **Sources:** [`src/hal/touch.cpp`](../src/hal/touch.cpp), [`src/hal/touch.h`](../src/hal/touch.h), [`test/test_touch/`](../test/test_touch/)
 
 ### I2C Keyboard
-- **MCU:** Separate ESP32-C3 slave on I2C address 0x55, 100 kHz
-- **Mode:** Returns ASCII characters for each keypress
+- **MCU:** Separate ESP32-C3 slave on I2C address 0x55, shared 400 kHz bus
+- **Mode:** Model-independent ASCII key mode, with bounded raw modifier samples
 - **Backlight:** I2C commands 0x01/0x02 for brightness control (0–255)
-- **Modifiers:** `is_shift()`, `is_ctrl()`, `is_alt()` — tracked from key codes
+- **Modifiers:** Alt/Mic/Sym extensions retained without raw-decoding normal keys
 - **Debouncing:** MCU handles matrix scanning and debounce internally
 - **Inject API:** `keyboard_inject()` for simulated input in test mode
 **Sources:** [`src/hal/keyboard.cpp`](../src/hal/keyboard.cpp), [`src/hal/keyboard.h`](../src/hal/keyboard.h), [`test/test_keyboard/`](../test/test_keyboard/)

@@ -48,7 +48,7 @@ pio run -e SigurdOS_TDeck
 | `test_hal_contract` | HAL display/gps lifecycle signatures, debug capture APIs, type stability |
 | `test_home_screen` | Home screen layout, icon grid, status bars |
 | `test_input_contract` | Trackball/keyboard input event types, remote hook signatures |
-| `test_keyboard` | Matrix scan, keymap, debounce, ghost detection, LVGL mapping |
+| `test_keyboard` | ASCII key mode, raw modifier sampling, extended layers, event queue |
 | `test_launcher_env` | Launcher runtime detection, partition/otadata probing, false-positive guards |
 | `test_layout` | Adaptive layout helpers, responsive grid calculations, screen size adjustments |
 | `test_lodepng_alloc` | lodepng PSRAM allocator, malloc/realloc fallback, heap caps delegation |

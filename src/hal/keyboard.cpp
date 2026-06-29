@@ -22,7 +22,6 @@
 #include "prefs.h"
 #include <Arduino.h>
 #include <Wire.h>
-#include <cstring>
 #if SIGURDOS_TELEMETRY
 #include "../diagnostics/telemetry.h"
 #endif
@@ -45,10 +44,14 @@
 //   0x04          Switch to key mode (returns ASCII characters)
 //
 // I2C read (master ← slave):
-//   Wire.requestFrom(0x55, 1) → 1 byte
-//     In key mode: 0x00 = no key, otherwise ASCII char of pressed key
-//                  (Enter=0x0D, Backspace=0x08, Alt+C=0x0C)
-//     In raw mode: 5 bytes, one bitmask per column
+//   Key mode: Wire.requestFrom(0x55, 1) → pre-decoded ASCII byte
+//   Raw mode: Wire.requestFrom(0x55, 5) → one bitmask per column
+//
+// Key mode is the primary path. It lets the keyboard MCU own the physical
+// matrix mapping, which is required for T-Deck variants with different
+// matrices. A short raw sample accompanies each ASCII byte and also runs every
+// 20 ms for modifier-only taps. This recovers the host-side Alt/Mic/Sym features
+// that the MCU's ASCII protocol cannot express without raw-decoding normal keys.
 //
 // Keymap (col × row, 5×7 matrix):
 //   Col0: q w sym a ALT SPC Mic
@@ -64,10 +67,10 @@ static constexpr uint8_t  CMD_DEFAULT_BRIGHTNESS    = 0x02;
 static constexpr uint8_t  CMD_MODE_RAW              = 0x03;  // raw bitmask mode
 static constexpr uint8_t  CMD_MODE_KEY              = 0x04;  // ASCII key mode
 static constexpr uint32_t KB_POLL_INTERVAL_MS       = 5;    // faster polling for responsive typing (was 10)
-static constexpr uint8_t  KB_BACKLIGHT_DEFAULT      = 127;  // mid brightness
+static constexpr uint32_t KB_RAW_SAMPLE_INTERVAL_MS = 20;
 static constexpr uint8_t  KB_RAW_COLS               = 5;
 static constexpr uint8_t  KB_RAW_ROWS               = 7;
-static constexpr uint8_t  KB_RAW_ROW_MASK           = 0x7F;
+static constexpr uint8_t  KB_RAW_UNSUPPORTED_LIMIT  = 3;
 
 enum class RawKeyKind : uint8_t {
     Printable,
@@ -77,7 +80,6 @@ enum class RawKeyKind : uint8_t {
     Shift,
     Enter,
     Backspace,
-    None,
 };
 
 struct RawKeyDef {
@@ -135,22 +137,36 @@ static constexpr RawKeyDef RAW_KEYS[KB_RAW_COLS][KB_RAW_ROWS] = {
     },
 };
 
+enum class RawSamplerSupport : uint8_t {
+    Unknown,
+    Supported,
+    Unavailable,
+};
+
 static bool     initialized     = false;
 
 void sigurdos_keyboard_reset_init_for_test() { initialized = false; }
 
 static uint32_t last_poll_ms    = 0;
+static uint32_t last_raw_sample_ms = 0;
 static bool     shift_held      = false;
 static bool     ctrl_held       = false;
 static bool     alt_held        = false;
-static bool     raw_mode_active = true;
-static uint8_t  raw_prev[KB_RAW_COLS] = {0};
+static bool     key_mode_ready  = true;
+static bool     sym_sample_down = false;
+static bool     alt_sample_down = false;
+static bool     mic_sample_down = false;
+static bool     shift_sample_down = false;
 static bool     sym_one_shot    = false;
 static bool     alt_one_shot    = false;
 static bool     mic_one_shot    = false;
 static bool     sym_combo_used  = false;
 static bool     alt_combo_used  = false;
 static bool     mic_combo_used  = false;
+static bool     pending_key_valid = false;
+static uint8_t  pending_key     = 0;
+static RawSamplerSupport raw_sampler_support = RawSamplerSupport::Unknown;
+static uint8_t  raw_single_byte_samples = 0;
 
 // ── Ring buffer for key events ─────────────────────────────
 // Fixes single-slot latch that dropped fast key presses:
@@ -168,22 +184,6 @@ static bool raw_key_down(const uint8_t matrix[KB_RAW_COLS], uint8_t col, uint8_t
 {
     if (col >= KB_RAW_COLS || row >= KB_RAW_ROWS) return false;
     return (matrix[col] & (uint8_t)(1u << row)) != 0;
-}
-
-static bool is_modifier_kind(RawKeyKind kind)
-{
-    return kind == RawKeyKind::Sym ||
-           kind == RawKeyKind::Alt ||
-           kind == RawKeyKind::Mic ||
-           kind == RawKeyKind::Shift;
-}
-
-static uint32_t shifted_codepoint(uint32_t codepoint)
-{
-    if (codepoint >= 'a' && codepoint <= 'z') {
-        return codepoint - ('a' - 'A');
-    }
-    return codepoint;
 }
 
 static uint32_t extended_codepoint(uint32_t base, bool shift)
@@ -249,106 +249,212 @@ static void enqueue_key(uint32_t key_code)
     }
 }
 
-static void process_legacy_key(int keyValue)
+static bool set_keyboard_mode(uint8_t command)
 {
-    if (keyValue <= 0 || keyValue == 0xFF) {
-        return;
-    }
-    enqueue_key((uint32_t)keyValue);
-    if (keyValue == 0x0C) {
-        alt_held = !alt_held;
-    }
+    Wire.beginTransmission(KB_I2C_ADDR);
+    Wire.write(command);
+    return Wire.endTransmission() == 0;
 }
 
-static void process_raw_matrix(const uint8_t matrix[KB_RAW_COLS])
+static const RawKeyDef* active_raw_key(const uint8_t matrix[KB_RAW_COLS])
+{
+    for (uint8_t row = 0; row < KB_RAW_ROWS; row++) {
+        for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
+            if (!raw_key_down(matrix, col, row)) continue;
+            const RawKeyDef& key = RAW_KEYS[col][row];
+            if (key.kind == RawKeyKind::Printable || key.kind == RawKeyKind::Mic) {
+                return &key;
+            }
+        }
+    }
+    return nullptr;
+}
+
+static uint32_t one_shot_symbol(uint8_t key_code, bool shifted)
+{
+    uint32_t base = key_code;
+    if (base >= 'A' && base <= 'Z') base += ('a' - 'A');
+
+    for (uint8_t row = 0; row < KB_RAW_ROWS; row++) {
+        for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
+            const RawKeyDef& key = RAW_KEYS[col][row];
+            if (key.normal != base) continue;
+            const uint32_t mapped = shifted && key.sym_shift ? key.sym_shift : key.sym;
+            return mapped ? mapped : key_code;
+        }
+    }
+    return key_code;
+}
+
+static void update_modifier_sample(const uint8_t matrix[KB_RAW_COLS])
 {
     const bool sym_down = raw_key_down(matrix, 0, 2);
     const bool alt_down = raw_key_down(matrix, 0, 4);
     const bool mic_down = raw_key_down(matrix, 0, 6);
     const bool shift_down = raw_key_down(matrix, 1, 6) || raw_key_down(matrix, 2, 3);
-    const bool sym_was_down = raw_key_down(raw_prev, 0, 2);
-    const bool alt_was_down = raw_key_down(raw_prev, 0, 4);
-    const bool mic_was_down = raw_key_down(raw_prev, 0, 6);
 
-    if (sym_down && !sym_was_down) {
-        sym_combo_used = false;
-    }
-    if (alt_down && !alt_was_down) {
-        alt_combo_used = false;
-    }
-    if (mic_down && !mic_was_down) {
-        mic_combo_used = false;
-    }
+    if (sym_down && !sym_sample_down) sym_combo_used = false;
+    if (alt_down && !alt_sample_down) alt_combo_used = false;
+    if (mic_down && !mic_sample_down) mic_combo_used = false;
 
+    // Alt+B is consumed entirely by the C3 as a backlight toggle, so no ASCII
+    // byte arrives for resolve_pending_key() to mark the chord as used.
+    if (alt_down && raw_key_down(matrix, 3, 4)) alt_combo_used = true;
+
+    if (!sym_down && sym_sample_down && !sym_combo_used) sym_one_shot = true;
+    if (!alt_down && alt_sample_down && !alt_combo_used) alt_one_shot = true;
+    if (!mic_down && mic_sample_down && !mic_combo_used) mic_one_shot = true;
+
+    sym_sample_down = sym_down;
+    alt_sample_down = alt_down;
+    mic_sample_down = mic_down;
+    shift_sample_down = shift_down;
     shift_held = shift_down;
     alt_held = alt_down || alt_one_shot || mic_down || mic_one_shot;
+}
 
-    for (uint8_t row = 0; row < KB_RAW_ROWS; row++) {
-        for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
-            const bool is_down = raw_key_down(matrix, col, row);
-            const bool was_down = raw_key_down(raw_prev, col, row);
-            if (!is_down || was_down) {
-                continue;
-            }
+static void resolve_pending_key(const uint8_t* matrix)
+{
+    if (!pending_key_valid) return;
 
-            const RawKeyDef& key = RAW_KEYS[col][row];
-            const bool sym_layer = sym_down || sym_one_shot;
-            if (is_modifier_kind(key.kind) &&
-                !(key.kind == RawKeyKind::Mic && sym_layer)) {
-                continue;
-            }
+    const uint8_t key_code = pending_key;
+    const bool shifted = shift_sample_down || (key_code >= 'A' && key_code <= 'Z');
+    const bool alt_layer = alt_sample_down || alt_one_shot;
+    const bool mic_layer = mic_sample_down || mic_one_shot;
+    uint32_t out = key_code;
 
-            const bool alt_layer = alt_down || alt_one_shot;
-            const bool mic_layer = mic_down || mic_one_shot;
-            uint32_t out = 0;
+    if (alt_layer) {
+        if (key_code == 0x0C) {
+            out = sigurdos_keyboard_char_picker_key(shifted ? 'C' : 'c');
+        } else if (key_code == ' ') {
+            out = 0x0C; // Keep the matrix-mode Alt+Space channel shortcut.
+        } else if (key_code >= 0x20 && key_code <= 0x7E) {
+            out = sigurdos_keyboard_char_picker_key(key_code);
+        }
+    } else if (mic_layer) {
+        const RawKeyDef* raw_key = matrix ? active_raw_key(matrix) : nullptr;
+        if (sym_sample_down && raw_key && raw_key->kind == RawKeyKind::Mic) {
+            // Mic is also the physical Sym+0 key. Preserve that key before
+            // treating Mic as the host-side accented-character modifier.
+            out = shifted && raw_key->sym_shift ? raw_key->sym_shift : raw_key->sym;
+        } else {
+            uint32_t base = key_code;
+            if (base >= 'A' && base <= 'Z') base += ('a' - 'A');
+            const uint32_t extended = extended_codepoint(base, shifted);
+            if (extended) out = extended;
+        }
+    } else if (sym_sample_down) {
+        // The C3 handles the ordinary Sym layer. Its published firmware applies
+        // an ASCII "-32" operation to Shift+Sym, so reconstruct that legacy
+        // matrix feature only when a raw sample identifies the physical key.
+        if (shifted && matrix) {
+            const RawKeyDef* raw_key = active_raw_key(matrix);
+            if (raw_key && raw_key->sym_shift) out = raw_key->sym_shift;
+        }
+    } else if (sym_one_shot) {
+        out = one_shot_symbol(key_code, shifted);
+    }
 
-            if (key.kind == RawKeyKind::Enter || key.kind == RawKeyKind::Backspace) {
-                out = key.normal;
-            } else if (key.kind == RawKeyKind::Mic && sym_layer) {
-                out = (shift_down && key.sym_shift) ? key.sym_shift : key.sym;
-            } else if (alt_layer && key.normal == ' ') {
-                out = 0x0C; // Channel-menu shortcut, leaving Alt+letter for character options.
-            } else if (alt_down && key.normal == 'b') {
-                out = 0;    // The keyboard MCU owns Alt+B backlight toggling.
-            } else if (alt_layer) {
-                out = sigurdos_keyboard_char_picker_key(
-                    (uint8_t)(shift_down ? shifted_codepoint(key.normal) : key.normal));
-            } else if (mic_layer) {
-                out = extended_codepoint(key.normal, shift_down);
-                if (out == 0) {
-                    out = sym_layer
-                        ? (shift_down && key.sym_shift ? key.sym_shift : key.sym)
-                        : (shift_down ? shifted_codepoint(key.normal) : key.normal);
-                }
-            } else if (sym_layer) {
-                out = (shift_down && key.sym_shift) ? key.sym_shift : key.sym;
-            } else {
-                out = shift_down ? shifted_codepoint(key.normal) : key.normal;
-            }
+    if (sym_sample_down) sym_combo_used = true;
+    if (alt_sample_down) alt_combo_used = true;
+    if (mic_sample_down) mic_combo_used = true;
 
-            if (sym_down) sym_combo_used = true;
-            if (alt_down) alt_combo_used = true;
-            if (mic_down) mic_combo_used = true;
-            if (sym_one_shot) sym_one_shot = false;
-            if (alt_one_shot) alt_one_shot = false;
-            if (mic_one_shot) mic_one_shot = false;
-            enqueue_key(out);
+    // A one-shot modifier is consumed by the next key even when the key itself
+    // has no transformed representation, matching the previous raw driver.
+    sym_one_shot = false;
+    alt_one_shot = false;
+    mic_one_shot = false;
+    alt_held = alt_sample_down || mic_sample_down;
+    pending_key_valid = false;
+    pending_key = 0;
+    enqueue_key(out);
+}
+
+static void hold_keymode_byte(int key_value)
+{
+    if (key_value <= 0 || key_value == 0xFF) return;
+
+    // The C3 has a single-byte latch, so a second byte here is already a newer
+    // physical event. Preserve ordering rather than silently replacing it.
+    if (pending_key_valid) resolve_pending_key(nullptr);
+    pending_key = (uint8_t)key_value;
+    pending_key_valid = true;
+
+    if (raw_sampler_support == RawSamplerSupport::Unavailable) {
+        resolve_pending_key(nullptr);
+    }
+}
+
+static bool poll_key_mode()
+{
+    if (!key_mode_ready) {
+        key_mode_ready = set_keyboard_mode(CMD_MODE_KEY);
+        if (!key_mode_ready) return false;
+    }
+
+    if (Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1) != 1 || Wire.available() == 0) {
+        return false;
+    }
+    const int key_value = Wire.read();
+
+#if defined(SIGURDOS_DEBUG)
+    if (key_value > 0 && key_value != 0xFF) {
+        const char c = (key_value >= 0x20 && key_value < 0x7F) ? (char)key_value : '.';
+        Serial.printf("[kbd] key-mode byte: 0x%02X '%c'\n", key_value & 0xFF, c);
+    }
+#endif
+
+    hold_keymode_byte(key_value);
+    return key_value > 0 && key_value != 0xFF;
+}
+
+static void sample_raw_modifiers()
+{
+    if (!set_keyboard_mode(CMD_MODE_RAW)) {
+        key_mode_ready = set_keyboard_mode(CMD_MODE_KEY);
+        resolve_pending_key(nullptr);
+        return;
+    }
+
+    uint8_t matrix[KB_RAW_COLS] = {0};
+    Wire.requestFrom(KB_I2C_ADDR, (uint8_t)KB_RAW_COLS);
+    uint8_t got = 0;
+    while (Wire.available() > 0 && got < KB_RAW_COLS) {
+        const int value = Wire.read();
+        if (value < 0) break;
+        matrix[got++] = (uint8_t)value;
+    }
+
+    // Always restore key mode before interpreting the sample. If this write
+    // fails, the next regular poll retries it before reading a byte.
+    key_mode_ready = set_keyboard_mode(CMD_MODE_KEY);
+
+    if (got == KB_RAW_COLS) {
+#if defined(SIGURDOS_DEBUG)
+        if (raw_sampler_support != RawSamplerSupport::Supported) {
+            Serial.println("[kbd] raw modifier sampling active");
+        }
+#endif
+        raw_sampler_support = RawSamplerSupport::Supported;
+        raw_single_byte_samples = 0;
+        update_modifier_sample(matrix);
+        resolve_pending_key(matrix);
+        return;
+    }
+
+    // Older C3 firmware ignores CMD_MODE_RAW and still returns one ASCII byte.
+    // Preserve that byte, then stop mode sampling after the behavior repeats.
+    if (got == 1) {
+        hold_keymode_byte(matrix[0]);
+        if (raw_sampler_support == RawSamplerSupport::Unknown &&
+            ++raw_single_byte_samples >= KB_RAW_UNSUPPORTED_LIMIT) {
+            raw_sampler_support = RawSamplerSupport::Unavailable;
+#if defined(SIGURDOS_DEBUG)
+            Serial.println("[kbd] raw modifier sampling unavailable; using key mode only");
+#endif
         }
     }
-
-    if (!sym_down && sym_was_down && !sym_combo_used) {
-        sym_one_shot = true;
-    }
-    if (!alt_down && alt_was_down && !alt_combo_used) {
-        alt_one_shot = true;
-    }
-    if (!mic_down && mic_was_down && !mic_combo_used) {
-        mic_one_shot = true;
-    }
-
-    for (uint8_t col = 0; col < KB_RAW_COLS; col++) {
-        raw_prev[col] = matrix[col] & KB_RAW_ROW_MASK;
-    }
+    resolve_pending_key(nullptr);
 }
 
 // ════════════════════════════════════════════════════════
@@ -405,18 +511,21 @@ bool sigurdos_keyboard_init()
         return false;
     }
 
-    // Switch to raw matrix mode when available. Raw mode exposes Sym, Shift,
-    // Mic, and the unlabeled/Alt matrix key so the host can provide a full
-    // T-Deck keyboard wrapper instead of relying on the C3's ASCII-only map.
-    Wire.beginTransmission(KB_I2C_ADDR);
-    Wire.write(CMD_MODE_RAW);
-    if (Wire.endTransmission() != 0) {
+    // Key mode is the permanent primary path. Raw mode is entered only for a
+    // bounded modifier sample and is restored immediately by scan().
+    if (!set_keyboard_mode(CMD_MODE_KEY)) {
         initialized = false;
         return false;
     }
 
-    raw_mode_active = true;
+    key_mode_ready = true;
+    raw_sampler_support = RawSamplerSupport::Unknown;
+    raw_single_byte_samples = 0;
+    last_raw_sample_ms = millis();
     initialized = true;
+#if defined(SIGURDOS_DEBUG)
+    Serial.println("[kbd] initialized in key mode");
+#endif
     return true;
 }
 
@@ -428,55 +537,21 @@ void sigurdos_keyboard_scan()
     if (now - last_poll_ms < KB_POLL_INTERVAL_MS) return;
     last_poll_ms = now;
 
-    // I2C clock is set once at init (200kHz compromise for shared bus)
-
-    if (raw_mode_active) {
-        uint8_t matrix[KB_RAW_COLS] = {0};
-        Wire.requestFrom(KB_I2C_ADDR, (uint8_t)KB_RAW_COLS);
-        uint8_t got = 0;
-        while (Wire.available() > 0 && got < KB_RAW_COLS) {
-            int v = Wire.read();
-            if (v < 0) break;
-            matrix[got++] = (uint8_t)v;
-        }
-
-        if (got == KB_RAW_COLS) {
-            process_raw_matrix(matrix);
-            return;
-        }
-
-        raw_mode_active = false;
-        if (got > 0) {
-            process_legacy_key(matrix[0]);
-        }
+    // I2C clock is set once in TDeckBoard::begin().
+    if (raw_sampler_support != RawSamplerSupport::Unavailable &&
+        now - last_raw_sample_ms >= KB_RAW_SAMPLE_INTERVAL_MS) {
+        last_raw_sample_ms = now;
+        sample_raw_modifiers();
         return;
     }
 
-    // Legacy C3 firmware only returns one pre-mapped ASCII byte.
-    Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
-    int keyValue = 0;
-    if (Wire.available() > 0) {
-        keyValue = Wire.read();
+    if (poll_key_mode() && raw_sampler_support != RawSamplerSupport::Unavailable) {
+        // Correlate the ASCII byte with the matrix state while the physical
+        // chord is still held. Periodic samples remain necessary for a tapped
+        // modifier that produces no ASCII byte of its own.
+        last_raw_sample_ms = now;
+        sample_raw_modifiers();
     }
-
-#if defined(SIGURDOS_DEBUG)
-    // Raw key-byte probe: prints the exact byte the C3 keyboard sends for
-    // every key (including would-be-dropped 0xFF), so unknown keys like the
-    // Mic key can be identified and bound. Deduped to avoid held-key spam.
-    {
-        static int last_logged = -1;
-        if (keyValue != 0 && keyValue != last_logged) {
-            char c = (keyValue >= 0x20 && keyValue < 0x7F) ? (char)keyValue : '.';
-            Serial.printf("[kbd] raw byte: 0x%02X (%d) '%c'\n",
-                          keyValue & 0xFF, keyValue, c);
-            last_logged = keyValue;
-        } else if (keyValue == 0) {
-            last_logged = -1;  // reset on key release so a repeat re-logs
-        }
-    }
-#endif
-
-    process_legacy_key(keyValue);
 }
 
 int sigurdos_keyboard_get_key()
@@ -542,6 +617,7 @@ void sigurdos_keyboard_set_default_brightness(uint8_t duty)
 void sigurdos_keyboard_reset_scan_state()
 {
     last_poll_ms    = 0;
+    last_raw_sample_ms = 0;
     key_head  = 0;
     key_tail  = 0;
     key_count = 0;
@@ -549,14 +625,21 @@ void sigurdos_keyboard_reset_scan_state()
     shift_held      = false;
     ctrl_held       = false;
     alt_held        = false;
-    raw_mode_active = true;
+    key_mode_ready  = true;
+    sym_sample_down = false;
+    alt_sample_down = false;
+    mic_sample_down = false;
+    shift_sample_down = false;
     sym_one_shot    = false;
     alt_one_shot    = false;
     mic_one_shot    = false;
     sym_combo_used  = false;
     alt_combo_used  = false;
     mic_combo_used  = false;
-    memset(raw_prev, 0, sizeof(raw_prev));
+    pending_key_valid = false;
+    pending_key = 0;
+    raw_sampler_support = RawSamplerSupport::Unknown;
+    raw_single_byte_samples = 0;
 }
 
 void sigurdos_keyboard_consume_key()
