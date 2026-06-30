@@ -52,6 +52,9 @@ typedef bool boolean;
 namespace arduino_mock {
     extern unsigned long current_millis;
     extern int pin_states[64];       // digital pin states
+    extern int pin_mode_calls[64];   // number of pinMode calls per pin
+    extern int forced_read_value[64]; // digitalRead override value
+    extern int forced_read_count[64]; // remaining overridden reads
     extern int analog_values[16];    // analog pin readings
     extern bool serial_output[1024]; // serial TX buffer
     extern int serial_output_len;
@@ -67,13 +70,21 @@ inline void delayMicroseconds(unsigned int us) { arduino_mock::current_millis +=
 
 // ── Digital I/O ──────────────────────────────────────────
 inline void pinMode(uint8_t pin, uint8_t mode) {
-    if (pin < 64) arduino_mock::pin_states[pin] = mode;
+    if (pin < 64) {
+        arduino_mock::pin_states[pin] = mode;
+        arduino_mock::pin_mode_calls[pin]++;
+    }
 }
 inline void digitalWrite(uint8_t pin, uint8_t val) {
     if (pin < 64) arduino_mock::pin_states[pin] = val;
 }
 inline int digitalRead(uint8_t pin) {
-    return (pin < 64) ? arduino_mock::pin_states[pin] : 0;
+    if (pin >= 64) return 0;
+    if (arduino_mock::forced_read_count[pin] > 0) {
+        arduino_mock::forced_read_count[pin]--;
+        return arduino_mock::forced_read_value[pin];
+    }
+    return arduino_mock::pin_states[pin];
 }
 
 // ── Analog I/O ───────────────────────────────────────────
@@ -216,9 +227,18 @@ extern HardwareSerial Serial1;
 // ── I2C ──────────────────────────────────────────────────
 class TwoWire {
 public:
-    void begin() {}
-    void begin(int, int) {}
-    void setClock(uint32_t) {}
+    void begin() {
+        _begun = true;
+        _begin_count++;
+    }
+    void begin(int sda, int scl) {
+        _begun = true;
+        _begin_count++;
+        _begin_sda = sda;
+        _begin_scl = scl;
+    }
+    void setClock(uint32_t clock) { _clock = clock; }
+    void setTimeOut(uint16_t timeout_ms) { _timeout_ms = timeout_ms; }
 
     // Master write
     void beginTransmission(uint8_t addr) {
@@ -229,8 +249,20 @@ public:
         if (_tx_len < 32) _tx_buf[_tx_len++] = val;
         return 1;
     }
+    size_t write(const uint8_t* data, size_t len) {
+        if (!data) return 0;
+        size_t written = 0;
+        while (written < len && _tx_len < sizeof(_tx_buf)) {
+            _tx_buf[_tx_len++] = data[written++];
+        }
+        return written;
+    }
     uint8_t endTransmission(bool stopBit = true) {
         (void)stopBit;
+        if (_address_count < sizeof(_address_history)) {
+            _address_history[_address_count++] = _tx_addr;
+        }
+        _end_count++;
         if (_nack_remaining > 0) {
             _nack_remaining--;
             return 1;  // NACK — simulate I2C no-ACK for warm-handoff testing
@@ -275,14 +307,34 @@ public:
         return (i >= 0 && i < (int)_tx_len) ? _tx_buf[i] : 0;
     }
     int mock_tx_len() const { return (int)_tx_len; }
+    bool mock_was_begun() const { return _begun; }
+    int mock_begin_count() const { return _begin_count; }
+    int mock_begin_sda() const { return _begin_sda; }
+    int mock_begin_scl() const { return _begin_scl; }
+    uint32_t mock_clock() const { return _clock; }
+    uint16_t mock_timeout_ms() const { return _timeout_ms; }
+    size_t mock_end_count() const { return _end_count; }
+    size_t mock_address_count() const { return _address_count; }
+    uint8_t mock_address_at(size_t index) const {
+        return index < _address_count ? _address_history[index] : 0;
+    }
 
 private:
+    bool _begun = false;
+    int _begin_count = 0;
+    int _begin_sda = -1;
+    int _begin_scl = -1;
+    uint32_t _clock = 0;
+    uint16_t _timeout_ms = 0;
     uint8_t _tx_addr = 0;
     uint8_t _tx_buf[32] = {};
     size_t  _tx_len = 0;
     uint8_t _end_error = 0;
     uint8_t _nack_count = 0;
     uint8_t _nack_remaining = 0;
+    size_t _end_count = 0;
+    uint8_t _address_history[64] = {};
+    size_t _address_count = 0;
 
     uint8_t _rx_addr = 0;
     uint8_t _rx_buf[32] = {};

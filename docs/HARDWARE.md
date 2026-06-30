@@ -93,12 +93,19 @@ The GT911 touch controller and keyboard MCU share a single I2C bus on pins 18
 
 | Device     | Address | Speed       | Driver     |
 |------------|---------|-------------|------------|
-| Touch      | 0x5D    | 200 kHz     | GT911      |
-| Keyboard   | 0x55    | 200 kHz     | ESP32-C3   |
+| Touch      | 0x5D / 0x14 | 400 kHz | GT911      |
+| Keyboard   | 0x55    | 400 kHz     | ESP32-C3   |
 
-> **Clock speed:** Both devices share a single I2C bus at 200 kHz -- a compromise
-> between the GT911's rated 400 kHz and the keyboard MCU's typical 100 kHz.
-> Each driver sets the clock once at init; neither re-asserts during loop/scan.
+`TDeckBoard::begin()` recovers the lines before `Wire.begin()`, then owns shared
+bus setup at 400 kHz with a 20 ms transaction timeout. Recovery releases SCL as
+open drain for at most nine clocks and emits a STOP only after SDA is released;
+it never bit-bangs pins while the Wire controller is active. Startup is
+process-wide idempotent because the application and mesh layer each own a
+`TDeckBoard`; the second call only reasserts the clock and timeout.
+
+Discovery is deliberately limited to keyboard `0x55` and GT911 `0x5D`/`0x14`.
+There is no full-address scan. Touch and keyboard cache their first completed
+initialization result, avoiding repeated probes after a confirmed failure.
 
 ---
 
@@ -206,10 +213,10 @@ raw_x, raw_y  →  swap XY  →  scale to 320×240  →  mirror Y  →  clamp
 
 ### Init Sequence
 
-1. Set I2C clock to 400 kHz
+1. Reassert the shared 400 kHz clock and 20 ms timeout
 2. Configure INT pin as `INPUT_PULLUP`
 3. Hardware reset via INT: LOW (1 ms) → HIGH (10 ms) → INPUT_PULLUP
-4. Probe both addresses (0x5D, then 0x14)
+4. Probe only the two valid GT911 addresses (0x5D, then 0x14)
 5. Read config (186 bytes) from register `0x8047` and write it back
 6. Clear status register `0x814E`
 
@@ -321,12 +328,13 @@ Row6   Mic      LShift   f        j        k
 
 ### Init Sequence
 
-1. Set I2C clock to 100 kHz
-2. Probe: request 1 byte from address 0x55 (must ACK)
-3. Send `CMD_BRIGHTNESS` (0x01) with stored value
-4. Send `CMD_DEFAULT_BRIGHTNESS` (0x02) with min(30) clamping
-5. Send `CMD_MODE_KEY` (0x04) and keep it as the primary operating mode
-6. During polling, use bounded `CMD_MODE_RAW` (0x03) samples for Alt/Mic/Sym,
+1. Reassert the shared 400 kHz clock and 20 ms timeout
+2. Probe only address 0x55, with up to eight 100 ms-spaced cold-boot attempts
+3. Request 1 byte after selecting key mode to confirm the C3 is ready
+4. Send `CMD_BRIGHTNESS` (0x01) with stored value
+5. Send `CMD_DEFAULT_BRIGHTNESS` (0x02) with min(30) clamping
+6. Send `CMD_MODE_KEY` (0x04) and keep it as the primary operating mode
+7. During polling, use bounded `CMD_MODE_RAW` (0x03) samples for Alt/Mic/Sym,
    then restore `CMD_MODE_KEY` before the next ASCII read
 
 ### Known Limitations

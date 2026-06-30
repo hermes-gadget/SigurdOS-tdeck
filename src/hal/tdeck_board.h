@@ -27,6 +27,7 @@
 #ifdef SIGURDOS_TDECK
 #include "tdeck_pins.h"
 #include "battery.h"
+#include "i2c_bus.h"
 #include <helpers/ESP32Board.h>
 #endif
 
@@ -67,9 +68,9 @@ public:
         analogReadResolution(12);
         adcAttachPin(PIN_BAT_ADC);
 
-        // I2C for touch / keyboard — both GT911 and ESP32-C3 support 400 kHz
-        Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL);
-        Wire.setClock(400000);
+        // Recover before Wire owns the pins, then start the shared bus with a
+        // bounded transaction timeout for touch and keyboard traffic.
+        i2c::begin();
 
         // Detect wake from deep sleep (matches MeshCore TDeckBoard pattern)
         esp_reset_reason_t reason = esp_reset_reason();

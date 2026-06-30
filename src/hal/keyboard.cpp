@@ -18,6 +18,7 @@
 
 
 #include "keyboard.h"
+#include "i2c_bus.h"
 #include "tdeck_pins.h"
 #include "prefs.h"
 #include <Arduino.h>
@@ -61,7 +62,7 @@
 //   Col4: o l i   Bksp   $ m k
 // ════════════════════════════════════════════════════════
 
-static constexpr uint8_t  KB_I2C_ADDR              = 0x55;
+static constexpr uint8_t  KB_I2C_ADDR              = sigurdos::i2c::KEYBOARD_ADDR;
 static constexpr uint8_t  CMD_BRIGHTNESS            = 0x01;
 static constexpr uint8_t  CMD_DEFAULT_BRIGHTNESS    = 0x02;
 static constexpr uint8_t  CMD_MODE_RAW              = 0x03;  // raw bitmask mode
@@ -144,8 +145,13 @@ enum class RawSamplerSupport : uint8_t {
 };
 
 static bool     initialized     = false;
+static bool     init_attempted  = false;
 
-void sigurdos_keyboard_reset_init_for_test() { initialized = false; }
+void sigurdos_keyboard_reset_init_for_test()
+{
+    initialized = false;
+    init_attempted = false;
+}
 
 static uint32_t last_poll_ms    = 0;
 static uint32_t last_raw_sample_ms = 0;
@@ -392,7 +398,11 @@ static bool poll_key_mode()
         if (!key_mode_ready) return false;
     }
 
-    if (Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1) != 1 || Wire.available() == 0) {
+    const uint8_t received = Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
+    if (received != 1 || Wire.available() == 0) {
+#if defined(SIGURDOS_DEBUG)
+        Serial.printf("[kbd] key-mode read: %u/1 bytes\n", received);
+#endif
         return false;
     }
     const int key_value = Wire.read();
@@ -417,7 +427,12 @@ static void sample_raw_modifiers()
     }
 
     uint8_t matrix[KB_RAW_COLS] = {0};
-    Wire.requestFrom(KB_I2C_ADDR, (uint8_t)KB_RAW_COLS);
+    const uint8_t requested = Wire.requestFrom(KB_I2C_ADDR, (uint8_t)KB_RAW_COLS);
+    if (requested != KB_RAW_COLS) {
+#if defined(SIGURDOS_DEBUG)
+        Serial.printf("[kbd] raw-mode read: %u/%u bytes\n", requested, KB_RAW_COLS);
+#endif
+    }
     uint8_t got = 0;
     while (Wire.available() > 0 && got < KB_RAW_COLS) {
         const int value = Wire.read();
@@ -464,18 +479,25 @@ static void sample_raw_modifiers()
 bool sigurdos_keyboard_init()
 {
     if (initialized) return true;
+    if (init_attempted) return false;
+    init_attempted = true;
 
-    // I2C bus is already initialized by TDeckBoard::begin() at 400 kHz.
+    // TDeckBoard::begin() normally applies this once. Reassert it here so the
+    // driver contract remains safe in isolation and after Launcher handoff.
+    sigurdos::i2c::configure_runtime();
 
     // Warm-handoff probe: after Launcher's ESP.restart(), the C3 keyboard
-    // MCU may be slow to respond or in an unexpected mode. Retry with
-    // a bounded window and explicitly reset to key mode before probing.
-    constexpr int WARM_KBD_RETRIES = 3;
+    // MCU may be slow to respond or in an unexpected mode. The 8-attempt
+    // window gives a cold C3 at least 700 ms to boot while every individual
+    // I2C operation remains bounded to 20 ms.
+    constexpr int WARM_KBD_RETRIES = 8;
     constexpr int WARM_KBD_RETRY_DELAY_MS = 100;
 
     bool probe_ok = false;
     for (int retry = 0; retry < WARM_KBD_RETRIES; retry++) {
         if (retry > 0) delay(WARM_KBD_RETRY_DELAY_MS);
+
+        if (!sigurdos::i2c::probe_target(KB_I2C_ADDR)) continue;
 
         // Push C3 into key mode (the default after C3 cold boot) to
         // establish a known state regardless of what Launcher left behind.

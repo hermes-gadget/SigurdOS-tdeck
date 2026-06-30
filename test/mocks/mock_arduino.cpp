@@ -23,11 +23,19 @@
 namespace arduino_mock {
     unsigned long current_millis = 0;
     int pin_states[64] = {0};
+    int pin_mode_calls[64] = {0};
+    int forced_read_value[64] = {0};
+    int forced_read_count[64] = {0};
     int analog_values[16] = {0};
 
     void reset() {
         current_millis = 0;
-        for (int i = 0; i < 64; i++) pin_states[i] = 0;
+        for (int i = 0; i < 64; i++) {
+            pin_states[i] = 0;
+            pin_mode_calls[i] = 0;
+            forced_read_value[i] = 0;
+            forced_read_count[i] = 0;
+        }
         for (int i = 0; i < 16; i++) analog_values[i] = 0;
     }
 }

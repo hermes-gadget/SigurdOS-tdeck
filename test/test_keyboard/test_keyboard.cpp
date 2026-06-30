@@ -23,15 +23,14 @@
  * Architecture: The T-Deck keyboard is a separate ESP32-C3 MCU that scans
  * the physical matrix and returns key codes over I2C.
  *
- * NOTE: keyboard.cpp uses static `initialized` flag that persists across
- * tests. Test order matters — init-failure and init-side-effect tests
- * must run BEFORE any successful init. All other tests call init_with_ack().
+ * The fixture resets the driver's one-shot init cache before every test.
  *
  * Reference: Xinyuan-LilyGO/T-Deck examples/Keyboard_ESP32C3/
  * License: MIT
  */
 #include <gtest/gtest.h>
 #include "hal/tdeck_pins.h"
+#include "hal/i2c_bus.h"
 #include "hal/keyboard.h"
 #include "Arduino.h"
 #include <cstdint>
@@ -151,6 +150,30 @@ TEST_F(KeyboardTest, InitIsIdempotent) {
     init_with_ack();
     Wire.mock_set_error(1);
     EXPECT_TRUE(sigurdos_keyboard_init());
+}
+
+TEST_F(KeyboardTest, InitUsesBoundedSharedBusTimeout) {
+    Wire.mock_queue_rx_byte(0x00);
+    EXPECT_TRUE(sigurdos_keyboard_init());
+    EXPECT_EQ(Wire.mock_timeout_ms(), sigurdos::i2c::TRANSACTION_TIMEOUT_MS);
+    EXPECT_EQ(Wire.mock_clock(), sigurdos::i2c::BUS_CLOCK_HZ);
+}
+
+TEST_F(KeyboardTest, FailedInitResultIsCached) {
+    EXPECT_FALSE(sigurdos_keyboard_init());
+    const size_t transactions_after_failure = Wire.mock_end_count();
+
+    Wire.mock_queue_rx_byte(0x00);
+    EXPECT_FALSE(sigurdos_keyboard_init());
+    EXPECT_EQ(Wire.mock_end_count(), transactions_after_failure);
+}
+
+TEST_F(KeyboardTest, InitRetryWindowCoversSlowColdBoot) {
+    Wire.mock_set_nack_count(6);
+    Wire.mock_queue_rx_byte(0x00);
+
+    EXPECT_TRUE(sigurdos_keyboard_init());
+    EXPECT_GE(arduino_mock::current_millis, 600u);
 }
 
 // ════════════════════════════════════════════════════════

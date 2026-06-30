@@ -24,6 +24,7 @@
  */
 #include <gtest/gtest.h>
 #include "hal/touch.h"
+#include "hal/i2c_bus.h"
 #include "hal/tdeck_pins.h"
 #include "Arduino.h"
 #include <cstdint>
@@ -152,6 +153,8 @@ protected:
 
     void SetUp() override {
         arduino_mock::reset();
+        Wire = TwoWire();
+        sigurdos_touch_reset_init_for_test();
         regs.clear();
     }
 
@@ -418,6 +421,27 @@ TEST_F(TouchTest, AllValidCoordsInScreenRange) {
             EXPECT_LT(y, TFT_HEIGHT)<< "y >= " << TFT_HEIGHT << " at (" << raw_x << "," << raw_y << ")";
         }
     }
+}
+
+// ── Initialization robustness ──────────────────────────
+TEST_F(TouchTest, InitUsesBoundedSharedBusConfiguration) {
+    EXPECT_TRUE(sigurdos_touch_init());
+    EXPECT_EQ(Wire.mock_clock(), sigurdos::i2c::BUS_CLOCK_HZ);
+    EXPECT_EQ(Wire.mock_timeout_ms(), sigurdos::i2c::TRANSACTION_TIMEOUT_MS);
+}
+
+TEST_F(TouchTest, FailedInitProbesOnlyKnownAddressesAndCachesResult) {
+    Wire.mock_set_error(1);
+    EXPECT_FALSE(sigurdos_touch_init());
+
+    ASSERT_EQ(Wire.mock_address_count(), 2u);
+    EXPECT_EQ(Wire.mock_address_at(0), sigurdos::i2c::TOUCH_ADDR_PRIMARY);
+    EXPECT_EQ(Wire.mock_address_at(1), sigurdos::i2c::TOUCH_ADDR_ALTERNATE);
+    const size_t probes_after_failure = Wire.mock_end_count();
+
+    Wire.mock_set_error(0);
+    EXPECT_FALSE(sigurdos_touch_init());
+    EXPECT_EQ(Wire.mock_end_count(), probes_after_failure);
 }
 
 } // anonymous namespace

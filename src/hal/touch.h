@@ -60,6 +60,10 @@ inline bool sigurdos_touch_parse_point_raw(const uint8_t* points,
 // Returns true on successful initialization
 bool sigurdos_touch_init();
 
+// Reset one-shot initialization state for native test isolation.
+// Production code never calls this.
+void sigurdos_touch_reset_init_for_test();
+
 // Call this each frame to poll for new touch data
 // (called from sigurdos_display_loop)
 void sigurdos_touch_loop();
