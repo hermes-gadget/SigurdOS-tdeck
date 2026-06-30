@@ -55,6 +55,12 @@
 #define LV_USE_ANIMATION          1
 #define LV_USE_SNAPSHOT           1
 
+// International keyboard layouts. Bidi ordering and Arabic contextual
+// shaping are applied by LVGL before glyph lookup.
+#define LV_USE_BIDI               1
+#define LV_BIDI_BASE_DIR_DEF      LV_BASE_DIR_AUTO
+#define LV_USE_ARABIC_PERSIAN_CHARS 1
+
 // Memory — keep LVGL's TLSF pool in PSRAM, not internal DRAM.
 //
 // NOTE: the old `LV_MEM_CUSTOM_*` macros below are LVGL v8 names. This project

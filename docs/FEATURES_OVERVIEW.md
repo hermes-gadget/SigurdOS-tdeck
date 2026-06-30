@@ -313,9 +313,13 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Mode:** Model-independent ASCII key mode, with bounded raw modifier samples
 - **Backlight:** I2C commands 0x01/0x02 for brightness control (0–255)
 - **Modifiers:** Alt/Mic/Sym extensions retained without raw-decoding normal keys
+- **Layouts:** 12 persisted hardware layouts (English, Cyrillic, Greek, Arabic,
+  AZERTY/QWERTZ, and accented Latin); double-tap Space within 250 ms to cycle
+- **Rendering:** Complete UTF-8 insertion plus Greek/Cyrillic/Arabic font
+  fallback; Arabic uses LVGL bidi ordering and contextual shaping
 - **Debouncing:** MCU handles matrix scanning and debounce internally
 - **Inject API:** `keyboard_inject()` for simulated input in test mode
-**Sources:** [`src/hal/keyboard.cpp`](../src/hal/keyboard.cpp), [`src/hal/keyboard.h`](../src/hal/keyboard.h), [`test/test_keyboard/`](../test/test_keyboard/)
+**Sources:** [`src/hal/keyboard.cpp`](../src/hal/keyboard.cpp), [`src/hal/keyboard_layouts.cpp`](../src/hal/keyboard_layouts.cpp), [`test/test_keyboard/`](../test/test_keyboard/), [`test/test_keyboard_layouts/`](../test/test_keyboard_layouts/)
 
 ### 5-Direction Trackball
 - **GPIO:** UP=3, DOWN=15, LEFT=1, RIGHT=2, CLICK=0 (BOOT button)

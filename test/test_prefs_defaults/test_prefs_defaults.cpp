@@ -84,6 +84,7 @@ TEST(PrefsDefaultsTest, UiConnectivityAndRegionDefaultsAreInitialized) {
     const sigurdos::NodePrefs prefs = defaults_from_dirty_memory();
 
     EXPECT_EQ(127, prefs.kbd_backlight);
+    EXPECT_EQ(0, prefs.kbd_layout);
     EXPECT_EQ(200, prefs.display_brightness);
     EXPECT_EQ(30, prefs.auto_off_timeout);
     EXPECT_EQ(0, prefs.theme_id);

@@ -8,6 +8,7 @@
 // which are unavailable in the mock environment.
 
 #include "fonts/emoji_font.h"
+#include "fonts/keyboard_layout_font.h"
 
 // Minimal lv_font_t stub — the .fallback pointer is the only member
 // the mock needs. Other fields are zero-initialized for C compatibility.
@@ -29,3 +30,7 @@ const lv_font_t emoji_font = {nullptr};
 // Only used for pointer equality checks in fallback registration.
 // The real latin_ext_font data lives in src/fonts/latin_ext_font.c.
 const lv_font_t latin_ext_font = {nullptr};
+
+// International keyboard-layout font stub. The real generated glyph data
+// lives in src/fonts/keyboard_layout_font.c.
+const lv_font_t keyboard_layout_font = {nullptr};

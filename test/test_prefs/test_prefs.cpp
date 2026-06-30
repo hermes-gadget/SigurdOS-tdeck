@@ -102,4 +102,17 @@ TEST_F(PrefsTest, PathHashModeRoundTripsThroughPrefsSaveAndLoad) {
     EXPECT_EQ(1, loaded.path_hash_mode);
 }
 
+TEST_F(PrefsTest, KeyboardLayoutRoundTripsThroughPrefs) {
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.kbd_layout = 9;
+
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_EQ(9, loaded.kbd_layout);
+}
+
 } // namespace

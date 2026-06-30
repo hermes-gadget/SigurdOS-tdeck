@@ -49,6 +49,7 @@ pio run -e SigurdOS_TDeck
 | `test_home_screen` | Home screen layout, icon grid, status bars |
 | `test_input_contract` | Trackball/keyboard input event types, remote hook signatures |
 | `test_keyboard` | ASCII key mode, raw modifier sampling, extended layers, event queue |
+| `test_keyboard_layouts` | 12-language UTF-8 maps, persistence, cycle gesture timing |
 | `test_launcher_env` | Launcher runtime detection, partition/otadata probing, false-positive guards |
 | `test_layout` | Adaptive layout helpers, responsive grid calculations, screen size adjustments |
 | `test_lodepng_alloc` | lodepng PSRAM allocator, malloc/realloc fallback, heap caps delegation |
@@ -323,6 +324,8 @@ This project builds on and incorporates open source software from the following 
 |---------|---------|-----------------|
 | [MeshCore](https://github.com/meshcore-dev/MeshCore) | MIT | Mesh networking protocol (submodule at `lib/meshcore/`). Also: RTC clock (`ESP32RTCClock`), auto-off display timer, deep sleep patterns, and `NodePrefs` struct — all adapted from MeshCore's companion radio firmware. |
 | [LilyGo T-Deck Keyboard_ESP32C3](https://github.com/Xinyuan-LilyGO/T-Deck) | MIT | I2C keyboard protocol reference — our `keyboard.cpp` driver is based on the command set and keymap from this firmware (© 2023 Shenzhen Xin Yuan Electronic Technology Co., Ltd) |
+| [wadamesh](https://github.com/ALLFATHER-BV/wadamesh) | GPL-3.0 | Physical-key phonetic mapping tables and 12-layout ordering adapted for the T-Deck keyboard |
+| [DejaVu Fonts](https://dejavu-fonts.github.io/) | Bitstream Vera font license | Greek, Cyrillic, and Arabic fallback glyphs for international keyboard layouts; full notice in `LICENSES/DejaVu-Fonts.txt` |
 | [LVGL](https://github.com/lvgl/lvgl) | MIT | Embedded GUI framework (v9.3.0) |
 | [LovyanGFX](https://github.com/lovyan03/LovyanGFX) | FreeBSD | Display driver for ST7789 TFT |
 | [RadioLib](https://github.com/jgromes/RadioLib) | MIT | SX1262 LoRa radio driver |

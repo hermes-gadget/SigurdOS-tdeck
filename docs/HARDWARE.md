@@ -295,6 +295,19 @@ Row6   Mic      LShift   f        j        k
 - Each key-mode byte is paired with a raw modifier sample, preventing a chord
   from producing both its base character and transformed character.
 
+### International Layouts
+
+- The active physical-key layout is stored in NVS as `kbd_layout` and restored
+  when input initializes.
+- Double-tapping Space in the same text field within 250 ms removes the first
+  space, cycles to the next layout, and briefly shows its two-letter code.
+- Available layouts, in cycle order: EN, BG, RU, UK, SR, EL, AR, FR, NL, DE,
+  ES, IT.
+- Mappings are inserted as complete UTF-8 strings, including multi-codepoint
+  entries such as Arabic lam-alef and Dutch `ij`.
+- The LVGL font fallback includes Greek, Cyrillic, Arabic, and contextual Arabic
+  presentation forms. Bidi ordering and Arabic shaping are enabled globally.
+
 ### Backlight Control
 
 | API Call                                          | Effect                          |

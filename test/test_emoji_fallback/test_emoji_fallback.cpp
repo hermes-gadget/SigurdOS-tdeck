@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include "fonts/emoji_font.h"
+#include "fonts/keyboard_layout_font.h"
 
 namespace {
 
@@ -57,11 +58,14 @@ TEST(EmojiFallback, RegistrationSetsFallbackChainForAllWrappers) {
 
     for (size_t i = 0; i < count; i++) {
         ASSERT_NE(fonts[i].wrapped, nullptr) << fonts[i].name;
-        // Each Montserrat wrapper's fallback now points to the latin_ext
-        // wrapper (not directly to emoji_font). The chain is:
-        //   wrapped_N → wrapped_latin_ext → emoji_font
+        // Each wrapper traverses every generated fallback in order:
+        // Montserrat → Latin extended → keyboard layouts → emoji.
         EXPECT_NE(fonts[i].wrapped->fallback, nullptr) << fonts[i].name;
         EXPECT_NE(fonts[i].wrapped->fallback, fonts[i].wrapped) << fonts[i].name;
+        const lv_font_t* latin = static_cast<const lv_font_t*>(fonts[i].wrapped->fallback);
+        ASSERT_NE(latin->fallback, nullptr) << fonts[i].name;
+        const lv_font_t* layouts = static_cast<const lv_font_t*>(latin->fallback);
+        EXPECT_EQ(layouts->fallback, &emoji_font) << fonts[i].name;
     }
 }
 

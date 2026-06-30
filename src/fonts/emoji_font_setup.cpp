@@ -18,17 +18,19 @@
 
 #include "emoji_font.h"
 #include "latin_ext_font.h"
+#include "keyboard_layout_font.h"
 #include <lvgl.h>
 #include <cstring>
 
 // Fallback registration must be extern "C" to match the C declaration
-// Writable font wrappers -- copies of Montserrat with latin_ext + emoji fallback.
+// Writable font wrappers -- copies of Montserrat with international fallbacks.
 // Cannot set fallback directly on the const LVGL Montserrat fonts in flash,
 // so we create writable copies in RAM at init time.
 //
-// Fallback chain: Montserrat → latin_ext_font → emoji_font
+// Fallback chain: Montserrat → latin_ext → keyboard_layout → emoji
 //   Montserrat:     ASCII only (built-in)
 //   latin_ext_font: Latin-1 Supplement + Latin Extended-A (äöüéèàç, etc.)
+//   keyboard layout: Greek, Cyrillic, Arabic, and Arabic presentation forms
 //   emoji_font:     Emoji pictographs
 
 static lv_font_t wrapped_10;
@@ -43,6 +45,7 @@ static lv_font_t wrapped_28;
 // Writable wrapper for latin_ext_font. Same deal: the generated font data is
 // const (flash), but the .fallback chain pointer must be mutable at runtime.
 static lv_font_t wrapped_latin_ext;
+static lv_font_t wrapped_keyboard_layout;
 
 // Expose wrapped fonts for use in UI code
 const lv_font_t* emoji_wrapped_montserrat_10 = &wrapped_10;
@@ -56,9 +59,12 @@ const lv_font_t* emoji_wrapped_montserrat_28 = &wrapped_28;
 
 extern "C" void emoji_font_register_fallback()
 {
-    // Copy const latin_ext_font into writable wrapper and set emoji fallback
+    // Link the two const generated fonts through writable wrappers.
+    memcpy(&wrapped_keyboard_layout, &keyboard_layout_font, sizeof(lv_font_t));
+    wrapped_keyboard_layout.fallback = &emoji_font;
+
     memcpy(&wrapped_latin_ext, &latin_ext_font, sizeof(lv_font_t));
-    wrapped_latin_ext.fallback = &emoji_font;
+    wrapped_latin_ext.fallback = &wrapped_keyboard_layout;
 
     // Copy const Montserrat fonts into writable wrappers and set latin_ext fallback
     memcpy(&wrapped_10, &lv_font_montserrat_10, sizeof(lv_font_t));
