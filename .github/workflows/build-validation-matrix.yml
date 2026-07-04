@@ -1,0 +1,58 @@
+name: Build Validation Matrix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { env: SigurdOS_TDeck, requires_wifi: false }
+          - { env: SigurdOS_TDeck_telemetry, requires_wifi: false }
+          - { env: SigurdOS_TDeck_remote_test, requires_wifi: false }
+          - { env: SigurdOS_TDeck_remote_test_radio, requires_wifi: false }
+          - { env: SigurdOS_TDeck_ble_validation, requires_wifi: false }
+          - { env: SigurdOS_TDeck_gps_validation, requires_wifi: false }
+          - { env: SigurdOS_TDeck_gps_validation_wifi, requires_wifi: true }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}-${{ matrix.env }}
+          restore-keys: |
+            pio-${{ runner.os }}-
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio
+      - name: Build ${{ matrix.env }}
+        if: ${{ !matrix.requires_wifi || (vars.GPS_WIFI_SSID != '' && vars.GPS_WIFI_HOST != '') }}
+        run: pio run -e ${{ matrix.env }}
+      - name: Upload firmware artifacts for ${{ matrix.env }}
+        if: ${{ !matrix.requires_wifi || (vars.GPS_WIFI_SSID != '' && vars.GPS_WIFI_HOST != '') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.env }}
+          path: |
+            .pio/build/${{ matrix.env }}/firmware.bin
+            .pio/build/${{ matrix.env }}/firmware-merged.bin
+          if-no-files-found: warn

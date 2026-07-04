@@ -84,6 +84,15 @@ static void formatDmConversation(char* out, size_t out_size, const char* name)
     out[pos] = '\0';
 }
 
+static bool sigurdos_mesh_radio_tx_allowed()
+{
+#if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
+    return false;
+#else
+    return true;
+#endif
+}
+
 // ════════════════════════════════════════════════════
 // Message queue
 // ════════════════════════════════════════════════════
@@ -396,6 +405,11 @@ bool ensurePublicChannelPresent(bool persist)
     return ok;
 }
 
+bool radioTxAllowed()
+{
+    return sigurdos_mesh_radio_tx_allowed();
+}
+
 } // namespace
 
 // ── Packet log ────────────────────────────────────
@@ -453,11 +467,13 @@ int getAckCounter() {
 
 // ── REQ/RESPONSE framework (Phase 4.1) ────────
 bool sendRequest(const char* dest_name, uint8_t req_type) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name) return false;
     return g_mesh->sendRequest(dest_name, req_type);
 }
 
 bool sendRequestWithData(const char* dest_name, const uint8_t* data, uint8_t len) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !data) return false;
     return g_mesh->sendRequestWithData(dest_name, data, len);
 }
@@ -486,6 +502,7 @@ void clearResponses() {
 
 // ── Room message fetch (Phase 4.6) ───────────────────
 bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name) {
+    if (!radioTxAllowed()) return false;
     return g_mesh ? g_mesh->sendRoomMsgFetchRequest(contact_name, channel_name) : false;
 }
 
@@ -522,6 +539,7 @@ void clearRoomMsgFetch() {
 
 // ── Room message posting ───────────────────────────
 uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text) {
+    if (!radioTxAllowed()) return 0;
     if (!g_mesh || !contact_name || !channel_name || !text) return 0;
     // Format: "[channel_name] text" — embeds the channel name in the message text
     // so the room server can identify which channel the message is for.
@@ -573,6 +591,7 @@ const char* getLoggedInRoomServerName(int index) {
 
 // ── Status request (Phase 4.2) ────────────────
 bool requestStatus(const char* dest_name) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
     bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS);
     if (ok) {
@@ -610,6 +629,7 @@ bool getStatusResult(NodeStatus* out) {
 
 // ── Telemetry queries (Phase 4.3) ────────────
 bool requestTelemetry(const char* dest_name) {
+    if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
     bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_TELEMETRY_DATA);
     if (ok) {

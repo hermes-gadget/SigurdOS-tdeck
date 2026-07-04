@@ -288,6 +288,7 @@ public:
                                                uint32_t timestamp,
                                                const char* text) override {
         CompanionSendResult result{};
+        if (!sigurdos_mesh_radio_tx_allowed()) return result;
         if (!g_mesh || !prefix || !text) return result;
         ::ContactInfo* contact = g_mesh->lookupContactByPubKey(prefix, (int)prefix_len);
         if (!contact) return result;
@@ -328,6 +329,7 @@ public:
     CompanionSendResult sendChannelText(int channel_index, uint32_t timestamp,
                                         const char* text) override {
         CompanionSendResult result{};
+        if (!sigurdos_mesh_radio_tx_allowed()) return result;
         if (!g_mesh || !text) return result;
         ChannelDetails cd;
         if (!g_mesh->BaseChatMesh::getChannel(channel_index, cd)) return result;
@@ -351,6 +353,7 @@ public:
                          uint16_t data_type,
                          const uint8_t* payload,
                          size_t payload_len) override {
+        if (!sigurdos_mesh_radio_tx_allowed()) return false;
         if (!g_mesh || payload_len > sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) {
             return false;
         }
@@ -360,6 +363,7 @@ public:
     }
 
     bool sendAdvert(bool flood) override {
+        if (!sigurdos_mesh_radio_tx_allowed()) return false;
         if (flood) {
             // Flood-scoped advert via existing broadcast path
             return sigurdos::mesh::sendAdvert();
@@ -731,6 +735,7 @@ public:
     // ── Async requests ───────────────────────────────────────
     CompanionSendResult sendLogin(const uint8_t* pub_key, const char* password) override {
         CompanionSendResult r{};
+        if (!sigurdos_mesh_radio_tx_allowed()) return r;
         if (!g_mesh || !pub_key) return r;
         ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;
@@ -752,6 +757,7 @@ public:
     CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
                                       const uint8_t* path, uint8_t path_len) override {
         CompanionSendResult r{};
+        if (!sigurdos_mesh_radio_tx_allowed()) return r;
         if (!g_mesh) return r;
         uint32_t est_timeout = 0;
         if (!g_mesh->sendTracePathRaw(tag, auth, flags, path, path_len, est_timeout)) return r;
@@ -763,6 +769,7 @@ public:
     }
     CompanionSendResult sendPathDiscovery(const uint8_t* pub_key) override {
         CompanionSendResult r{};
+        if (!sigurdos_mesh_radio_tx_allowed()) return r;
         if (!g_mesh || !pub_key) return r;
         ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;
@@ -841,6 +848,7 @@ private:
     // tested wrapper helpers, and read back the assigned tag for RESP_CODE_SENT.
     CompanionSendResult sendReqByPubKey(const uint8_t* pub_key, bool telemetry) {
         CompanionSendResult r{};
+        if (!sigurdos_mesh_radio_tx_allowed()) return r;
         if (!g_mesh || !pub_key) return r;
         ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;

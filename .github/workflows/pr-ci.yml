@@ -86,6 +86,12 @@ jobs:
       - name: Build remote test firmware
         run: pio run -e SigurdOS_TDeck_remote_test_radio
 
+      - name: Build USA/Canada remote radio firmware
+        run: pio run -e SigurdOS_TDeck_remote_test_radio_usca
+
+      - name: Build USA/Canada RX-only remote radio firmware
+        run: pio run -e SigurdOS_TDeck_remote_test_radio_usca_rxonly
+
       - name: Report firmware size
         if: always()
         run: |

@@ -3,10 +3,10 @@
 SigurdOS Map Downloader
 
 Downloads OpenStreetMap tiles for a specified region and zoom range,
-outputting JPEG tiles in the directory structure expected by the firmware:
-    maps/{z}/{x}/{y}.jpg
+outputting PNG tiles in the directory structure expected by the firmware:
+    tiles/{z}/{x}/{y}.png
 
-Copy the resulting 'maps/' directory to the root of the T-Deck SD card.
+Copy the resulting 'tiles/' directory to the root of the T-Deck SD card.
 
 Usage examples:
     # Download Teesside area, zooms 8-14
@@ -23,7 +23,7 @@ Tile servers:
     cyclosm   CyclOSM (bicycle-oriented, OSM data)
     carto     CartoDB (light theme)
 
-Dependencies: pip install requests Pillow
+Dependencies: pip install requests
 License: GPL-3.0-or-later
 Copyright (C) 2025 Ben
 """
@@ -34,7 +34,6 @@ import os
 import sys
 import time
 import json
-from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
@@ -131,7 +130,7 @@ def init_session(server_config):
     return session
 
 def download_tile(args):
-    """Download a single tile and convert to JPEG. Returns (x, y, zoom, success)."""
+    """Download a single PNG tile. Returns (x, y, zoom, success)."""
     x, y, zoom, server_config, output_dir = args
     global session, download_stats
 
@@ -147,7 +146,7 @@ def download_tile(args):
     # Output path
     out_dir = os.path.join(output_dir, str(zoom), str(x))
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{y}.jpg")
+    out_path = os.path.join(out_dir, f"{y}.png")
 
     # Skip if already downloaded
     if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
@@ -161,20 +160,8 @@ def download_tile(args):
         try:
             resp = session.get(url, timeout=30)
             if resp.status_code == 200:
-                # Convert to JPEG
-                try:
-                    from PIL import Image
-                    img = Image.open(BytesIO(resp.content))
-                    if img.mode != "RGB":
-                        img = img.convert("RGB")
-                    img.save(out_path, "JPEG", quality=85)
-                except ImportError:
-                    # Fallback: save as-is (PNG) with .jpg extension
-                    # Firmware will need to handle PNG too
-                    with open(out_path, "wb") as f:
-                        f.write(resp.content)
-
-                file_size = os.path.getsize(out_path)
+                with open(out_path, "wb") as f:
+                    f.write(resp.content)
 
                 with stats_lock:
                     download_stats["done"] += 1
@@ -210,9 +197,9 @@ def write_metadata(output_dir, name, server_config, lat1, lon1, lat2, lon2, zoom
     metadata = {
         "name": name,
         "attribution": server_config["attribution"],
-        "bounds": [min_lat, min_lon, max_lat, max_lon],
+        "bounds": [min_lon, min_lat, max_lon, max_lat],
         "zoom_range": [zoom_min, zoom_max],
-        "format": "jpg",
+        "format": "png",
         "tile_size": 256,
     }
 
@@ -268,6 +255,15 @@ def main():
         # Quick city lookup
         cities = {
             "london": (51.3, -0.5, 51.7, 0.3),
+            "toronto": (43.55, -79.65, 43.85, -79.15),
+            "montreal": (45.4, -73.75, 45.65, -73.45),
+            "vancouver": (49.15, -123.3, 49.35, -122.95),
+            "ottawa": (45.25, -76.05, 45.55, -75.45),
+            "new-york": (40.55, -74.15, 40.9, -73.7),
+            "seattle": (47.45, -122.45, 47.8, -122.15),
+            "chicago": (41.7, -88.0, 42.05, -87.5),
+            "los-angeles": (33.85, -118.55, 34.2, -118.15),
+            "san-francisco": (37.65, -122.55, 37.9, -122.3),
             "manchester": (53.35, -2.45, 53.55, -2.1),
             "birmingham": (52.35, -2.05, 52.55, -1.7),
             "leeds": (53.7, -1.7, 53.9, -1.4),
@@ -304,12 +300,11 @@ def main():
 
     server_config = TILE_SERVERS[args.server]
     output_dir = args.output or f"maps-{args.name}"
-    maps_dir = os.path.join(output_dir, "maps")
-    os.makedirs(maps_dir, exist_ok=True)
+    tiles_dir = os.path.join(output_dir, "tiles")
 
     print(f"Region: {args.name}")
-    print(f"Bounds: {lat1:.4f},{lon1:.4f} → {lat2:.4f},{lon2:.4f}")
-    print(f"Zooms:  {zoom_min}–{zoom_max}")
+    print(f"Bounds: {lat1:.4f},{lon1:.4f} -> {lat2:.4f},{lon2:.4f}")
+    print(f"Zooms:  {zoom_min}-{zoom_max}")
     print(f"Server: {args.server} ({server_config['url']})")
     print(f"Output: {output_dir}/")
     print()
@@ -333,22 +328,23 @@ def main():
         sys.exit(0)
 
     # Estimate size and time
-    est_mb = total_tiles * 0.015  # ~15KB per JPEG tile
+    est_mb = total_tiles * 0.025  # ~25KB per PNG tile
     print(f"Estimated size: ~{est_mb:.0f} MB")
     print(f"Estimated time: ~{total_tiles / args.workers / 2:.0f} seconds ({args.workers} workers)")
 
     if args.dry_run:
-        print("\nDry run — no tiles downloaded. Remove --dry-run to download.")
+        print("\nDry run - no tiles downloaded. Remove --dry-run to download.")
         return
 
     print(f"\nDownloading with {args.workers} workers...")
     print("Press Ctrl+C to cancel (partial downloads are safe to --resume)\n")
+    os.makedirs(tiles_dir, exist_ok=True)
 
     # Build tile list
     tiles = []
     for zoom in range(zoom_min, zoom_max + 1):
         for x, y, _ in tiles_for_bbox(lat1, lon1, lat2, lon2, zoom):
-            tiles.append((x, y, zoom, server_config, maps_dir))
+            tiles.append((x, y, zoom, server_config, tiles_dir))
 
     download_stats["total"] = len(tiles)
     download_stats["done"] = 0
@@ -370,23 +366,24 @@ def main():
                 rate = download_stats["done"] / elapsed if elapsed > 0 else 0
                 pct = download_stats["done"] / download_stats["total"] * 100
                 print(f"\r  {download_stats['done']}/{download_stats['total']} tiles "
-                      f"({pct:.0f}%) — {rate:.0f} tiles/s "
-                      f"— {download_stats['failed']} failed  ", end="", flush=True)
+                      f"({pct:.0f}%) - {rate:.0f} tiles/s "
+                      f"- {download_stats['failed']} failed  ", end="", flush=True)
                 last_report = now
 
     elapsed = time.time() - start_time
     print(f"\r  {download_stats['done']}/{download_stats['total']} tiles "
-          f"(100%) — {download_stats['done']/elapsed:.0f} tiles/s "
-          f"— {download_stats['failed']} failed  ")
+          f"(100%) - {download_stats['done']/elapsed:.0f} tiles/s "
+          f"- {download_stats['failed']} failed  ")
 
     # Write metadata
-    write_metadata(output_dir, args.name, server_config, lat1, lon1, lat2, lon2, zoom_min, zoom_max)
+    write_metadata(tiles_dir, args.name, server_config, lat1, lon1, lat2, lon2,
+                   zoom_min, zoom_max)
 
     print(f"\nDone! {download_stats['done']} tiles downloaded, {download_stats['failed']} failed")
     print(f"Output: {output_dir}/")
     print(f"\nTo use on T-Deck:")
-    print(f"  Copy the 'maps/' folder to the root of the SD card")
-    print(f"  The firmware reads from: /maps/{{z}}/{{x}}/{{y}}.jpg")
+    print(f"  Copy the 'tiles/' folder to the root of the SD card")
+    print(f"  The firmware reads from: /sdcard/tiles/{{z}}/{{x}}/{{y}}.png")
 
 
 if __name__ == "__main__":
