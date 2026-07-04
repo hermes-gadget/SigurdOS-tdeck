@@ -4,6 +4,7 @@
 #include "i2c_bus.h"
 
 #include "tdeck_pins.h"
+#include "../diagnostics/log.h"
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -88,9 +89,9 @@ void begin()
 
 #if defined(SIGURDOS_DEBUG)
   if (recovery == RecoveryResult::Recovered) {
-    Serial.println("[i2c] recovered shared bus before startup");
+    SIG_LOGD("i2c recovered shared bus before startup");
   } else if (recovery == RecoveryResult::Stuck) {
-    Serial.println("[i2c] WARNING: SDA remained low after recovery clocks");
+    SIG_LOGD("i2c WARNING: SDA remained low after recovery clocks");
   }
 #else
   (void)recovery;

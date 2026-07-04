@@ -22,12 +22,17 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../home_screen.h"
+#include "../../hal/keyboard.h"
 #include "../../hal/prefs.h"
 #include "../../hal/sdcard.h"
+#include "../../hal/tdeck_pins.h"
+#include "../../hal/touch.h"
+#include "../../hal/trackball.h"
 #include "../../hal/launcher_env.h"
 #include "../../hal/wifi_ota.h"
 #include "../../hal/github_ota.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../diagnostics/build_info.h"
 #include "../../fonts/emoji_font.h"
 #include <Arduino.h>
 #include <lvgl.h>
@@ -42,6 +47,371 @@ using namespace responsive;
 
 static lv_obj_t* g_date_row = nullptr;   // for live update after setting time
 static lv_obj_t* g_time_row = nullptr;
+
+static void show_build_info_dialog(lv_obj_t* parent)
+{
+    const auto& info = sigurdos::build::info();
+    auto dlg_sz = dialog_size(292, 214);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_border_width(dlg, PIXEL_BORDER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "Build Info");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    char run_line[64];
+    const bool has_attempt = info.actions_run_attempt && info.actions_run_attempt[0] != '\0';
+    snprintf(run_line, sizeof(run_line), "%s%s%s",
+             info.actions_run_id ? info.actions_run_id : "unknown",
+             has_attempt ? "." : "",
+             has_attempt ? info.actions_run_attempt : "");
+
+    char body[512];
+    snprintf(body, sizeof(body),
+             "Version: %s\nGit: %s%s\nMeshCore: %s\nEnv: %s\nPartitions: %s\nBoard: %s\nMCU: %s\nSource: %s\nRun: %s\nRef: %s",
+             info.firmware_version, info.git_sha, info.git_dirty ? " dirty" : "",
+             info.meshcore_sha, info.build_env, info.partitions, info.board, info.mcu,
+             info.build_source, run_line, info.actions_ref);
+    lv_obj_t* text = lv_label_create(dlg);
+    lv_label_set_text(text, body);
+    lv_obj_set_width(text, dlg_sz.w - 18);
+    lv_obj_set_style_text_color(text, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(text, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(text, LV_ALIGN_TOP_LEFT, 9, 32);
+
+    lv_obj_t* close_btn = lv_btn_create(dlg);
+    lv_obj_set_size(close_btn, 88, 26);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_radius(close_btn, 0, 0);
+    lv_obj_t* cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "Close");
+    lv_obj_center(cl);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t* ev) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
+    }, LV_EVENT_CLICKED, nullptr);
+}
+
+struct SdDiagDialogCtx {
+    lv_obj_t* label;
+    lv_obj_t* row;
+};
+
+static void update_sd_row_label(lv_obj_t* row)
+{
+    if (!row) return;
+    char buf[40];
+    snprintf(buf, sizeof(buf), "  SD Card: %s", sigurdos_sdcard_mounted() ? "Mounted" : "Not mounted");
+    update_row_label(row, buf);
+}
+
+static void sd_diag_update(SdDiagDialogCtx* ctx)
+{
+    if (!ctx || !ctx->label) return;
+
+    SigurdosSdMountDiagnostic diag = sigurdos_sdcard_diagnostics();
+    char total_buf[24] = "n/a";
+    char free_buf[24] = "n/a";
+    if (diag.mounted) {
+        sigurdos_sdcard_format_size(sigurdos_sdcard_capacity_bytes(), total_buf, sizeof(total_buf));
+        sigurdos_sdcard_format_size(sigurdos_sdcard_free_bytes(), free_buf, sizeof(free_buf));
+    }
+
+    char body[256];
+    snprintf(body, sizeof(body),
+             "Mounted: %s\n"
+             "Attempts: %u\n"
+             "Last: %s / %s\n"
+             "Backoff: %lu ms\n"
+             "Free: %s / %s",
+             diag.mounted ? "yes" : "no",
+             diag.attempt_count,
+             sigurdos_sdcard_mount_source_name(diag.last_source),
+             sigurdos_sdcard_mount_error_name(diag.last_error),
+             (unsigned long)diag.last_backoff_ms,
+             free_buf,
+             total_buf);
+    lv_label_set_text(ctx->label, body);
+}
+
+static void show_sd_diag_dialog(lv_obj_t* parent, lv_obj_t* row)
+{
+    auto dlg_sz = dialog_size(270, 146);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_border_width(dlg, PIXEL_BORDER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "SD Card");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+    lv_obj_t* text = lv_label_create(dlg);
+    lv_obj_set_width(text, dlg_sz.w - 16);
+    lv_label_set_long_mode(text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(text, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(text, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(text, LV_ALIGN_TOP_LEFT, 0, 28);
+
+    auto* ctx = new SdDiagDialogCtx{text, row};
+    sd_diag_update(ctx);
+
+    lv_obj_t* retry_btn = lv_btn_create(dlg);
+    lv_obj_set_size(retry_btn, 72, 24);
+    lv_obj_align(retry_btn, LV_ALIGN_BOTTOM_LEFT, 4, -4);
+    apply_pixel_btn_outline(retry_btn);
+    lv_obj_t* rl = lv_label_create(retry_btn);
+    lv_label_set_text(rl, "Retry");
+    lv_obj_set_style_text_font(rl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(rl);
+    lv_obj_add_event_cb(retry_btn, [](lv_event_t* e) {
+        auto* ctx = (SdDiagDialogCtx*)lv_event_get_user_data(e);
+        sigurdos_sdcard_retry();
+        sd_diag_update(ctx);
+        update_sd_row_label(ctx ? ctx->row : nullptr);
+    }, LV_EVENT_CLICKED, (void*)ctx);
+
+    lv_obj_t* close_btn = lv_btn_create(dlg);
+    lv_obj_set_size(close_btn, 72, 24);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+    apply_pixel_btn(close_btn);
+    lv_obj_t* cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "Close");
+    lv_obj_set_style_text_font(cl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(cl);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        delete (SdDiagDialogCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, (void*)ctx);
+}
+
+struct InputDiagDialogCtx {
+    lv_obj_t* dialog;
+    lv_obj_t* touch_label;
+    lv_obj_t* touch_marker;
+    lv_obj_t* touch_pad;
+    lv_obj_t* trackball_label;
+    lv_obj_t* keyboard_label;
+    lv_timer_t* timer;
+};
+
+static const char* input_diag_trackball_event_name(SigurdOSTrackballEvent ev)
+{
+    switch (ev) {
+    case SigurdOSTrackballEvent::Up: return "up";
+    case SigurdOSTrackballEvent::Down: return "down";
+    case SigurdOSTrackballEvent::Left: return "left";
+    case SigurdOSTrackballEvent::Right: return "right";
+    case SigurdOSTrackballEvent::Click: return "click";
+    case SigurdOSTrackballEvent::None:
+    default:
+        return "none";
+    }
+}
+
+static int input_diag_clamp(int value, int min_value, int max_value)
+{
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static void input_diag_update(InputDiagDialogCtx* ctx)
+{
+    if (!ctx) return;
+
+    SigurdOSTouchDiag td{};
+    bool touch_ok = sigurdos_touch_get_diag(&td);
+    char text[256];
+    snprintf(text, sizeof(text),
+             "Touch: %s %s x=%d y=%d\npress=%lu drag=%lu rel=%lu err=%d",
+             touch_ok && td.initialized ? "ready" : "offline",
+             td.pressed ? "down" : "up",
+             td.x, td.y,
+             (unsigned long)td.press_count,
+             (unsigned long)td.move_count,
+             (unsigned long)td.release_count,
+             td.consecutive_i2c_errors);
+    lv_label_set_text(ctx->touch_label, text);
+
+    if (touch_ok && td.initialized && td.pressed) {
+        const int pad_w = (int)lv_obj_get_width(ctx->touch_pad);
+        const int pad_h = (int)lv_obj_get_height(ctx->touch_pad);
+        const int marker_w = (int)lv_obj_get_width(ctx->touch_marker);
+        const int marker_h = (int)lv_obj_get_height(ctx->touch_marker);
+        int mx = (td.x * pad_w) / TFT_WIDTH - marker_w / 2;
+        int my = (td.y * pad_h) / TFT_HEIGHT - marker_h / 2;
+        mx = input_diag_clamp(mx, 0, pad_w - marker_w);
+        my = input_diag_clamp(my, 0, pad_h - marker_h);
+        lv_obj_set_pos(ctx->touch_marker, mx, my);
+        lv_obj_clear_flag(ctx->touch_marker, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(ctx->touch_marker, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    SigurdOSTrackballDiag bd{};
+    bool tb_ok = sigurdos_trackball_get_diag(&bd);
+    snprintf(text, sizeof(text),
+             "Trackball: %s last=%s q=%u ev=%lu ov=%lu\n"
+             "active UDLRC=%d%d%d%d%d raw=%u,%u,%u,%u,%u",
+             tb_ok && bd.initialized ? "ready" : "offline",
+             input_diag_trackball_event_name(bd.last_event),
+             bd.queue_count,
+             (unsigned long)bd.event_count,
+             (unsigned long)bd.overflow_count,
+             bd.active[0] ? 1 : 0,
+             bd.active[1] ? 1 : 0,
+             bd.active[2] ? 1 : 0,
+             bd.active[3] ? 1 : 0,
+             bd.active[4] ? 1 : 0,
+             bd.raw_levels[0], bd.raw_levels[1], bd.raw_levels[2],
+             bd.raw_levels[3], bd.raw_levels[4]);
+    lv_label_set_text(ctx->trackball_label, text);
+
+    SigurdOSKeyboardDiag kd{};
+    bool key_ok = sigurdos_keyboard_get_diag(&kd);
+    char keymode_printable = (kd.last_key_mode_byte >= 32 && kd.last_key_mode_byte <= 126)
+        ? (char)kd.last_key_mode_byte : '.';
+    char output_printable = (kd.last_output_codepoint >= 32 && kd.last_output_codepoint <= 126)
+        ? (char)kd.last_output_codepoint : '.';
+    snprintf(text, sizeof(text),
+             "Kbd: %s lay=%u km=%02X '%c' out=%04lX '%c'\n"
+             "ev=%lu drop=%lu ms=%lu raw=%s\n"
+             "mat=%02X %02X %02X %02X %02X mod=S%d C%d A%d Y%d M%d",
+             key_ok && kd.initialized ? "ready" : "offline",
+             kd.layout,
+             kd.last_key_mode_byte,
+             keymode_printable,
+             (unsigned long)kd.last_output_codepoint,
+             output_printable,
+             (unsigned long)kd.event_count,
+             (unsigned long)kd.overwrite_count,
+             (unsigned long)kd.last_event_ms,
+             kd.raw_supported ? (kd.raw_valid ? "ok" : "bad") : "n/a",
+             kd.raw_matrix[0],
+             kd.raw_matrix[1],
+             kd.raw_matrix[2],
+             kd.raw_matrix[3],
+             kd.raw_matrix[4],
+             kd.shift ? 1 : 0,
+             kd.ctrl ? 1 : 0,
+             kd.alt ? 1 : 0,
+             kd.sym_down ? 1 : 0,
+             kd.mic_down ? 1 : 0);
+    lv_label_set_text(ctx->keyboard_label, text);
+}
+
+static void input_diag_timer_cb(lv_timer_t* timer)
+{
+    auto* ctx = (InputDiagDialogCtx*)lv_timer_get_user_data(timer);
+    if (!ctx || !ctx->dialog) {
+        lv_timer_del(timer);
+        return;
+    }
+    input_diag_update(ctx);
+}
+
+static void show_input_diag_dialog(lv_obj_t* parent)
+{
+    auto dlg_sz = dialog_size(300, 214);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_border_width(dlg, PIXEL_BORDER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "Input Self-Test");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 3);
+
+    lv_obj_t* pad = lv_obj_create(dlg);
+    lv_obj_set_size(pad, 112, 76);
+    lv_obj_align(pad, LV_ALIGN_TOP_LEFT, 0, 25);
+    lv_obj_set_style_bg_color(pad, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_border_color(pad, lv_color_hex(DIVIDER), 0);
+    lv_obj_set_style_border_width(pad, PIXEL_BORDER, 0);
+    lv_obj_set_style_radius(pad, 0, 0);
+    lv_obj_set_style_pad_all(pad, 0, 0);
+
+    lv_obj_t* marker = lv_obj_create(pad);
+    lv_obj_set_size(marker, 8, 8);
+    lv_obj_set_style_bg_color(marker, lv_color_hex(ACCENT_GREEN), 0);
+    lv_obj_set_style_border_width(marker, 0, 0);
+    lv_obj_set_style_radius(marker, 0, 0);
+    lv_obj_add_flag(marker, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* touch_label = lv_label_create(dlg);
+    lv_obj_set_width(touch_label, dlg_sz.w - 134);
+    lv_label_set_long_mode(touch_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(touch_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(touch_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(touch_label, LV_ALIGN_TOP_LEFT, 122, 27);
+
+    lv_obj_t* trackball_label = lv_label_create(dlg);
+    lv_obj_set_width(trackball_label, dlg_sz.w - 16);
+    lv_label_set_long_mode(trackball_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(trackball_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(trackball_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(trackball_label, LV_ALIGN_TOP_LEFT, 0, 106);
+
+    lv_obj_t* keyboard_label = lv_label_create(dlg);
+    lv_obj_set_width(keyboard_label, dlg_sz.w - 16);
+    lv_label_set_long_mode(keyboard_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(keyboard_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(keyboard_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(keyboard_label, LV_ALIGN_TOP_LEFT, 0, 138);
+
+    lv_obj_t* close_btn = lv_btn_create(dlg);
+    lv_obj_set_size(close_btn, 70, 22);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -2);
+    apply_pixel_btn(close_btn);
+    lv_obj_t* close_lbl = lv_label_create(close_btn);
+    lv_label_set_text(close_lbl, "Close");
+    lv_obj_set_style_text_font(close_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(close_lbl);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
+
+    auto* ctx = new InputDiagDialogCtx{
+        dlg, touch_label, marker, pad, trackball_label, keyboard_label, nullptr
+    };
+    ctx->timer = lv_timer_create(input_diag_timer_cb, 100, ctx);
+    input_diag_update(ctx);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        auto* ctx = (InputDiagDialogCtx*)lv_event_get_user_data(e);
+        if (ctx) {
+            if (ctx->timer) {
+                lv_timer_del(ctx->timer);
+                ctx->timer = nullptr;
+            }
+            ctx->dialog = nullptr;
+            delete ctx;
+        }
+    }, LV_EVENT_DELETE, ctx);
+}
 
 struct DateTimeDialogCtx {
     lv_obj_t* input;
@@ -210,6 +580,10 @@ void settings_system_show()
     lv_obj_set_style_bg_color(r1, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r1, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r1, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(r1, [](lv_event_t* e) {
+        lv_obj_t* row = (lv_obj_t*)lv_event_get_target(e);
+        show_sd_diag_dialog(lv_obj_get_screen(row), row);
+    }, LV_EVENT_CLICKED, nullptr);
     row++;
 
     // Date
@@ -251,6 +625,16 @@ void settings_system_show()
     lv_obj_set_style_text_color(btn_wizard, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_add_event_cb(btn_wizard, [](lv_event_t*) {
         navigate_to(Screen::Onboarding);
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    // Input self-test
+    lv_obj_t* btn_input_diag = lv_list_add_btn(list, LV_SYMBOL_SETTINGS, "  Input Self-Test");
+    lv_obj_set_style_bg_color(btn_input_diag, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_input_diag, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_input_diag, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_input_diag, [](lv_event_t* e) {
+        show_input_diag_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)));
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 
@@ -825,6 +1209,19 @@ void settings_system_show()
         }, LV_EVENT_CLICKED, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
     row++;
+    {
+        const auto& info = sigurdos::build::info();
+        snprintf(buf, sizeof(buf), "  Build: %s / %s", info.git_sha, info.build_env);
+        lv_obj_t* rb = lv_list_add_btn(list, LV_SYMBOL_HOME, buf);
+        lv_obj_set_style_bg_color(rb, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(rb, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(rb, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_add_event_cb(rb, [](lv_event_t* e) {
+            show_build_info_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
     snprintf(buf, sizeof(buf), "  SigurdOS " SIGURDOS_VERSION);
     lv_obj_t* rv = lv_list_add_btn(list, LV_SYMBOL_HOME, buf);
     lv_obj_set_style_bg_color(rv, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);

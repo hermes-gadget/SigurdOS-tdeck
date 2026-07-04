@@ -26,7 +26,9 @@
 #include "test_controller.h"
 #include "hal/display.h"
 #include "hal/trackball.h"
+#include "hal/touch.h"
 #include "hal/keyboard.h"
+#include "hal/gps.h"
 #include "hal/prefs.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
@@ -133,6 +135,7 @@ static void print_help() {
     Serial.println(F("║  inject <from> [channel=<ch>] <msg>  ║"));
     Serial.println(F("║  sendchannel <ch> <text>          Send on a channel        ║"));
     Serial.println(F("║  addchannel <name> [psk]          Add channel              ║"));
+    Serial.println(F("║  removechannel <idx|name>         Remove a saved channel   ║"));
     Serial.println(F("║  addrepeater <name>           Add test repeater contact  ║"));
 
     Serial.println(F("║  addroomserver <name>        Add test room server    ║"));
@@ -141,6 +144,9 @@ static void print_help() {
 
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
+    Serial.println(F("║  keydiag     Dump keyboard diagnostics║"));
+    Serial.println(F("║  inputdiag   Dump touch/trackball diag║"));
+    Serial.println(F("║  gpsdiag     Dump GPS UART/fix diag   ║"));
     Serial.println(F("║  contactstats Show contact counters ║"));
     Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
     Serial.println(F("║  debug <feat> <1|0>  Toggle feature: display/mesh/ui/map/diag║"));
@@ -1001,6 +1007,170 @@ static void cmd_addchannel(const char* arg) {
     }
 }
 
+// ── Remove channel ───────────────────────────────────
+static void cmd_removechannel(const char* arg) {
+    if (!arg || arg[0] == '\0') {
+        Serial.println("[test] removechannel: usage: removechannel <idx|name>");
+        return;
+    }
+
+    int idx = -1;
+    bool numeric = true;
+    for (const char* p = arg; *p; ++p) {
+        if (!isdigit((unsigned char)*p)) {
+            numeric = false;
+            break;
+        }
+    }
+    if (numeric) {
+        idx = atoi(arg);
+    } else {
+        char names[8][37] = {};
+        const int n = sigurdos::mesh::exportChannels(names, 8);
+        const char* wanted = arg[0] == '#' ? arg + 1 : arg;
+        for (int i = 0; i < n; ++i) {
+            const char* have = names[i][0] == '#' ? names[i] + 1 : names[i];
+            if (strcmp(have, wanted) == 0) {
+                idx = i;
+                break;
+            }
+        }
+    }
+
+    if (idx < 0) {
+        Serial.printf("[test] removechannel FAILED: %s not found\n", arg);
+        return;
+    }
+
+    bool ok = sigurdos::mesh::removeChannel(idx);
+    Serial.printf("[test] removechannel %s: idx=%d %s\n", arg, idx, ok ? "OK" : "FAILED");
+}
+
+// ── Keyboard diagnostics ───────────────────────────────
+static void cmd_keydiag() {
+    SigurdOSKeyboardDiag d{};
+    bool ok = sigurdos_keyboard_get_diag(&d);
+    char key_char = (d.last_key_mode_byte >= 0x20 && d.last_key_mode_byte < 0x7F)
+        ? (char)d.last_key_mode_byte
+        : '.';
+    char out_char = (d.last_output_codepoint >= 0x20 && d.last_output_codepoint < 0x7F)
+        ? (char)d.last_output_codepoint
+        : '.';
+    Serial.printf("[test] keydiag: ok=%d init=%d raw_supported=%d raw_unavailable=%d raw_valid=%d layout=%u\n",
+                  ok ? 1 : 0, d.initialized ? 1 : 0, d.raw_supported ? 1 : 0,
+                  d.raw_unavailable ? 1 : 0, d.raw_valid ? 1 : 0, d.layout);
+    Serial.printf("[test] keydiag: keymode=0x%02X '%c' output=U+%04lX '%c' events=%lu overwrites=%lu last_ms=%lu\n",
+                  d.last_key_mode_byte, key_char,
+                  (unsigned long)d.last_output_codepoint, out_char,
+                  (unsigned long)d.event_count,
+                  (unsigned long)d.overwrite_count,
+                  (unsigned long)d.last_event_ms);
+    Serial.printf("[test] keydiag: raw=%02X %02X %02X %02X %02X shift=%d ctrl=%d alt=%d sym=%d mic=%d\n",
+                  d.raw_matrix[0], d.raw_matrix[1], d.raw_matrix[2],
+                  d.raw_matrix[3], d.raw_matrix[4],
+                  d.shift ? 1 : 0, d.ctrl ? 1 : 0, d.alt ? 1 : 0,
+                  d.sym_down ? 1 : 0, d.mic_down ? 1 : 0);
+}
+
+static const char* trackball_event_label(SigurdOSTrackballEvent event)
+{
+    switch (event) {
+    case SigurdOSTrackballEvent::Up: return "up";
+    case SigurdOSTrackballEvent::Down: return "down";
+    case SigurdOSTrackballEvent::Left: return "left";
+    case SigurdOSTrackballEvent::Right: return "right";
+    case SigurdOSTrackballEvent::Click: return "click";
+    case SigurdOSTrackballEvent::None:
+    default: return "none";
+    }
+}
+
+// ── Touch + trackball diagnostics ────────────────────────
+static void cmd_inputdiag() {
+    SigurdOSTouchDiag td{};
+    bool touch_ok = sigurdos_touch_get_diag(&td);
+    Serial.printf("[test] inputdiag touch: ok=%d init=%d attempted=%d addr=0x%02X pressed=%d edge_release=%d x=%d y=%d errors=%d\n",
+                  touch_ok ? 1 : 0, td.initialized ? 1 : 0,
+                  td.init_attempted ? 1 : 0, td.i2c_addr,
+                  td.pressed ? 1 : 0, td.edge_release_pending ? 1 : 0,
+                  td.x, td.y, td.consecutive_i2c_errors);
+    Serial.printf("[test] inputdiag touch: presses=%lu releases=%lu moves=%lu last_ms=%lu\n",
+                  (unsigned long)td.press_count,
+                  (unsigned long)td.release_count,
+                  (unsigned long)td.move_count,
+                  (unsigned long)td.last_event_ms);
+
+    SigurdOSTrackballDiag bd{};
+    bool tb_ok = sigurdos_trackball_get_diag(&bd);
+    Serial.printf("[test] inputdiag trackball: ok=%d init=%d queue=%u last=%s events=%lu overflows=%lu last_ms=%lu\n",
+                  tb_ok ? 1 : 0, bd.initialized ? 1 : 0,
+                  bd.queue_count, trackball_event_label(bd.last_event),
+                  (unsigned long)bd.event_count,
+                  (unsigned long)bd.overflow_count,
+                  (unsigned long)bd.last_event_ms);
+    Serial.printf("[test] inputdiag trackball: raw(U,D,L,R,C)=%u,%u,%u,%u,%u active=%d,%d,%d,%d,%d\n",
+                  bd.raw_levels[0], bd.raw_levels[1], bd.raw_levels[2],
+                  bd.raw_levels[3], bd.raw_levels[4],
+                  bd.active[0] ? 1 : 0, bd.active[1] ? 1 : 0,
+                  bd.active[2] ? 1 : 0, bd.active[3] ? 1 : 0,
+                  bd.active[4] ? 1 : 0);
+}
+
+static const char* gps_diag_assessment()
+{
+    if (sigurdos_gps_active_baud() == 0 && sigurdos_gps_chars_processed() == 0) {
+        return "not_initialized_or_no_uart";
+    }
+    if (sigurdos_gps_chars_processed() == 0) return "no_uart_chars";
+    if (sigurdos_gps_sentences_received() == 0) return "partial_uart_no_lines";
+    if (sigurdos_gps_valid_sentences() == 0) {
+        return sigurdos_gps_checksum_failures() > 0
+            ? "checksum_failures"
+            : "no_valid_nmea";
+    }
+    if (sigurdos_gps_has_fix()) return "fix";
+    if (sigurdos_gps_gsv_sentences() == 0) return "valid_nmea_no_gsv";
+    if (sigurdos_gps_satellites_in_view() == 0) return "no_satellites_visible";
+    if (sigurdos_gps_gsv_snr_count() == 0) return "satellites_no_snr";
+    return "satellites_waiting_fix";
+}
+
+// ── GPS diagnostics ──────────────────────────────────────
+static void cmd_gpsdiag() {
+    const char rmc = sigurdos_gps_rmc_status() ? sigurdos_gps_rmc_status() : '-';
+    Serial.printf("[test] gpsdiag: assessment=%s fix=%d qual=%u sv=%u siv=%u ft=%u rmc=%c snr_max=%u snr_count=%u\n",
+                  gps_diag_assessment(),
+                  sigurdos_gps_has_fix() ? 1 : 0,
+                  (unsigned)sigurdos_gps_fix_quality(),
+                  (unsigned)sigurdos_gps_satellites(),
+                  (unsigned)sigurdos_gps_satellites_in_view(),
+                  (unsigned)sigurdos_gps_fix_type(),
+                  rmc,
+                  (unsigned)sigurdos_gps_gsv_snr_max(),
+                  (unsigned)sigurdos_gps_gsv_snr_count());
+    Serial.printf("[test] gpsdiag: baud=%lu chars=%lu sent=%lu valid=%lu gga=%lu rmc_s=%lu gsv=%lu gsa=%lu csfail=%lu switches=%lu\n",
+                  (unsigned long)sigurdos_gps_active_baud(),
+                  (unsigned long)sigurdos_gps_chars_processed(),
+                  (unsigned long)sigurdos_gps_sentences_received(),
+                  (unsigned long)sigurdos_gps_valid_sentences(),
+                  (unsigned long)sigurdos_gps_gga_sentences(),
+                  (unsigned long)sigurdos_gps_rmc_sentences(),
+                  (unsigned long)sigurdos_gps_gsv_sentences(),
+                  (unsigned long)sigurdos_gps_gsa_sentences(),
+                  (unsigned long)sigurdos_gps_checksum_failures(),
+                  (unsigned long)sigurdos_gps_baud_switches());
+    Serial.printf("[test] gpsdiag: lat=%.6f lon=%.6f alt=%.1f speed=%.1f heading=%.1f time=%02u:%02u:%02u synced=%d\n",
+                  (double)sigurdos_gps_latitude(),
+                  (double)sigurdos_gps_longitude(),
+                  (double)sigurdos_gps_altitude_m(),
+                  (double)sigurdos_gps_speed_kn(),
+                  (double)sigurdos_gps_heading(),
+                  (unsigned)sigurdos_gps_hour(),
+                  (unsigned)sigurdos_gps_minute(),
+                  (unsigned)sigurdos_gps_second(),
+                  sigurdos_gps_time_synced() ? 1 : 0);
+}
+
 static void dump_focused_widget() {
     lv_group_t* g = lv_group_get_default();
     if (!g) { Serial.println("[test] focus: no default group"); return; }
@@ -1042,9 +1212,33 @@ static void cmd_getrf() {
         return;
     }
 
-    Serial.printf("[test] getrf: freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm RX_BOOST=%d\n",
+    Serial.printf("[test] getrf: profile=%s freq=%.3f SF=%d BW=%.1f CR=%d TX=%d dBm RX_BOOST=%d channels=%d\n",
+#if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
+                  "remote_usca_rxonly",
+#elif defined(SIGURDOS_REMOTE_TEST_RADIO)
+                  "remote_radio",
+#elif defined(SIGURDOS_REMOTE_TEST)
+                  "remote_no_radio",
+#else
+                  "normal",
+#endif
                   p.freq, (int)p.sf, p.bw, (int)p.cr, (int)p.tx_power_dbm,
-                  (int)p.rx_boosted_gain);
+                  (int)p.rx_boosted_gain,
+                  sigurdos::mesh::getChannelCount());
+    Serial.printf("[test] getrf: noise=%d rssi=%d snr=%.1f tx_air_ms=%lu rx_air_ms=%lu sent_flood=%lu sent_direct=%lu recv_flood=%lu recv_direct=%lu pktlog=%d\n",
+                  sigurdos::mesh::getNoiseFloor(),
+                  sigurdos::mesh::getLastRSSI(),
+                  (double)sigurdos::mesh::getLastSNR(),
+                  (unsigned long)sigurdos::mesh::getTotalTxAirtimeMs(),
+                  (unsigned long)sigurdos::mesh::getTotalRxAirtimeMs(),
+                  (unsigned long)sigurdos::mesh::getNumSentFlood(),
+                  (unsigned long)sigurdos::mesh::getNumSentDirect(),
+                  (unsigned long)sigurdos::mesh::getNumRecvFlood(),
+                  (unsigned long)sigurdos::mesh::getNumRecvDirect(),
+                  sigurdos::mesh::getPacketLogCount());
+#if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
+    Serial.println(F("[test] getrf: remote-test RX-only mode enabled; TX commands are blocked"));
+#endif
 }
 
 // ── Cmd: setrf ────────────────────────────────────────────
@@ -1167,6 +1361,10 @@ static bool dispatch(const char* line) {
     } else if (strcmp(cmd, "addchannel") == 0 || strcmp(cmd, "addchan") == 0) {
         if (!arg) { Serial.println("[test] addchannel: missing args"); return true; }
         cmd_addchannel(arg);
+    } else if (strcmp(cmd, "removechannel") == 0 || strcmp(cmd, "rmchannel") == 0 ||
+               strcmp(cmd, "removechan") == 0 || strcmp(cmd, "rmchan") == 0) {
+        if (!arg) { Serial.println("[test] removechannel: missing args"); return true; }
+        cmd_removechannel(arg);
     } else if (strcmp(cmd, "addrepeater") == 0) {
         if (!arg) { Serial.println("[test] addrepeater: missing name"); return true; }
         bool ok = sigurdos::mesh::addTestRepeater(arg);
@@ -1256,6 +1454,13 @@ static bool dispatch(const char* line) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {
         cmd_status();
+    } else if (strcmp(cmd, "keydiag") == 0 || strcmp(cmd, "kbddiag") == 0) {
+        cmd_keydiag();
+    } else if (strcmp(cmd, "inputdiag") == 0 || strcmp(cmd, "touchdiag") == 0 ||
+               strcmp(cmd, "trackballdiag") == 0 || strcmp(cmd, "tbdiag") == 0) {
+        cmd_inputdiag();
+    } else if (strcmp(cmd, "gpsdiag") == 0) {
+        cmd_gpsdiag();
     } else if (strcmp(cmd, "contactstats") == 0) {
         cmd_contactstats();
     } else if (strcmp(cmd, "debug") == 0) {

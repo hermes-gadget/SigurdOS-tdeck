@@ -32,6 +32,141 @@ namespace sigurdos::ui {
 using namespace theme;
 using namespace responsive;
 
+struct GpsDiagDialogCtx {
+    lv_obj_t* label;
+    lv_obj_t* row;
+};
+
+static const char* gps_diag_assessment()
+{
+    if (sigurdos_gps_active_baud() == 0 && sigurdos_gps_chars_processed() == 0) {
+        return "not_initialized_or_no_uart";
+    }
+    if (sigurdos_gps_chars_processed() == 0) return "no_uart_chars";
+    if (sigurdos_gps_sentences_received() == 0) return "partial_uart_no_lines";
+    if (sigurdos_gps_valid_sentences() == 0) {
+        return sigurdos_gps_checksum_failures() > 0
+            ? "checksum_failures"
+            : "no_valid_nmea";
+    }
+    if (sigurdos_gps_has_fix()) return "fix";
+    if (sigurdos_gps_gsv_sentences() == 0) return "valid_nmea_no_gsv";
+    if (sigurdos_gps_satellites_in_view() == 0) return "no_satellites_visible";
+    if (sigurdos_gps_gsv_snr_count() == 0) return "satellites_no_snr";
+    return "satellites_seen_waiting_fix";
+}
+
+static void update_gps_status_row(lv_obj_t* row)
+{
+    if (!row) return;
+    char row_buf[48];
+    snprintf(row_buf, sizeof(row_buf), "  GPS: %s", sigurdos_gps_has_fix() ? "Fix acquired" : "No fix");
+    update_row_label(row, row_buf);
+}
+
+static void gps_diag_update(GpsDiagDialogCtx* ctx)
+{
+    if (!ctx || !ctx->label) return;
+
+    const char rmc = sigurdos_gps_rmc_status() ? sigurdos_gps_rmc_status() : '-';
+    char body[448];
+    snprintf(body, sizeof(body),
+             "State: %s\n"
+             "Fix: %d qual=%u type=%u rmc=%c\n"
+             "Sky: sat=%u view=%u snr=%u/%u\n"
+             "UART: %lu baud chars=%lu lines=%lu\n"
+             "NMEA: valid=%lu gga=%lu rmc=%lu\n"
+             "More: gsv=%lu gsa=%lu cs=%lu sw=%lu\n"
+             "Pos: %.5f %.5f alt=%.1f\n"
+             "UTC: %02u:%02u:%02u sync=%d",
+             gps_diag_assessment(),
+             sigurdos_gps_has_fix() ? 1 : 0,
+             (unsigned)sigurdos_gps_fix_quality(),
+             (unsigned)sigurdos_gps_fix_type(),
+             rmc,
+             (unsigned)sigurdos_gps_satellites(),
+             (unsigned)sigurdos_gps_satellites_in_view(),
+             (unsigned)sigurdos_gps_gsv_snr_max(),
+             (unsigned)sigurdos_gps_gsv_snr_count(),
+             (unsigned long)sigurdos_gps_active_baud(),
+             (unsigned long)sigurdos_gps_chars_processed(),
+             (unsigned long)sigurdos_gps_sentences_received(),
+             (unsigned long)sigurdos_gps_valid_sentences(),
+             (unsigned long)sigurdos_gps_gga_sentences(),
+             (unsigned long)sigurdos_gps_rmc_sentences(),
+             (unsigned long)sigurdos_gps_gsv_sentences(),
+             (unsigned long)sigurdos_gps_gsa_sentences(),
+             (unsigned long)sigurdos_gps_checksum_failures(),
+             (unsigned long)sigurdos_gps_baud_switches(),
+             (double)sigurdos_gps_latitude(),
+             (double)sigurdos_gps_longitude(),
+             (double)sigurdos_gps_altitude_m(),
+             (unsigned)sigurdos_gps_hour(),
+             (unsigned)sigurdos_gps_minute(),
+             (unsigned)sigurdos_gps_second(),
+             sigurdos_gps_time_synced() ? 1 : 0);
+    lv_label_set_text(ctx->label, body);
+}
+
+static void show_gps_diag_dialog(lv_obj_t* parent, lv_obj_t* row)
+{
+    auto dlg_sz = dialog_size(302, 214);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_border_width(dlg, PIXEL_BORDER, 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "GPS Diagnostics");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+    lv_obj_t* text = lv_label_create(dlg);
+    lv_obj_set_width(text, dlg_sz.w - 16);
+    lv_label_set_long_mode(text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(text, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(text, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(text, LV_ALIGN_TOP_LEFT, 0, 28);
+
+    auto* ctx = new GpsDiagDialogCtx{text, row};
+    gps_diag_update(ctx);
+
+    lv_obj_t* refresh_btn = lv_btn_create(dlg);
+    lv_obj_set_size(refresh_btn, 78, 24);
+    lv_obj_align(refresh_btn, LV_ALIGN_BOTTOM_LEFT, 4, -4);
+    apply_pixel_btn_outline(refresh_btn);
+    lv_obj_t* rl = lv_label_create(refresh_btn);
+    lv_label_set_text(rl, "Refresh");
+    lv_obj_set_style_text_font(rl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(rl);
+    lv_obj_add_event_cb(refresh_btn, [](lv_event_t* e) {
+        auto* ctx = (GpsDiagDialogCtx*)lv_event_get_user_data(e);
+        gps_diag_update(ctx);
+        update_gps_status_row(ctx ? ctx->row : nullptr);
+    }, LV_EVENT_CLICKED, (void*)ctx);
+
+    lv_obj_t* close_btn = lv_btn_create(dlg);
+    lv_obj_set_size(close_btn, 78, 24);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_RIGHT, -4, -4);
+    apply_pixel_btn(close_btn);
+    lv_obj_t* cl = lv_label_create(close_btn);
+    lv_label_set_text(cl, "Close");
+    lv_obj_set_style_text_font(cl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(cl);
+    lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        delete (GpsDiagDialogCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, (void*)ctx);
+}
+
 void settings_gps_show()
 {
     lv_obj_t* scr = make_screen_full("GPS / Location");
@@ -53,6 +188,10 @@ void settings_gps_show()
     lv_obj_set_style_bg_color(row0, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_bg_opa(row0, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(row0, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(row0, [](lv_event_t* e) {
+        lv_obj_t* row = (lv_obj_t*)lv_event_get_target(e);
+        show_gps_diag_dialog(lv_obj_get_screen(row), row);
+    }, LV_EVENT_CLICKED, nullptr);
     row++;
 
     // GPS enable toggle
