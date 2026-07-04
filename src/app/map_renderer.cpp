@@ -22,6 +22,7 @@
 #include "../hal/tdeck_pins.h"
 #include "../hal/sdcard.h"
 #include <Arduino.h>
+#include "../hal/prefs.h"
 #include <lvgl.h>
 #include <cmath>
 #include <cstdio>
@@ -56,9 +57,9 @@ static constexpr double MIN_LON   = SIGURDOS_MAP_MIN_LON;
 static lv_obj_t* map_canvas = nullptr;
 static uint8_t*   canvas_pixels = nullptr;
 
-static double center_lat = 51.5074;  // London
-static double center_lon = -0.1278;
-static int    zoom_level = 10;
+static double center_lat = SIGURDOS_MAP_DEFAULT_US_LAT;
+static double center_lon = SIGURDOS_MAP_DEFAULT_US_LON;
+static int    zoom_level = SIGURDOS_MAP_DEFAULT_US_ZOOM;
 static bool   initialized = false;
 
 struct TileCoverage {
@@ -160,6 +161,15 @@ static void reset_tile_coverage() {
     min_available_zoom = MIN_ZOOM;
     max_available_zoom = MAX_ZOOM;
     have_tile_coverage = false;
+}
+
+static void apply_preset_default_view() {
+    const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
+    const SigurdosMapDefaultView view =
+        sigurdos_map_default_view_for_radio_profile(prefs.radio_profile);
+    center_lat = clamp_d(view.lat, MIN_LAT, MAX_LAT);
+    center_lon = clamp_d(view.lon, MIN_LON, MAX_LON);
+    zoom_level = clamp(view.zoom, MIN_ZOOM, MAX_ZOOM);
 }
 
 static void clamp_view_to_coverage() {
@@ -566,6 +576,8 @@ static void discover_tiles() {
 
 // ── Metadata auto-center (from metadata.json, fallback to discover) ──
 static void load_metadata() {
+    apply_preset_default_view();
+
     if (!sigurdos_sdcard_mounted()) {
         // Lazy retry — SD may have been absent at boot but inserted since
         if (!sigurdos_sdcard_retry()) return;

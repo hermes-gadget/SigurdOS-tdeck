@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cmath>
+#include <cstring>
 #include <lvgl.h>
 
 static constexpr int SIGURDOS_MAP_TILE_SIZE = 256;
@@ -31,6 +32,28 @@ static constexpr double SIGURDOS_MAP_MIN_LAT = -85.0511;
 static constexpr double SIGURDOS_MAP_MAX_LON = 180.0;
 static constexpr double SIGURDOS_MAP_MIN_LON = -180.0;
 static constexpr double SIGURDOS_MAP_PI = 3.14159265358979323846;
+static constexpr double SIGURDOS_MAP_DEFAULT_US_LAT = 39.8283;
+static constexpr double SIGURDOS_MAP_DEFAULT_US_LON = -98.5795;
+static constexpr int SIGURDOS_MAP_DEFAULT_US_ZOOM = 4;
+static constexpr double SIGURDOS_MAP_DEFAULT_CA_LAT = 56.1304;
+static constexpr double SIGURDOS_MAP_DEFAULT_CA_LON = -106.3468;
+static constexpr int SIGURDOS_MAP_DEFAULT_CA_ZOOM = 3;
+
+struct SigurdosMapDefaultView {
+    double lat;
+    double lon;
+    int zoom;
+};
+
+inline SigurdosMapDefaultView sigurdos_map_default_view_for_radio_profile(
+    const char* radio_profile_id) {
+    if (radio_profile_id && std::strcmp(radio_profile_id, "ca_902_928") == 0) {
+        return {SIGURDOS_MAP_DEFAULT_CA_LAT, SIGURDOS_MAP_DEFAULT_CA_LON,
+                SIGURDOS_MAP_DEFAULT_CA_ZOOM};
+    }
+    return {SIGURDOS_MAP_DEFAULT_US_LAT, SIGURDOS_MAP_DEFAULT_US_LON,
+            SIGURDOS_MAP_DEFAULT_US_ZOOM};
+}
 
 inline bool sigurdos_map_zoom_valid(int zoom) {
     return zoom >= SIGURDOS_MAP_MIN_ZOOM && zoom <= SIGURDOS_MAP_MAX_ZOOM;

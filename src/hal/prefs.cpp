@@ -100,6 +100,11 @@ bool prefs_load(NodePrefs& p) {
     }
     p.ota_allow_prerelease = nvs.getBool("ota_pre", false);
 
+    // Radio profile (backward-compatible: empty = custom/unset)
+    size_t rf_prof_len = nvs.getString("rf_prof", p.radio_profile, sizeof(p.radio_profile));
+    if (rf_prof_len == 0 || rf_prof_len > sizeof(p.radio_profile)) { p.radio_profile[0] = '\0'; }
+    else { p.radio_profile[sizeof(p.radio_profile) - 1] = '\0'; }
+
     nvs.end();
     return true;
 }
@@ -152,6 +157,7 @@ bool prefs_save(const NodePrefs& p) {
     nvs.putString("act_reg", p.active_region);
     nvs.putString("ota_br", p.ota_branch);
     nvs.putBool("ota_pre", p.ota_allow_prerelease);
+    nvs.putString("rf_prof", p.radio_profile);
 
     nvs.end();
     return true;

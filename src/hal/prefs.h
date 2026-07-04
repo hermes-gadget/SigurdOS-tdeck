@@ -57,6 +57,7 @@ struct NodePrefs {
     char     active_region[31];        // active flood scope region name (empty = wildcard/unscoped)
     char     ota_branch[16];            // GitHub OTA release channel: "dev" or "main" (or "latest")
     bool     ota_allow_prerelease;      // include pre-release tags when searching for OTA updates
+    char     radio_profile[16];          // radio profile id (e.g. "us_902_928"), or empty/"custom" for manual
 
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
@@ -106,6 +107,7 @@ struct NodePrefs {
         strncpy(ota_branch, "main", sizeof(ota_branch) - 1);
         ota_branch[sizeof(ota_branch) - 1] = '\0';
         ota_allow_prerelease = false;
+        radio_profile[0] = '\0';        // empty = not set / custom
     }
 };
 

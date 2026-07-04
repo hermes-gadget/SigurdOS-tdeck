@@ -6,12 +6,14 @@
 #include "screens.h"
 #include "../fonts/emoji_font.h"
 #include "../hal/prefs.h"
+#include "../hal/radio_profiles.h"
 #include "../mesh/mesh_wrapper.h"
 #include <Arduino.h>
 #include <lvgl.h>
 #include <SPIFFS.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
 #include <cmath>
 
 namespace sigurdos::ui {
@@ -25,19 +27,24 @@ static char s_name[32];
 static float s_freq;
 static int s_sf;
 static int s_pwr;
+static int s_dt_year;
+static int s_dt_month;
+static int s_dt_day;
+static int s_dt_hour;
+static int s_dt_minute;
+static bool s_dt_loaded = false;
+static const sigurdos::RadioProfile* s_radio_profile = nullptr;
 
 // ── Persistent widgets ───────────────────────────────────
 static lv_obj_t* s_scr = nullptr;
 static lv_obj_t* s_content = nullptr;
 static lv_obj_t* s_name_input = nullptr;
-static lv_obj_t* s_date_input = nullptr;
-static lv_obj_t* s_time_input = nullptr;
-static lv_obj_t* s_freq_btns[5] = {};
+static lv_obj_t* s_dt_value_labels[5] = {};
+static lv_obj_t* s_dt_error_label = nullptr;
+static lv_obj_t* s_profile_btns[8] = {};
+static lv_obj_t* s_profile_summary_label = nullptr;
 static lv_obj_t* s_sf_label = nullptr;
 static lv_obj_t* s_pwr_label = nullptr;
-
-// ── Frequency presets ────────────────────────────────────
-static constexpr float FREQ_VALS[] = {868.000f, 869.525f, 869.618f, 915.000f, 433.500f};
 
 static void rebuild_content();
 static void show_screen(lv_obj_t* scr);
@@ -45,11 +52,172 @@ static void show_screen(lv_obj_t* scr);
 static void clear_widget_ptrs()
 {
     s_name_input = nullptr;
-    s_date_input = nullptr;
-    s_time_input = nullptr;
-    for (auto& b : s_freq_btns) b = nullptr;
+    for (auto& l : s_dt_value_labels) l = nullptr;
+    s_dt_error_label = nullptr;
+    for (auto& b : s_profile_btns) b = nullptr;
+    s_profile_summary_label = nullptr;
     s_sf_label = nullptr;
     s_pwr_label = nullptr;
+}
+
+enum DateTimeField : int {
+    DT_YEAR = 0,
+    DT_MONTH,
+    DT_DAY,
+    DT_HOUR,
+    DT_MINUTE,
+    DT_FIELD_COUNT,
+};
+
+static void load_current_datetime_once()
+{
+    if (s_dt_loaded) return;
+    sigurdos::mesh::getCurrentLocalDateTime(&s_dt_year, &s_dt_month, &s_dt_day,
+                                            &s_dt_hour, &s_dt_minute);
+    if (!onboarding_date_valid(s_dt_year, s_dt_month, s_dt_day)) {
+        s_dt_year = 2026;
+        s_dt_month = 1;
+        s_dt_day = 1;
+    }
+    if (!onboarding_time_valid(s_dt_hour, s_dt_minute)) {
+        s_dt_hour = 0;
+        s_dt_minute = 0;
+    }
+    s_dt_loaded = true;
+}
+
+static void update_datetime_labels()
+{
+    char buf[16];
+    if (s_dt_value_labels[DT_YEAR]) {
+        snprintf(buf, sizeof(buf), "%04d", s_dt_year);
+        lv_label_set_text(s_dt_value_labels[DT_YEAR], buf);
+    }
+    if (s_dt_value_labels[DT_MONTH]) {
+        snprintf(buf, sizeof(buf), "%02d", s_dt_month);
+        lv_label_set_text(s_dt_value_labels[DT_MONTH], buf);
+    }
+    if (s_dt_value_labels[DT_DAY]) {
+        snprintf(buf, sizeof(buf), "%02d", s_dt_day);
+        lv_label_set_text(s_dt_value_labels[DT_DAY], buf);
+    }
+    if (s_dt_value_labels[DT_HOUR]) {
+        snprintf(buf, sizeof(buf), "%02d", s_dt_hour);
+        lv_label_set_text(s_dt_value_labels[DT_HOUR], buf);
+    }
+    if (s_dt_value_labels[DT_MINUTE]) {
+        snprintf(buf, sizeof(buf), "%02d", s_dt_minute);
+        lv_label_set_text(s_dt_value_labels[DT_MINUTE], buf);
+    }
+}
+
+static void adjust_datetime_field(DateTimeField field, int delta)
+{
+    switch (field) {
+    case DT_YEAR:
+        s_dt_year = onboarding_wrap_range(s_dt_year + delta, 2020, 2106);
+        s_dt_day = onboarding_clamp_day(s_dt_year, s_dt_month, s_dt_day);
+        break;
+    case DT_MONTH:
+        s_dt_month = onboarding_wrap_range(s_dt_month + delta, 1, 12);
+        s_dt_day = onboarding_clamp_day(s_dt_year, s_dt_month, s_dt_day);
+        break;
+    case DT_DAY:
+        s_dt_day = onboarding_wrap_range(
+            s_dt_day + delta, 1,
+            (int)onboarding_days_in_month(s_dt_year, s_dt_month));
+        break;
+    case DT_HOUR:
+        s_dt_hour = onboarding_wrap_range(s_dt_hour + delta, 0, 23);
+        break;
+    case DT_MINUTE:
+        s_dt_minute = onboarding_wrap_range(s_dt_minute + delta, 0, 59);
+        break;
+    default:
+        break;
+    }
+    if (s_dt_error_label) lv_label_set_text(s_dt_error_label, "");
+    update_datetime_labels();
+}
+
+static void datetime_adjust_cb(lv_event_t* e)
+{
+    intptr_t packed = (intptr_t)lv_event_get_user_data(e);
+    DateTimeField field = (DateTimeField)((packed >> 8) & 0xFF);
+    int delta = (packed & 0xFF) == 1 ? 1 : -1;
+    adjust_datetime_field(field, delta);
+}
+
+static void add_to_group(lv_obj_t* obj)
+{
+    lv_group_t* g = lv_group_get_default();
+    if (g && obj) lv_group_add_obj(g, obj);
+}
+
+static lv_obj_t* make_small_button(lv_obj_t* parent, int w, int h,
+                                   const char* text, uint32_t color)
+{
+    lv_obj_t* btn = lv_btn_create(parent);
+    lv_obj_set_size(btn, w, h);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(color), 0);
+    lv_obj_set_style_radius(btn, 0, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    apply_focus_style(btn);
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_center(lbl);
+    add_to_group(btn);
+    return btn;
+}
+
+static void add_datetime_row(const char* label, DateTimeField field, int y)
+{
+    lv_obj_t* name = lv_label_create(s_content);
+    lv_label_set_text(name, label);
+    lv_obj_set_style_text_color(name, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(name, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(name, LV_ALIGN_TOP_LEFT, 16, y + 5);
+
+    lv_obj_t* minus = make_small_button(s_content, 32, 22, "-", ACCENT_RED);
+    lv_obj_align(minus, LV_ALIGN_TOP_LEFT, 88, y);
+    lv_obj_add_event_cb(minus, datetime_adjust_cb, LV_EVENT_CLICKED,
+                        (void*)(intptr_t)(((int)field << 8) | 0));
+
+    lv_obj_t* value = make_small_button(s_content, 78, 22, "", BG_INPUT);
+    lv_obj_align(value, LV_ALIGN_TOP_LEFT, 126, y);
+    s_dt_value_labels[field] = lv_obj_get_child(value, 0);
+    lv_obj_add_event_cb(value, datetime_adjust_cb, LV_EVENT_CLICKED,
+                        (void*)(intptr_t)(((int)field << 8) | 1));
+
+    lv_obj_t* plus = make_small_button(s_content, 32, 22, "+", ACCENT);
+    lv_obj_align(plus, LV_ALIGN_TOP_LEFT, 210, y);
+    lv_obj_add_event_cb(plus, datetime_adjust_cb, LV_EVENT_CLICKED,
+                        (void*)(intptr_t)(((int)field << 8) | 1));
+}
+
+static void select_radio_profile(const sigurdos::RadioProfile* profile)
+{
+    if (!profile) return;
+    s_radio_profile = profile;
+    s_freq = profile->freq_mhz;
+    s_sf = profile->sf;
+    s_pwr = profile->tx_power_dbm;
+
+    const size_t count = sigurdos::radio_profile_count();
+    for (size_t i = 0; i < count && i < (sizeof(s_profile_btns) / sizeof(s_profile_btns[0])); ++i) {
+        if (!s_profile_btns[i]) continue;
+        const auto* p = sigurdos::radio_profile_at(i);
+        const bool selected = p && strcmp(p->id, profile->id) == 0;
+        lv_obj_set_style_bg_color(s_profile_btns[i],
+                                  lv_color_hex(selected ? 0x2a5a2a : BG_TERTIARY), 0);
+    }
+    if (s_profile_summary_label) {
+        char summary[96];
+        snprintf(summary, sizeof(summary), "%.3f MHz / SF%d / BW%.1f / CR4/%d",
+                 profile->freq_mhz, profile->sf, profile->bw_khz, profile->cr);
+        lv_label_set_text(s_profile_summary_label, summary);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -117,6 +285,7 @@ static void build_step1()
         // Use timer to defer rebuild (safer inside LVGL event)
         lv_timer_create([](lv_timer_t* t) { lv_timer_del(t); rebuild_content(); }, 1, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
+    add_to_group(next_btn);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -125,6 +294,7 @@ static void build_step1()
 static void build_step2()
 {
     clear_widget_ptrs();
+    load_current_datetime_once();
 
     lv_obj_t* step_lbl = lv_label_create(s_content);
     lv_label_set_text(step_lbl, "Step 2 of 3");
@@ -138,53 +308,28 @@ static void build_step2()
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
 
-    int y, mo, d, h, mi;
-    sigurdos::mesh::getCurrentLocalDateTime(&y, &mo, &d, &h, &mi);
+    lv_obj_t* hint = lv_label_create(s_content);
+    lv_label_set_text(hint, "Tap +/- or focus a value with the trackball.");
+    lv_obj_set_width(hint, DISPLAY_W - 24);
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(hint, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 36);
 
-    lv_obj_t* dl = lv_label_create(s_content);
-    lv_label_set_text(dl, "Date (YYYY-MM-DD):");
-    lv_obj_set_style_text_color(dl, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(dl, emoji_wrapped_montserrat_10, 0);
-    lv_obj_align(dl, LV_ALIGN_TOP_LEFT, 16, 38);
+    add_datetime_row("Year", DT_YEAR, 52);
+    add_datetime_row("Month", DT_MONTH, 75);
+    add_datetime_row("Day", DT_DAY, 98);
+    add_datetime_row("Hour", DT_HOUR, 121);
+    add_datetime_row("Minute", DT_MINUTE, 144);
+    update_datetime_labels();
 
-    char date_buf[16];
-    snprintf(date_buf, sizeof(date_buf), "%04d-%02d-%02d", y, mo, d);
-    s_date_input = lv_textarea_create(s_content);
-    lv_obj_set_size(s_date_input, 160, 28);
-    lv_obj_align(s_date_input, LV_ALIGN_TOP_MID, 0, 56);
-    lv_obj_set_style_bg_color(s_date_input, lv_color_hex(BG_INPUT), 0);
-    lv_obj_set_style_text_color(s_date_input, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_date_input, emoji_wrapped_montserrat_10, 0);
-    lv_obj_set_style_border_width(s_date_input, 0, 0);
-    lv_textarea_set_one_line(s_date_input, true);
-    lv_textarea_set_text(s_date_input, date_buf);
-    apply_focus_style(s_date_input);
-
-    lv_obj_t* tl = lv_label_create(s_content);
-    lv_label_set_text(tl, "Time (HH:MM 24h):");
-    lv_obj_set_style_text_color(tl, lv_color_hex(TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_10, 0);
-    lv_obj_align(tl, LV_ALIGN_TOP_LEFT, 16, 90);
-
-    char time_buf[8];
-    snprintf(time_buf, sizeof(time_buf), "%02d:%02d", h, mi);
-    s_time_input = lv_textarea_create(s_content);
-    lv_obj_set_size(s_time_input, 120, 28);
-    lv_obj_align(s_time_input, LV_ALIGN_TOP_MID, 0, 108);
-    lv_obj_set_style_bg_color(s_time_input, lv_color_hex(BG_INPUT), 0);
-    lv_obj_set_style_text_color(s_time_input, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_time_input, emoji_wrapped_montserrat_10, 0);
-    lv_obj_set_style_border_width(s_time_input, 0, 0);
-    lv_textarea_set_one_line(s_time_input, true);
-    lv_textarea_set_text(s_time_input, time_buf);
-    apply_focus_style(s_time_input);
-
-    lv_group_t* g = lv_group_get_default();
-    if (g) {
-        lv_group_add_obj(g, s_date_input);
-        lv_group_add_obj(g, s_time_input);
-        lv_group_focus_obj(s_date_input);
-    }
+    s_dt_error_label = lv_label_create(s_content);
+    lv_label_set_text(s_dt_error_label, "");
+    lv_obj_set_width(s_dt_error_label, DISPLAY_W - 32);
+    lv_obj_set_style_text_align(s_dt_error_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(s_dt_error_label, lv_color_hex(ACCENT_RED), 0);
+    lv_obj_set_style_text_font(s_dt_error_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(s_dt_error_label, LV_ALIGN_BOTTOM_MID, 0, -42);
 
     lv_obj_t* back_btn = lv_btn_create(s_content);
     lv_obj_set_size(back_btn, 100, 32);
@@ -198,6 +343,7 @@ static void build_step2()
         s_step = 0;
         lv_timer_create([](lv_timer_t* t) { lv_timer_del(t); rebuild_content(); }, 1, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
+    add_to_group(back_btn);
 
     lv_obj_t* next_btn = lv_btn_create(s_content);
     lv_obj_set_size(next_btn, 120, 32);
@@ -208,23 +354,23 @@ static void build_step2()
     lv_label_set_text(nl, "Next  " LV_SYMBOL_RIGHT);
     lv_obj_center(nl);
     lv_obj_add_event_cb(next_btn, [](lv_event_t*) {
-        const char* date_s = s_date_input ? lv_textarea_get_text(s_date_input) : "";
-        const char* time_s = s_time_input ? lv_textarea_get_text(s_time_input) : "";
+        if (!onboarding_date_valid(s_dt_year, s_dt_month, s_dt_day) ||
+            !onboarding_time_valid(s_dt_hour, s_dt_minute)) {
+            if (s_dt_error_label) lv_label_set_text(s_dt_error_label, "Invalid date/time");
+            return;
+        }
 
-        int ny = 2025, nm = 1, nd = 1, nh = 0, nmi = 0;
-        bool date_ok = (sscanf(date_s, "%d-%d-%d", &ny, &nm, &nd) == 3 &&
-                        onboarding_date_valid(ny, nm, nd));
-        bool time_ok = (sscanf(time_s, "%d:%d", &nh, &nmi) == 2 &&
-                        onboarding_time_valid(nh, nmi));
-
-        if (date_ok && time_ok) {
-            uint32_t epoch = sigurdos::mesh::makeEpoch(ny, nm, nd, nh, nmi);
-            sigurdos::mesh::setSystemTime(epoch);
+        uint32_t epoch = sigurdos::mesh::makeEpoch(
+            s_dt_year, s_dt_month, s_dt_day, s_dt_hour, s_dt_minute);
+        if (!sigurdos::mesh::setSystemTime(epoch)) {
+            if (s_dt_error_label) lv_label_set_text(s_dt_error_label, "Clock not ready");
+            return;
         }
 
         s_step = 2;
         lv_timer_create([](lv_timer_t* t) { lv_timer_del(t); rebuild_content(); }, 1, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
+    add_to_group(next_btn);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -239,136 +385,72 @@ static void build_step3()
     s_freq = p.configured ? p.freq : 869.618f;
     s_sf   = p.configured ? p.sf   : 8;
     s_pwr  = p.configured ? p.tx_power_dbm : 22;
+    s_radio_profile = p.configured ? sigurdos::radio_profile_match(p)
+                                   : sigurdos::radio_profile_default();
+    if (!s_radio_profile) s_radio_profile = sigurdos::radio_profile_default();
 
     lv_obj_t* title = lv_label_create(s_content);
-    lv_label_set_text(title, "Set Frequency");
+    lv_label_set_text(title, "Country Profile");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
-    static const struct { const char* label; float freq; } freqs[] = {
-        {"868.000 MHz (EU)", 868.000f},
-        {"869.525 MHz (UK)", 869.525f},
-        {"869.618 MHz (UK)", 869.618f},
-        {"915.000 MHz (US)", 915.000f},
-        {"433.500 MHz (EU)", 433.500f},
-    };
+    lv_obj_t* hint = lv_label_create(s_content);
+    lv_label_set_text(hint, "Choose the preset for where this device will be used.");
+    lv_obj_set_width(hint, DISPLAY_W - 24);
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(hint, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 20);
 
-    int fy = 20;
-    for (int i = 0; i < 5; i++) {
+    int fy = 42;
+    const size_t count = sigurdos::radio_profile_count();
+    const size_t max_buttons = sizeof(s_profile_btns) / sizeof(s_profile_btns[0]);
+    for (size_t i = 0; i < count && i < max_buttons; i++) {
+        const auto* profile = sigurdos::radio_profile_at(i);
+        if (!profile) continue;
         auto* btn = lv_btn_create(s_content);
-        lv_obj_set_size(btn, 220, 16);
+        lv_obj_set_size(btn, 230, 20);
         lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, fy);
-        bool selected = fabsf(s_freq - freqs[i].freq) < 0.001f;
+        bool selected = s_radio_profile && strcmp(s_radio_profile->id, profile->id) == 0;
         lv_obj_set_style_bg_color(btn, lv_color_hex(selected ? 0x2a5a2a : BG_TERTIARY), 0);
         lv_obj_set_style_radius(btn, 0, 0);
         lv_obj_set_style_border_width(btn, 0, 0);
+        apply_focus_style(btn);
         auto* tl = lv_label_create(btn);
-        lv_label_set_text(tl, freqs[i].label);
+        char label[96];
+        snprintf(label, sizeof(label), "%s  %.3f/SF%d/BW%.1f",
+                 profile->short_label, profile->freq_mhz, profile->sf, profile->bw_khz);
+        lv_label_set_text(tl, label);
         lv_obj_set_style_text_color(tl, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_10, 0);
         lv_obj_center(tl);
-        s_freq_btns[i] = btn;
+        s_profile_btns[i] = btn;
+        add_to_group(btn);
 
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
-            int idx = (int)(intptr_t)lv_event_get_user_data(e);
-            s_freq = FREQ_VALS[idx];
-            for (int j = 0; j < 5; j++) {
-                if (s_freq_btns[j]) {
-                    bool sel = (j == idx);
-                    lv_obj_set_style_bg_color(s_freq_btns[j],
-                        lv_color_hex(sel ? 0x2a5a2a : BG_TERTIARY), 0);
-                }
-            }
+            size_t idx = (size_t)(intptr_t)lv_event_get_user_data(e);
+            select_radio_profile(sigurdos::radio_profile_at(idx));
         }, LV_EVENT_CLICKED, (void*)(intptr_t)i);
-        fy += 18;
+        fy += 23;
     }
 
-    // SF and TX power on one compact row
-    int row_y = fy + 6;
-    char sf_buf[16];
-    snprintf(sf_buf, sizeof(sf_buf), "SF:%d", s_sf);
-    s_sf_label = lv_label_create(s_content);
-    lv_label_set_text(s_sf_label, sf_buf);
-    lv_obj_set_style_text_color(s_sf_label, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_sf_label, emoji_wrapped_montserrat_10, 0);
-    lv_obj_align(s_sf_label, LV_ALIGN_TOP_LEFT, 16, row_y);
-
-    auto* sf_minus = lv_btn_create(s_content);
-    lv_obj_set_size(sf_minus, 28, 22);
-    lv_obj_align(sf_minus, LV_ALIGN_TOP_LEFT, 70, row_y - 2);
-    lv_obj_set_style_bg_color(sf_minus, lv_color_hex(ACCENT_RED), 0);
-    lv_obj_set_style_radius(sf_minus, 0, 0);
-    auto* sml = lv_label_create(sf_minus);
-    lv_label_set_text(sml, "-");
-    lv_obj_center(sml);
-    lv_obj_add_event_cb(sf_minus, [](lv_event_t*) {
-        if (s_sf > 6) { s_sf--;
-            if (s_sf_label) { char b[16]; snprintf(b, sizeof(b), "SF:%d", s_sf); lv_label_set_text(s_sf_label, b); } }
-    }, LV_EVENT_CLICKED, nullptr);
-
-    auto* sf_plus = lv_btn_create(s_content);
-    lv_obj_set_size(sf_plus, 28, 22);
-    lv_obj_align(sf_plus, LV_ALIGN_TOP_LEFT, 100, row_y - 2);
-    lv_obj_set_style_bg_color(sf_plus, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_radius(sf_plus, 0, 0);
-    auto* spl = lv_label_create(sf_plus);
-    lv_label_set_text(spl, "+");
-    lv_obj_center(spl);
-    lv_obj_add_event_cb(sf_plus, [](lv_event_t*) {
-        if (s_sf < 12) { s_sf++;
-            if (s_sf_label) { char b[16]; snprintf(b, sizeof(b), "SF:%d", s_sf); lv_label_set_text(s_sf_label, b); } }
-    }, LV_EVENT_CLICKED, nullptr);
-
-    char pwr_buf[24];
-    snprintf(pwr_buf, sizeof(pwr_buf), "TX:%d dBm", s_pwr);
-    s_pwr_label = lv_label_create(s_content);
-    lv_label_set_text(s_pwr_label, pwr_buf);
-    lv_obj_set_style_text_color(s_pwr_label, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_pwr_label, emoji_wrapped_montserrat_10, 0);
-    lv_obj_align(s_pwr_label, LV_ALIGN_TOP_LEFT, 150, row_y);
-
-    auto* pwr_minus = lv_btn_create(s_content);
-    lv_obj_set_size(pwr_minus, 28, 22);
-    lv_obj_align(pwr_minus, LV_ALIGN_TOP_LEFT, 215, row_y - 2);
-    lv_obj_set_style_bg_color(pwr_minus, lv_color_hex(ACCENT_RED), 0);
-    lv_obj_set_style_radius(pwr_minus, 0, 0);
-    auto* pml = lv_label_create(pwr_minus);
-    lv_label_set_text(pml, "-");
-    lv_obj_center(pml);
-    lv_obj_add_event_cb(pwr_minus, [](lv_event_t*) {
-        if (s_pwr > 2) { s_pwr--;
-            if (s_pwr_label) { char b[24]; snprintf(b, sizeof(b), "TX:%d dBm", s_pwr); lv_label_set_text(s_pwr_label, b); } }
-    }, LV_EVENT_CLICKED, nullptr);
-
-    auto* pwr_plus = lv_btn_create(s_content);
-    lv_obj_set_size(pwr_plus, 28, 22);
-    lv_obj_align(pwr_plus, LV_ALIGN_TOP_LEFT, 245, row_y - 2);
-    lv_obj_set_style_bg_color(pwr_plus, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_radius(pwr_plus, 0, 0);
-    auto* ppl = lv_label_create(pwr_plus);
-    lv_label_set_text(ppl, "+");
-    lv_obj_center(ppl);
-    lv_obj_add_event_cb(pwr_plus, [](lv_event_t*) {
-        if (s_pwr < 22) { s_pwr++;
-            if (s_pwr_label) { char b[24]; snprintf(b, sizeof(b), "TX:%d dBm", s_pwr); lv_label_set_text(s_pwr_label, b); } }
-    }, LV_EVENT_CLICKED, nullptr);
-
-    // Custom RF button
-    int custom_y = row_y + 28;
-    auto* custom_btn = lv_btn_create(s_content);
-    lv_obj_set_size(custom_btn, 160, 20);
-    lv_obj_align(custom_btn, LV_ALIGN_TOP_MID, 0, custom_y);
-    lv_obj_set_style_bg_color(custom_btn, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_radius(custom_btn, 0, 0);
-    lv_obj_set_style_border_width(custom_btn, 0, 0);
-    auto* ctl = lv_label_create(custom_btn);
-    lv_label_set_text(ctl, "Full Radio Setup...");
-    lv_obj_set_style_text_font(ctl, emoji_wrapped_montserrat_10, 0);
-    lv_obj_center(ctl);
-    lv_obj_add_event_cb(custom_btn, [](lv_event_t*) {
-        sigurdos::ui::radio_setup_screen_show();
-    }, LV_EVENT_CLICKED, nullptr);
+    // Summary row reflects the selected profile.
+    char summary[96];
+    if (s_radio_profile) {
+        snprintf(summary, sizeof(summary), "%.3f MHz / SF%d / BW%.1f / CR4/%d",
+                 s_radio_profile->freq_mhz, s_radio_profile->sf,
+                 s_radio_profile->bw_khz, s_radio_profile->cr);
+    } else {
+        snprintf(summary, sizeof(summary), "%.3f MHz / SF%d", s_freq, s_sf);
+    }
+    s_profile_summary_label = lv_label_create(s_content);
+    lv_label_set_text(s_profile_summary_label, summary);
+    lv_obj_set_width(s_profile_summary_label, DISPLAY_W - 24);
+    lv_obj_set_style_text_align(s_profile_summary_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(s_profile_summary_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(s_profile_summary_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(s_profile_summary_label, LV_ALIGN_TOP_MID, 0, fy + 4);
 
     // Bottom: Back + Done
     lv_obj_t* back_btn = lv_btn_create(s_content);
@@ -383,6 +465,7 @@ static void build_step3()
         s_step = 1;
         lv_timer_create([](lv_timer_t* t) { lv_timer_del(t); rebuild_content(); }, 1, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
+    add_to_group(back_btn);
 
     lv_obj_t* done_btn = lv_btn_create(s_content);
     lv_obj_set_size(done_btn, 120, 32);
@@ -396,12 +479,10 @@ static void build_step3()
         sigurdos::NodePrefs np = sigurdos::prefs_get();
         strncpy(np.node_name, s_name, sizeof(np.node_name) - 1);
         np.node_name[sizeof(np.node_name) - 1] = '\0';
-        np.freq = s_freq;
-        np.bw = 62.5f;
-        np.sf = (uint8_t)s_sf;
-        np.cr = 5;
-        np.tx_power_dbm = (int8_t)s_pwr;
-        np.configured = true;
+        if (!s_radio_profile) s_radio_profile = sigurdos::radio_profile_default();
+        if (s_radio_profile) {
+            sigurdos::radio_profile_apply(*s_radio_profile, np);
+        }
         sigurdos::mesh::setOwnName(s_name);
         sigurdos::prefs_set(np);
         // Auto-join the Public channel so new devices can receive group messages
@@ -415,6 +496,7 @@ static void build_step3()
         delay(200);
         ESP.restart();
     }, LV_EVENT_CLICKED, nullptr);
+    add_to_group(done_btn);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -445,6 +527,7 @@ void onboarding_screen_show()
     s_freq = p.configured ? p.freq : 869.618f;
     s_sf   = p.configured ? p.sf   : 8;
     s_pwr  = p.configured ? p.tx_power_dbm : 22;
+    s_dt_loaded = false;
     s_step = 0;
 
     clear_widget_ptrs();

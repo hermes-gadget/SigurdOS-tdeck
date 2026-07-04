@@ -21,6 +21,7 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../hal/prefs.h"
+#include "../../hal/radio_profiles.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
@@ -52,8 +53,14 @@ void settings_radio_show()
 
     // Radio config
     if (p.configured) {
-        snprintf(buf, sizeof(buf), "  Radio: %.3f MHz / %.1f kHz / SF%d / %d dBm",
-                 p.freq, p.bw, p.sf, p.tx_power_dbm);
+        const auto* profile = sigurdos::radio_profile_match(p);
+        if (profile) {
+            snprintf(buf, sizeof(buf), "  Radio: %s / %.3f MHz / SF%d",
+                     profile->short_label, p.freq, p.sf);
+        } else {
+            snprintf(buf, sizeof(buf), "  Radio: Custom / %.3f MHz / %.1f kHz / SF%d / %d dBm",
+                     p.freq, p.bw, p.sf, p.tx_power_dbm);
+        }
     } else {
         snprintf(buf, sizeof(buf), "  Radio: NOT CONFIGURED");
     }
