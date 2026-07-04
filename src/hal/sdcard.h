@@ -27,6 +27,26 @@
 
 static constexpr size_t SIGURDOS_SD_MAX_PATH_LEN = 255;
 
+enum SigurdosSdMountSource : uint8_t {
+    SIGURDOS_SD_MOUNT_SOURCE_NONE = 0,
+    SIGURDOS_SD_MOUNT_SOURCE_INIT,
+    SIGURDOS_SD_MOUNT_SOURCE_RETRY,
+};
+
+enum SigurdosSdMountError : uint8_t {
+    SIGURDOS_SD_MOUNT_ERROR_NONE = 0,
+    SIGURDOS_SD_MOUNT_ERROR_BEGIN_FAILED,
+    SIGURDOS_SD_MOUNT_ERROR_RETRIES_EXHAUSTED,
+};
+
+struct SigurdosSdMountDiagnostic {
+    bool mounted;
+    uint8_t attempt_count;  // Total SD.begin() calls since the last boot init reset.
+    SigurdosSdMountSource last_source;
+    SigurdosSdMountError last_error;
+    uint32_t last_backoff_ms;
+};
+
 inline bool sigurdos_sdcard_path_valid(const char* path)
 {
     if (!path || path[0] == '\0') return false;
@@ -36,7 +56,7 @@ inline bool sigurdos_sdcard_path_valid(const char* path)
     return true;
 }
 
-// Initialize SD card over SPI (single attempt — fast boot)
+// Initialize SD card over SPI with short bounded retry/backoff for warm reboot recovery.
 // Call sigurdos_sdcard_retry() lazily when a consumer needs the card
 bool sigurdos_sdcard_init();
 
@@ -47,6 +67,11 @@ bool sigurdos_sdcard_retry();
 
 // Check if SD card is currently mounted
 bool sigurdos_sdcard_mounted();
+
+// Last mount diagnostic state for telemetry/UI/debug surfaces.
+SigurdosSdMountDiagnostic sigurdos_sdcard_diagnostics();
+const char* sigurdos_sdcard_mount_source_name(SigurdosSdMountSource source);
+const char* sigurdos_sdcard_mount_error_name(SigurdosSdMountError error);
 
 // Filesystem info
 uint64_t sigurdos_sdcard_capacity_bytes();

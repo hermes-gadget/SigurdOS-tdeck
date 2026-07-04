@@ -38,45 +38,158 @@ static bool mounted = false;
 static uint64_t capacity_bytes = 0;
 static uint64_t free_bytes = 0;
 
-static int sdcard_retry_count = 0;  // total additional retry attempts
+static constexpr uint8_t SDCARD_INIT_MAX_ATTEMPTS = 3;
+static constexpr uint8_t SDCARD_LAZY_RETRY_MAX_ATTEMPTS = 3;
 
-bool sigurdos_sdcard_init()
+static int sdcard_retry_count = 0;  // total additional lazy retry attempts
+
+static SigurdosSdMountDiagnostic sdcard_diag = {
+    false,
+    0,
+    SIGURDOS_SD_MOUNT_SOURCE_NONE,
+    SIGURDOS_SD_MOUNT_ERROR_NONE,
+    0,
+};
+
+static uint32_t sdcard_backoff_ms(uint8_t attempt_index)
 {
-    sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
+    if (attempt_index == 0) return 0;
+    if (attempt_index == 1) return 120;
+    if (attempt_index == 2) return 300;
+    return 600;
+}
 
-    // Single attempt at boot — retries are lazy via sigurdos_sdcard_retry()
+static void sdcard_reset_mount_state()
+{
+    mounted = false;
+    capacity_bytes = 0;
+    free_bytes = 0;
+}
+
+static void sdcard_reset_diagnostics()
+{
+    sdcard_diag.mounted = false;
+    sdcard_diag.attempt_count = 0;
+    sdcard_diag.last_source = SIGURDOS_SD_MOUNT_SOURCE_NONE;
+    sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_NONE;
+    sdcard_diag.last_backoff_ms = 0;
+}
+
+static void sdcard_record_success()
+{
+    uint64_t total = (uint64_t)SD.totalBytes();
+    uint64_t used = (uint64_t)SD.usedBytes();
+
+    capacity_bytes = total;
+    free_bytes = used <= total ? (total - used) : 0;
+    mounted = true;
+    sdcard_diag.mounted = true;
+    sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_NONE;
+}
+
+static bool sdcard_mount_once(SigurdosSdMountSource source)
+{
+    sdcard_diag.attempt_count++;
+    sdcard_diag.last_source = source;
+
     if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
-        capacity_bytes = (uint64_t)SD.totalBytes();
-        free_bytes     = (uint64_t)(SD.totalBytes() - SD.usedBytes());
-        mounted = true;
-        sdcard_retry_count = 0;
+        sdcard_record_success();
         return true;
     }
 
-    mounted = false;
+    SD.end();
+    sdcard_reset_mount_state();
+    sdcard_diag.mounted = false;
+    sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_BEGIN_FAILED;
     return false;
+}
+
+static bool sdcard_mount_with_backoff(SigurdosSdMountSource source, uint8_t max_attempts)
+{
+    for (uint8_t attempt = 0; attempt < max_attempts; ++attempt) {
+        uint32_t backoff_ms = sdcard_backoff_ms(attempt);
+        sdcard_diag.last_backoff_ms = backoff_ms;
+        if (backoff_ms > 0) {
+            delay(backoff_ms);
+        }
+
+        if (sdcard_mount_once(source)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool sigurdos_sdcard_init()
+{
+    sdcard_reset_diagnostics();
+    sdcard_reset_mount_state();
+    sdcard_retry_count = 0;
+
+    sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
+
+    return sdcard_mount_with_backoff(
+        SIGURDOS_SD_MOUNT_SOURCE_INIT,
+        SDCARD_INIT_MAX_ATTEMPTS);
 }
 
 bool sigurdos_sdcard_retry()
 {
     if (mounted) return true;  // already mounted
-    if (sdcard_retry_count >= 3) return false;  // cap: 3 total retries
+    if (sdcard_retry_count >= SDCARD_LAZY_RETRY_MAX_ATTEMPTS) {
+        sdcard_diag.last_source = SIGURDOS_SD_MOUNT_SOURCE_RETRY;
+        sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_RETRIES_EXHAUSTED;
+        sdcard_diag.last_backoff_ms = 0;
+        return false;
+    }
 
     sdcard_retry_count++;
 
-    if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
-        capacity_bytes = (uint64_t)SD.totalBytes();
-        free_bytes     = (uint64_t)(SD.totalBytes() - SD.usedBytes());
-        mounted = true;
-        return true;
+    uint32_t backoff_ms = sdcard_backoff_ms((uint8_t)sdcard_retry_count);
+    sdcard_diag.last_backoff_ms = backoff_ms;
+    if (backoff_ms > 0) {
+        delay(backoff_ms);
     }
 
-    return false;
+    return sdcard_mount_once(SIGURDOS_SD_MOUNT_SOURCE_RETRY);
 }
 
 bool sigurdos_sdcard_mounted()
 {
     return mounted;
+}
+
+SigurdosSdMountDiagnostic sigurdos_sdcard_diagnostics()
+{
+    sdcard_diag.mounted = mounted;
+    return sdcard_diag;
+}
+
+const char* sigurdos_sdcard_mount_source_name(SigurdosSdMountSource source)
+{
+    switch (source) {
+    case SIGURDOS_SD_MOUNT_SOURCE_INIT:
+        return "init";
+    case SIGURDOS_SD_MOUNT_SOURCE_RETRY:
+        return "retry";
+    case SIGURDOS_SD_MOUNT_SOURCE_NONE:
+    default:
+        return "none";
+    }
+}
+
+const char* sigurdos_sdcard_mount_error_name(SigurdosSdMountError error)
+{
+    switch (error) {
+    case SIGURDOS_SD_MOUNT_ERROR_BEGIN_FAILED:
+        return "begin_failed";
+    case SIGURDOS_SD_MOUNT_ERROR_RETRIES_EXHAUSTED:
+        return "retries_exhausted";
+    case SIGURDOS_SD_MOUNT_ERROR_NONE:
+    default:
+        return "none";
+    }
 }
 
 uint64_t sigurdos_sdcard_capacity_bytes()

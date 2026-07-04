@@ -81,6 +81,28 @@ bool sigurdos_keyboard_is_shift();
 bool sigurdos_keyboard_is_ctrl();
 bool sigurdos_keyboard_is_alt();
 
+struct SigurdOSKeyboardDiag {
+    bool initialized;
+    bool raw_supported;
+    bool raw_unavailable;
+    bool raw_valid;
+    bool shift;
+    bool ctrl;
+    bool alt;
+    bool sym_down;
+    bool mic_down;
+    uint8_t layout;
+    uint8_t last_key_mode_byte;
+    uint8_t raw_matrix[5];
+    uint32_t last_output_codepoint;
+    uint32_t event_count;
+    uint32_t overwrite_count;
+    uint32_t last_event_ms;
+};
+
+// Snapshot keyboard diagnostic state without consuming the pending key queue.
+bool sigurdos_keyboard_get_diag(SigurdOSKeyboardDiag* out);
+
 // Reset internal scan state (poll timer, key buffer, modifier flags).
 // Does NOT reset the `initialized` flag or I2C communication.
 // Useful for testing and on device wake from deep sleep.

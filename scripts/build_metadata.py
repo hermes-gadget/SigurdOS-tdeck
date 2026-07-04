@@ -1,5 +1,6 @@
 Import("env")
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -72,6 +73,17 @@ meshcore_sha = _git(["rev-parse", "--short=12", "HEAD"], meshcore_dir)
 git_dirty = _git_dirty(project_dir)
 git_tag = _git_describe(project_dir)
 
+build_source = "github_actions" if os.environ.get("GITHUB_ACTIONS") == "true" else "local"
+actions_run_id = os.environ.get("GITHUB_RUN_ID", "local")
+actions_run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+actions_ref = os.environ.get("GITHUB_REF_NAME") or _git(["rev-parse", "--abbrev-ref", "HEAD"], project_dir)
+actions_run_url = ""
+if build_source == "github_actions":
+    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    repository = os.environ.get("GITHUB_REPOSITORY", "")
+    if repository and actions_run_id:
+        actions_run_url = f"{server_url}/{repository}/actions/runs/{actions_run_id}"
+
 # Set SIGURDOS_VERSION from git describe with tdeck_pins.h define as fallback
 sigurdos_version = _macro_string(git_tag) if git_tag else None
 
@@ -84,6 +96,11 @@ env.Append(
         ("SIGURDOS_BUILD_PARTITIONS", _macro_string(partitions)),
         ("SIGURDOS_BUILD_BOARD", _macro_string(board)),
         ("SIGURDOS_BUILD_MCU", _macro_string(mcu)),
+        ("SIGURDOS_BUILD_SOURCE", _macro_string(build_source)),
+        ("SIGURDOS_BUILD_ACTIONS_RUN_ID", _macro_string(actions_run_id)),
+        ("SIGURDOS_BUILD_ACTIONS_RUN_ATTEMPT", _macro_string(actions_run_attempt)),
+        ("SIGURDOS_BUILD_ACTIONS_REF", _macro_string(actions_ref)),
+        ("SIGURDOS_BUILD_ACTIONS_RUN_URL", _macro_string(actions_run_url)),
     ]
 )
 
@@ -96,5 +113,6 @@ dirty_suffix = "+dirty" if git_dirty else ""
 print(
     "SigurdOS build metadata: "
     f"env={build_env} git={git_sha}{dirty_suffix} "
-    f"meshcore={meshcore_sha} partitions={partitions}"
+    f"meshcore={meshcore_sha} partitions={partitions} "
+    f"source={build_source} run={actions_run_id}"
 )

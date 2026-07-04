@@ -47,6 +47,10 @@ static SigurdOSTrackballEvent event_queue[EVENT_QUEUE_SIZE];
 static uint8_t queue_head = 0;
 static uint8_t queue_tail = 0;
 static uint8_t queue_count = 0;
+static SigurdOSTrackballEvent diag_last_event = SigurdOSTrackballEvent::None;
+static uint32_t diag_event_count = 0;
+static uint32_t diag_overflow_count = 0;
+static uint32_t diag_last_event_ms = 0;
 #if defined(SIGURDOS_TRACKBALL_DEBUG)
 static uint32_t last_debug_status_at = 0;
 #endif
@@ -119,7 +123,14 @@ static void queue_event(SigurdOSTrackballEvent event)
     sigurdos::telemetry::report_trackball_event((uint8_t)event);
 #endif
 
-    if (queue_count >= EVENT_QUEUE_SIZE) return;
+    diag_last_event = event;
+    diag_event_count++;
+    diag_last_event_ms = millis();
+
+    if (queue_count >= EVENT_QUEUE_SIZE) {
+        diag_overflow_count++;
+        return;
+    }
     event_queue[queue_head] = event;
     queue_head = (uint8_t)((queue_head + 1) % EVENT_QUEUE_SIZE);
     queue_count++;
@@ -304,6 +315,10 @@ void sigurdos_trackball_reset_scan_state()
     queue_head = 0;
     queue_tail = 0;
     queue_count = 0;
+    diag_last_event = SigurdOSTrackballEvent::None;
+    diag_event_count = 0;
+    diag_overflow_count = 0;
+    diag_last_event_ms = 0;
 #if defined(SIGURDOS_TRACKBALL_DEBUG)
     last_debug_status_at = 0;
 #endif
@@ -311,4 +326,20 @@ void sigurdos_trackball_reset_scan_state()
     for (ButtonState& btn : buttons) {
         reset_button(btn, now);
     }
+}
+
+bool sigurdos_trackball_get_diag(SigurdOSTrackballDiag* out)
+{
+    if (!out) return false;
+    out->initialized = initialized;
+    out->queue_count = queue_count;
+    out->last_event = diag_last_event;
+    out->event_count = diag_event_count;
+    out->overflow_count = diag_overflow_count;
+    out->last_event_ms = diag_last_event_ms;
+    for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); ++i) {
+        out->raw_levels[i] = (uint8_t)digitalRead(buttons[i].pin);
+        out->active[i] = raw_pin_active(buttons[i]);
+    }
+    return initialized;
 }

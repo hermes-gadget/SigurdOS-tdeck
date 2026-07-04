@@ -23,6 +23,7 @@
 #include "prefs.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include <cstring>
 #if SIGURDOS_TELEMETRY
 #include "../diagnostics/telemetry.h"
 #endif
@@ -185,6 +186,12 @@ static int      key_tail  = 0;   // next read position
 static int      key_count = 0;   // number of entries in buffer
 static uint32_t last_consumed_key = 0; // key returned by most recent consume_event()
 static uint32_t key_overwrites = 0;    // count of keys silently overwritten when buffer full
+static uint8_t  diag_last_key_mode_byte = 0;
+static uint8_t  diag_raw_matrix[KB_RAW_COLS] = {0};
+static bool     diag_raw_valid = false;
+static uint32_t diag_last_output_codepoint = 0;
+static uint32_t diag_event_count = 0;
+static uint32_t diag_last_event_ms = 0;
 
 static bool raw_key_down(const uint8_t matrix[KB_RAW_COLS], uint8_t col, uint8_t row)
 {
@@ -242,6 +249,9 @@ static void enqueue_key(uint32_t key_code)
         key_tail = (key_tail + 1) % KEY_BUF_SIZE;
         key_overwrites++;
     }
+    diag_last_output_codepoint = key_code;
+    diag_event_count++;
+    diag_last_event_ms = millis();
 
 #if SIGURDOS_TELEMETRY
     sigurdos::telemetry::report_key_event(
@@ -406,6 +416,9 @@ static bool poll_key_mode()
         return false;
     }
     const int key_value = Wire.read();
+    if (key_value > 0 && key_value != 0xFF) {
+        diag_last_key_mode_byte = (uint8_t)key_value;
+    }
 
 #if defined(SIGURDOS_DEBUG)
     if (key_value > 0 && key_value != 0xFF) {
@@ -452,6 +465,8 @@ static void sample_raw_modifiers()
 #endif
         raw_sampler_support = RawSamplerSupport::Supported;
         raw_single_byte_samples = 0;
+        memcpy(diag_raw_matrix, matrix, sizeof(diag_raw_matrix));
+        diag_raw_valid = true;
         update_modifier_sample(matrix);
         resolve_pending_key(matrix);
         return;
@@ -662,6 +677,12 @@ void sigurdos_keyboard_reset_scan_state()
     pending_key = 0;
     raw_sampler_support = RawSamplerSupport::Unknown;
     raw_single_byte_samples = 0;
+    diag_last_key_mode_byte = 0;
+    memset(diag_raw_matrix, 0, sizeof(diag_raw_matrix));
+    diag_raw_valid = false;
+    diag_last_output_codepoint = 0;
+    diag_event_count = 0;
+    diag_last_event_ms = 0;
 }
 
 void sigurdos_keyboard_consume_key()
@@ -685,4 +706,26 @@ void sigurdos_keyboard_inject_codepoint(uint32_t key_code)
 uint32_t sigurdos_keyboard_overwrite_count()
 {
     return key_overwrites;
+}
+
+bool sigurdos_keyboard_get_diag(SigurdOSKeyboardDiag* out)
+{
+    if (!out) return false;
+    out->initialized = initialized;
+    out->raw_supported = raw_sampler_support == RawSamplerSupport::Supported;
+    out->raw_unavailable = raw_sampler_support == RawSamplerSupport::Unavailable;
+    out->raw_valid = diag_raw_valid;
+    out->shift = shift_held;
+    out->ctrl = ctrl_held;
+    out->alt = alt_held;
+    out->sym_down = sym_sample_down;
+    out->mic_down = mic_sample_down;
+    out->layout = sigurdos::prefs_get().kbd_layout;
+    out->last_key_mode_byte = diag_last_key_mode_byte;
+    memcpy(out->raw_matrix, diag_raw_matrix, sizeof(out->raw_matrix));
+    out->last_output_codepoint = diag_last_output_codepoint;
+    out->event_count = diag_event_count;
+    out->overwrite_count = key_overwrites;
+    out->last_event_ms = diag_last_event_ms;
+    return initialized;
 }

@@ -32,6 +32,26 @@
 #define SIGURDOS_BUILD_MCU "unknown"
 #endif
 
+#ifndef SIGURDOS_BUILD_SOURCE
+#define SIGURDOS_BUILD_SOURCE "local"
+#endif
+
+#ifndef SIGURDOS_BUILD_ACTIONS_RUN_ID
+#define SIGURDOS_BUILD_ACTIONS_RUN_ID "local"
+#endif
+
+#ifndef SIGURDOS_BUILD_ACTIONS_RUN_ATTEMPT
+#define SIGURDOS_BUILD_ACTIONS_RUN_ATTEMPT ""
+#endif
+
+#ifndef SIGURDOS_BUILD_ACTIONS_REF
+#define SIGURDOS_BUILD_ACTIONS_REF "unknown"
+#endif
+
+#ifndef SIGURDOS_BUILD_ACTIONS_RUN_URL
+#define SIGURDOS_BUILD_ACTIONS_RUN_URL ""
+#endif
+
 namespace sigurdos {
 namespace build {
 
@@ -46,6 +66,11 @@ const BuildInfo& info()
         SIGURDOS_BUILD_PARTITIONS,
         SIGURDOS_BUILD_BOARD,
         SIGURDOS_BUILD_MCU,
+        SIGURDOS_BUILD_SOURCE,
+        SIGURDOS_BUILD_ACTIONS_RUN_ID,
+        SIGURDOS_BUILD_ACTIONS_RUN_ATTEMPT,
+        SIGURDOS_BUILD_ACTIONS_REF,
+        SIGURDOS_BUILD_ACTIONS_RUN_URL,
     };
     return kInfo;
 }

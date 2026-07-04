@@ -20,6 +20,7 @@
 #include "touch.h"
 #include "i2c_bus.h"
 #include "tdeck_pins.h"
+#include "../diagnostics/log.h"
 #include <Wire.h>
 #include <Arduino.h>
 #if SIGURDOS_TELEMETRY
@@ -49,6 +50,16 @@ static uint32_t last_poll      = 0;
 static bool     was_pressed     = false;   // for edge detection
 static int      touch_i2c_errors = 0;   // consecutive I2C read failures
 static constexpr int TOUCH_MAX_CONSECUTIVE_ERRORS = 5;
+static uint32_t diag_press_count = 0;
+static uint32_t diag_release_count = 0;
+static uint32_t diag_move_count = 0;
+static uint32_t diag_last_event_ms = 0;
+
+static void diag_record_release(uint32_t now)
+{
+    diag_release_count++;
+    diag_last_event_ms = now;
+}
 
 // ── Helpers ───────────────────────────────────────────────
 static bool i2c_write_reg(uint16_t reg, uint8_t val)
@@ -78,10 +89,8 @@ static bool i2c_read_bytes(uint16_t reg, uint8_t* out, size_t len)
 
     const size_t received = Wire.requestFrom(i2c_addr, len);
     if (received != len) {
-#if defined(SIGURDOS_DEBUG)
-        Serial.printf("[touch] I2C read 0x%04X: %u/%u bytes\n",
-                      reg, (unsigned)received, (unsigned)len);
-#endif
+        SIG_LOGD("touch I2C read 0x%04X: %u/%u bytes",
+                 reg, (unsigned)received, (unsigned)len);
         return false;
     }
     if (Wire.available() < (int)len) return false;
@@ -180,6 +189,14 @@ void sigurdos_touch_reset_init_for_test()
     init_attempted = false;
     i2c_addr = GT911_ADDR1;
     touch_i2c_errors = 0;
+    last_x = -1;
+    last_y = -1;
+    pressed = false;
+    was_pressed = false;
+    diag_press_count = 0;
+    diag_release_count = 0;
+    diag_move_count = 0;
+    diag_last_event_ms = 0;
 }
 
 void sigurdos_touch_loop()
@@ -208,6 +225,7 @@ void sigurdos_touch_loop()
             if (pressed) {
                 pressed = false;
                 was_pressed = true;
+                diag_record_release(now);
             }
             return;
         }
@@ -219,7 +237,11 @@ void sigurdos_touch_loop()
         touch_i2c_errors++;
         if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS) {
             // Touch controller may need re-init — clear stale state
-            if (pressed) { pressed = false; was_pressed = true; }
+            if (pressed) {
+                pressed = false;
+                was_pressed = true;
+                diag_record_release(now);
+            }
         }
         return;
     }
@@ -235,6 +257,7 @@ void sigurdos_touch_loop()
         if (pressed) {
             pressed = false;
             was_pressed = true;
+            diag_record_release(now);
         }
         return;
     }
@@ -246,7 +269,9 @@ void sigurdos_touch_loop()
         // Clear status to acknowledge even on partial read failure
         i2c_write_reg(GT911_REG_STATUS, 0);
         if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS && pressed) {
-            pressed = false; was_pressed = true;
+            pressed = false;
+            was_pressed = true;
+            diag_record_release(now);
         }
         return;
     }
@@ -292,6 +317,13 @@ void sigurdos_touch_loop()
 
     if (found_x >= 0 && found_y >= 0) {
         // Touch detected
+        if (!pressed) {
+            diag_press_count++;
+            diag_last_event_ms = now;
+        } else if (last_x != found_x || last_y != found_y) {
+            diag_move_count++;
+            diag_last_event_ms = now;
+        }
         last_x = found_x;
         last_y = found_y;
         pressed = true;
@@ -304,6 +336,7 @@ void sigurdos_touch_loop()
         if (pressed) {
             pressed = false;
             was_pressed = true;
+            diag_record_release(now);
         }
     }
 }
@@ -325,5 +358,23 @@ bool sigurdos_touch_get(int* out_x, int* out_y, bool* out_pressed)
 
 bool sigurdos_touch_ready()
 {
+    return initialized;
+}
+
+bool sigurdos_touch_get_diag(SigurdOSTouchDiag* out)
+{
+    if (!out) return false;
+    out->initialized = initialized;
+    out->init_attempted = init_attempted;
+    out->pressed = pressed;
+    out->edge_release_pending = was_pressed;
+    out->i2c_addr = i2c_addr;
+    out->x = last_x >= 0 ? last_x : 0;
+    out->y = last_y >= 0 ? last_y : 0;
+    out->consecutive_i2c_errors = touch_i2c_errors;
+    out->press_count = diag_press_count;
+    out->release_count = diag_release_count;
+    out->move_count = diag_move_count;
+    out->last_event_ms = diag_last_event_ms;
     return initialized;
 }

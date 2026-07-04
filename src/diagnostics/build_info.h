@@ -19,6 +19,11 @@ struct BuildInfo {
     const char* partitions;
     const char* board;
     const char* mcu;
+    const char* build_source;
+    const char* actions_run_id;
+    const char* actions_run_attempt;
+    const char* actions_ref;
+    const char* actions_run_url;
 };
 
 const BuildInfo& info();

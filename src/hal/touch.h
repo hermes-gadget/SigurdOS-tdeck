@@ -75,3 +75,21 @@ bool sigurdos_touch_get(int* out_x, int* out_y, bool* out_pressed);
 
 // Is the touch controller initialized and responding?
 bool sigurdos_touch_ready();
+
+struct SigurdOSTouchDiag {
+    bool initialized;
+    bool init_attempted;
+    bool pressed;
+    bool edge_release_pending;
+    uint8_t i2c_addr;
+    int x;
+    int y;
+    int consecutive_i2c_errors;
+    uint32_t press_count;
+    uint32_t release_count;
+    uint32_t move_count;
+    uint32_t last_event_ms;
+};
+
+// Snapshot touch diagnostic state without changing LVGL input state.
+bool sigurdos_touch_get_diag(SigurdOSTouchDiag* out);
