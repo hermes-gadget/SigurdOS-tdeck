@@ -35,6 +35,7 @@
 #include "../diagnostics/debug_cfg.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../ui/theme.h"
+#include "../hal/gps.h"
 
 // Forward declare — the map screen sets this via sigurdos_map_contact_set_tap_cb
 static map_contact_tap_cb_t g_contact_tap_cb = nullptr;
@@ -167,6 +168,8 @@ static void apply_preset_default_view() {
     const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
     const SigurdosMapDefaultView view =
         sigurdos_map_default_view_for_radio_profile(prefs.radio_profile);
+    // Sentinel zoom of -1 means "no regional override — keep current center"
+    if (view.zoom < 0) return;
     center_lat = clamp_d(view.lat, MIN_LAT, MAX_LAT);
     center_lon = clamp_d(view.lon, MIN_LON, MAX_LON);
     zoom_level = clamp(view.zoom, MIN_ZOOM, MAX_ZOOM);
@@ -574,48 +577,89 @@ static void discover_tiles() {
                      min_available_zoom, max_available_zoom);
 }
 
-// ── Metadata auto-center (from metadata.json, fallback to discover) ──
+// ── Auto-localization: center the map on whatever data is available ──
+// Priority chain:
+//   1. SD card tile coverage (auto-centers on geographic center of available tiles)
+//   2. metadata.json bounds (user-provided overrides for the tile set)
+//   3. GPS fix (device's current position — works anywhere, no SD needed)
+//   4. Radio profile preset (US/Canada regional defaults from onboarding)
+//   5. Hardcoded fallback (London — static initializers, line 60-62)
+//
+// Each level only activates if ALL higher-priority levels are unavailable.
 static void load_metadata() {
-    apply_preset_default_view();
+    // ── Level 1: SD card tile auto-discovery ─────────────
+    // This is the best option: it automatically centers on whatever tiles
+    // the user has, no matter where they are in the world.
+    if (sigurdos_sdcard_mounted() || sigurdos_sdcard_retry()) {
+        discover_tiles();
 
-    if (!sigurdos_sdcard_mounted()) {
-        // Lazy retry — SD may have been absent at boot but inserted since
-        if (!sigurdos_sdcard_retry()) return;
+        if (have_tile_coverage) {
+            // ── Level 2: metadata.json bounds refine ─────
+            FILE* f = fopen(SIGURDOS_SD_MOUNTPOINT "/tiles/metadata.json", "r");
+            if (f) {
+                char buf[512];
+                size_t len = fread(buf, 1, sizeof(buf) - 1, f);
+                fclose(f);
+                if (len > 0) {
+                    buf[len] = '\0';
+                    const char* p = strstr(buf, "\"bounds\"");
+                    if (p) {
+                        p = strchr(p, '[');
+                        if (p) {
+                            p++;
+                            double bounds[4];
+                            int n = 0;
+                            while (n < 4 && *p) {
+                                while (*p && (*p == ' ' || *p == ',' || *p == '\n')) p++;
+                                char* end;
+                                bounds[n] = strtod(p, &end);
+                                if (end == p) break;
+                                p = end;
+                                n++;
+                            }
+                            if (n >= 4) {
+                                center_lat = (bounds[1] + bounds[3]) / 2.0;
+                                center_lon = (bounds[0] + bounds[2]) / 2.0;
+                                clamp_view_to_coverage();
+                                MAP_DEBUG_PRINTF("[map] metadata: center=%.4f,%.4f\n",
+                                                 center_lat, center_lon);
+                            }
+                        }
+                    }
+                }
+            }
+            return; // Tiles win — best auto-localization
+        }
     }
 
-    // Always discover tiles first — this correctly sets zoom_level = best_zoom
-    discover_tiles();
-
-    // If metadata.json has bounds, refine the center from those
-    FILE* f = fopen(SIGURDOS_SD_MOUNTPOINT "/tiles/metadata.json", "r");
-    if (!f) return;
-    char buf[512];
-    size_t len = fread(buf, 1, sizeof(buf) - 1, f);
-    fclose(f);
-    if (len == 0) return;
-    buf[len] = '\0';
-    const char* p = strstr(buf, "\"bounds\"");
-    if (!p) return;
-    p = strchr(p, '[');
-    if (!p) return;
-    p++;
-    double bounds[4];
-    int n = 0;
-    while (n < 4 && *p) {
-        while (*p && (*p == ' ' || *p == ',' || *p == '\n')) p++;
-        char* end;
-        bounds[n] = strtod(p, &end);
-        if (end == p) break;
-        p = end;
-        n++;
-    }
-    if (n >= 4) {
-        center_lat = (bounds[1] + bounds[3]) / 2.0;
-        center_lon = (bounds[0] + bounds[2]) / 2.0;
-        clamp_view_to_coverage();
-        MAP_DEBUG_PRINTF("[map] metadata: center overridden to %.4f,%.4f\n",
+    // ── Level 3: GPS position ────────────────────────────
+    // No tiles found, but the device knows where it is.
+    // Center on the user's actual position at street-level zoom.
+    if (sigurdos_gps_has_fix()) {
+        center_lat = sigurdos_gps_latitude();
+        center_lon = sigurdos_gps_longitude();
+        zoom_level = sigurdos_map_clamp_int(15, MIN_ZOOM, MAX_ZOOM);
+        MAP_DEBUG_PRINTF("[map] gps: center=%.4f,%.4f zoom=15\n",
                          center_lat, center_lon);
+        return;
     }
+
+    // ── Level 4: Radio profile preset ────────────────────
+    // User selected a region during onboarding (US, Canada, UK, EU).
+    // Only apply if a profile is actually set — NULL/empty means "not chosen."
+    const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
+    if (prefs.radio_profile && prefs.radio_profile[0] != '\0') {
+        apply_preset_default_view();
+        MAP_DEBUG_PRINTF("[map] profile: center=%.4f,%.4f zoom=%d (profile=%s)\n",
+                         center_lat, center_lon, zoom_level, prefs.radio_profile);
+        return;
+    }
+
+    // ── Level 5: Hardcoded London fallback ───────────────
+    // Already set by static initializers (line 60-62).
+    // London is a neutral default that has map tiles widely available.
+    MAP_DEBUG_PRINTF("[map] fallback: center=%.4f,%.4f zoom=%d\n",
+                     center_lat, center_lon, zoom_level);
 }
 
 // ════════════════════════════════════════════════════════

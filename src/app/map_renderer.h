@@ -51,8 +51,13 @@ inline SigurdosMapDefaultView sigurdos_map_default_view_for_radio_profile(
         return {SIGURDOS_MAP_DEFAULT_CA_LAT, SIGURDOS_MAP_DEFAULT_CA_LON,
                 SIGURDOS_MAP_DEFAULT_CA_ZOOM};
     }
-    return {SIGURDOS_MAP_DEFAULT_US_LAT, SIGURDOS_MAP_DEFAULT_US_LON,
-            SIGURDOS_MAP_DEFAULT_US_ZOOM};
+    if (radio_profile_id && std::strcmp(radio_profile_id, "us_902_928") == 0) {
+        return {SIGURDOS_MAP_DEFAULT_US_LAT, SIGURDOS_MAP_DEFAULT_US_LON,
+                SIGURDOS_MAP_DEFAULT_US_ZOOM};
+    }
+    // UK and EU profiles: London is already a reasonable default; no override needed.
+    // Return a sentinel that apply_preset_default_view() will ignore.
+    return {0.0, 0.0, -1};  // sentinel: caller keeps current center
 }
 
 inline bool sigurdos_map_zoom_valid(int zoom) {
