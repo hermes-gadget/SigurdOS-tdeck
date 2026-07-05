@@ -57,9 +57,9 @@ static constexpr double MIN_LON   = SIGURDOS_MAP_MIN_LON;
 static lv_obj_t* map_canvas = nullptr;
 static uint8_t*   canvas_pixels = nullptr;
 
-static double center_lat = SIGURDOS_MAP_DEFAULT_US_LAT;
-static double center_lon = SIGURDOS_MAP_DEFAULT_US_LON;
-static int    zoom_level = SIGURDOS_MAP_DEFAULT_US_ZOOM;
+static double center_lat = 51.5074;  // London (fallback default)
+static double center_lon = -0.1278;
+static int    zoom_level = 10;
 static bool   initialized = false;
 
 struct TileCoverage {
