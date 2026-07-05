@@ -92,6 +92,16 @@ static bool sdcard_mount_once(SigurdosSdMountSource source)
     sdcard_diag.attempt_count++;
     sdcard_diag.last_source = source;
 
+    // Re-initialise the shared SPI bus before every mount attempt.
+    // The ESP32 SPIClass.begin() issues periph_module_reset() on SPI2,
+    // which the SD card's GO_IDLE_STATE (CMD0) requires to handshake.
+    // This is especially important on retries where SD.end() was called.
+    sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
+
+    // Give the SD card time to stabilise after SPI bus reset.
+    // Some cards need >1ms after power-on before they accept CMD0.
+    delay(10);
+
     if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
         sdcard_record_success();
         return true;
@@ -127,7 +137,8 @@ bool sigurdos_sdcard_init()
     sdcard_reset_mount_state();
     sdcard_retry_count = 0;
 
-    sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
+    // sdcard_mount_once() calls sigurdos_shared_spi_begin() internally,
+    // so we don't need to duplicate it here.
 
     return sdcard_mount_with_backoff(
         SIGURDOS_SD_MOUNT_SOURCE_INIT,
