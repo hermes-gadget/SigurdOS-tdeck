@@ -57,25 +57,22 @@ namespace sigurdos::ui {
 
 using namespace theme;
 
-// ── Layout constants (from responsive.h) ──────────────────
+// Layout constants (from responsive.h)
 using namespace responsive;
-// TOP_BAR_H, BOT_BAR_H, DIVIDER_H, CONTENT_Y, CONTENT_H — all from responsive.h
 
 void show_screen(lv_obj_t* scr)
 {
-    // Use lv_scr_load_anim with auto_del=true for ALL screen loads so LVGL
-    // consistently manages the outgoing screen lifecycle. The previous
-    // lv_scr_load() (auto_del=false) + manual lv_obj_del_async() conflicted
-    // with lv_scr_load_anim() (auto_del=true) used by the animated Home/Chat
-    // transitions. On rapid navigation between instant and animated screens,
-    // LVGL's internal screen-load state machine (d->scr_to_load, d->prev_scr,
-    // d->del_prev) deadlocked — the device hung silently after ~4 round-trips
-    // with no crash/reboot. (#672)
+    // Use auto_del=false for ALL screen loads and manage outgoing-screen
+    // deletion manually. Previously, mixing auto_del=true/false across
+    // different screen types caused LVGL's internal screen-load state
+    // machine (d->scr_to_load, d->prev_scr, d->del_prev) to deadlock
+    // after ~4-5 round-trips between animated and instant screen loads.
     //
-    // With auto_del=true, LVGL frees the outgoing screen, triggers its
-    // LV_EVENT_DELETE handlers to null global pointers and stop timers, and
-    // reclaims the LVGL object-pool memory — same result, single code path.
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    // For NONE animation (this path): the load completes synchronously
+    // so lv_obj_del_async() is safe immediately.
+    lv_obj_t* old_scr = lv_screen_active();
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
 }
 
 // Update the text inside a settings row button (used after live time set)

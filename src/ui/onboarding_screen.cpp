@@ -4,6 +4,7 @@
 #include "responsive.h"
 #include "chat_screen.h"
 #include "screens.h"
+#include "screens_common.h"
 #include "../fonts/emoji_font.h"
 #include "../hal/prefs.h"
 #include "../hal/radio_profiles.h"
@@ -47,7 +48,7 @@ static lv_obj_t* s_sf_label = nullptr;
 static lv_obj_t* s_pwr_label = nullptr;
 
 static void rebuild_content();
-static void show_screen(lv_obj_t* scr);
+static void onboarding_show_screen(lv_obj_t* scr);
 
 static void clear_widget_ptrs()
 {
@@ -586,12 +587,14 @@ void onboarding_screen_show()
     }, LV_EVENT_DELETE, nullptr);
 
     rebuild_content();
-    show_screen(s_scr);
+    onboarding_show_screen(s_scr);
 }
 
-static void show_screen(lv_obj_t* scr)
+static void onboarding_show_screen(lv_obj_t* scr)
 {
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
+    lv_obj_t* old_scr = lv_screen_active();
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
+    if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
 }
 
 } // namespace sigurdos::ui

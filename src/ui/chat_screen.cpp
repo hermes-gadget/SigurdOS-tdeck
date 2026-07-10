@@ -21,6 +21,7 @@
 #include "channel_menu.h"
 #include "navigation.h"
 #include "screens.h"
+#include "screens_common.h"
 #include "theme.h"
 #include "responsive.h"
 #include "../hal/tdeck_pins.h"
@@ -1027,7 +1028,9 @@ static void show_channel_list(lv_scr_load_anim_t anim)
         show_add_channel_options(scr);
     }, LV_EVENT_CLICKED, nullptr);
 
-    lv_scr_load_anim(s, anim, 200, 0, true);
+    lv_obj_t* old_scr = lv_screen_active();
+    lv_scr_load_anim(s, anim, 200, 0, false);
+    if (old_scr && old_scr != s) lv_obj_del_async(old_scr);
 }
 
 // ════════════════════════════════════════════════════
@@ -1852,7 +1855,9 @@ static void open_channel_messaging(int idx)
         lv_group_focus_obj(input_field);
     }
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
+    lv_obj_t* old_scr = lv_screen_active();
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
+    if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
 }
 
 static void refresh_chat_list_view(lv_obj_t* scr) {
