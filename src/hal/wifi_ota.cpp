@@ -20,6 +20,10 @@ static bool active = false;
 static char server_ip[16] = "";
 static String csrf_token;  // regenerated per OTA session
 
+// OTA PIN brute-force protection (SEC-001)
+static constexpr int MAX_PIN_FAILURES = 5;
+static int pin_fail_count = 0;
+
 bool start(const char* ssid, const char* password) {
     if (active) return true;
 
@@ -36,6 +40,9 @@ bool start(const char* ssid, const char* password) {
         SIG_LOGW("[ota] REFUSED: no device PIN set — set a PIN before using WiFi OTA");
         return false;
     }
+
+    // Reset PIN brute-force counter on each OTA session start (SEC-001)
+    pin_fail_count = 0;
 
     IPAddress ip;
     if (wifi_sta::isConnected()) {
@@ -154,12 +161,22 @@ bool start(const char* ssid, const char* password) {
                     Update.abort();
                     return;
                 }
+                // PIN brute-force protection: lock out after N failures (SEC-001).
+                // Counter resets when OTA is restarted (start() called again).
+                if (pin_fail_count >= MAX_PIN_FAILURES) {
+                    SIG_LOGW("[ota] Upload rejected: too many failed PIN attempts (%d) — restart OTA to retry",
+                             pin_fail_count);
+                    Update.abort();
+                    return;
+                }
                 // A PIN is mandatory: start() refuses to run without one, so
                 // device_pin is always non-zero here. Treat a missing/zero PIN
                 // as unauthenticated rather than silently accepting (#687).
                 bool pin_valid = otaPinAccepts(p.device_pin, pin_arg.c_str());
                 if (!pin_valid) {
-                    SIG_LOGW("[ota] Upload rejected: invalid PIN");
+                    pin_fail_count++;
+                    SIG_LOGW("[ota] Upload rejected: invalid PIN (attempt %d/%d)",
+                             pin_fail_count, MAX_PIN_FAILURES);
                     // Reject by setting a zero-length update so the write/end
                     // callbacks become no-ops. The completion handler will
                     // report the error.
