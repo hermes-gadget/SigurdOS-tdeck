@@ -561,10 +561,10 @@ namespace mesh {
         const char* sender_name = text;
         const char* msg_text = "";
         const char* colon = strstr(text, ": ");
+        char sender_buf[32];  // hoisted: must outlive the if-block (used at queue_push below)
         if (colon && colon > text) {
             size_t nlen = colon - text;
             if (nlen > 31) nlen = 31;
-            char sender_buf[32];
             memcpy(sender_buf, text, nlen);
             sender_buf[nlen] = '\0';
             sender_name = sender_buf;
