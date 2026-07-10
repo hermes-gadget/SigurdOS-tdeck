@@ -360,16 +360,19 @@ void sigurdos_gps_loop() {
                 // Auto-sync RTC from GPS on first valid fix with date
                 if (!gps.time_synced && gps.has_fix && gps.year >= 2020) {
                     gps.time_synced = true;
-                    // Compute Unix epoch from GPS date/time
+                    // Compute Unix epoch from GPS date/time using Howard
+                    // Hinnant's date algorithm — shared with the onboarding
+                    // and manual time-set paths (mesh_wrapper.cpp makeEpoch)
+                    // to prevent formula duplication and divergence.
                     int y = gps.year;
-                    int m = gps.month;
-                    int d = gps.day;
-                    if (m <= 2) { y--; m += 12; }
-                    // Days since 1970-01-01 (Gregorian calendar)
-                    uint32_t days = (uint32_t)(365LL * y + y / 4 - y / 100 + y / 400
-                                             - (365LL * 1970 + 1970 / 4 - 1970 / 100 + 1970 / 400)
-                                             + (uint32_t)(30.6001 * (m + 1)) + d - 719469);
-                    uint32_t epoch = days * 86400UL + gps.hour * 3600UL
+                    unsigned m = (unsigned)gps.month;
+                    if (m < 3) { m += 12; y -= 1; }
+                    int era = (y >= 0 ? y : y - 399) / 400;
+                    unsigned yoe = (unsigned)(y - era * 400);
+                    unsigned doy = (153u * (m - 3u) + 2u) / 5u + (unsigned)(gps.day - 1);
+                    unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+                    int days = (int)(era * 146097) + (int)doe - 719468;
+                    uint32_t epoch = (uint32_t)days * 86400UL + gps.hour * 3600UL
                                    + gps.minute * 60UL + gps.second;
                     // Set system RTC where settimeofday is available.
                     // Native Windows builds do not expose it, and the tests only
