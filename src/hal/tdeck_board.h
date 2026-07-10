@@ -72,15 +72,23 @@ public:
         // bounded transaction timeout for touch and keyboard traffic.
         i2c::begin();
 
-        // Detect wake from deep sleep (matches MeshCore TDeckBoard pattern)
+        // Detect wake from deep sleep (matches MeshCore TDeckBoard pattern).
+        // GPIO45 (DIO1) is not RTC-capable on ESP32-S3 (RTC GPIOs are 0-21),
+        // so the ext1 wake path is guarded and BD_STARTUP_RX_PACKET is never
+        // reached on this hardware. Timer-wake detection is handled by the
+        // caller (e.g. critical-battery re-check after the 15-min safety wake).
         esp_reset_reason_t reason = esp_reset_reason();
         if (reason == ESP_RST_DEEPSLEEP) {
-            uint64_t wakeup_source = esp_sleep_get_ext1_wakeup_status();
-            if (wakeup_source & SIGURDOS_LORA_DIO1_WAKE_MASK) {
-                _startup_reason = BD_STARTUP_RX_PACKET;
+            if (rtc_gpio_is_valid_gpio((gpio_num_t)PIN_LORA_DIO1)) {
+                uint64_t wakeup_source = esp_sleep_get_ext1_wakeup_status();
+                if (wakeup_source & SIGURDOS_LORA_DIO1_WAKE_MASK) {
+                    _startup_reason = BD_STARTUP_RX_PACKET;
+                }
+                rtc_gpio_deinit((gpio_num_t)PIN_LORA_DIO1);
             }
-            rtc_gpio_hold_dis((gpio_num_t)PIN_LORA_NSS);
-            rtc_gpio_deinit((gpio_num_t)PIN_LORA_DIO1);
+            if (rtc_gpio_is_valid_gpio((gpio_num_t)PIN_LORA_NSS)) {
+                rtc_gpio_hold_dis((gpio_num_t)PIN_LORA_NSS);
+            }
         }
     }
 
@@ -128,14 +136,28 @@ public:
         digitalWrite(PIN_TFT_BL, LOW);
 
         esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
-        rtc_gpio_set_direction((gpio_num_t)PIN_LORA_DIO1, RTC_GPIO_MODE_INPUT_ONLY);
-        rtc_gpio_pulldown_en((gpio_num_t)PIN_LORA_DIO1);
-        rtc_gpio_hold_en((gpio_num_t)PIN_LORA_NSS);
 
-        esp_sleep_enable_ext1_wakeup(SIGURDOS_LORA_DIO1_WAKE_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
-        if (secs > 0) {
-            esp_sleep_enable_timer_wakeup(secs * 1000000ULL);
+        // GPIO45 (DIO1) is not RTC-capable on ESP32-S3 (RTC GPIOs are
+        // 0-21). Guard all RTC-GPIO/ext1 calls so they don't silently
+        // fail with ESP_ERR_INVALID_ARG. Wake-on-packet from deep sleep
+        // is not supported on the T-Deck because DIO1 is on a non-RTC pin.
+        if (rtc_gpio_is_valid_gpio((gpio_num_t)PIN_LORA_DIO1)) {
+            rtc_gpio_set_direction((gpio_num_t)PIN_LORA_DIO1, RTC_GPIO_MODE_INPUT_ONLY);
+            rtc_gpio_pulldown_en((gpio_num_t)PIN_LORA_DIO1);
+            esp_sleep_enable_ext1_wakeup(SIGURDOS_LORA_DIO1_WAKE_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
         }
+
+        // GPIO9 (NSS) IS RTC-capable — hold to prevent floating during sleep
+        if (rtc_gpio_is_valid_gpio((gpio_num_t)PIN_LORA_NSS)) {
+            rtc_gpio_hold_en((gpio_num_t)PIN_LORA_NSS);
+        }
+
+        // Always arm a timer wakeup so the device can recover even when
+        // external wake (DIO1) is unavailable. For the critical-battery
+        // path (secs == 0 → indefinite sleep), wake every 15 minutes to
+        // re-check battery level and re-sleep if still below threshold.
+        uint32_t wake_secs = (secs > 0) ? secs : 900;
+        esp_sleep_enable_timer_wakeup(wake_secs * 1000000ULL);
         esp_deep_sleep_start();
     }
 
