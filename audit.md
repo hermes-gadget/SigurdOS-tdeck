@@ -664,7 +664,7 @@ Each PR below is independently reviewable; none is created here.
 | SEC-001 | OTA gated by brute-forceable 4-digit PIN, no rate limit | Medium | High | SEC | `hal/wifi_ota.cpp:131-198` | Unauthed flash by nearby attacker during OTA | Rate-limit/lockout, longer PIN | Rec. | PR 8 |
 | PERF-001 | O(n) SPIFFS open storm per incoming message | Medium | High | PERF/storage | `message_store.cpp:139-160,308-319` | UI stalls, flash wear on RX bursts | Single-open streaming + RAM index | No | PR 5 |
 | PERF-002 | Full-frame synchronous flush every redraw | Medium | High | PERF/render | `hal/display.cpp:770-807,529-595` | Higher CPU/power, SPI contention | Double-buffer / DMA flush | **Yes** | PR 6 |
-| HW-002 | Literal `\n` comment swallows trackball `pinMode` | Low | Confirmed | BUG/HW | `tdeck_board.h:62` | GPIO0 pull-up deferred (mitigated) | Real newline | No | PR 7 |
+| HW-002 | Literal `\n` comment swallows trackball `pinMode` | Low | Confirmed | BUG/HW | `tdeck_board.h:62` | GPIO0 pull-up deferred (mitigated) | Real newline | **PR #776** | ✅ Fixed |
 | SEC-002 | Companion PIN >4 digits locks on-device gate | Low | High | SEC/BUG | `screens_common.cpp:280`, `companion_bridge.cpp:841` | Owner locked out of Settings/Terminal | Align PIN ranges | No | PR 8 |
 | SEC-003 | Plaintext secrets in NVS/SPIFFS | Info | Confirmed | SEC | `prefs.cpp`, `persistence_store.cpp` | Flash dump exposes creds/identity | Document; consider flash encryption | No | — |
 | PERF-003 | 12.8 KB `emergency_buf` always in BSS | Low | High | PERF/RAM | `hal/display.cpp:797` | Wasted internal RAM | Allocate lazily | No | PR 7 |
@@ -673,13 +673,13 @@ Each PR below is independently reviewable; none is created here.
 | PERF-007 | Full-`ContactInfo`-copy linear scans in hot paths | Low | High | PERF/CPU | `sigurd_mesh_v2.cpp`, `mesh_wrapper.cpp` | CPU on UI refresh | Name→index cache | No | Phase 3 |
 | RELI-001 | No touch re-init after persistent I²C wedge | Low | High | reliability | `hal/touch.cpp:236-248,271-277` | Touch dead until reboot | Bounded re-init/reset | Rec. | Phase 2 |
 | RELI-003 | `atomicReplaceStore` removes before rename | Low | High | reliability | `message_store.cpp:351-356` | Store lost on power-cut mid-swap | Replace-rename / promote `.tmp` | No | Phase 2 |
-| DEAD-001 | `ctrl_held`/`is_ctrl()` always false | Low | Confirmed | DEAD | `hal/keyboard.cpp:161,607` | none | Remove or wire up | No | PR 9 |
-| DEAD-002 | `platformio.ini.bak` tracked | Low | Confirmed | DEAD | `/platformio.ini.bak` | none | Delete + gitignore | No | PR 9 |
-| DEAD-003 | Stale audit/merge docs tracked | Low | Medium | DEAD/DOC | `fork-merge-audit.md`, `merge-prs.md`, `docs/AUDIT*.md` | none | Archive/delete | No | PR 9 |
-| DEAD-004 | GT911 config read/write-back no-op | Low | High | DEAD | `hal/touch.cpp:153-172` | none (minor init cost) | Remove round-trip | Rec. | PR 9 |
-| BUILD-001 | ~140 `P_LORA_*` redefinition warnings | Low | Confirmed | BUILD | `tdeck_pins.h:150-156` | Real warnings buried | `#ifndef` guards | No | PR 9 |
-| DOC-001 | Stale comments (history size, I²C clock) | Low | Confirmed | DOC | `navigation.cpp:34`, `touch.cpp:210` | Confusing | Correct comments | No | PR 7 |
-| CI-001 | Static-analysis job is advisory (non-blocking) | Low | Confirmed | CI | `.github/workflows/pr-ci.yml` | `pio check` never gates | Make blocking once clean | No | PR 9 |
+| DEAD-001 | `ctrl_held`/`is_ctrl()` always false | Low | Confirmed | DEAD | `hal/keyboard.cpp:161,607` | none | Remove or wire up | **PR #776** | ✅ Fixed |
+| DEAD-002 | `platformio.ini.bak` tracked | Low | Confirmed | DEAD | `/platformio.ini.bak` | none | Delete + gitignore | **PR #776** | ✅ Fixed |
+| DEAD-003 | Stale audit/merge docs tracked | Low | Medium | DEAD/DOC | `fork-merge-audit.md`, `merge-prs.md`, `docs/AUDIT*.md` | none | Archive/delete | **PR #776** | ✅ Fixed |
+| DEAD-004 | GT911 config read/write-back no-op | Low | High | DEAD | `hal/touch.cpp:153-172` | none (minor init cost) | Remove round-trip | **PR #776** | ✅ Fixed |
+| BUILD-001 | ~140 `P_LORA_*` redefinition warnings | Low | Confirmed | BUILD | `tdeck_pins.h:150-156` | Real warnings buried | `#ifndef` guards | **PR #776** | ✅ Fixed |
+| DOC-001 | Stale comments (history size, I²C clock) | Low | Confirmed | DOC | `navigation.cpp:34`, `touch.cpp:210` | Confusing | Correct both comments | **PR #776** | ✅ Fixed |
+| CI-001 | Static-analysis job is advisory (non-blocking) | Low | Confirmed | CI | `.github/workflows/pr-ci.yml` | `pio check` never gates | Remove continue-on-error | **PR #776** | ✅ Fixed |
 | CI-002 | Large raw-`Serial.print` whitelist | Low | Confirmed | CI | `pr-ci.yml` logging grep | Policy under-enforced | Shrink whitelist | No | Phase 5 |
 | TEST-001 | No GPS time-sync/epoch test | Medium | Confirmed | TEST | `test/test_gps/` | Let `BUG-001` ship | Add epoch table test | No | PR 1 |
 | TEST-002 | No screen-transition lifecycle test | Medium | Confirmed | TEST | `test/` (missing) | Let `BUG-002` ship | Add UI-lifecycle test | No | PR 2 |
