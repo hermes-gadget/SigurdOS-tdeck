@@ -173,6 +173,10 @@ lv_obj_t* make_screen_full(const char* title)
 
 void update_wifi_status() {
     if (!g_wifi_icon) return;
+    if (!lv_obj_is_valid(g_wifi_icon)) {
+        g_wifi_icon = nullptr;
+        return;
+    }
     bool connected = sigurdos::wifi_sta::isConnected();
     if (connected) {
         int rssi = sigurdos::wifi_sta::getRSSI();

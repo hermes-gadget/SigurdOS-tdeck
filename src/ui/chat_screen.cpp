@@ -2408,6 +2408,7 @@ bool chat_screen_overlay_active() {
 void chat_screen_show()
 {
     screens_clear_back_btn();
+    screens_clear_wifi_icon();
     // Skip channel list when DM is being opened directly —
     // open_channel_messaging() will create the messaging screen instead.
     if (g_skip_channel_list) {
