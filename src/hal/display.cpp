@@ -793,16 +793,24 @@ bool sigurdos_display_init()
                                    partial_buf_bytes,
                                    LV_DISPLAY_RENDER_MODE_PARTIAL);
         } else {
-            // Emergency fallback: tiny DRAM buffer — at least LVGL can render
-            static uint8_t emergency_buf[TFT_WIDTH * 20 * 2];
-            uint32_t emergency_bytes = full_stride * 20;
-            if (emergency_bytes > sizeof(emergency_buf)) {
-                emergency_bytes = sizeof(emergency_buf);
+            // Last-resort fallback: allocate tiny DRAM buffer from heap so the
+            // 12.8 KB is only reserved when both PSRAM and DRAM partial allocs
+            // fail — not permanently in BSS (PERF-003).
+            const uint32_t emergency_buf_bytes = full_stride * 20;
+            uint8_t* emergency_buf = (uint8_t*)heap_caps_malloc(
+                emergency_buf_bytes,
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (emergency_buf) {
+                lv_display_set_buffers(lv_disp, emergency_buf, nullptr,
+                                       emergency_buf_bytes,
+                                       LV_DISPLAY_RENDER_MODE_PARTIAL);
+            } else {
+                // Truly out of memory — LVGL will render to a null buffer
+                // (functional but slow, pixels drawn one at a time via
+                // set_px_cb).  Better than crashing.
+                Serial.printf("[disp] WARNING: no draw buffer available — "
+                              "rendering will be degraded\n");
             }
-            lv_display_set_buffers(lv_disp, emergency_buf, nullptr,
-                                   emergency_bytes,
-                                   LV_DISPLAY_RENDER_MODE_PARTIAL);
-            Serial.printf("[disp] WARNING: using emergency draw buffer\n");
         }
     }
 
