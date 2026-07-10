@@ -468,13 +468,16 @@ namespace mesh {
                 sigurdos::mesh::registerAckedMessage(_pending_acks[i].dest_name, _pending_acks[i].timestamp);
                 // Notify the phone app so it marks the sent message delivered.
                 sigurdos::mesh::mesh_v2_notify_send_confirmed(ack_val, trip_ms);
-                // Return a valid ContactInfo for BaseChatMesh internal processing
+                // Return the correct contact for BaseChatMesh internal processing
+                // (e.g. handleReturnPathRetry). Must match the contact that actually
+                // sent the ACK, not the first entry in the contact list (BUG-004).
                 for (int j = 0; j < getNumContacts(); j++) {
-                    if (getContactByIdx((uint32_t)j, _contact_cache)) {
+                    if (getContactByIdx((uint32_t)j, _contact_cache) &&
+                        strcmp(_contact_cache.name, _pending_acks[i].dest_name) == 0) {
                         return &_contact_cache;
                     }
                 }
-                return &_contact_cache;
+                return nullptr;  // contact gone — can't return the right one
             }
         }
         return nullptr;
