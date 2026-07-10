@@ -145,15 +145,31 @@ static constexpr uint64_t SIGURDOS_LORA_DIO1_WAKE_MASK =
 #endif
 
 // ════════════════════════════════════════════════════════
-// MeshCore expects P_ prefix for radio pins
+// MeshCore expects P_ prefix for radio pins.
+// Guarded to prevent redefinition warnings when platformio.ini
+// build_flags also defines these (BUILD-001).
 // ════════════════════════════════════════════════════════
+#ifndef P_LORA_NSS
 #define P_LORA_NSS    PIN_LORA_NSS
+#endif
+#ifndef P_LORA_DIO_1
 #define P_LORA_DIO_1  PIN_LORA_DIO1
+#endif
+#ifndef P_LORA_RESET
 #define P_LORA_RESET  PIN_LORA_RESET
+#endif
+#ifndef P_LORA_BUSY
 #define P_LORA_BUSY   PIN_LORA_BUSY
+#endif
+#ifndef P_LORA_SCLK
 #define P_LORA_SCLK   PIN_LORA_SCLK
+#endif
+#ifndef P_LORA_MISO
 #define P_LORA_MISO   PIN_LORA_MISO
+#endif
+#ifndef P_LORA_MOSI
 #define P_LORA_MOSI   PIN_LORA_MOSI
+#endif
 
 // Firmware version — displayed in Settings > About
 // Can be overridden at build time by scripts/build_metadata.py (git describe --tags)

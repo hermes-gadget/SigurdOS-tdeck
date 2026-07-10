@@ -78,7 +78,7 @@ void sigurdos_keyboard_set_default_brightness(uint8_t duty);
 
 // ── Modifier state (derived from key codes, not I2C) ───
 bool sigurdos_keyboard_is_shift();
-bool sigurdos_keyboard_is_ctrl();
+bool sigurdos_keyboard_is_ctrl();  // retained for tests (DEAD-001: not yet wired)
 bool sigurdos_keyboard_is_alt();
 
 struct SigurdOSKeyboardDiag {

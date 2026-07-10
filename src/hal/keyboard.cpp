@@ -604,6 +604,9 @@ bool sigurdos_keyboard_is_shift()
     return shift_held;
 }
 
+// NOTE: sigurdos_keyboard_is_ctrl() currently always returns false —
+// the raw modifier sampler does not yet detect Ctrl (DEAD-001).
+// The function is retained for the test suite and diagnostic output.
 bool sigurdos_keyboard_is_ctrl()
 {
     return ctrl_held;
