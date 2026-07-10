@@ -105,9 +105,8 @@ jobs:
           fi
 
   lint:
-    name: Static analysis + logging policy (advisory)
+    name: Static analysis + logging policy
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     steps:
       - name: Check out repository
