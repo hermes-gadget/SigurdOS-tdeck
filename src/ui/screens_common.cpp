@@ -34,26 +34,6 @@
 
 namespace sigurdos::ui {
 
-// ── Deferred screen deletion (avoids LVGL screen-load state-machine deadlock) ──
-// When lv_scr_load_anim() is called with auto_del=false, the outgoing screen
-// must be deleted manually. For instantaneous (LV_SCR_LOAD_ANIM_NONE) loads,
-// lv_obj_del_async() is safe immediately. For animated loads, the old screen
-// is still referenced by the running animation, so deletion must be scheduled
-// to fire after the animation completes (anim_duration + 50ms buffer).
-static void deferred_screen_delete_cb(lv_timer_t* t) {
-    lv_obj_t* scr = (lv_obj_t*)lv_timer_get_user_data(t);
-    if (scr && lv_obj_is_valid(scr)) {
-        lv_obj_del_async(scr);
-    }
-    lv_timer_del(t);
-}
-
-void schedule_screen_delete(lv_obj_t* old_scr, uint32_t delay_ms) {
-    if (!old_scr || !lv_obj_is_valid(old_scr)) return;
-    lv_timer_t* t = lv_timer_create(deferred_screen_delete_cb, delay_ms, old_scr);
-    lv_timer_set_repeat_count(t, 1);
-}
-
 using namespace theme;
 using namespace responsive;
 
@@ -366,9 +346,7 @@ void pin_entry_show(Screen target_screen) {
         lv_group_focus_obj(ta);
     }
 
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
-    if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 }
 
 } // namespace sigurdos::ui

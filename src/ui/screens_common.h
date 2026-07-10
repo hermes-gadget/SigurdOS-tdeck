@@ -28,14 +28,6 @@ namespace sigurdos::ui {
 // time, signal dots) and bottom bar (device name, WiFi icon, battery).
 lv_obj_t* make_screen_full(const char* title);
 
-// ── Screen lifecycle helpers ──────────────────────────────
-// Schedule deletion of an outgoing screen after an animation completes.
-// Use for animated screen transitions (MOVE_LEFT, MOVE_RIGHT, FADE_ON)
-// where the old screen is still referenced by LVGL's animation engine.
-// For instant (NONE) transitions, delete immediately with lv_obj_del_async().
-// delay_ms should be >= the animation duration + 50ms buffer.
-void schedule_screen_delete(lv_obj_t* old_scr, uint32_t delay_ms);
-
 // Load a fully built screen object (lv_scr_load wrapper).
 void show_screen(lv_obj_t* scr);
 

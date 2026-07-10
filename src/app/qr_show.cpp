@@ -9,7 +9,6 @@
 #include "ui/theme.h"
 #include "ui/responsive.h"
 #include "ui/navigation.h"
-#include "ui/screens_common.h"
 #include "hal/battery.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -40,9 +39,7 @@ void qr_show_error(lv_obj_t* scr, const char* message)
     lv_label_set_text(err, message);
     lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
     lv_obj_align(err, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
-    if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
 }
 
 } // namespace
@@ -226,9 +223,7 @@ void qr_show(const char* title, const char* data)
     lv_obj_set_style_border_width(bdiv, 0, 0);
 
     // ── Show the screen ────────────────────────────────────
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
-    if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
 }
 
 } // namespace app
