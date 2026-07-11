@@ -39,6 +39,13 @@ inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)
     return cap;
 }
 
+static constexpr uint32_t CHAT_SAVE_DEBOUNCE_MS = 5000;
+inline bool chat_screen_save_is_due(bool dirty, uint32_t dirty_since,
+                                    uint32_t now) {
+    return dirty && static_cast<uint32_t>(now - dirty_since) >=
+                        CHAT_SAVE_DEBOUNCE_MS;
+}
+
 inline bool chat_screen_is_dm_name(const char* name)
 {
     return name && std::strncmp(name, "DM:", 3) == 0;
@@ -96,6 +103,7 @@ void     chat_screen_set_message_cap(uint16_t cap);
 
 // Persist/restore per-channel message history to/from SPIFFS
 void chat_save_messages();
+void chat_save_messages_if_due(uint32_t now);
 void chat_load_messages();
 
 // Periodically check for newly arrived ACKs and re-render if needed.

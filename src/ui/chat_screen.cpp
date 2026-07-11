@@ -134,6 +134,14 @@ static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
 static int   active_channel = 0;
+static bool  chat_history_dirty = false;
+static uint32_t chat_history_dirty_since = 0;
+
+static void mark_chat_history_dirty()
+{
+    if (!chat_history_dirty) chat_history_dirty_since = millis();
+    chat_history_dirty = true;
+}
 
 // ── Channel filter mode ────────────────────────────────────
 // 0 = show all, 1 = channels only, 2 = DMs only
@@ -821,6 +829,7 @@ static bool append_loaded_channel_message(int idx, const char* sender, const cha
     }
 
     append_channel_message(idx, sender, text, timestamp, is_self);
+    mark_chat_history_dirty();
     if (acked && has_channel_buffer(idx) && ch_msg_count[idx] > 0) {
         ch_msgs[idx][ch_msg_count[idx] - 1].acked = true;
     }
@@ -1638,6 +1647,7 @@ static void do_send()
         snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
     }
     append_channel_message(sent_channel, sigurdos::mesh::getOwnName(), display_text, ts, true);
+    mark_chat_history_dirty();
     mark_channel_used(sent_channel);
     render_active_messages();
     lv_textarea_set_text(input_field, "");
@@ -2489,6 +2499,7 @@ void chat_screen_add_msg_at(const char* channel, const char* sender, const char*
     if (idx >= MAX_CHANNELS) return;
 
     append_channel_message(idx, sender, text, message_time, is_self);
+    mark_chat_history_dirty();
 
     bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
     if (!is_self && !visible) ch_meta[idx].unread++;
@@ -2777,8 +2788,18 @@ void chat_save_messages()
             ctx.channel_indices[stored_count++] = channel;
         }
     }
-    chatHistorySave(stored_count, read_history_channel,
-                    read_history_message, &ctx);
+    if (chatHistorySave(stored_count, read_history_channel,
+                        read_history_message, &ctx)) {
+        chat_history_dirty = false;
+    }
+}
+
+void chat_save_messages_if_due(uint32_t now)
+{
+    if (chat_screen_save_is_due(chat_history_dirty,
+                                chat_history_dirty_since, now)) {
+        chat_save_messages();
+    }
 }
 
 void chat_load_messages()

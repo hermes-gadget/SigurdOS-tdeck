@@ -17,6 +17,7 @@ using sigurdos::ui::chat_screen_filter_accepts_channel;
 using sigurdos::ui::chat_screen_is_dm_name;
 using sigurdos::ui::chat_screen_normalize_message_cap;
 using sigurdos::ui::chat_screen_resolve_message_timestamp;
+using sigurdos::ui::chat_screen_save_is_due;
 
 TEST(ChatConfig, DelayedPollPreservesAuthoritativeTimestamp) {
     EXPECT_EQ(chat_screen_resolve_message_timestamp(1000, 1007), 1000U);
@@ -28,6 +29,16 @@ TEST(ChatConfig, ZeroTimestampFallsBackToCurrentClock) {
 
 TEST(ChatConfig, ZeroUsesDefaultMessageCap) {
     EXPECT_EQ(chat_screen_normalize_message_cap(0), CHAT_SCREEN_MESSAGE_CAP_DEFAULT);
+}
+
+TEST(ChatConfig, DirtyHistorySavesAfterDebounceOnly) {
+    EXPECT_FALSE(chat_screen_save_is_due(false, 100, 10000));
+    EXPECT_FALSE(chat_screen_save_is_due(true, 100, 5099));
+    EXPECT_TRUE(chat_screen_save_is_due(true, 100, 5100));
+}
+
+TEST(ChatConfig, DirtySaveDeadlineHandlesMillisWrap) {
+    EXPECT_TRUE(chat_screen_save_is_due(true, 0xFFFFFF00U, 0x00001300U));
 }
 
 TEST(ChatConfig, ValuesBelowMinimumClampUp) {

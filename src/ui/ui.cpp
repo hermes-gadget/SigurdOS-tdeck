@@ -140,16 +140,12 @@ void loop()
             }
             home_screen_update_time(tbuf);
         }
-        // Persist state every 5 min (catches unexpected power loss)
-        // modulo avoids the 22-day gap after uint16_t overflow (follow-up to #637)
-        static uint16_t save_counter = 0;
-        if (++save_counter % 10 == 0) {
-            sigurdos::mesh::saveState();
-            sigurdos::mesh::saveChannels();
-            sigurdos::mesh::saveContacts();
-            chat_save_messages();
-        }
     }
+
+    // Identity, channel, and contact mutations save at their event sites.
+    // Batch chat bursts into one atomic checkpoint instead of rewriting all
+    // state every five minutes while the device is idle.
+    chat_save_messages_if_due(millis());
 
     // Poll for new mesh messages and feed to chat
     if (home_shown) {
