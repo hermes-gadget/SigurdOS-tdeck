@@ -1268,7 +1268,8 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 
     // ── Stub handlers for upstream commands not yet implemented ──
     // These are recognized command IDs but return unsupported error until
-    // full implementations are added. Added for protocol coverage parity.
+    // full implementations and security review are added. Recognition is not
+    // advertised as feature parity; see docs/COMPANION_SUPPORT.md.
     if (cmd == CMD_SEND_RAW_DATA) {
         writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
     }

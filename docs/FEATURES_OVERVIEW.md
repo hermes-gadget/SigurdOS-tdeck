@@ -277,7 +277,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 
 ### Companion BLE (Official MeshCore App)
 
-- **CompanionBridge** — full BLE companion protocol implementation (38+ `CMD_*` codes, 28 `RESP_CODE_*`, 16 `PUSH_CODE_*`) driven by `loop()` via `ObservedSerialBLEInterface` wrapping `SerialBLEInterface`
+- **CompanionBridge** — broad BLE companion protocol implementation driven by `loop()` via `ObservedSerialBLEInterface` wrapping `SerialBLEInterface`; five recognized upstream command families intentionally return `ERR_CODE_UNSUPPORTED_CMD` (see the [support matrix](COMPANION_SUPPORT.md))
 - **Offline queue** — `seedOfflineQueueFromStore()` buffers messages received while phone is disconnected; drained via `CMD_SYNC_NEXT_MESSAGE` on reconnect
 - **Dual-consumer hook** — `companion_adapter.inc` fans out message/advert/ack events to both UI and BLE simultaneously
 - **SPIFFS message store** — persistent, append-only, dedup-keyed by (conversation, sender, timestamp); survives reboot; shared between chat UI and BLE sync
@@ -424,6 +424,7 @@ Run it with `pio test -e native_test`. See [`test/README.md`](../test/README.md)
 | [`docs/MAP_SCREEN.md`](MAP_SCREEN.md) | Map screen and tile cache system documentation |
 | [`docs/MESH_NETWORKING.md`](MESH_NETWORKING.md) | Mesh networking protocol and features documentation |
 | [`docs/MISSING_FEATURES.md`](MISSING_FEATURES.md) | Companion parity audit: implemented, declined, and out-of-scope MeshCore deltas |
+| [`docs/COMPANION_SUPPORT.md`](COMPANION_SUPPORT.md) | Current BLE companion command support matrix and interoperability limits |
 | [`docs/NETWORK_SCREEN.md`](NETWORK_SCREEN.md) | Network screen documentation |
 | [`docs/ROADMAP.md`](ROADMAP.md) | Development roadmap and planned features |
 | [`docs/SETTINGS_SCREEN.md`](SETTINGS_SCREEN.md) | Settings screen documentation |
