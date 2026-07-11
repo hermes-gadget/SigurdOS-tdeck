@@ -36,11 +36,6 @@
  * that includes this header already pulls in.
  */
 
-// On ESP32, FSPI maps to SPI2_HOST. Native test mocks may not define it.
-#ifndef FSPI
-#define FSPI 1
-#endif
-
 class SPIClass;  // forward decl — full definition from Arduino.h / mock
 
 SPIClass& sigurdos_shared_spi();

@@ -16,14 +16,16 @@
 // You should have received a copy of the GNU General Public License
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
-#include "spi_shared.h"
 // SPIClass definition comes from <SPI.h> on real ESP32 hardware, or from
 // the mock Arduino.h in native test builds. Include both to cover all cases.
 #ifdef ESP32_PLATFORM
 #include <SPI.h>
+#define SIGURDOS_SHARED_SPI_HOST FSPI
 #else
 #include <Arduino.h>  // native test mock
+#define SIGURDOS_SHARED_SPI_HOST 1
 #endif
+#include "spi_shared.h"
 
 // Single SPIClass instance for the shared SPI2_HOST (FSPI) bus.
 // Both the LoRa radio (mesh_wrapper.cpp) and SD card (sdcard.cpp) use this
@@ -40,7 +42,7 @@
 //
 // Note: LovyanGFX (display) manages its own bus access on SPI2_HOST through
 // the IDF SPI driver directly and is not affected by this SPI class state.
-static SPIClass s_shared_spi(FSPI);
+static SPIClass s_shared_spi(SIGURDOS_SHARED_SPI_HOST);
 
 SPIClass& sigurdos_shared_spi()
 {
