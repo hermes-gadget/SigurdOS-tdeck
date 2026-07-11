@@ -19,6 +19,28 @@ using ChannelReadFn    = bool (*)(int index, char* name_out, size_t name_len,
 using ChannelLoadFn    = bool (*)(const uint8_t* secret, size_t secret_len,
                                   const uint8_t* hash, const char* name, void* ctx);
 
+namespace detail {
+
+struct ChannelStoreKv {
+    void* ctx;
+    bool (*has)(void* ctx, const char* key);
+    bool (*putU8)(void* ctx, const char* key, uint8_t value);
+    bool (*putU32)(void* ctx, const char* key, uint32_t value);
+    bool (*putString)(void* ctx, const char* key, const char* value);
+    bool (*putBytes)(void* ctx, const char* key, const uint8_t* data, size_t len);
+    uint8_t (*getU8)(void* ctx, const char* key, uint8_t fallback);
+    uint32_t (*getU32)(void* ctx, const char* key, uint32_t fallback);
+    size_t (*getString)(void* ctx, const char* key, char* out, size_t len);
+    size_t (*getBytes)(void* ctx, const char* key, uint8_t* out, size_t len);
+};
+
+bool channelStoreSaveTransactional(ChannelStoreKv& kv, int count,
+                                   ChannelReadFn read, void* ctx);
+int channelStoreLoadTransactional(ChannelStoreKv& kv,
+                                  ChannelLoadFn load, void* ctx);
+
+} // namespace detail
+
 // Save channels list to NVS.
 // Returns true on success (NVS write committed).
 bool channelStoreSave(int count, ChannelReadFn read, void* ctx);
