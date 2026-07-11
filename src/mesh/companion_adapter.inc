@@ -2,6 +2,7 @@
 // This file is intentionally included from mesh_wrapper.cpp so it can access
 // the existing singletons without widening the public mesh API.
 
+#include "advert_blob.h"
 #include <new>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -18,6 +19,9 @@ using sigurdos::comms::CompanionOtherParams;
 using sigurdos::comms::CompanionCoreStats;
 using sigurdos::comms::CompanionRadioStats;
 using sigurdos::comms::CompanionPacketStats;
+
+static_assert(sigurdos::mesh::SIGURDOS_ADVERT_BLOB_MAX_LEN <= MAX_FRAME_SIZE - 1,
+              "serialized adverts must fit the companion response frame");
 
 // g_companion_bridge carries ~3 KB of frame and offline-queue buffers. The
 // internal dram0_0_seg .bss region is nearly full at baseline, so the instance
@@ -596,7 +600,7 @@ public:
         if (!pub_key) return g_mesh->exportSelfContact(own_name, out, out_cap);
         ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
         if (!c) return 0;
-        return (int)g_mesh->exportContact(*c, out);
+        return g_mesh->exportContactBounded(*c, out, out_cap);
     }
     bool importContact(const uint8_t* data, size_t len) override {
         if (!g_mesh || !data) return false;

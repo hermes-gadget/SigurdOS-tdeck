@@ -33,6 +33,7 @@ PR body:
 test/
 |-- mocks/                          Native Arduino/LVGL/MeshCore/driver mocks
 |-- test_battery/                   Battery conversion and ADC math
+|-- test_advert_blob/               Advert persistence size and key-path invariants
 |-- test_build/                     Header inclusion and cross-module sanity checks
 |-- test_build_info/                Firmware version string and build info defaults
 |-- test_buzzer/                    Buzzer notification patterns and duration bounds

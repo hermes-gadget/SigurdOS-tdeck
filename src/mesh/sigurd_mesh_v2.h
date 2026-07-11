@@ -393,6 +393,9 @@ public:
     bool putBlobByKey(const uint8_t key[], int key_len,
                        const uint8_t src_buf[], int len) override;
 
+    int exportContactBounded(const ::ContactInfo& contact,
+                             uint8_t* out, size_t out_cap);
+
 
     // ── Behavior overrides ──────────────────────
 

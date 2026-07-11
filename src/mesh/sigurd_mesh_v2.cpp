@@ -4,6 +4,7 @@
 // SigurdMeshV2 — method implementations split from sigurd_mesh_v2.h
 //
 #include "sigurd_mesh_v2.h"
+#include "advert_blob.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -772,32 +773,57 @@ namespace mesh {
 #if defined(ESP32_PLATFORM)
     int SigurdMeshV2::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
         char path[48];
-        snprintf(path, sizeof(path), "/blob_%02x%02x%02x%02x",
-                 key_len > 0 ? key[0] : 0, key_len > 1 ? key[1] : 0,
-                 key_len > 2 ? key[2] : 0, key_len > 3 ? key[3] : 0);
-        if (!SPIFFS.exists(path)) return 0;
+        if (!dest_buf || !makeAdvertBlobPath(key, key_len, path, sizeof(path))) return 0;
+        if (!SPIFFS.exists(path)) {
+            if (!makeAdvertBlobPath(key, key_len, path, sizeof(path), true) ||
+                !SPIFFS.exists(path)) {
+                return 0;
+            }
+        }
         File f = SPIFFS.open(path, "r");
         if (!f) return 0;
-        int len = f.read(dest_buf, 4096);
+        const size_t file_len = f.size();
+        if (!advertBlobLengthValid(file_len)) {
+            f.close();
+            return 0;
+        }
+        const size_t read = f.read(dest_buf, file_len);
         f.close();
-        return len;
+        return read == file_len ? (int)read : 0;
     }
 #endif  // ESP32_PLATFORM
 
 #if defined(ESP32_PLATFORM)
     bool SigurdMeshV2::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], int len) {
         char path[48];
-        snprintf(path, sizeof(path), "/blob_%02x%02x%02x%02x",
-                 key_len > 0 ? key[0] : 0, key_len > 1 ? key[1] : 0,
-                 key_len > 2 ? key[2] : 0, key_len > 3 ? key[3] : 0);
-        if (SPIFFS.exists(path)) SPIFFS.remove(path);
+        if (!src_buf || len < 0 || !advertBlobLengthValid((size_t)len) ||
+            !makeAdvertBlobPath(key, key_len, path, sizeof(path))) {
+            return false;
+        }
         File f = SPIFFS.open(path, "w");
         if (!f) return false;
-        size_t written = f.write(src_buf, len);
+        const size_t written = f.write(src_buf, (size_t)len);
         f.close();
-        return written == (size_t)len;
+        if (written != (size_t)len) {
+            SPIFFS.remove(path);
+            return false;
+        }
+
+        char legacy_path[48];
+        if (makeAdvertBlobPath(key, key_len, legacy_path, sizeof(legacy_path), true) &&
+            strcmp(path, legacy_path) != 0 && SPIFFS.exists(legacy_path)) {
+            SPIFFS.remove(legacy_path);
+        }
+        return true;
     }
 #endif  // ESP32_PLATFORM
+
+    int SigurdMeshV2::exportContactBounded(const ::ContactInfo& contact,
+                                            uint8_t* out, size_t out_cap) {
+        if (!out || out_cap < SIGURDOS_ADVERT_BLOB_MAX_LEN) return 0;
+        const int len = (int)BaseChatMesh::exportContact(contact, out);
+        return len > 0 && advertBlobFitsOutput((size_t)len, out_cap) ? len : 0;
+    }
 
     bool SigurdMeshV2::allowPacketForward(const ::mesh::Packet* packet) {
         if (sigurdos::prefs_get().client_repeat == 0) return false;
