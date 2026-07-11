@@ -4,6 +4,30 @@ Patterned after MeshCore merge-bin.py — reads flash config from board JSON."""
 
 Import("env")
 
+_FLASH_MODE_HEADER_VALUES = {
+    "qio": 0x00,
+    "qout": 0x01,
+    "dio": 0x02,
+    "dout": 0x03,
+}
+
+
+def _assert_image_flash_mode(path, expected_mode, label):
+    expected = _FLASH_MODE_HEADER_VALUES.get(expected_mode)
+    if expected is None:
+        raise RuntimeError(f"Unsupported configured flash mode: {expected_mode}")
+
+    with open(path, "rb") as image:
+        header = image.read(3)
+    if len(header) != 3 or header[0] != 0xE9:
+        raise RuntimeError(f"{label} has an invalid ESP image header: {path}")
+    if header[2] != expected:
+        raise RuntimeError(
+            f"{label} flash mode mismatch: header=0x{header[2]:02x}, "
+            f"expected {expected_mode} (0x{expected:02x})"
+        )
+
+
 def merge_bin_action(target, source, env):
     board_config = env.BoardConfig()
     build_dir = env.subst("$BUILD_DIR")
@@ -18,6 +42,12 @@ def merge_bin_action(target, source, env):
         if not _os.path.isfile(f):
             print(f"SigurdOS: skipping merge - missing: {f}")
             return
+
+    expected_flash_mode = env.GetProjectOption(
+        "board_build.flash_mode",
+        board_config.get("build.flash_mode", "dio"),
+    ).lower()
+    _assert_image_flash_mode(bootloader, expected_flash_mode, "bootloader")
 
     flash_images = [
         *env.Flatten(env.get("FLASH_EXTRA_IMAGES", [])),
@@ -45,6 +75,7 @@ def merge_bin_action(target, source, env):
     env.Execute(merge_cmd)
 
     if _os.path.isfile(merged_bin):
+        _assert_image_flash_mode(merged_bin, expected_flash_mode, "merged image")
         print(f"SigurdOS: merged -> firmware-merged.bin ({_os.path.getsize(merged_bin):,} bytes)")
         # Launcher-compatible copy (same bytes as merged, Launcher-optimized name)
         launcher_bin = _os.path.join(build_dir, "SigurdOS-tdeck-launcher.bin")

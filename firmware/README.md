@@ -38,8 +38,9 @@ After a successful firmware build, `merge_bin.py`:
 3.  Generates `webflasher/manifest.json` containing firmware version, Git SHA,
     artifact SHA-256 checksums, flash offsets, and build metadata.
 
-The merge uses the ESP32-S3 flash configuration (QIO mode, 80 MHz, 16 MB) read
-from the board definition in `platformio.ini`.
+The canonical PlatformIO environment builds the ESP32-S3 bootloader for DIO
+flash mode at 80 MHz with 16 MB flash. The merge preserves that header instead
+of applying the board JSON's QIO default.
 
 ## Where to find the files
 
@@ -60,13 +61,15 @@ pip install esptool
 # Full flash (first install)
 esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
   --before default_reset --after hard_reset write_flash \
-  --flash_mode qio --flash_freq 80m --flash_size 16MB \
   0x0 sigurdos-tdeck-merged.bin
 
 # App update only (keep settings)
 esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
   write_flash 0x10000 sigurdos-tdeck.bin
 ```
+
+Do not pass `--flash_mode qio` when flashing the merged image. Its bootloader
+header is DIO; forcing QIO can make affected T-Deck units boot-loop.
 
 ## Flash with PlatformIO
 
@@ -137,4 +140,3 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash 0x0 sigurdos-tdeck-mer
 ```
 
 This replaces Launcher entirely with standalone SigurdOS. Your mesh identity will regenerate (it's stored in a differently-located SPIFFS), and NVS settings will reset. Re-onboard via the setup wizard and reconfigure your radio preferences.
-

@@ -30,7 +30,7 @@ Compatibility is achievable **without changing any standalone behavior**. The pa
 | Aspect | Status | Evidence |
 |---|---|---|
 | Launcher has a T-Deck port | ✅ Yes | `boards/lilygo-t-deck/` in Launcher repo; release asset `Launcher-lilygo-t-deck.bin` (v2.7.2) |
-| SigurdOS chip/flash matches Launcher's T-Deck build | ✅ Yes | Both esp32s3 / 16 MB / QIO / OPI PSRAM (`boards/t-deck.json` here; `boards/_jsonfiles/lilygo-t-deck.json` there) |
+| SigurdOS chip/flash matches Launcher's T-Deck build | ✅ Yes | Both esp32s3 / 16 MB / OPI PSRAM; SigurdOS overrides its board JSON default to DIO flash for boot compatibility (`boards/t-deck.json` here; `boards/_jsonfiles/lilygo-t-deck.json` there) |
 | `firmware-merged.bin` parseable by Launcher's installer | ✅ Yes (by source inspection, untested on hardware) | Launcher `src/sd_functions.cpp::updateFromSD` detects the partition table at 0x8000 and extracts app + SPIFFS spec |
 | `firmware.bin` (app-only) install preserves identity | ❌ No — no SPIFFS partition is created | Launcher `updateFromSD` app-only path passes `spiffs=false`; `src/main.cpp:50-52` here |
 | Self-OTA (WiFi AP / GitHub) under Launcher | ✅ Gated off with explanation | `src/hal/wifi_ota.cpp`, `src/hal/github_ota.cpp`, and Settings System refuse OTA when `sigurdos_is_under_launcher()` fires |
@@ -120,7 +120,7 @@ Handoff is `ESP.restart()` — a **software reset**. The ESP32-S3's own GPIO mat
 | Assumption | Where |
 |---|---|
 | Build system: PlatformIO + Arduino, `platformio/espressif32@6.11.0` (Arduino core 2.x / ESP-IDF 4.4) | `platformio.ini:68-69` |
-| Single hardware target: LilyGo T-Deck, esp32s3, 16 MB flash QIO, 8 MB OPI PSRAM (`qio_opi`) | `boards/t-deck.json` |
+| Single hardware target: LilyGo T-Deck, esp32s3, 16 MB DIO flash, 8 MB OPI PSRAM (board JSON memory type remains `qio_opi`, while `platformio.ini` overrides boot flash mode to DIO) | `boards/t-deck.json`, `platformio.ini` |
 | Partition table: stock `default_16MB.csv` — `nvs 0x9000/0x5000`, `otadata 0xE000/0x2000`, `app0 (ota_0) 0x10000/0x640000`, `app1 (ota_1) 0x650000/0x640000`, `spiffs 0xC90000/0x360000`, `coredump 0xFF0000/0x10000` | `platformio.ini:73` (`board_build.partitions = default_16MB.csv`, resolved from the Arduino framework package) |
 | Artifacts: `firmware.bin` (app, flash @0x10000) and `firmware-merged.bin` (bootloader @0x0 + table @0x8000 + `boot_app0` @0xE000 + app @0x10000, `flash_mode keep`), plus per-component webflasher files + `webflasher/manifest.json` | `scripts/merge_bin.py`, `firmware/README.md` |
 | Release: tag push builds `SigurdOS_TDeck` and uploads `firmware.bin` + `firmware-merged.bin` to a GitHub release | `.github/workflows/build-release.yml` |
