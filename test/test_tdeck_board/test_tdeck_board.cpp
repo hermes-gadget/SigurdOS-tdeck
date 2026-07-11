@@ -48,4 +48,15 @@ TEST_F(TDeckBoardPowerTest, NominalBatteryVoltageIsNotCritical) {
     EXPECT_FALSE(sigurdos::tdeck_battery_mv_is_critical(UINT16_MAX));
 }
 
+TEST_F(TDeckBoardPowerTest, CriticalTimerWakeResleepsBeforeFullBoot) {
+    EXPECT_TRUE(sigurdos::tdeck_should_resleep_early(true, true, 3199));
+}
+
+TEST_F(TDeckBoardPowerTest, OtherBootReasonsAndRecoveredBatteryContinue) {
+    EXPECT_FALSE(sigurdos::tdeck_should_resleep_early(false, true, 3199));
+    EXPECT_FALSE(sigurdos::tdeck_should_resleep_early(true, false, 3199));
+    EXPECT_FALSE(sigurdos::tdeck_should_resleep_early(true, true, 3200));
+    EXPECT_FALSE(sigurdos::tdeck_should_resleep_early(true, true, 0));
+}
+
 } // namespace

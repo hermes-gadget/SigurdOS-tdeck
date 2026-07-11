@@ -39,6 +39,13 @@ inline bool tdeck_battery_mv_is_critical(uint16_t millivolts) {
     return millivolts > 0 && millivolts < SIGURDOS_TDECK_AUTO_SHUTDOWN_MV;
 }
 
+inline bool tdeck_should_resleep_early(bool deep_sleep_reset,
+                                      bool timer_wakeup,
+                                      uint16_t battery_mv) {
+    return deep_sleep_reset && timer_wakeup &&
+           tdeck_battery_mv_is_critical(battery_mv);
+}
+
 #ifdef SIGURDOS_TDECK
 class TDeckBoard : public ESP32Board {
     uint8_t  _startup_reason;

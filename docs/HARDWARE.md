@@ -55,7 +55,7 @@
 | 42  | TFT Backlight       | PWM       | Backlight brightness control        |
 | 43  | GPS TX              | UART      | Serial1 TX                          |
 | 44  | GPS RX              | UART      | Serial1 RX                          |
-| 45  | LoRa DIO1           | GPIO      | Radio interrupt / wake source       |
+| 45  | LoRa DIO1           | GPIO      | Radio interrupt while awake (not RTC-capable) |
 | 46  | Buzzer              | GPIO      | Active-low buzzer output            |
 
 ---
@@ -583,7 +583,7 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 
 ### Deep Sleep Wake
 
-- DIO1 is used as wake source from deep sleep
+- DIO1 is GPIO45 and is not RTC-capable on ESP32-S3, so LoRa packets cannot wake deep sleep
 - `rtc_gpio_pulldown_en` configured and `ESP_EXT1_WAKEUP_ANY_HIGH` enabled
 - LoRa NSS pin held via `rtc_gpio_hold_en` during sleep
 
@@ -638,7 +638,7 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
    - `PIN_LORA_DIO1` → input-only with pulldown
    - `PIN_LORA_NSS` → hold enable
 4. Enable wake sources:
-   - **EXT1:** `PIN_LORA_DIO1` rising edge (incoming LoRa packet)
+   - **EXT1:** unavailable: `PIN_LORA_DIO1` is GPIO45, outside the ESP32-S3 RTC GPIO set
    - **Timer:** optional, if `secs > 0`
 5. Call `esp_deep_sleep_start()`
 
@@ -646,7 +646,7 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 
 | Source            | Mechanism                  | `_startup_reason`    |
 |-------------------|----------------------------|----------------------|
-| LoRa packet       | DIO1 rising edge (EXT1)    | `BD_STARTUP_RX_PACKET` |
+| LoRa packet       | Not available in deep sleep | — |
 | Timer             | RTC timer                  | `BD_STARTUP_NORMAL`  |
 | Power-on / reset  | ESP reset                  | `BD_STARTUP_NORMAL`  |
 

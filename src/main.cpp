@@ -58,6 +58,20 @@ void setup()
     board.begin();
     boot_log("board init OK");
     sigurdos_battery_init();
+
+    // Critical-battery sleep wakes periodically to permit recovery after
+    // charging. Re-sleep before display/radio/storage initialization when a
+    // timer wake finds that the battery remains below the safe threshold.
+    const bool deep_sleep_reset = esp_reset_reason() == ESP_RST_DEEPSLEEP;
+    const bool timer_wakeup = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+    const uint16_t early_battery_mv = sigurdos_battery_mv();
+    if (sigurdos::tdeck_should_resleep_early(
+            deep_sleep_reset, timer_wakeup, early_battery_mv)) {
+        Serial.printf("[boot] battery still critical (%u mV); returning to deep sleep\n",
+                      early_battery_mv);
+        board.sleep(0);
+        return;
+    }
     sigurdos::hal::buzzer_init();
 
     // Track display init failures across reboots to detect boot loops.
