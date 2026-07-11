@@ -620,7 +620,6 @@ persistence:
 | `channelStoreSave(count, read, ctx)` | NVS (`"sigurdos"` namespace) | Save all channels via caller-provided `ChannelReadFn` |
 | `channelStoreLoad(load, ctx)` | NVS | Load channels via caller-provided `ChannelLoadFn`; returns count loaded |
 | `identityStoreSave(data, len)` | SPIFFS (`/mesh_id`) | Save raw identity bytes |
-| `identityStoreLoad(buf, buf_len, out_len)` | SPIFFS | Load raw identity bytes |
 
 These are called by `saveChannels()` / `loadChannels()` and `saveIdentity()` /
 `loadIdentity()` respectively in `mesh_wrapper.cpp`.

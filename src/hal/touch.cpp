@@ -80,15 +80,6 @@ static bool i2c_write_reg(uint16_t reg, uint8_t val)
     return Wire.endTransmission() == 0;
 }
 
-static bool i2c_write_bytes(uint16_t reg, const uint8_t* data, size_t len)
-{
-    Wire.beginTransmission(i2c_addr);
-    Wire.write(reg >> 8);
-    Wire.write(reg & 0xFF);
-    Wire.write(data, len);
-    return Wire.endTransmission() == 0;
-}
-
 static bool i2c_read_bytes(uint16_t reg, uint8_t* out, size_t len)
 {
     Wire.beginTransmission(i2c_addr);

@@ -30,7 +30,6 @@ int  channelStoreLoad(ChannelLoadFn load, void* ctx);
 // Identity persistence — saves/loads the raw bytes of a LocalIdentity
 // to/from SPIFFS at "/mesh_id".
 bool identityStoreSave(const uint8_t* data, size_t len);
-bool identityStoreLoad(uint8_t* buf, size_t buf_len, size_t* out_len);
 
 } // namespace mesh
 } // namespace sigurdos

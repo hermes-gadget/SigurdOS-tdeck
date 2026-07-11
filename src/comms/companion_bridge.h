@@ -434,7 +434,6 @@ private:
     bool    _sign_active = false;
     bool    _was_connected = false;  // detect BLE disconnect to clear signing state (#712)
 
-    bool pushContactFrame(uint8_t code, const CompanionContact& contact);
 };
 
 } // namespace comms

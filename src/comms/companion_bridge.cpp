@@ -379,15 +379,6 @@ void CompanionBridge::writeSentOrErr(const CompanionSendResult& r)
     _serial->writeFrame(_out_frame, 10);
 }
 
-// Like writeContactFrame, but used for unsolicited pushes — same layout, only
-// emitted when a phone is actually connected (a push to nobody is wasted).
-bool CompanionBridge::pushContactFrame(uint8_t code, const CompanionContact& contact)
-{
-    if (!isConnected()) return false;
-    writeContactFrame(code, contact);
-    return true;
-}
-
 bool CompanionBridge::pushAdvert(const CompanionContact& contact, bool is_new)
 {
     if (!isConnected()) return false;

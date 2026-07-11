@@ -106,29 +106,5 @@ bool identityStoreSave(const uint8_t* data, size_t len)
 #endif
 }
 
-bool identityStoreLoad(uint8_t* buf, size_t buf_len, size_t* out_len)
-{
-    if (!buf || buf_len == 0) return false;
-
-#if defined(ESP32_PLATFORM)
-    File f = SPIFFS.open("/mesh_id", "r");
-    if (!f) return false;
-    size_t sz = f.size();
-    if (sz > buf_len) {
-        f.close();
-        return false;
-    }
-    size_t read = f.read(buf, sz);
-    f.close();
-    if (out_len) *out_len = read;
-    return read == sz && sz > 0;
-#else
-    (void)buf;
-    (void)buf_len;
-    if (out_len) *out_len = 0;
-    return false;
-#endif
-}
-
 } // namespace mesh
 } // namespace sigurdos
