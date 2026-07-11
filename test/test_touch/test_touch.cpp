@@ -444,4 +444,47 @@ TEST_F(TouchTest, FailedInitProbesOnlyKnownAddressesAndCachesResult) {
     EXPECT_EQ(Wire.mock_end_count(), probes_after_failure);
 }
 
+TEST_F(TouchTest, FailedRuntimeRecoveryRetriesAndRestoresTouch) {
+    ASSERT_TRUE(sigurdos_touch_init());
+
+    Wire.mock_set_error(1);
+    for (int i = 0; i < 5; ++i) {
+        arduino_mock::current_millis += 100;
+        sigurdos_touch_loop();
+    }
+    EXPECT_FALSE(sigurdos_touch_ready());
+
+    Wire.mock_set_error(0);
+    arduino_mock::current_millis += 1000;
+    sigurdos_touch_loop();
+
+    EXPECT_TRUE(sigurdos_touch_ready());
+    SigurdOSTouchDiag diag{};
+    ASSERT_TRUE(sigurdos_touch_get_diag(&diag));
+    EXPECT_EQ(diag.reinit_count, 1u);
+    EXPECT_EQ(diag.consecutive_i2c_errors, 0);
+}
+
+TEST_F(TouchTest, RuntimeRecoveryStopsAfterBoundedFailures) {
+    ASSERT_TRUE(sigurdos_touch_init());
+
+    Wire.mock_set_error(1);
+    for (int i = 0; i < 5; ++i) {
+        arduino_mock::current_millis += 100;
+        sigurdos_touch_loop();
+    }
+    ASSERT_FALSE(sigurdos_touch_ready());
+
+    arduino_mock::current_millis += 1000;
+    sigurdos_touch_loop();
+    arduino_mock::current_millis += 1000;
+    sigurdos_touch_loop();
+    const size_t transactions_after_exhaustion = Wire.mock_end_count();
+
+    arduino_mock::current_millis += 5000;
+    sigurdos_touch_loop();
+    EXPECT_EQ(Wire.mock_end_count(), transactions_after_exhaustion);
+    EXPECT_FALSE(sigurdos_touch_ready());
+}
+
 } // anonymous namespace

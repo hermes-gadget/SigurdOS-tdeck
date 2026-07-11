@@ -40,6 +40,8 @@ static constexpr uint32_t GT911_INIT_RETRY_MS  = 50;
 static constexpr uint32_t GT911_POLL_INTERVAL  = 10;     // ms between full scans (active)
 static constexpr uint32_t GT911_IDLE_INTERVAL  = 50;     // ms when no touch activity (PERF-004)
 static constexpr int      TOUCH_IDLE_THRESHOLD = 5;      // consecutive idle polls before slowing
+static constexpr uint8_t  TOUCH_MAX_REINIT_ATTEMPTS = 3;
+static constexpr uint32_t TOUCH_REINIT_RETRY_MS = 1000;
 
 // ── State ────────────────────────────────────────────────
 static uint8_t  i2c_addr       = GT911_ADDR1;
@@ -53,6 +55,9 @@ static bool     was_pressed     = false;   // for edge detection
 static int      touch_i2c_errors = 0;   // consecutive I2C read failures
 static constexpr int TOUCH_MAX_CONSECUTIVE_ERRORS = 5;
 static int      touch_idle_count = 0;   // consecutive idle polls (PERF-004)
+static uint8_t  touch_reinit_attempts = 0;
+static bool     touch_reinit_pending = false;
+static uint32_t touch_next_reinit_ms = 0;
 static uint32_t diag_press_count = 0;
 static uint32_t diag_release_count = 0;
 static uint32_t diag_move_count = 0;
@@ -126,17 +131,24 @@ static void gt911_reset()
 // Called when touch_i2c_errors reaches TOUCH_MAX_CONSECUTIVE_ERRORS.
 // Resets the GT911 via INT pin and re-probes.  Caps re-init attempts
 // so a physically dead controller doesn't cause infinite resets.
-// On success, touch resumes immediately.  On failure, touch stays
-// dead but will retry on the next error burst if attempts remain.
+// On success, touch resumes immediately. On failure, touch stays
+// disabled while the remaining attempts run on a bounded schedule.
 // RELI-001.
-static void touch_attempt_reinit()
+static void touch_attempt_reinit(uint32_t now)
 {
-    if (touch_reinit_attempts >= TOUCH_MAX_REINIT_ATTEMPTS) {
-        // Already exhausted re-init attempts — give up until reboot
+    if (!touch_reinit_pending || touch_reinit_attempts >= TOUCH_MAX_REINIT_ATTEMPTS) {
+        touch_reinit_pending = false;
         initialized = false;
         return;
     }
     touch_reinit_attempts++;
+    const uint8_t attempt = touch_reinit_attempts;
+
+    if (pressed) {
+        pressed = false;
+        was_pressed = true;
+        diag_record_release(now);
+    }
 
     // Reset the GT911 controller
     gt911_reset();
@@ -156,19 +168,32 @@ static void touch_attempt_reinit()
         // Clear status register and resume
         i2c_write_reg(GT911_REG_STATUS, 0);
         touch_i2c_errors = 0;
+        touch_idle_count = 0;
         initialized = true;
-        pressed = false;
-        was_pressed = true;
+        touch_reinit_pending = false;
+        touch_reinit_attempts = 0;
+        last_poll = now;
         diag_reinit_count++;
         SIG_LOGD("touch: re-init succeeded (attempt %d/%d)",
-                 touch_reinit_attempts, TOUCH_MAX_REINIT_ATTEMPTS);
+                 attempt, TOUCH_MAX_REINIT_ATTEMPTS);
     } else {
-        // Controller not responding — leave initialized=false
-        // so touch stays dead; will retry on next error burst if attempts remain
         initialized = false;
+        if (touch_reinit_attempts < TOUCH_MAX_REINIT_ATTEMPTS) {
+            touch_next_reinit_ms = now + TOUCH_REINIT_RETRY_MS;
+        } else {
+            touch_reinit_pending = false;
+        }
         SIG_LOGW("touch: re-init failed (attempt %d/%d)",
-                 touch_reinit_attempts, TOUCH_MAX_REINIT_ATTEMPTS);
+                 attempt, TOUCH_MAX_REINIT_ATTEMPTS);
     }
+}
+
+static void touch_start_reinit(uint32_t now)
+{
+    touch_reinit_attempts = 0;
+    touch_reinit_pending = true;
+    touch_next_reinit_ms = now;
+    touch_attempt_reinit(now);
 }
 
 // ════════════════════════════════════════════════════════
@@ -222,6 +247,10 @@ void sigurdos_touch_reset_init_for_test()
     i2c_addr = GT911_ADDR1;
     touch_i2c_errors = 0;
     touch_idle_count = 0;
+    touch_reinit_attempts = 0;
+    touch_reinit_pending = false;
+    touch_next_reinit_ms = 0;
+    last_poll = 0;
     last_x = -1;
     last_y = -1;
     pressed = false;
@@ -235,9 +264,15 @@ void sigurdos_touch_reset_init_for_test()
 
 void sigurdos_touch_loop()
 {
-    if (!initialized) return;
-
     uint32_t now = millis();
+    if (!initialized) {
+        if (touch_reinit_pending &&
+            (int32_t)(now - touch_next_reinit_ms) >= 0) {
+            touch_attempt_reinit(now);
+        }
+        return;
+    }
+
     // Adaptive poll interval: fast (10ms) when touch is active,
     // slow (50ms) after consecutive idle polls (PERF-004).
     uint32_t interval = (touch_idle_count >= TOUCH_IDLE_THRESHOLD)
@@ -278,7 +313,7 @@ void sigurdos_touch_loop()
         touch_i2c_errors++;
         if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS) {
             // Persistent I2C wedge — attempt bounded GT911 re-init (RELI-001)
-            touch_attempt_reinit();
+            touch_start_reinit(now);
         }
         return;
     }
@@ -307,7 +342,7 @@ void sigurdos_touch_loop()
         i2c_write_reg(GT911_REG_STATUS, 0);
         if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS) {
             // Persistent I2C wedge — attempt bounded GT911 re-init (RELI-001)
-            touch_attempt_reinit();
+            touch_start_reinit(now);
         }
         return;
     }
