@@ -5,6 +5,7 @@
 //
 #include "sigurd_mesh_v2.h"
 #include "advert_blob.h"
+#include "control_parser.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -212,10 +213,17 @@ namespace mesh {
             size_t name_len = (size_t)(rssi_start - remaining);
             if (name_len > 31) name_len = 31;
 
+            const uint8_t* rssi_data = reinterpret_cast<const uint8_t*>(rssi_start + 1);
+            const size_t rssi_len = pkt->payload_len -
+                static_cast<size_t>((rssi_start + 1) -
+                                    reinterpret_cast<const char*>(pkt->payload));
+            int rssi = 0;
+            if (!parse_bounded_int(rssi_data, rssi_len, &rssi)) return;
+
             PingResult& pr = _ping_results[_ping_n_results++];
             memcpy(pr.name, remaining, name_len);
             pr.name[name_len] = '\0';
-            pr.rssi = atoi(rssi_start + 1);
+            pr.rssi = rssi;
             return;
         }
 
