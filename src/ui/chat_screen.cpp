@@ -18,6 +18,7 @@
 
 
 #include "chat_screen.h"
+#include "chat_message_buffer.h"
 #include "channel_menu.h"
 #include "navigation.h"
 #include "screens.h"
@@ -153,16 +154,9 @@ struct ChannelMeta {
 };
 static ChannelMeta ch_meta[MAX_CHANNELS];
 
-struct ChannelMessage {
-    char     sender[32];
-    char     text[160];
-    uint32_t timestamp;
-    bool     is_self;
-    bool     acked;
-};
-static ChannelMessage* ch_msgs[MAX_CHANNELS] = {nullptr};
-static uint16_t       ch_msg_capacity[MAX_CHANNELS] = {0};
-static uint16_t       ch_msg_count[MAX_CHANNELS];
+// ChannelMessage and the per-channel buffer mechanics live in
+// chat_message_buffer.h (issue #820) so they are testable off-target.
+static ChatMessageBuffer ch_buffers[MAX_CHANNELS];
 
 
 struct ChatPrivateScopeState {
@@ -225,23 +219,12 @@ static void clear_chat_private_scope(const char* conversation)
 static void ensure_channel_buffer(int idx)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
-    if (ch_msgs[idx] || ch_msg_capacity[idx] == CHAT_MSGS_MAX) return;
-
-    const size_t bytes = CHAT_MSGS_MAX * sizeof(ChannelMessage);
-    ch_msgs[idx] = (ChannelMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!ch_msgs[idx]) {
-        // PSRAM exhausted — fall back to DRAM at reduced capacity
-        size_t dram_bytes = CHAT_MSGS_MIN_CAP * sizeof(ChannelMessage);
-        ch_msgs[idx] = (ChannelMessage*)heap_caps_malloc(dram_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        ch_msg_capacity[idx] = ch_msgs[idx] ? CHAT_MSGS_MIN_CAP : 0;
-    } else {
-        ch_msg_capacity[idx] = CHAT_MSGS_MAX;
-    }
+    ch_buffers[idx].ensure(CHAT_MSGS_MAX, CHAT_MSGS_MIN_CAP);
 }
 
 static bool has_channel_buffer(int idx)
 {
-    return idx >= 0 && idx < MAX_CHANNELS && ch_msgs[idx] != nullptr;
+    return idx >= 0 && idx < MAX_CHANNELS && ch_buffers[idx].allocated();
 }
 
 static uint16_t chat_msg_cap()
@@ -254,20 +237,10 @@ static void trim_channel_history(int idx, uint16_t cap)
     if (idx < 0 || idx >= MAX_CHANNELS || cap == 0) {
         return;
     }
+    // Keeps the legacy ensure side effect: callers gate on
+    // has_channel_buffer() right after trimming.
     ensure_channel_buffer(idx);
-    if (!has_channel_buffer(idx)) {
-        return;
-    }
-
-    const uint16_t buf_cap = ch_msg_capacity[idx];
-    const uint16_t effective_cap = (cap < buf_cap) ? cap : buf_cap;
-    if (ch_msg_count[idx] <= effective_cap) {
-        return;
-    }
-
-    uint16_t drop = ch_msg_count[idx] - effective_cap;
-    memmove(&ch_msgs[idx][0], &ch_msgs[idx][drop], effective_cap * sizeof(ChannelMessage));
-    ch_msg_count[idx] = effective_cap;
+    ch_buffers[idx].trim(cap);
 }
 
 // ── Forward declarations ───────────────────────────────────
@@ -343,9 +316,7 @@ static void refresh_channels()
     // NOTE: static to avoid ~1.9KB stack allocation in LVGL event handler context
     static char old_names[MAX_CHANNELS][CHANNEL_NAME_CAP] = {{0}};
     static ChannelMeta old_meta[MAX_CHANNELS] = {};
-    static uint16_t old_counts[MAX_CHANNELS] = {0};
-    static ChannelMessage* old_msgs[MAX_CHANNELS] = {nullptr};
-    static uint16_t old_caps[MAX_CHANNELS] = {0};
+    static ChatMessageBuffer old_bufs[MAX_CHANNELS];
     // The flat memcpy below relies on old_names having the same row stride as
     // dyn_channels; assert it so the two can never silently diverge again (#686).
     static_assert(sizeof(old_names) == sizeof(dyn_channels),
@@ -362,13 +333,8 @@ static void refresh_channels()
 
     memcpy(old_names, dyn_channels, sizeof(old_names));
     memcpy(old_meta, ch_meta, sizeof(old_meta));
-    memcpy(old_counts, ch_msg_count, sizeof(old_counts));
     for (int i = 0; i < MAX_CHANNELS; i++) {
-        old_msgs[i] = ch_msgs[i];
-        old_caps[i] = ch_msg_capacity[i];
-        ch_msgs[i] = nullptr;
-        ch_msg_capacity[i] = 0;
-        ch_msg_count[i] = 0;
+        old_bufs[i].takeFrom(ch_buffers[i]);
         memset(&ch_meta[i], 0, sizeof(ch_meta[i]));
     }
 
@@ -445,11 +411,8 @@ static void refresh_channels()
         for (int old_idx = 0; old_idx < old_count; old_idx++) {
             if (old_names[old_idx][0] != '\0' &&
                 strcmp(dyn_channels[new_idx], old_names[old_idx]) == 0) {
-                ch_msgs[new_idx] = old_msgs[old_idx];
-                ch_msg_capacity[new_idx] = old_caps[old_idx];
-                ch_msg_count[new_idx] = old_counts[old_idx];
+                ch_buffers[new_idx].takeFrom(old_bufs[old_idx]);  // claimed
                 ch_meta[new_idx] = old_meta[old_idx];
-                old_msgs[old_idx] = nullptr;  // claimed — don't free
                 old_names[old_idx][0] = '\0'; // mark consumed
                 break;
             }
@@ -467,20 +430,14 @@ static void refresh_channels()
             if (strncmp(old_names[old_idx], "DM:", 3) != 0) continue;
             if (dyn_count >= MAX_CHANNELS) {
                 // No room — free the orphaned buffer
-                if (old_msgs[old_idx]) {
-                    heap_caps_free(old_msgs[old_idx]);
-                    old_msgs[old_idx] = nullptr;
-                }
+                old_bufs[old_idx].release();
                 continue;
             }
             int new_idx = dyn_count++;
             strncpy(dyn_channels[new_idx], old_names[old_idx], sizeof(dyn_channels[new_idx]) - 1);
             dyn_channels[new_idx][sizeof(dyn_channels[new_idx]) - 1] = '\0';
-            ch_msgs[new_idx] = old_msgs[old_idx];
-            ch_msg_capacity[new_idx] = old_caps[old_idx];
-            ch_msg_count[new_idx] = old_counts[old_idx];
+            ch_buffers[new_idx].takeFrom(old_bufs[old_idx]);  // claimed
             ch_meta[new_idx] = old_meta[old_idx];
-            old_msgs[old_idx] = nullptr; // claimed
         }
     }
 
@@ -489,10 +446,7 @@ static void refresh_channels()
     // present (gone from mesh, not a DM) have their memory
     // released here.
     for (int i = 0; i < old_count; i++) {
-        if (old_msgs[i]) {
-            heap_caps_free(old_msgs[i]);
-            old_msgs[i] = nullptr;
-        }
+        old_bufs[i].release();
     }
 
     // ── Update active_channel by name, not by index ──────
@@ -754,34 +708,11 @@ static void append_channel_message(int idx, const char* sender, const char* text
                                    uint32_t timestamp, bool is_self)
 {
     if (idx < 0 || idx >= MAX_CHANNELS) return;
-    ensure_channel_buffer(idx);
-    if (!has_channel_buffer(idx)) return;
-
-    const uint16_t user_cap = chat_msg_cap();
-    const uint16_t buf_cap = ch_msg_capacity[idx];
-    // Use actual buffer capacity if it's smaller than the user-configured cap
-    // Prevents OOB write when PSRAM exhausted and DRAM fallback provides only CHAT_MSGS_MIN_CAP (#542)
-    const uint16_t cap = (buf_cap > 0 && buf_cap < user_cap) ? buf_cap : user_cap;
-    trim_channel_history(idx, cap);
-
-    uint16_t pos = ch_msg_count[idx];
-    if (pos >= cap) {
-        for (uint16_t i = 1; i < cap; i++) ch_msgs[idx][i - 1] = ch_msgs[idx][i];
-        pos = cap - 1;
-    } else {
-        ch_msg_count[idx]++;
-    }
-
-    ChannelMessage& msg = ch_msgs[idx][pos];
-    strncpy(msg.sender, sender ? sender : "", sizeof(msg.sender) - 1);
-    msg.sender[sizeof(msg.sender) - 1] = '\0';
-    strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
-    msg.text[sizeof(msg.text) - 1] = '\0';
-    msg.timestamp = timestamp;
-    msg.is_self = is_self;
-    msg.acked = false;
-
-    update_channel_meta(idx, msg.text, timestamp);
+    ChannelMessage* msg = ch_buffers[idx].append(sender, text, timestamp, is_self,
+                                                 chat_msg_cap(), CHAT_MSGS_MAX,
+                                                 CHAT_MSGS_MIN_CAP);
+    if (!msg) return;
+    update_channel_meta(idx, msg->text, timestamp);
 }
 
 static bool loaded_message_exists(int idx, const char* sender, const char* text,
@@ -790,8 +721,8 @@ static bool loaded_message_exists(int idx, const char* sender, const char* text,
     if (idx < 0 || idx >= MAX_CHANNELS || !has_channel_buffer(idx)) return false;
     const char* safe_sender = sender ? sender : "";
     const char* safe_text = text ? text : "";
-    for (uint16_t i = 0; i < ch_msg_count[idx]; i++) {
-        const ChannelMessage& msg = ch_msgs[idx][i];
+    for (uint16_t i = 0; i < ch_buffers[idx].count(); i++) {
+        const ChannelMessage& msg = ch_buffers[idx].at(i);
         uint32_t delta = msg.timestamp > timestamp
             ? msg.timestamp - timestamp
             : timestamp - msg.timestamp;
@@ -811,8 +742,8 @@ static bool append_loaded_channel_message(int idx, const char* sender, const cha
     ensure_channel_buffer(idx);
     if (loaded_message_exists(idx, sender, text, timestamp, is_self)) {
         if (acked && has_channel_buffer(idx)) {
-            for (uint16_t i = 0; i < ch_msg_count[idx]; i++) {
-                ChannelMessage& msg = ch_msgs[idx][i];
+            for (uint16_t i = 0; i < ch_buffers[idx].count(); i++) {
+                ChannelMessage& msg = ch_buffers[idx].at(i);
                 uint32_t delta = msg.timestamp > timestamp
                     ? msg.timestamp - timestamp
                     : timestamp - msg.timestamp;
@@ -828,8 +759,8 @@ static bool append_loaded_channel_message(int idx, const char* sender, const cha
 
     append_channel_message(idx, sender, text, timestamp, is_self);
     mark_chat_history_dirty();
-    if (acked && has_channel_buffer(idx) && ch_msg_count[idx] > 0) {
-        ch_msgs[idx][ch_msg_count[idx] - 1].acked = true;
+    if (acked && has_channel_buffer(idx) && ch_buffers[idx].count() > 0) {
+        ch_buffers[idx].markLastAcked();
     }
     return true;
 }
@@ -1065,7 +996,7 @@ static void run_search(const char* query)
     search_current_match = -1;
     if (!query || !query[0] || !has_channel_buffer(active_channel)) return;
 
-    int n = ch_msg_count[active_channel];
+    int n = ch_buffers[active_channel].count();
     // Lowercase query for case-insensitive matching
     char q_lower[32];
     size_t qlen = 0;
@@ -1077,7 +1008,7 @@ static void run_search(const char* query)
     for (int i = 0; i < n && search_match_count < 200; i++) {
         bool found = false;
         // Search message text
-        const char* text = ch_msgs[active_channel][i].text;
+        const char* text = ch_buffers[active_channel].at(i).text;
         if (text[0]) {
             for (const char* p = text; *p; p++) {
                 bool match = true;
@@ -1092,7 +1023,7 @@ static void run_search(const char* query)
         }
         // Also search sender name
         if (!found) {
-            const char* sender = ch_msgs[active_channel][i].sender;
+            const char* sender = ch_buffers[active_channel].at(i).sender;
             if (sender[0]) {
                 for (const char* p = sender; *p; p++) {
                     bool match = true;
@@ -1448,8 +1379,8 @@ static void render_active_messages()
         if (search_match_count > 0) {
             for (int i = 0; i < search_match_count; i++) {
                 int idx = search_matches[i];
-                if (idx < 0 || idx >= ch_msg_count[active_channel]) continue;
-                ChannelMessage& msg = ch_msgs[active_channel][idx];
+                if (idx < 0 || idx >= ch_buffers[active_channel].count()) continue;
+                ChannelMessage& msg = ch_buffers[active_channel].at(idx);
                 lv_obj_t* bubble = create_bubble(msg_list, msg.sender, msg.text,
                                                   msg.timestamp, msg.is_self, msg.acked);
                 // Highlight the current search match
@@ -1479,8 +1410,8 @@ static void render_active_messages()
     }
 
     // ── Normal mode: render all messages ──
-    for (uint16_t i = 0; i < ch_msg_count[active_channel]; i++) {
-        ChannelMessage& msg = ch_msgs[active_channel][i];
+    for (uint16_t i = 0; i < ch_buffers[active_channel].count(); i++) {
+        ChannelMessage& msg = ch_buffers[active_channel].at(i);
 
         // Check ACK status for self-sent DM messages
         if (msg.is_self && !msg.acked) {
@@ -2732,8 +2663,8 @@ static bool read_history_channel(int stored_index, char* name_out,
     }
     std::strncpy(name_out, dyn_channels[channel], name_len - 1);
     name_out[name_len - 1] = '\0';
-    const uint16_t count = ch_msg_count[channel] > ctx->message_cap
-        ? ctx->message_cap : ch_msg_count[channel];
+    const uint16_t count = ch_buffers[channel].count() > ctx->message_cap
+        ? ctx->message_cap : ch_buffers[channel].count();
     *message_count_out = (uint8_t)count;
     return true;
 }
@@ -2746,9 +2677,9 @@ static bool read_history_message(int stored_index, int message_index,
         stored_index >= (int)CHAT_HISTORY_MAX_CHANNELS) return false;
     const int channel = ctx->channel_indices[stored_index];
     if (channel < 0 || channel >= dyn_count || !has_channel_buffer(channel) ||
-        message_index < 0 || message_index >= ch_msg_count[channel]) return false;
+        message_index < 0 || message_index >= ch_buffers[channel].count()) return false;
 
-    const ChannelMessage& source = ch_msgs[channel][message_index];
+    const ChannelMessage& source = ch_buffers[channel].at(message_index);
     std::strncpy(out->sender, source.sender, sizeof(out->sender) - 1);
     std::strncpy(out->text, source.text, sizeof(out->text) - 1);
     out->timestamp = source.timestamp;
@@ -2782,7 +2713,7 @@ void chat_save_messages()
     int stored_count = 0;
     for (int channel = 0; channel < dyn_count &&
          stored_count < (int)CHAT_HISTORY_MAX_CHANNELS; ++channel) {
-        if (ch_msg_count[channel] > 0 && has_channel_buffer(channel)) {
+        if (ch_buffers[channel].count() > 0 && has_channel_buffer(channel)) {
             ctx.channel_indices[stored_count++] = channel;
         }
     }
