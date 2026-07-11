@@ -36,14 +36,17 @@ using AtomicFileWriteFn = bool (*)(AtomicFileWriter& writer, void* ctx);
 using AtomicFileValidateFn = bool (*)(AtomicFileReader& reader, void* ctx);
 
 // Stream a replacement to <path>.tmp, close it, validate the complete file,
-// then atomically rename it over path. A valid temp is retained if only the
-// final rename fails so boot recovery can finish the commit.
+// remove the live file (SPIFFS cannot rename over an existing name, #837),
+// then rename the temp into place. The live file is only touched after the
+// temp validates; if the commit fails past that point the validated temp is
+// retained so atomicFileRecover can finish it — at least one validated copy
+// of the data survives at every step.
 bool atomicFileReplace(const char* path,
                        AtomicFileWriteFn write_fn, void* write_ctx,
                        AtomicFileValidateFn validate_fn, void* validate_ctx);
 
 // Recover an interrupted replacement. Invalid temps are removed without
-// touching the live file; valid temps are atomically promoted.
+// touching the live file; valid temps are promoted over the live file.
 bool atomicFileRecover(const char* path,
                        AtomicFileValidateFn validate_fn, void* validate_ctx);
 

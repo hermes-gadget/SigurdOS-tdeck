@@ -139,12 +139,30 @@ TEST_F(AtomicFileTest, RenameFailureLeavesValidatedTempForRecovery)
     atomicFileSetNativeFault(AtomicFileNativeFault::Rename);
     EXPECT_FALSE(atomicFileReplace(LIVE_PATH, writePayload, &replacement,
                                    validatePayload, nullptr));
-    EXPECT_EQ(readPayload(LIVE_PATH), "old");
+    // The live file was cleared for the SPIFFS rename, so only the validated
+    // temp survives the interrupted commit — recovery must finish it.
     EXPECT_EQ(readPayload("/tmp/sigurdos_atomic_file_test.bin.tmp"), "new");
 
     atomicFileSetNativeFault(AtomicFileNativeFault::None);
     EXPECT_TRUE(atomicFileRecover(LIVE_PATH, validatePayload, nullptr));
     EXPECT_EQ(readPayload(LIVE_PATH), "new");
+    EXPECT_EQ(std::fopen("/tmp/sigurdos_atomic_file_test.bin.tmp", "rb"), nullptr);
+}
+
+TEST_F(AtomicFileTest, RecoverPromotesValidTempOverExistingLive)
+{
+    // Crash after the temp validated but before the live file was removed:
+    // both files exist. SPIFFS cannot rename over the live name (#837), so
+    // recovery must clear it before promoting the temp.
+    save("old");
+    Payload staged{"new", false};
+    ASSERT_TRUE(atomicFileReplace("/tmp/sigurdos_atomic_file_test.bin.tmp",
+                                  writePayload, &staged,
+                                  validatePayload, nullptr));
+
+    EXPECT_TRUE(atomicFileRecover(LIVE_PATH, validatePayload, nullptr));
+    EXPECT_EQ(readPayload(LIVE_PATH), "new");
+    EXPECT_EQ(std::fopen("/tmp/sigurdos_atomic_file_test.bin.tmp", "rb"), nullptr);
 }
 
 TEST_F(AtomicFileTest, InvalidTempNeverReplacesValidLive)

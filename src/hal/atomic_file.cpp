@@ -74,6 +74,10 @@ bool renameFile(const char* from, const char* to)
     return SPIFFS.rename(from, to);
 #else
     if (faultIs(AtomicFileNativeFault::Rename)) return false;
+    // SPIFFS (IDF 4.4) returns SPIFFS_ERR_CONFLICTING_NAME when the
+    // destination exists — no POSIX overwrite. Emulate that here so native
+    // tests exercise the same remove-then-rename path as hardware (#837).
+    if (fileExists(to)) return false;
     return std::rename(from, to) == 0;
 #endif
 }
@@ -194,6 +198,10 @@ bool atomicFileReplace(const char* path,
         removeFile(temp_path);
         return false;
     }
+    // SPIFFS rename fails when the destination exists, so the live file must
+    // be removed first — but only now that the temp has validated. A crash in
+    // this window leaves the validated temp for atomicFileRecover to promote.
+    if (!removeFile(path)) return false;
     return renameFile(temp_path, path);
 }
 
@@ -209,6 +217,10 @@ bool atomicFileRecover(const char* path,
         removeFile(temp_path);
         return fileExists(path) && validatePath(path, validate_fn, validate_ctx);
     }
+    // Same as atomicFileReplace: clear the destination for SPIFFS before
+    // promoting the validated temp. The temp survives a failure here, so a
+    // later recovery pass can retry the commit.
+    if (!removeFile(path)) return false;
     return renameFile(temp_path, path);
 }
 
