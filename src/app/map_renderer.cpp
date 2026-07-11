@@ -223,15 +223,6 @@ static bool load_tile(int zoom, int tx, int ty) {
         return true;
     }
 
-    CachedTile* slot = tile_cache_evict_slot(tile_cache, TILE_CACHE_SIZE);
-    if (slot->pixels) { map_free(slot->pixels); slot->pixels = nullptr; }
-
-    slot->pixels = (uint16_t*)map_alloc(TILE_SIZE * TILE_SIZE * 2);
-    if (!slot->pixels) {
-        set_tile_status("load:no tile buf");
-        return false;
-    }
-
     char path[64];
     snprintf(path, sizeof(path), SIGURDOS_SD_MOUNTPOINT "/tiles/%d/%d/%d.png", zoom, tx, ty);
 
@@ -239,7 +230,7 @@ static bool load_tile(int zoom, int tx, int ty) {
     if (!f) {
         MAP_DEBUG_PRINTF("[map] tile miss: %s\n", path);
         set_tile_status("load:fopen fail %d/%d/%d", zoom, tx, ty);
-        map_free(slot->pixels); slot->pixels = nullptr; return false;
+        return false;
     }
     MAP_DEBUG_PRINTF("[map] tile hit: %s\n", path);
 
@@ -249,18 +240,18 @@ static bool load_tile(int zoom, int tx, int ty) {
 
     if (fsize <= 0 || fsize > 196 * 1024) {
         set_tile_status("load:size %ld %d/%d/%d", fsize, zoom, tx, ty);
-        fclose(f); map_free(slot->pixels); slot->pixels = nullptr; return false;
+        fclose(f); return false;
     }
 
     uint8_t* png_buf = (uint8_t*)map_alloc((size_t)fsize);
     if (!png_buf) {
         set_tile_status("load:no png buf %ld", fsize);
-        fclose(f); map_free(slot->pixels); slot->pixels = nullptr; return false;
+        fclose(f); return false;
     }
 
     if (fread(png_buf, 1, (size_t)fsize, f) != (size_t)fsize) {
         set_tile_status("load:read fail %ld", fsize);
-        fclose(f); map_free(png_buf); map_free(slot->pixels); slot->pixels = nullptr; return false;
+        fclose(f); map_free(png_buf); return false;
     }
     fclose(f);
 
@@ -271,7 +262,14 @@ static bool load_tile(int zoom, int tx, int ty) {
 
     if (err != 0 || w != TILE_SIZE || h != TILE_SIZE) {
         set_tile_status("load:png err %u %ux%u", err, w, h);
-        lodepng_free(rgba); map_free(slot->pixels); slot->pixels = nullptr; return false;
+        lodepng_free(rgba); return false;
+    }
+
+    uint16_t* decoded_pixels = (uint16_t*)map_alloc(TILE_SIZE * TILE_SIZE * 2);
+    if (!decoded_pixels) {
+        set_tile_status("load:no tile buf");
+        lodepng_free(rgba);
+        return false;
     }
 
     for (int y = 0; y < TILE_SIZE; y++) {
@@ -280,11 +278,17 @@ static bool load_tile(int zoom, int tx, int ty) {
             uint16_t r = rgba[i] >> 3;
             uint16_t g = rgba[i + 1] >> 2;
             uint16_t b = rgba[i + 2] >> 3;
-            slot->pixels[y * TILE_SIZE + x] = (r << 11) | (g << 5) | b;
+            decoded_pixels[y * TILE_SIZE + x] = (r << 11) | (g << 5) | b;
         }
     }
 
     lodepng_free(rgba);
+
+    // Do not destroy a valid cached tile until the replacement file has been
+    // opened, bounded, read, decoded, validated, and converted successfully.
+    CachedTile* slot = tile_cache_evict_slot(tile_cache, TILE_CACHE_SIZE);
+    if (slot->pixels) map_free(slot->pixels);
+    slot->pixels = decoded_pixels;
 
     slot->zoom = zoom;
     slot->tx = tx;

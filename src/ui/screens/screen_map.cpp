@@ -71,24 +71,30 @@ bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
 // ════════════════════════════════════════════════════════
 
 // Helper: render map tiles then overlay contact markers
+static sigurdos::mesh::ContactInfo* map_contacts = nullptr;
+
 static void render_map_with_contacts() {
     sigurdos_map_render();
-    sigurdos::mesh::ContactInfo* contacts =
-        new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
-    if (!contacts) {
+    if (!map_contacts) {
+        map_contacts = new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
+    }
+    if (!map_contacts) {
         sigurdos_map_contact_render(nullptr, 0);
         return;
     }
-    int n = sigurdos::mesh::exportContactsFull(contacts, MAX_CONTACTS);
+    int n = sigurdos::mesh::exportContactsFull(map_contacts, MAX_CONTACTS);
     if (n < 0) n = 0;
     if (n > MAX_CONTACTS) n = MAX_CONTACTS;
-    sigurdos_map_contact_render(contacts, n);
-    delete[] contacts;
+    sigurdos_map_contact_render(map_contacts, n);
 }
 
 void map_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Map");
+    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+        delete[] map_contacts;
+        map_contacts = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
 
     // Create the map overlay container before initializing contacts
     lv_obj_t* map = lv_obj_create(scr);
