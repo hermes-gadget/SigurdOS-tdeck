@@ -178,30 +178,40 @@ bool CompanionBridge::offlineFrameExists(const uint8_t* frame, size_t len) const
     return false;
 }
 
-bool CompanionBridge::addToOfflineQueue(uint32_t store_id, const uint8_t* frame, size_t len)
+bool CompanionBridge::addToOfflineQueue(uint32_t store_id, bool persistent,
+                                        const uint8_t* frame, size_t len)
 {
     if (!frame || len == 0 || len > MAX_FRAME_SIZE) return false;
+    if (persistent && store_id == 0) return false;
     if (offlineFrameExists(frame, len)) return false;
     if (_offline_len >= OFFLINE_QUEUE_SIZE) {
         for (int i = 1; i < _offline_len; i++) _offline[i - 1] = _offline[i];
         _offline_len--;
     }
     _offline[_offline_len].store_id = store_id;
+    _offline[_offline_len].persistent = persistent;
     _offline[_offline_len].len = (uint8_t)len;
     std::memcpy(_offline[_offline_len].buf, frame, len);
     _offline_len++;
     return true;
 }
 
-int CompanionBridge::getFromOfflineQueue(uint8_t* frame, uint32_t* store_id)
+int CompanionBridge::peekOfflineQueue(uint8_t* frame, uint32_t* store_id,
+                                      bool* persistent)
 {
     if (!frame || _offline_len <= 0) return 0;
     if (store_id) *store_id = _offline[0].store_id;
+    if (persistent) *persistent = _offline[0].persistent;
     int len = _offline[0].len;
     std::memcpy(frame, _offline[0].buf, len);
+    return len;
+}
+
+void CompanionBridge::removeFirstOfflineFrame()
+{
+    if (_offline_len <= 0) return;
     for (int i = 1; i < _offline_len; i++) _offline[i - 1] = _offline[i];
     _offline_len--;
-    return len;
 }
 
 bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg,
@@ -285,7 +295,7 @@ void CompanionBridge::seedOfflineQueueFromStore()
         uint8_t frame[MAX_FRAME_SIZE];
         size_t len = 0;
         if (buildMessageFrame(recent[idx], frame, &len) &&
-            addToOfflineQueue(recent[idx].store_id, frame, len)) {
+            addToOfflineQueue(recent[idx].store_id, true, frame, len)) {
             added_any = true;
         }
     }
@@ -306,7 +316,7 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
     uint8_t frame[MAX_FRAME_SIZE];
     size_t len = 0;
     if (!buildMessageFrame(msg, frame, &len)) return false;
-    bool added = addToOfflineQueue(msg.store_id, frame, len);
+    bool added = addToOfflineQueue(msg.store_id, msg.store_id != 0, frame, len);
     if (added) {
         // The record is NOT marked companion_sent here — that happens only when
         // CMD_SYNC_NEXT_MESSAGE successfully writes the frame to the app. This
@@ -345,7 +355,7 @@ bool CompanionBridge::enqueueChannelData(uint8_t channel_index,
         i += (int)payload_len;
     }
 
-    bool added = addToOfflineQueue(0, _out_frame, (size_t)i);
+    bool added = addToOfflineQueue(0, false, _out_frame, (size_t)i);
     if (added && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
         _serial->writeFrame(&tickle, 1);
@@ -577,14 +587,16 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     if (cmd == CMD_SYNC_NEXT_MESSAGE) {
         _last_sync_time = _host->currentTime();
         uint32_t store_id = 0;
-        int out_len = getFromOfflineQueue(_out_frame, &store_id);
+        bool persistent = false;
+        int out_len = peekOfflineQueue(_out_frame, &store_id, &persistent);
         if (out_len > 0) {
-            // Only mark the record as delivered if writeFrame succeeds. If BLE
-            // is busy/disconnected and writeFrame returns 0, the frame stays in
-            // the queue and the record remains unsent for the next sync attempt.
+            // Dequeue only after the transport accepts the complete frame.
             size_t written = _serial->writeFrame(_out_frame, out_len);
-            if (written == (size_t)out_len && store_id != 0) {
-                sigurdos::mesh::messageStoreMarkCompanionSent(store_id);
+            if (written == (size_t)out_len) {
+                if (persistent) {
+                    sigurdos::mesh::messageStoreMarkCompanionSent(store_id);
+                }
+                removeFirstOfflineFrame();
             }
         } else {
             writeNoMoreMessages();

@@ -396,7 +396,8 @@ public:
 private:
     static constexpr int OFFLINE_QUEUE_SIZE = 16;
     struct Frame {
-        uint32_t store_id;  // monotonic store ID for per-record delivery marking
+        uint32_t store_id;
+        bool persistent;    // channel-data frames have no message-store record
         uint8_t len;
         uint8_t buf[MAX_FRAME_SIZE];
     };
@@ -409,10 +410,13 @@ private:
     void writeContactFrame(uint8_t code, const CompanionContact& contact);
     void writeNoMoreMessages();
     bool offlineFrameExists(const uint8_t* frame, size_t len) const;
-    bool addToOfflineQueue(uint32_t store_id, const uint8_t* frame, size_t len);
+    bool addToOfflineQueue(uint32_t store_id, bool persistent,
+                           const uint8_t* frame, size_t len);
     void seedOfflineQueueFromStore();
-    // Returns frame length and sets *store_id to the record ID. Returns 0 if empty.
-    int  getFromOfflineQueue(uint8_t* frame, uint32_t* store_id);
+    // Peek does not dequeue. removeFirstOfflineFrame() is called only after the
+    // transport accepts the complete frame.
+    int  peekOfflineQueue(uint8_t* frame, uint32_t* store_id, bool* persistent);
+    void removeFirstOfflineFrame();
     bool buildMessageFrame(const sigurdos::mesh::StoredMessage& msg,
                            uint8_t* out, size_t* out_len);
 

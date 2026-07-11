@@ -3,6 +3,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -150,9 +151,9 @@ TEST_F(MessageStoreTest, StoreIdIsMonotonic) {
     sigurdos::mesh::StoredMessage out[4]{};
     int n = sigurdos::mesh::messageStoreLoadAll(out, 4);
     ASSERT_EQ(n, 3);
-    EXPECT_EQ(out[0].store_id, 0u);
-    EXPECT_EQ(out[1].store_id, 1u);
-    EXPECT_EQ(out[2].store_id, 2u);
+    EXPECT_EQ(out[0].store_id, 1u);
+    EXPECT_EQ(out[1].store_id, 2u);
+    EXPECT_EQ(out[2].store_id, 3u);
 }
 
 TEST_F(MessageStoreTest, MarkCompanionSentMarksOnlyOneRecord) {
@@ -163,17 +164,17 @@ TEST_F(MessageStoreTest, MarkCompanionSentMarksOnlyOneRecord) {
     EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
         makeMsg("DM: Bob", "Bob", "three", 3, false, false)));
 
-    // Mark only record with store_id=1
-    EXPECT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(1));
+    // Mark only the second record (store_id=2).
+    EXPECT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(2));
 
     sigurdos::mesh::StoredMessage out[4]{};
     int n = sigurdos::mesh::messageStoreLoadAll(out, 4);
     ASSERT_EQ(n, 3);
-    // Record 0 (store_id=0): NOT marked
+    // Record 0 (store_id=1): NOT marked
     EXPECT_FALSE(out[0].companion_sent);
-    // Record 1 (store_id=1): marked
+    // Record 1 (store_id=2): marked
     EXPECT_TRUE(out[1].companion_sent);
-    // Record 2 (store_id=2): NOT marked
+    // Record 2 (store_id=3): NOT marked
     EXPECT_FALSE(out[2].companion_sent);
 }
 
@@ -192,14 +193,14 @@ TEST_F(MessageStoreTest, LoadUnsentOnlyReturnsUnmarkedRecords) {
     EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(m2));
     EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(m3));
 
-    // Mark record 1 as sent
-    EXPECT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(1));
+    // Mark the second record as sent.
+    EXPECT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(2));
 
     sigurdos::mesh::StoredMessage out[4]{};
     int n = sigurdos::mesh::messageStoreLoadUnsent(out, 4);
     ASSERT_EQ(n, 2);
-    EXPECT_EQ(out[0].store_id, 0u);
-    EXPECT_EQ(out[1].store_id, 2u);
+    EXPECT_EQ(out[0].store_id, 1u);
+    EXPECT_EQ(out[1].store_id, 3u);
 }
 
 TEST_F(MessageStoreTest, MetadataRoundTrips) {
@@ -237,7 +238,8 @@ TEST_F(MessageStoreTest, BeginRecoversRecordWrittenBeforeHeaderCount) {
     ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
         makeMsg("DM: Alice", "Alice", "complete", 42, false, false)));
     auto raw = readFile(path);
-    ASSERT_GE(raw.size(), 9U + sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
+    ASSERT_GE(raw.size(), sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
+                          sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
     const uint32_t stale_count = 0;
     std::memcpy(raw.data() + 5, &stale_count, sizeof(stale_count));
     writeFile(path, raw);
@@ -255,7 +257,8 @@ TEST_F(MessageStoreTest, BeginDropsOnlyTornTailAndCorrectsCount) {
     ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
         makeMsg("DM: Alice", "Alice", "second", 2, false, false)));
     auto raw = readFile(path);
-    raw.resize(9 + sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE + 13);
+    raw.resize(sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
+               sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE + 13);
     writeFile(path, raw);
 
     ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
@@ -306,6 +309,86 @@ TEST_F(MessageStoreTest, WholeStoreWriteFailurePreservesLiveStore) {
     sigurdos::mesh::StoredMessage out{};
     ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
     EXPECT_FALSE(out.acked);
+}
+
+TEST_F(MessageStoreTest, FirstAndRotatedIdsAreNonZeroAndNeverReused) {
+    std::set<uint32_t> ids;
+    for (uint32_t i = 1; i <= 130; ++i) {
+        char text[24];
+        std::snprintf(text, sizeof(text), "msg%lu", (unsigned long)i);
+        uint32_t id = 0;
+        ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+            makeMsg("DM: Alice", "Alice", text, i, false, false), &id));
+        EXPECT_NE(id, 0U);
+        EXPECT_TRUE(ids.insert(id).second) << "duplicate ID at append " << i;
+    }
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 64);
+    sigurdos::mesh::StoredMessage out[64]{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(out, 64), 64);
+    EXPECT_EQ(out[0].store_id, 67U);
+    EXPECT_EQ(out[63].store_id, 130U);
+    EXPECT_FALSE(sigurdos::mesh::messageStoreMarkCompanionSent(0));
+}
+
+TEST_F(MessageStoreTest, VersionFourMigratesAmbiguousIdsToNonZeroSequence) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "one", 1, false, false)));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Bob", "Bob", "two", 2, false, false)));
+    const auto v5 = readFile(path);
+    ASSERT_EQ(v5.size(), sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
+                         2 * sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
+
+    std::vector<uint8_t> v4;
+    v4.insert(v4.end(), v5.begin(), v5.begin() +
+        sigurdos::mesh::detail::MESSAGE_STORE_V4_HEADER_SIZE);
+    v4[4] = 4;
+    v4.insert(v4.end(), v5.begin() + sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE,
+              v5.end());
+    const uint32_t zero = 0;
+    const uint32_t reused = 1;
+    std::memcpy(v4.data() + sigurdos::mesh::detail::MESSAGE_STORE_V4_HEADER_SIZE,
+                &zero, sizeof(zero));
+    std::memcpy(v4.data() + sigurdos::mesh::detail::MESSAGE_STORE_V4_HEADER_SIZE +
+                    sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE,
+                &reused, sizeof(reused));
+    writeFile(path, v4);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    sigurdos::mesh::StoredMessage out[2]{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(out, 2), 2);
+    EXPECT_EQ(out[0].store_id, 1U);
+    EXPECT_EQ(out[1].store_id, 2U);
+    const auto migrated = readFile(path);
+    ASSERT_GE(migrated.size(), sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE);
+    EXPECT_EQ(migrated[4], sigurdos::mesh::detail::MESSAGE_STORE_VERSION);
+}
+
+TEST_F(MessageStoreTest, ValidVersionFourTempIsRecoveredBeforeMigration) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "old", 1, false, false)));
+    const auto old_live = readFile(path);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Bob", "Bob", "new", 2, false, false)));
+    const auto v5_new = readFile(path);
+
+    std::vector<uint8_t> v4_temp;
+    v4_temp.insert(v4_temp.end(), v5_new.begin(), v5_new.begin() +
+        sigurdos::mesh::detail::MESSAGE_STORE_V4_HEADER_SIZE);
+    v4_temp[4] = 4;
+    v4_temp.insert(v4_temp.end(),
+        v5_new.begin() + sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE,
+        v5_new.end());
+    writeFile(path, old_live);
+    writeFile((std::string(path) + ".tmp").c_str(), v4_temp);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    sigurdos::mesh::StoredMessage out[2]{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(out, 2), 2);
+    EXPECT_STREQ(out[0].text, "old");
+    EXPECT_STREQ(out[1].text, "new");
+    EXPECT_EQ(out[0].store_id, 1U);
+    EXPECT_EQ(out[1].store_id, 2U);
 }
 
 } // namespace

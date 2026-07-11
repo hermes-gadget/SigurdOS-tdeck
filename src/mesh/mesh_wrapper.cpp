@@ -8,6 +8,7 @@
 #include "channel_validation.h"
 #include "public_channel.h"
 #include "message_store.h"
+#include "durable_fanout.h"
 #include "contact_store.h"
 #include "persistence_store.h"
 #include "comms/companion_bridge.h"
@@ -168,6 +169,69 @@ static void bleValidationStartLog() {}
 static void bleValidationEmit(bool) {}
 #endif
 
+struct IncomingMessageFanoutCtx {
+    const char* sender;
+    const char* channel;
+    const char* text;
+    int rssi;
+    float snr;
+    uint32_t sender_timestamp;
+    uint8_t path_len;
+    const uint8_t* sender_prefix;
+    uint8_t txt_type;
+    const uint8_t* extra;
+    uint8_t extra_len;
+};
+
+static bool persistIncomingMessage(void* raw)
+{
+    IncomingMessageFanoutCtx* ctx = static_cast<IncomingMessageFanoutCtx*>(raw);
+    return ctx && storeIncomingMessageForCompanion(
+        ctx->sender, ctx->channel, ctx->text, ctx->rssi, ctx->snr,
+        ctx->sender_timestamp, ctx->path_len, ctx->sender_prefix,
+        ctx->txt_type, ctx->extra, ctx->extra_len);
+}
+
+static bool presentIncomingMessage(void* raw)
+{
+    IncomingMessageFanoutCtx* ctx = static_cast<IncomingMessageFanoutCtx*>(raw);
+    if (!ctx) return false;
+    if (msg_count >= MAX_QUEUED) {
+        msg_drop_count++;
+#if SIGURDOS_DEBUG_MESH
+        SIGURDOS_RUNTIME_FEAT(mesh) {
+        Serial.printf("[mesh] WARN: message queue full — dropping msg from %s (%lu dropped so far)\n",
+                      ctx->sender, (unsigned long)msg_drop_count);
+        }
+#endif
+        return false;
+    }
+    MeshMessage& m = msg_buf[msg_head];
+    strncpy(m.sender, ctx->sender, sizeof(m.sender) - 1);
+    m.sender[sizeof(m.sender) - 1] = '\0';
+    strncpy(m.channel, ctx->channel ? ctx->channel : "", sizeof(m.channel) - 1);
+    m.channel[sizeof(m.channel) - 1] = '\0';
+    strncpy(m.text, ctx->text, sizeof(m.text) - 1);
+    m.text[sizeof(m.text) - 1] = '\0';
+    m.timestamp = ctx->sender_timestamp
+        ? ctx->sender_timestamp : rtc_clock.getCurrentTime();
+    m.is_self = false;
+    if (strcmp(ctx->sender, own_name) != 0) unread_count++;
+    msg_head = (msg_head + 1) % MAX_QUEUED;
+    msg_count++;
+    const char* ptype = (ctx->channel && ctx->channel[0]) ? "CHANNEL" : "DM";
+    sigurdos::mesh::pushPacketLog(ctx->sender, ctx->rssi, ctx->snr, ptype);
+#if SIGURDOS_DEBUG_MESH
+    SIGURDOS_RUNTIME_FEAT(mesh) {
+    Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
+                  ctx->sender, ctx->channel && ctx->channel[0] ? " in " : "",
+                  ctx->channel && ctx->channel[0] ? ctx->channel : "",
+                  ctx->text, ctx->rssi, ctx->snr);
+    }
+#endif
+    return true;
+}
+
 // Non-static overload for SigurdMeshV2 — takes RSSI/SNR from caller context
 // (SigurdMeshV2 has packet context when calling, while the static queue_push
 //  reads from radio_driver which may not reflect the correct packet.)
@@ -181,40 +245,10 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
                          const uint8_t* extra,
                          uint8_t extra_len) {
     if (!sender || !text) return;
-    if (msg_count >= MAX_QUEUED) {
-        msg_drop_count++;
-#if SIGURDOS_DEBUG_MESH
-        SIGURDOS_RUNTIME_FEAT(mesh) {
-        Serial.printf("[mesh] WARN: message queue full — dropping msg from %s (%lu dropped so far)\n",
-                      sender, (unsigned long)msg_drop_count);
-        }
-#endif
-        return;
-    }
-    MeshMessage& m = msg_buf[msg_head];
-    strncpy(m.sender, sender, sizeof(m.sender) - 1);
-    m.sender[sizeof(m.sender) - 1] = '\0';
-    strncpy(m.channel, channel ? channel : "", sizeof(m.channel) - 1);
-    m.channel[sizeof(m.channel) - 1] = '\0';
-    strncpy(m.text, text, sizeof(m.text) - 1);
-    m.text[sizeof(m.text) - 1] = '\0';
-    m.timestamp = sender_timestamp ? sender_timestamp : rtc_clock.getCurrentTime();
-    m.is_self = false;
-    if (strcmp(sender, own_name) != 0) unread_count++;
-    msg_head = (msg_head + 1) % MAX_QUEUED;
-    msg_count++;
-    const char* ptype = (channel && channel[0]) ? "CHANNEL" : "DM";
-    sigurdos::mesh::pushPacketLog(sender, rssi, snr, ptype);
-    storeIncomingMessageForCompanion(sender, channel, text, rssi, snr,
-                                     sender_timestamp, path_len,
-                                     sender_prefix, txt_type, extra, extra_len);
-#if SIGURDOS_DEBUG_MESH
-    SIGURDOS_RUNTIME_FEAT(mesh) {
-    Serial.printf("[mesh] MSG from %s%s%s: %s  (RSSI:%ddBm SNR:%.1fdB)\n",
-                  sender, channel && channel[0] ? " in " : "",
-                  channel && channel[0] ? channel : "", text, rssi, snr);
-    }
-#endif
+    IncomingMessageFanoutCtx ctx{sender, channel, text, rssi, snr,
+        sender_timestamp, path_len, sender_prefix, txt_type, extra, extra_len};
+    sigurdos::mesh::deliverMessageDurableFirst(
+        persistIncomingMessage, presentIncomingMessage, &ctx);
 }
 
 void sigurdos::mesh::mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_time_ms) {

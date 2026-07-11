@@ -46,11 +46,11 @@ struct StoredMessage {
 
 namespace detail {
 static constexpr uint32_t MESSAGE_STORE_MAGIC = 0x534d5347; // "SMSG"
-// v4 added store_id (4), txt_type (1), extra_len (1), and extra[8] (8) for
-// exact companion message metadata. Old v3 records are rejected by readHeader
-// (version mismatch) and the store is rebuilt — acceptable for a persisted
-// message cache.
-static constexpr uint8_t MESSAGE_STORE_VERSION = 4;
+// v5 adds a non-zero monotonic next-ID field to the file header. Version-4
+// records are migrated by assigning fresh non-zero IDs in chronological order.
+static constexpr uint8_t MESSAGE_STORE_VERSION = 5;
+static constexpr size_t MESSAGE_STORE_V4_HEADER_SIZE = 9;
+static constexpr size_t MESSAGE_STORE_HEADER_SIZE = 13;
 static constexpr size_t MESSAGE_STORE_RECORD_SIZE =
     4 +  // store_id
     SIGURDOS_MSG_CONVERSATION_LEN +
@@ -72,7 +72,7 @@ void storedMessageNormalize(StoredMessage& msg);
 
 bool messageStoreBegin();
 bool messageStoreClear();
-bool messageStoreAppend(const StoredMessage& msg);
+bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out = nullptr);
 int  messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max);
 int  messageStoreLoadAll(StoredMessage* out, int max);
 bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp);

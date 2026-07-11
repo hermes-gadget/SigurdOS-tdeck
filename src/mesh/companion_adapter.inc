@@ -96,7 +96,7 @@ static void fillStoredPrefixForName(const char* name, uint8_t* out)
     }
 }
 
-static void storeIncomingMessageForCompanion(const char* sender, const char* channel,
+static bool storeIncomingMessageForCompanion(const char* sender, const char* channel,
                                              const char* text, int rssi, float snr,
                                              uint32_t sender_timestamp = 0,
                                              uint8_t path_len = 0xFF,
@@ -157,8 +157,13 @@ static void storeIncomingMessageForCompanion(const char* sender, const char* cha
     } else {
         fillStoredPrefixForName(sender, msg.sender_prefix);
     }
-    sigurdos::mesh::messageStoreAppend(msg);
-    if (CompanionBridge* b = companionBridge()) b->enqueueMessage(msg);
+    uint32_t store_id = 0;
+    if (sigurdos::mesh::messageStoreAppend(msg, &store_id)) {
+        msg.store_id = store_id;
+        if (CompanionBridge* b = companionBridge()) b->enqueueMessage(msg);
+        return true;
+    }
+    return false;
 }
 
 static void storeOutgoingMessageForCompanion(const char* conversation, const char* text,

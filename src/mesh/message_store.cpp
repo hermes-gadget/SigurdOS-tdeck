@@ -57,9 +57,10 @@ static void applyFlags(StoredMessage& msg, uint8_t flags)
     msg.companion_sent = (flags & 0x08) != 0;
 }
 
-static bool readHeader(uint32_t* out_count);
+static bool readHeader(uint32_t* out_count, uint32_t* out_next_id = nullptr);
 static bool writeHeaderIfNeeded();
-static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count);
+static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count,
+                               uint32_t next_id = 0);
 
 #if defined(ESP32_PLATFORM)
 static bool ensureFs()
@@ -145,7 +146,8 @@ static bool readRecordAt(uint32_t index, StoredMessage& msg)
 {
     uint32_t count = 0;
     if (!readHeader(&count) || index >= count) return false;
-    const long offset = 9L + (long)index * (long)detail::MESSAGE_STORE_RECORD_SIZE;
+    const long offset = (long)detail::MESSAGE_STORE_HEADER_SIZE +
+        (long)index * (long)detail::MESSAGE_STORE_RECORD_SIZE;
     uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
 
 #if defined(ESP32_PLATFORM)
@@ -203,7 +205,7 @@ static void writeRecordRaw(const StoredMessage& msg, uint8_t* rec, size_t len)
     rec[pos++] = flagsFor(norm);
 }
 
-static bool readHeader(uint32_t* out_count)
+static bool readHeader(uint32_t* out_count, uint32_t* out_next_id)
 {
     if (!ensureFs() || !existsStore()) return false;
 
@@ -213,9 +215,11 @@ static bool readHeader(uint32_t* out_count)
     uint32_t magic = 0;
     uint8_t version = 0;
     uint32_t count = 0;
+    uint32_t next_id = 0;
     bool ok = f.read((uint8_t*)&magic, 4) == 4 &&
               f.read(&version, 1) == 1 &&
-              f.read((uint8_t*)&count, 4) == 4;
+              f.read((uint8_t*)&count, 4) == 4 &&
+              f.read((uint8_t*)&next_id, 4) == 4;
     f.close();
 #else
     FILE* f = std::fopen(g_native_path, "rb");
@@ -223,23 +227,26 @@ static bool readHeader(uint32_t* out_count)
     uint32_t magic = 0;
     uint8_t version = 0;
     uint32_t count = 0;
+    uint32_t next_id = 0;
     bool ok = std::fread(&magic, 1, 4, f) == 4 &&
               std::fread(&version, 1, 1, f) == 1 &&
-              std::fread(&count, 1, 4, f) == 4;
+              std::fread(&count, 1, 4, f) == 4 &&
+              std::fread(&next_id, 1, 4, f) == 4;
     std::fclose(f);
 #endif
 
     if (!ok || magic != detail::MESSAGE_STORE_MAGIC ||
-        version != detail::MESSAGE_STORE_VERSION) {
+        version != detail::MESSAGE_STORE_VERSION || next_id == 0) {
         return false;
     }
     if (out_count) *out_count = count;
+    if (out_next_id) *out_next_id = next_id;
     return true;
 }
 
-static bool writeHeaderCount(uint32_t count)
+static bool writeHeaderState(uint32_t count, uint32_t next_id)
 {
-    if (!ensureFs()) return false;
+    if (!ensureFs() || next_id == 0) return false;
 
 #if defined(ESP32_PLATFORM)
     File f = SPIFFS.open(STORE_PATH, existsStore() ? "r+" : "w");
@@ -248,7 +255,8 @@ static bool writeHeaderCount(uint32_t count)
     uint8_t version = detail::MESSAGE_STORE_VERSION;
     bool ok = f.write((const uint8_t*)&magic, 4) == 4 &&
               f.write(&version, 1) == 1 &&
-              f.write((const uint8_t*)&count, 4) == 4;
+              f.write((const uint8_t*)&count, 4) == 4 &&
+              f.write((const uint8_t*)&next_id, 4) == 4;
     f.close();
     return ok;
 #else
@@ -258,7 +266,8 @@ static bool writeHeaderCount(uint32_t count)
     uint8_t version = detail::MESSAGE_STORE_VERSION;
     bool ok = std::fwrite(&magic, 1, 4, f) == 4 &&
               std::fwrite(&version, 1, 1, f) == 1 &&
-              std::fwrite(&count, 1, 4, f) == 4;
+              std::fwrite(&count, 1, 4, f) == 4 &&
+              std::fwrite(&next_id, 1, 4, f) == 4;
     std::fclose(f);
     return ok;
 #endif
@@ -281,11 +290,11 @@ static int loadAllInternal(StoredMessage* out, int max)
 #if defined(ESP32_PLATFORM)
     File f = SPIFFS.open(STORE_PATH, "r");
     if (!f) return 0;
-    f.seek(9, SeekSet);
+    f.seek(detail::MESSAGE_STORE_HEADER_SIZE, SeekSet);
 #else
     FILE* f = std::fopen(g_native_path, "rb");
     if (!f) return 0;
-    std::fseek(f, 9, SEEK_SET);
+    std::fseek(f, (long)detail::MESSAGE_STORE_HEADER_SIZE, SEEK_SET);
 #endif
 
     int n = 0;
@@ -314,7 +323,7 @@ static int loadAllInternal(StoredMessage* out, int max)
 // but O(1) file opens.  Previously called readRecordAt() per record, which
 // opened the file twice for each (readHeader + seek/read), giving O(n²) SPIFFS
 // opens (~128 for a full 64-record store on every incoming message).  PERF-001.
-static bool messageExists(const StoredMessage& msg)
+static bool messageExists(const StoredMessage& msg, uint32_t* store_id_out)
 {
     if (!ensureFs() || !existsStore()) return false;
 
@@ -326,11 +335,13 @@ static bool messageExists(const StoredMessage& msg)
     uint32_t magic = 0;
     uint8_t version = 0;
     uint32_t count = 0;
+    uint32_t next_id = 0;
     bool header_ok = f.read((uint8_t*)&magic, 4) == 4 &&
                      f.read(&version, 1) == 1 &&
                      f.read((uint8_t*)&count, 4) == 4 &&
+                     f.read((uint8_t*)&next_id, 4) == 4 &&
                      magic == detail::MESSAGE_STORE_MAGIC &&
-                     version == detail::MESSAGE_STORE_VERSION;
+                     version == detail::MESSAGE_STORE_VERSION && next_id != 0;
 
     if (!header_ok) { f.close(); return false; }
 
@@ -341,6 +352,7 @@ static bool messageExists(const StoredMessage& msg)
         if (f.read(rec, sizeof(rec)) == sizeof(rec) &&
             readRecordRaw(existing, rec, sizeof(rec)) &&
             detail::storedMessageSameIdentity(existing, msg)) {
+            if (store_id_out) *store_id_out = existing.store_id;
             found = true;
         }
     }
@@ -353,11 +365,13 @@ static bool messageExists(const StoredMessage& msg)
     uint32_t magic = 0;
     uint8_t version = 0;
     uint32_t count = 0;
+    uint32_t next_id = 0;
     bool header_ok = std::fread(&magic, 1, 4, f) == 4 &&
                      std::fread(&version, 1, 1, f) == 1 &&
                      std::fread(&count, 1, 4, f) == 4 &&
+                     std::fread(&next_id, 1, 4, f) == 4 &&
                      magic == detail::MESSAGE_STORE_MAGIC &&
-                     version == detail::MESSAGE_STORE_VERSION;
+                     version == detail::MESSAGE_STORE_VERSION && next_id != 0;
 
     if (!header_ok) { std::fclose(f); return false; }
 
@@ -368,6 +382,7 @@ static bool messageExists(const StoredMessage& msg)
         if (std::fread(rec, 1, sizeof(rec), f) == sizeof(rec) &&
             readRecordRaw(existing, rec, sizeof(rec)) &&
             detail::storedMessageSameIdentity(existing, msg)) {
+            if (store_id_out) *store_id_out = existing.store_id;
             found = true;
         }
     }
@@ -379,18 +394,21 @@ static bool messageExists(const StoredMessage& msg)
 struct StoreWriteCtx {
     const StoredMessage* messages;
     uint32_t count;
+    uint32_t next_id;
 };
 
 static bool writeStore(sigurdos::storage::AtomicFileWriter& writer, void* raw)
 {
     StoreWriteCtx* ctx = static_cast<StoreWriteCtx*>(raw);
-    if (!ctx || ctx->count > MESSAGE_STORE_RECOVERY_MAX_RECORDS ||
+    if (!ctx || ctx->next_id == 0 ||
+        ctx->count > MESSAGE_STORE_RECOVERY_MAX_RECORDS ||
         (ctx->count > 0 && !ctx->messages)) return false;
     const uint32_t magic = detail::MESSAGE_STORE_MAGIC;
     const uint8_t version = detail::MESSAGE_STORE_VERSION;
     if (writer.write(&magic, sizeof(magic)) != sizeof(magic) ||
         writer.write(&version, 1) != 1 ||
-        writer.write(&ctx->count, sizeof(ctx->count)) != sizeof(ctx->count)) {
+        writer.write(&ctx->count, sizeof(ctx->count)) != sizeof(ctx->count) ||
+        writer.write(&ctx->next_id, sizeof(ctx->next_id)) != sizeof(ctx->next_id)) {
         return false;
     }
     uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
@@ -403,44 +421,98 @@ static bool writeStore(sigurdos::storage::AtomicFileWriter& writer, void* raw)
 
 static bool validateStore(sigurdos::storage::AtomicFileReader& reader, void*)
 {
-    if (reader.size() < 9 || !reader.seek(0)) return false;
+    if (reader.size() < detail::MESSAGE_STORE_HEADER_SIZE || !reader.seek(0)) return false;
     uint32_t magic = 0;
     uint8_t version = 0;
     uint32_t count = 0;
+    uint32_t next_id = 0;
     if (reader.read(&magic, sizeof(magic)) != sizeof(magic) ||
         reader.read(&version, 1) != 1 ||
         reader.read(&count, sizeof(count)) != sizeof(count) ||
+        reader.read(&next_id, sizeof(next_id)) != sizeof(next_id) ||
         magic != detail::MESSAGE_STORE_MAGIC ||
         version != detail::MESSAGE_STORE_VERSION ||
-        count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) {
+        count > MESSAGE_STORE_RECOVERY_MAX_RECORDS || next_id == 0) {
         return false;
     }
-    return reader.size() == 9 +
+    if (reader.size() != detail::MESSAGE_STORE_HEADER_SIZE +
+        (size_t)count * detail::MESSAGE_STORE_RECORD_SIZE) return false;
+    uint32_t ids[MESSAGE_STORE_RECOVERY_MAX_RECORDS] = {};
+    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
+    for (uint32_t i = 0; i < count; ++i) {
+        if (reader.read(record, sizeof(record)) != sizeof(record)) return false;
+        std::memcpy(&ids[i], record, sizeof(ids[i]));
+        if (ids[i] == 0 || ids[i] == next_id) return false;
+        for (uint32_t j = 0; j < i; ++j) {
+            if (ids[j] == ids[i]) return false;
+        }
+    }
+    return true;
+}
+
+static bool validateStoreForRecovery(sigurdos::storage::AtomicFileReader& reader, void*)
+{
+    if (reader.size() < detail::MESSAGE_STORE_V4_HEADER_SIZE || !reader.seek(0)) {
+        return false;
+    }
+    uint32_t magic = 0;
+    uint8_t version = 0;
+    if (reader.read(&magic, sizeof(magic)) != sizeof(magic) ||
+        reader.read(&version, 1) != 1 || magic != detail::MESSAGE_STORE_MAGIC) {
+        return false;
+    }
+    if (version == detail::MESSAGE_STORE_VERSION) {
+        return validateStore(reader, nullptr);
+    }
+    if (version != 4) return false;
+    uint32_t count = 0;
+    if (reader.read(&count, sizeof(count)) != sizeof(count) ||
+        count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
+    return reader.size() == detail::MESSAGE_STORE_V4_HEADER_SIZE +
         (size_t)count * detail::MESSAGE_STORE_RECORD_SIZE;
 }
 
 // Atomically replace the entire message store with the given records. A valid
 // temp remains available for boot recovery if only the final rename fails.
-static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count)
+static uint32_t nextAfter(uint32_t id)
+{
+    return id == UINT32_MAX ? 1U : id + 1U;
+}
+
+static uint32_t deriveNextId(const StoredMessage* messages, uint32_t count)
+{
+    uint32_t next_id = 1;
+    for (uint32_t i = 0; messages && i < count; ++i) {
+        if (messages[i].store_id >= next_id) next_id = nextAfter(messages[i].store_id);
+    }
+    return next_id == 0 ? 1 : next_id;
+}
+
+static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count,
+                               uint32_t next_id)
 {
     if (!ensureFs()) return false;
-    StoreWriteCtx ctx{msgs, count};
+    if (next_id == 0) {
+        uint32_t ignored_count = 0;
+        if (!readHeader(&ignored_count, &next_id)) next_id = deriveNextId(msgs, count);
+    }
+    StoreWriteCtx ctx{msgs, count, next_id};
     return sigurdos::storage::atomicFileReplace(
         storePath(), writeStore, &ctx, validateStore, nullptr);
 }
 
-static bool readCompleteRecords(StoredMessage* out, uint32_t count)
+static bool readCompleteRecords(StoredMessage* out, uint32_t count, size_t header_size)
 {
     if (count > 0 && !out) return false;
 #if defined(ESP32_PLATFORM)
     File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file || !file.seek(9, SeekSet)) {
+    if (!file || !file.seek(header_size, SeekSet)) {
         if (file) file.close();
         return false;
     }
 #else
     FILE* file = std::fopen(g_native_path, "rb");
-    if (!file || std::fseek(file, 9, SEEK_SET) != 0) {
+    if (!file || std::fseek(file, (long)header_size, SEEK_SET) != 0) {
         if (file) std::fclose(file);
         return false;
     }
@@ -463,7 +535,7 @@ static bool readCompleteRecords(StoredMessage* out, uint32_t count)
     return ok;
 }
 
-static bool repairInterruptedAppend()
+static bool migrateVersion4Store()
 {
     if (!existsStore()) return true;
     uint32_t magic = 0;
@@ -490,12 +562,66 @@ static bool repairInterruptedAppend()
         std::fread(&declared_count, 1, 4, file) == 4;
     std::fclose(file);
 #endif
+    (void)declared_count;
+    if (!header_ok || magic != detail::MESSAGE_STORE_MAGIC || version != 4) return true;
+    if (file_size < detail::MESSAGE_STORE_V4_HEADER_SIZE) return false;
+    const size_t payload_size = file_size - detail::MESSAGE_STORE_V4_HEADER_SIZE;
+    const uint32_t complete_count =
+        (uint32_t)(payload_size / detail::MESSAGE_STORE_RECORD_SIZE);
+    if (complete_count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
+
+    StoredMessage* messages = complete_count > 0
+        ? (StoredMessage*)std::malloc(sizeof(StoredMessage) * complete_count)
+        : nullptr;
+    if (complete_count > 0 && !messages) return false;
+    bool ok = readCompleteRecords(
+        messages, complete_count, detail::MESSAGE_STORE_V4_HEADER_SIZE);
+    for (uint32_t i = 0; ok && i < complete_count; ++i) {
+        messages[i].store_id = i + 1U;
+    }
+    const uint32_t next_id = complete_count == UINT32_MAX ? 1U : complete_count + 1U;
+    ok = ok && atomicReplaceStore(messages, complete_count, next_id);
+    std::free(messages);
+    return ok;
+}
+
+static bool repairInterruptedAppend()
+{
+    if (!existsStore()) return true;
+    uint32_t magic = 0;
+    uint8_t version = 0;
+    uint32_t declared_count = 0;
+    uint32_t declared_next_id = 0;
+    size_t file_size = 0;
+#if defined(ESP32_PLATFORM)
+    File file = SPIFFS.open(STORE_PATH, "r");
+    if (!file) return false;
+    file_size = file.size();
+    const bool header_ok = file.read((uint8_t*)&magic, 4) == 4 &&
+        file.read(&version, 1) == 1 &&
+        file.read((uint8_t*)&declared_count, 4) == 4 &&
+        file.read((uint8_t*)&declared_next_id, 4) == 4;
+    file.close();
+#else
+    FILE* file = std::fopen(g_native_path, "rb");
+    if (!file) return false;
+    std::fseek(file, 0, SEEK_END);
+    const long end = std::ftell(file);
+    file_size = end > 0 ? (size_t)end : 0;
+    std::fseek(file, 0, SEEK_SET);
+    const bool header_ok = std::fread(&magic, 1, 4, file) == 4 &&
+        std::fread(&version, 1, 1, file) == 1 &&
+        std::fread(&declared_count, 1, 4, file) == 4 &&
+        std::fread(&declared_next_id, 1, 4, file) == 4;
+    std::fclose(file);
+#endif
     if (!header_ok || magic != detail::MESSAGE_STORE_MAGIC ||
-        version != detail::MESSAGE_STORE_VERSION || file_size < 9) {
+        version != detail::MESSAGE_STORE_VERSION || declared_next_id == 0 ||
+        file_size < detail::MESSAGE_STORE_HEADER_SIZE) {
         return true; // writeHeaderIfNeeded() will replace an invalid header.
     }
 
-    const size_t payload_size = file_size - 9;
+    const size_t payload_size = file_size - detail::MESSAGE_STORE_HEADER_SIZE;
     const uint32_t complete_count =
         (uint32_t)(payload_size / detail::MESSAGE_STORE_RECORD_SIZE);
     const bool has_torn_tail =
@@ -507,8 +633,12 @@ static bool repairInterruptedAppend()
         ? (StoredMessage*)std::malloc(sizeof(StoredMessage) * complete_count)
         : nullptr;
     if (complete_count > 0 && !messages) return false;
-    const bool read_ok = readCompleteRecords(messages, complete_count);
-    const bool replace_ok = read_ok && atomicReplaceStore(messages, complete_count);
+    const bool read_ok = readCompleteRecords(
+        messages, complete_count, detail::MESSAGE_STORE_HEADER_SIZE);
+    const uint32_t recovered_next_id = read_ok
+        ? deriveNextId(messages, complete_count) : 0;
+    const bool replace_ok = read_ok &&
+        atomicReplaceStore(messages, complete_count, recovered_next_id);
     std::free(messages);
     return replace_ok;
 }
@@ -555,7 +685,9 @@ bool messageStoreBegin()
     if (!ensureFs()) return false;
     // A valid whole-store replacement wins. Invalid temps are removed without
     // touching the live file, which may still be repairable after an append.
-    sigurdos::storage::atomicFileRecover(storePath(), validateStore, nullptr);
+    sigurdos::storage::atomicFileRecover(
+        storePath(), validateStoreForRecovery, nullptr);
+    if (!migrateVersion4Store()) return false;
     if (!repairInterruptedAppend()) return false;
     if (!writeHeaderIfNeeded()) return false;
     uint32_t count = 0;
@@ -567,24 +699,26 @@ bool messageStoreBegin()
 
 bool messageStoreClear()
 {
-    return atomicReplaceStore(nullptr, 0);
+    return atomicReplaceStore(nullptr, 0, 1);
 }
 
-bool messageStoreAppend(const StoredMessage& msg)
+bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out)
 {
     if (!writeHeaderIfNeeded()) return false;
 
     StoredMessage norm = msg;
     detail::storedMessageNormalize(norm);
 
-    if (messageExists(norm)) return true;
-
-    // Assign a monotonic store_id from the current record count.
-    {
-        uint32_t count = 0;
-        readHeader(&count);
-        norm.store_id = count;
+    uint32_t existing_id = 0;
+    if (messageExists(norm, &existing_id)) {
+        if (store_id_out) *store_id_out = existing_id;
+        return true;
     }
+
+    uint32_t count = 0;
+    uint32_t next_id = 0;
+    if (!readHeader(&count, &next_id) || next_id == 0) return false;
+    norm.store_id = next_id;
 
     uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
     writeRecordRaw(norm, rec, sizeof(rec));
@@ -602,13 +736,12 @@ bool messageStoreAppend(const StoredMessage& msg)
 #endif
     if (!ok) return false;
 
-    uint32_t count = 0;
-    readHeader(&count);
     uint32_t new_count = count + 1;
-    if (!writeHeaderCount(new_count)) return false;
+    if (!writeHeaderState(new_count, nextAfter(next_id))) return false;
     if (new_count > MESSAGE_STORE_MAX_RECORDS) {
-        return trimStoreToRecent(MESSAGE_STORE_MAX_RECORDS);
+        if (!trimStoreToRecent(MESSAGE_STORE_MAX_RECORDS)) return false;
     }
+    if (store_id_out) *store_id_out = norm.store_id;
     return true;
 }
 

@@ -28,7 +28,39 @@
 #include <vector>
 #include <algorithm>
 
+#include "mesh/durable_fanout.h"
+
 namespace {
+
+struct FanoutProbe {
+    std::vector<char> calls;
+    bool presentation_accepts;
+};
+
+bool recordDurableFanout(void* raw)
+{
+    static_cast<FanoutProbe*>(raw)->calls.push_back('D');
+    return true;
+}
+
+bool recordPresentationFanout(void* raw)
+{
+    FanoutProbe* probe = static_cast<FanoutProbe*>(raw);
+    probe->calls.push_back('P');
+    return probe->presentation_accepts;
+}
+
+TEST(MessageFanout, FullPresentationQueueDoesNotSuppressDurableDelivery)
+{
+    FanoutProbe probe{{}, false};
+    const auto result = sigurdos::mesh::deliverMessageDurableFirst(
+        recordDurableFanout, recordPresentationFanout, &probe);
+    EXPECT_TRUE(result.durable);
+    EXPECT_FALSE(result.presented);
+    ASSERT_EQ(probe.calls.size(), 2U);
+    EXPECT_EQ(probe.calls[0], 'D');
+    EXPECT_EQ(probe.calls[1], 'P');
+}
 
 // ── Contact list (replicating SlopContact + LRU eviction logic) ──
 
