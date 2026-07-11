@@ -119,6 +119,15 @@ void setup()
         boot_log("GPS disabled");
     }
 
+    // Probe/mount SD before the SX1262 begins listening. SD card handshake may
+    // reset SPI2; doing so after radio init can invalidate RadioLib state.
+    boot_status("Checking SD card...");
+    if (!sigurdos_sdcard_init()) {
+        boot_status("No SD card");
+    } else {
+        boot_status("SD card ready");
+    }
+
     boot_status("Starting radio...");
     const char* radio_status = "Radio ready";
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
@@ -143,6 +152,7 @@ void setup()
     }
 #endif
     boot_status(radio_status);
+    sigurdos_sdcard_lock_bus_reset();
 
     boot_status("Loading chats...");
     sigurdos::ui::load_persisted_state();
@@ -152,14 +162,6 @@ void setup()
     sigurdos::debug::init();
     boot_log("debug diagnostics enabled");
 #endif
-
-    // SD card init after radio init so SPI bus is already configured
-    boot_status("Checking SD card...");
-    if (!sigurdos_sdcard_init()) {
-        boot_status("No SD card");
-    } else {
-        boot_status("SD card ready");
-    }
 
     boot_status("Preparing map...");
     sigurdos_map_init();

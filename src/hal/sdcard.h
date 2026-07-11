@@ -27,6 +27,11 @@
 
 static constexpr size_t SIGURDOS_SD_MAX_PATH_LEN = 255;
 
+inline bool sigurdos_sdcard_may_reset_bus(bool reset_locked)
+{
+    return !reset_locked;
+}
+
 enum SigurdosSdMountSource : uint8_t {
     SIGURDOS_SD_MOUNT_SOURCE_NONE = 0,
     SIGURDOS_SD_MOUNT_SOURCE_INIT,
@@ -59,6 +64,11 @@ inline bool sigurdos_sdcard_path_valid(const char* path)
 // Initialize SD card over SPI with short bounded retry/backoff for warm reboot recovery.
 // Call sigurdos_sdcard_retry() lazily when a consumer needs the card
 bool sigurdos_sdcard_init();
+
+// Permanently disable SPI peripheral resets after the radio driver starts.
+// Lazy retries continue on the configured bus without invalidating SX1262.
+void sigurdos_sdcard_lock_bus_reset();
+bool sigurdos_sdcard_bus_reset_locked();
 
 // Retry SD mount (called lazily from consumers like the map renderer)
 // Caps total retries at 3 to avoid unbounded re-probing of a broken card.

@@ -35,6 +35,7 @@
 static SPIClass& sd_spi = sigurdos_shared_spi();
 
 static bool mounted = false;
+static bool bus_reset_locked = false;
 static uint64_t capacity_bytes = 0;
 static uint64_t free_bytes = 0;
 
@@ -92,13 +93,14 @@ static bool sdcard_mount_once(SigurdosSdMountSource source)
     sdcard_diag.attempt_count++;
     sdcard_diag.last_source = source;
 
-    // Re-initialise the shared SPI bus before every mount attempt.
-    // The ESP32 SPIClass.begin() issues periph_module_reset() on SPI2,
-    // which the SD card's GO_IDLE_STATE (CMD0) requires to handshake.
-    // This is especially important on retries where SD.end() was called.
-    sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_SD_CS);
+    // Pre-radio probing may reset SPI2 for the card's CMD0 handshake. After
+    // radio startup, retries must preserve the active SX1262 peripheral state.
+    if (sigurdos_sdcard_may_reset_bus(bus_reset_locked)) {
+        sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO,
+                                  PIN_LORA_MOSI, PIN_SD_CS);
+    }
 
-    // Give the SD card time to stabilise after SPI bus reset.
+    // Give the SD card time to stabilise before CMD0.
     // Some cards need >1ms after power-on before they accept CMD0.
     delay(10);
 
@@ -143,6 +145,16 @@ bool sigurdos_sdcard_init()
     return sdcard_mount_with_backoff(
         SIGURDOS_SD_MOUNT_SOURCE_INIT,
         SDCARD_INIT_MAX_ATTEMPTS);
+}
+
+void sigurdos_sdcard_lock_bus_reset()
+{
+    bus_reset_locked = true;
+}
+
+bool sigurdos_sdcard_bus_reset_locked()
+{
+    return bus_reset_locked;
 }
 
 bool sigurdos_sdcard_retry()

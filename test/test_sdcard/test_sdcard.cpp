@@ -70,6 +70,11 @@ TEST_F(SDCardTest, CSPinDoesNotConflictWithDisplayOrLoRa) {
     EXPECT_NE(PIN_SD_CS, PIN_LORA_NSS);
 }
 
+TEST_F(SDCardTest, SPIResetIsForbiddenAfterRadioLock) {
+    EXPECT_TRUE(sigurdos_sdcard_may_reset_bus(false));
+    EXPECT_FALSE(sigurdos_sdcard_may_reset_bus(true));
+}
+
 TEST_F(SDCardTest, InitialStateIsNotMounted) {
     EXPECT_EQ(sd_state, SDState::NOT_MOUNTED);
 }

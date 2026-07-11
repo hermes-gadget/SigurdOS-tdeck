@@ -697,20 +697,22 @@ The splash screen shows a status label updated by `boot_status()`, which calls
       → boot_status("Input ready")
  9. sigurdos_gps_init() (if GPS enabled) [step 7]
       → boot_status("Starting GPS...")
-10. sigurdos::mesh::init()               [step 8]
+10. sigurdos_sdcard_init()               [step 8]
+      → Shared SPI2 reset/CMD0 probe occurs before radio ownership
+      → boot_status("Checking SD card...")
+      → boot_status("SD card ready" / "No SD card")
+11. sigurdos::mesh::init()               [step 9]
       → Shared SPI bus init
       → SX1262 hard reset + std_init
       → Radio config from prefs or defaults
       → MeshCore SigurdMeshV2 init
       → boot_status("Starting radio...")
       → boot_status("Radio ready" / "Radio unavailable")
-11. sigurdos::ui::load_persisted_state()
+      → locks later SD retries out of SPI2 peripheral reset
+12. sigurdos::ui::load_persisted_state()
       → boot_status("Loading chats...")
       → boot_status("Chats ready")
-12. Debug diagnostics (debug builds)     [step 9]
-13. sigurdos_sdcard_init()               [step 10]
-      → boot_status("Checking SD card...")
-      → boot_status("SD card ready" / "No SD card")
+13. Debug diagnostics (debug builds)     [step 10]
 14. sigurdos_map_init()
       → boot_status("Preparing map...")
 15. boot_status("Ready")                 [step 11]
