@@ -3,6 +3,8 @@
 
 #include "persistence_store.h"
 
+#include "hal/atomic_file.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -290,26 +292,219 @@ int channelStoreLoad(ChannelLoadFn load, void* ctx)
 // Identity persistence (SPIFFS-backed)
 // ════════════════════════════════════════════════════
 
-bool identityStoreSave(const uint8_t* data, size_t len)
-{
-    if (!data || len == 0) return false;
+namespace {
 
 #if defined(ESP32_PLATFORM)
-    File f = SPIFFS.open("/mesh_id", "w");
-    if (!f) return false;
-    size_t written = f.write(data, len);
-    f.close();
-    if (written != len) {
-        SPIFFS.remove("/mesh_id");
+static constexpr const char* IDENTITY_PATH = "/mesh_id";
+#else
+static char g_identity_path[160] = "/tmp/sigurdos_mesh_id.bin";
+#endif
+
+static constexpr uint8_t IDENTITY_MAGIC[4] = {'S', 'G', 'I', 0xB1};
+static constexpr uint8_t IDENTITY_VERSION = 1;
+static constexpr size_t IDENTITY_HEADER_SIZE = 4 + 1 + 2 + 4;
+static constexpr size_t IDENTITY_MAX_PAYLOAD = 128;
+
+const char* identityPath()
+{
+#if defined(ESP32_PLATFORM)
+    return IDENTITY_PATH;
+#else
+    return g_identity_path;
+#endif
+}
+
+uint32_t crc32Update(uint32_t crc, const uint8_t* data, size_t length)
+{
+    for (size_t i = 0; i < length; ++i) {
+        crc ^= data[i];
+        for (uint8_t bit = 0; bit < 8; ++bit) {
+            crc = (crc >> 1) ^ (0xEDB88320U & (uint32_t)-(int32_t)(crc & 1U));
+        }
+    }
+    return crc;
+}
+
+uint32_t payloadCrc(const uint8_t* data, size_t length)
+{
+    return crc32Update(0xFFFFFFFFU, data, length) ^ 0xFFFFFFFFU;
+}
+
+void encodeIdentityHeader(uint8_t* header, size_t length, uint32_t crc)
+{
+    std::memcpy(header, IDENTITY_MAGIC, sizeof(IDENTITY_MAGIC));
+    header[4] = IDENTITY_VERSION;
+    header[5] = (uint8_t)(length & 0xFFU);
+    header[6] = (uint8_t)((length >> 8) & 0xFFU);
+    header[7] = (uint8_t)(crc & 0xFFU);
+    header[8] = (uint8_t)((crc >> 8) & 0xFFU);
+    header[9] = (uint8_t)((crc >> 16) & 0xFFU);
+    header[10] = (uint8_t)((crc >> 24) & 0xFFU);
+}
+
+bool decodeIdentityHeader(const uint8_t* header, size_t& length, uint32_t& crc)
+{
+    if (std::memcmp(header, IDENTITY_MAGIC, sizeof(IDENTITY_MAGIC)) != 0 ||
+        header[4] != IDENTITY_VERSION) {
         return false;
     }
-    return true;
+    length = (size_t)header[5] | ((size_t)header[6] << 8);
+    crc = (uint32_t)header[7] |
+          ((uint32_t)header[8] << 8) |
+          ((uint32_t)header[9] << 16) |
+          ((uint32_t)header[10] << 24);
+    return length > 0 && length <= IDENTITY_MAX_PAYLOAD;
+}
+
+struct IdentityWriteCtx {
+    const uint8_t* data;
+    size_t length;
+};
+
+bool writeIdentity(sigurdos::storage::AtomicFileWriter& writer, void* raw)
+{
+    IdentityWriteCtx* ctx = static_cast<IdentityWriteCtx*>(raw);
+    if (!ctx || !ctx->data || ctx->length == 0 ||
+        ctx->length > IDENTITY_MAX_PAYLOAD) {
+        return false;
+    }
+    uint8_t header[IDENTITY_HEADER_SIZE];
+    encodeIdentityHeader(header, ctx->length, payloadCrc(ctx->data, ctx->length));
+    return writer.write(header, sizeof(header)) == sizeof(header) &&
+           writer.write(ctx->data, ctx->length) == ctx->length;
+}
+
+bool validateIdentity(sigurdos::storage::AtomicFileReader& reader, void*)
+{
+    if (reader.size() < IDENTITY_HEADER_SIZE || !reader.seek(0)) return false;
+    uint8_t header[IDENTITY_HEADER_SIZE];
+    if (reader.read(header, sizeof(header)) != sizeof(header)) return false;
+    size_t length = 0;
+    uint32_t expected_crc = 0;
+    if (!decodeIdentityHeader(header, length, expected_crc) ||
+        reader.size() != IDENTITY_HEADER_SIZE + length) {
+        return false;
+    }
+
+    uint8_t chunk[32];
+    uint32_t crc = 0xFFFFFFFFU;
+    size_t remaining = length;
+    while (remaining > 0) {
+        const size_t wanted = remaining < sizeof(chunk) ? remaining : sizeof(chunk);
+        if (reader.read(chunk, wanted) != wanted) return false;
+        crc = crc32Update(crc, chunk, wanted);
+        remaining -= wanted;
+    }
+    return (crc ^ 0xFFFFFFFFU) == expected_crc;
+}
+
+bool removeIdentityFile(const char* path)
+{
+#if defined(ESP32_PLATFORM)
+    return !SPIFFS.exists(path) || SPIFFS.remove(path);
 #else
-    (void)data;
-    (void)len;
+    if (std::remove(path) == 0) return true;
+    FILE* file = std::fopen(path, "rb");
+    if (!file) return true;
+    std::fclose(file);
     return false;
 #endif
 }
+
+} // namespace
+
+bool identityStoreSave(const uint8_t* data, size_t len)
+{
+    if (!data || len == 0 || len > IDENTITY_MAX_PAYLOAD) return false;
+    IdentityWriteCtx ctx{data, len};
+    return sigurdos::storage::atomicFileReplace(
+        identityPath(), writeIdentity, &ctx, validateIdentity, nullptr);
+}
+
+bool identityStoreLoad(uint8_t* buf, size_t buf_len, size_t* out_len)
+{
+    if (!buf || buf_len == 0) return false;
+
+    // A failed recovery can mean an invalid temp was discarded while a legacy
+    // raw live file remains. Continue and let the legacy reader handle it.
+    sigurdos::storage::atomicFileRecover(identityPath(), validateIdentity, nullptr);
+
+#if defined(ESP32_PLATFORM)
+    File f = SPIFFS.open(identityPath(), "r");
+    if (!f) return false;
+    size_t sz = f.size();
+    uint8_t header[IDENTITY_HEADER_SIZE] = {};
+    const bool has_header = sz >= sizeof(header) &&
+        f.read(header, sizeof(header)) == sizeof(header) &&
+        std::memcmp(header, IDENTITY_MAGIC, sizeof(IDENTITY_MAGIC)) == 0;
+    if (!has_header) f.seek(0, SeekSet);
+#else
+    FILE* f = std::fopen(identityPath(), "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    const long end = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    size_t sz = end > 0 ? (size_t)end : 0;
+    uint8_t header[IDENTITY_HEADER_SIZE] = {};
+    const bool has_header = sz >= sizeof(header) &&
+        std::fread(header, 1, sizeof(header), f) == sizeof(header) &&
+        std::memcmp(header, IDENTITY_MAGIC, sizeof(IDENTITY_MAGIC)) == 0;
+    if (!has_header) std::fseek(f, 0, SEEK_SET);
+#endif
+
+    size_t payload_len = sz;
+    uint32_t expected_crc = 0;
+    if (has_header) {
+        if (!decodeIdentityHeader(header, payload_len, expected_crc) ||
+            sz != IDENTITY_HEADER_SIZE + payload_len) {
+#if defined(ESP32_PLATFORM)
+            f.close();
+#else
+            std::fclose(f);
+#endif
+            return false;
+        }
+    }
+    if (payload_len == 0 || payload_len > buf_len) {
+#if defined(ESP32_PLATFORM)
+        f.close();
+#else
+        std::fclose(f);
+#endif
+        return false;
+    }
+
+#if defined(ESP32_PLATFORM)
+    size_t read = f.read(buf, payload_len);
+    f.close();
+#else
+    size_t read = std::fread(buf, 1, payload_len, f);
+    std::fclose(f);
+#endif
+    if (out_len) *out_len = read;
+    return read == payload_len &&
+        (!has_header || payloadCrc(buf, payload_len) == expected_crc);
+}
+
+bool identityStoreClear()
+{
+    char temp_path[192];
+    if (!sigurdos::storage::atomicFileTempPath(
+            identityPath(), temp_path, sizeof(temp_path))) {
+        return false;
+    }
+    const bool temp_ok = removeIdentityFile(temp_path);
+    return removeIdentityFile(identityPath()) && temp_ok;
+}
+
+#if !defined(ESP32_PLATFORM)
+void identityStoreSetNativePath(const char* path)
+{
+    if (!path || !path[0]) return;
+    std::strncpy(g_identity_path, path, sizeof(g_identity_path) - 1);
+    g_identity_path[sizeof(g_identity_path) - 1] = '\0';
+}
+#endif
 
 } // namespace mesh
 } // namespace sigurdos

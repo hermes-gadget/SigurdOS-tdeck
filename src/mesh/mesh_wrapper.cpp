@@ -292,20 +292,21 @@ namespace sigurdos { namespace mesh { bool sendChannelMessage(const char* channe
 // ════════════════════════════════════════════════════
 
 static bool loadIdentity(::mesh::LocalIdentity& id) {
-    if (!SPIFFS.exists("/mesh_id")) return false;
-    File f = SPIFFS.open("/mesh_id", "r");
-    if (!f) return false;
     uint8_t buf[128];
-    int len = f.read(buf, sizeof(buf));
-    f.close();
+    size_t len = 0;
+    if (!sigurdos::mesh::identityStoreLoad(buf, sizeof(buf), &len)) return false;
     if (len != PRV_KEY_SIZE && len != (PRV_KEY_SIZE + PUB_KEY_SIZE)) {
         // Corrupt or partial file — delete it and regenerate
-        SPIFFS.remove("/mesh_id");
+        sigurdos::mesh::identityStoreClear();
         return false;
     }
     id.readFrom(buf, len);
     // validatePrivateKey expects raw 64-byte prv_key — MeshCore serializes prv_key first
-    return ::mesh::LocalIdentity::validatePrivateKey(buf);
+    if (!::mesh::LocalIdentity::validatePrivateKey(buf)) {
+        sigurdos::mesh::identityStoreClear();
+        return false;
+    }
+    return true;
 }
 
 static void saveIdentity(::mesh::LocalIdentity& id) {

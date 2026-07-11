@@ -3,6 +3,8 @@
 
 #include "contact_store.h"
 
+#include "hal/atomic_file.h"
+
 #include <cstring>
 
 #if defined(ESP32_PLATFORM)
@@ -52,7 +54,11 @@ static bool existsStore()
 
 static bool removeStore()
 {
-    return SPIFFS.remove(STORE_PATH);
+    char temp_path[192];
+    if (!sigurdos::storage::atomicFileTempPath(
+            STORE_PATH, temp_path, sizeof(temp_path))) return false;
+    const bool temp_ok = !SPIFFS.exists(temp_path) || SPIFFS.remove(temp_path);
+    return (!SPIFFS.exists(STORE_PATH) || SPIFFS.remove(STORE_PATH)) && temp_ok;
 }
 #else
 static bool ensureFs()
@@ -70,9 +76,81 @@ static bool existsStore()
 
 static bool removeStore()
 {
-    return std::remove(g_native_path) == 0 || !existsStore();
+    char temp_path[192];
+    if (!sigurdos::storage::atomicFileTempPath(
+            g_native_path, temp_path, sizeof(temp_path))) return false;
+    bool temp_ok = std::remove(temp_path) == 0;
+    if (!temp_ok) {
+        FILE* temp = std::fopen(temp_path, "rb");
+        temp_ok = temp == nullptr;
+        if (temp) std::fclose(temp);
+    }
+    return (std::remove(g_native_path) == 0 || !existsStore()) && temp_ok;
 }
 #endif
+
+static const char* storePath()
+{
+#if defined(ESP32_PLATFORM)
+    return STORE_PATH;
+#else
+    return g_native_path;
+#endif
+}
+
+struct ContactSaveCtx {
+    int count;
+    ContactStoreReadFn read;
+    void* read_ctx;
+};
+
+static bool writeContacts(sigurdos::storage::AtomicFileWriter& writer, void* raw)
+{
+    ContactSaveCtx* ctx = static_cast<ContactSaveCtx*>(raw);
+    if (!ctx || !ctx->read || ctx->count <= 0 || ctx->count > MAX_CONTACTS) {
+        return false;
+    }
+    if (writer.write(detail::CONTACT_STORE_MAGIC,
+                     sizeof(detail::CONTACT_STORE_MAGIC)) !=
+            sizeof(detail::CONTACT_STORE_MAGIC) ||
+        writer.write(&detail::CONTACT_STORE_VERSION, 1) != 1 ||
+        writer.write(&ctx->count, sizeof(ctx->count)) != sizeof(ctx->count)) {
+        return false;
+    }
+
+    uint8_t rec[detail::CONTACT_STORE_RECORD_SIZE];
+    for (int i = 0; i < ctx->count; ++i) {
+        StoredContact contact{};
+        if (!ctx->read(i, &contact, ctx->read_ctx)) return false;
+        detail::writeContactRecord(contact, rec, sizeof(rec));
+        if (writer.write(rec, sizeof(rec)) != sizeof(rec)) return false;
+    }
+    return true;
+}
+
+static bool validateContacts(sigurdos::storage::AtomicFileReader& reader, void*)
+{
+    if (reader.size() < sizeof(int) || !reader.seek(0)) return false;
+    uint8_t head[sizeof(detail::CONTACT_STORE_MAGIC)] = {};
+    if (reader.read(head, sizeof(head)) != sizeof(head)) return false;
+
+    int count = 0;
+    size_t header_size = sizeof(int);
+    if (std::memcmp(head, detail::CONTACT_STORE_MAGIC, sizeof(head)) == 0) {
+        uint8_t version = 0;
+        if (reader.read(&version, 1) != 1 ||
+            version == 0 || version > detail::CONTACT_STORE_VERSION ||
+            reader.read(&count, sizeof(count)) != sizeof(count)) {
+            return false;
+        }
+        header_size += 1 + sizeof(count);
+    } else {
+        std::memcpy(&count, head, sizeof(count));
+    }
+    if (count <= 0 || count > MAX_CONTACTS) return false;
+    return reader.size() == header_size +
+        (size_t)count * detail::CONTACT_STORE_RECORD_SIZE;
+}
 
 struct SaveAllCtx {
     const StoredContact* contacts;
@@ -141,7 +219,12 @@ bool readContactRecord(StoredContact& contact, const uint8_t* rec, size_t len)
 
 bool contactStoreBegin()
 {
-    return ensureFs();
+    if (!ensureFs()) return false;
+    // Invalid temps are discarded without touching the live store. A false
+    // return can also mean a salvageable legacy live file is incomplete, so
+    // do not block loading it after cleanup.
+    sigurdos::storage::atomicFileRecover(storePath(), validateContacts, nullptr);
+    return true;
 }
 
 bool contactStoreClear()
@@ -156,45 +239,16 @@ bool contactStoreSave(int count, ContactStoreReadFn read, void* ctx)
     if (count <= 0) return removeStore();
     if (!read) return false;
 
-#if defined(ESP32_PLATFORM)
-    File f = SPIFFS.open(STORE_PATH, "w");
-    if (!f) return false;
-    bool ok = f.write(detail::CONTACT_STORE_MAGIC, sizeof(detail::CONTACT_STORE_MAGIC)) ==
-              sizeof(detail::CONTACT_STORE_MAGIC);
-    ok = ok && f.write(&detail::CONTACT_STORE_VERSION, 1) == 1;
-    ok = ok && f.write((const uint8_t*)&count, sizeof(count)) == sizeof(count);
-#else
-    FILE* f = std::fopen(g_native_path, "wb");
-    if (!f) return false;
-    bool ok = std::fwrite(detail::CONTACT_STORE_MAGIC, 1, sizeof(detail::CONTACT_STORE_MAGIC), f) ==
-              sizeof(detail::CONTACT_STORE_MAGIC);
-    ok = ok && std::fwrite(&detail::CONTACT_STORE_VERSION, 1, 1, f) == 1;
-    ok = ok && std::fwrite(&count, 1, sizeof(count), f) == sizeof(count);
-#endif
-
-    uint8_t rec[detail::CONTACT_STORE_RECORD_SIZE];
-    for (int i = 0; ok && i < count; i++) {
-        StoredContact contact{};
-        if (!read(i, &contact, ctx)) continue;
-        detail::writeContactRecord(contact, rec, sizeof(rec));
-#if defined(ESP32_PLATFORM)
-        ok = f.write(rec, sizeof(rec)) == sizeof(rec);
-#else
-        ok = std::fwrite(rec, 1, sizeof(rec), f) == sizeof(rec);
-#endif
-    }
-
-#if defined(ESP32_PLATFORM)
-    f.close();
-#else
-    std::fclose(f);
-#endif
-    return ok;
+    ContactSaveCtx save_ctx{count, read, ctx};
+    return sigurdos::storage::atomicFileReplace(
+        storePath(), writeContacts, &save_ctx, validateContacts, nullptr);
 }
 
 int contactStoreLoad(ContactStoreWriteFn write, void* ctx)
 {
-    if (!write || !ensureFs() || !existsStore()) return 0;
+    if (!write || !ensureFs()) return 0;
+    sigurdos::storage::atomicFileRecover(storePath(), validateContacts, nullptr);
+    if (!existsStore()) return 0;
 
 #if defined(ESP32_PLATFORM)
     File f = SPIFFS.open(STORE_PATH, "r");

@@ -55,6 +55,7 @@ test/
 |-- test_gps/                       NMEA parsing, coordinates, checksums, fix fields
 |-- test_hal_contract/              HAL lifecycle, power, display, and GPS API stability
 |-- test_home_screen/               Home tile routing contract
+|-- test_identity_store/            Atomic, checksummed identity persistence
 |-- test_input_contract/            Trackball, keyboard, and input event encoding stability
 |-- test_keyboard/                  Keyboard scan, event, brightness, injection logic
 |-- test_launcher_env/              Launcher detection, partition probing, false-positive guards

@@ -49,9 +49,15 @@ bool channelStoreSave(int count, ChannelReadFn read, void* ctx);
 // Returns the number of channels loaded (0 if NVS unavailable or empty).
 int  channelStoreLoad(ChannelLoadFn load, void* ctx);
 
-// Identity persistence — saves/loads the raw bytes of a LocalIdentity
-// to/from SPIFFS at "/mesh_id".
+// Identity persistence. New saves use a checksummed envelope; loads remain
+// compatible with the legacy raw LocalIdentity bytes.
 bool identityStoreSave(const uint8_t* data, size_t len);
+bool identityStoreLoad(uint8_t* buf, size_t buf_len, size_t* out_len);
+bool identityStoreClear();
+
+#if !defined(ESP32_PLATFORM)
+void identityStoreSetNativePath(const char* path);
+#endif
 
 } // namespace mesh
 } // namespace sigurdos

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "mesh/contact_store.h"
+#include "hal/atomic_file.h"
 
 namespace {
 
@@ -76,13 +77,19 @@ protected:
         std::snprintf(path, sizeof(path), "/tmp/sigurdos_contact_store_%d.bin",
                       ::testing::UnitTest::GetInstance()->random_seed());
         sigurdos::mesh::contactStoreSetNativePath(path);
+        sigurdos::storage::atomicFileSetNativeFault(
+            sigurdos::storage::AtomicFileNativeFault::None);
         std::remove(path);
+        std::remove((std::string(path) + ".tmp").c_str());
         ASSERT_TRUE(sigurdos::mesh::contactStoreBegin());
         ASSERT_TRUE(sigurdos::mesh::contactStoreClear());
     }
 
     void TearDown() override {
+        sigurdos::storage::atomicFileSetNativeFault(
+            sigurdos::storage::AtomicFileNativeFault::None);
         std::remove(path);
+        std::remove((std::string(path) + ".tmp").c_str());
     }
 };
 
@@ -255,6 +262,50 @@ TEST_F(ContactStoreTest, LoadAllStopsAtCallerCapacity) {
     StoredContact out[1]{};
     EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 1), 1);
     EXPECT_STREQ(out[0].name, "One");
+}
+
+TEST_F(ContactStoreTest, WriteFailurePreservesLiveStore) {
+    StoredContact old_contact = makeContact(0x10, "Old", 1, 0);
+    StoredContact new_contact = makeContact(0x40, "New", 2, 1);
+    ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(&old_contact, 1));
+
+    sigurdos::storage::atomicFileSetNativeFault(
+        sigurdos::storage::AtomicFileNativeFault::Write);
+    EXPECT_FALSE(sigurdos::mesh::contactStoreSaveAll(&new_contact, 1));
+    sigurdos::storage::atomicFileSetNativeFault(
+        sigurdos::storage::AtomicFileNativeFault::None);
+
+    StoredContact out{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.name, "Old");
+}
+
+TEST_F(ContactStoreTest, RenameFailureRecoversValidatedNewStore) {
+    StoredContact old_contact = makeContact(0x10, "Old", 1, 0);
+    StoredContact new_contact = makeContact(0x40, "New", 2, 1);
+    ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(&old_contact, 1));
+
+    sigurdos::storage::atomicFileSetNativeFault(
+        sigurdos::storage::AtomicFileNativeFault::Rename);
+    EXPECT_FALSE(sigurdos::mesh::contactStoreSaveAll(&new_contact, 1));
+    sigurdos::storage::atomicFileSetNativeFault(
+        sigurdos::storage::AtomicFileNativeFault::None);
+
+    StoredContact out{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.name, "New");
+}
+
+TEST_F(ContactStoreTest, InvalidTempNeverReplacesLiveStore) {
+    StoredContact old_contact = makeContact(0x10, "Old", 1, 0);
+    ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(&old_contact, 1));
+    const std::string temp_path = std::string(path) + ".tmp";
+    writeBytes(temp_path.c_str(), {0x01, 0x02, 0x03});
+
+    StoredContact out{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.name, "Old");
+    EXPECT_FALSE(fileExists(temp_path.c_str()));
 }
 
 } // namespace
