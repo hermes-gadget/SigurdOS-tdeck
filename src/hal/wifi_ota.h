@@ -110,11 +110,21 @@ enum class Status {
     Failed
 };
 
+static constexpr uint32_t CONNECT_TIMEOUT_MS = 15000;
+
+inline Status advanceConnectingStatus(Status current, bool hardware_connected,
+                                      uint32_t elapsed_ms) {
+    if (current != Status::Connecting) return current;
+    if (hardware_connected) return Status::Connected;
+    return elapsed_ms > CONNECT_TIMEOUT_MS ? Status::Failed
+                                           : Status::Connecting;
+}
+
 // Start connecting to an access point. Returns immediately.
-// Poll with getStatus() to check progress.
+// Progress is serviced by loop(); getStatus() is a side-effect-free snapshot.
 void beginConnect(const char* ssid, const char* password);
 
-// Returns current connection status.
+// Returns the current connection status without changing hardware state.
 Status getStatus();
 
 // Disconnect and turn WiFi off.

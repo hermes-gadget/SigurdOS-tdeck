@@ -327,28 +327,7 @@ void beginConnect(const char* ssid, const char* password) {
 }
 
 Status getStatus() {
-    if (s_status != Status::Connecting) return s_status;
-
-    if (WiFi.status() == WL_CONNECTED) {
-        s_status = Status::Connected;
-        s_connected = true;
-        s_rssi = WiFi.RSSI();
-        SIG_LOGD("[wifi-sta] connected! (%d dBm)", s_rssi);
-        return Status::Connected;
-    }
-
-    // Timeout after 15 seconds
-    if (millis() - s_conn_start > 15000) {
-        WiFi.disconnect();
-        WiFi.mode(WIFI_OFF);
-        s_status = Status::Failed;
-        s_connected = false;
-        s_rssi = 0;
-        SIG_LOGW("[wifi-sta] connection timed out");
-        return Status::Failed;
-    }
-
-    return Status::Connecting;
+    return s_status;
 }
 
 void disconnect() {
@@ -388,6 +367,25 @@ void loop() {
     // Always sync internal state with hardware (handles external
     // reconnections, e.g. github_ota reusing an existing STA link).
     bool hw = (WiFi.status() == WL_CONNECTED);
+
+    if (s_status == Status::Connecting) {
+        const Status next = advanceConnectingStatus(
+            s_status, hw, static_cast<uint32_t>(millis() - s_conn_start));
+        if (next == Status::Connected) {
+            s_status = next;
+            s_connected = true;
+            s_rssi = WiFi.RSSI();
+            SIG_LOGD("[wifi-sta] connected! (%d dBm)", s_rssi);
+        } else if (next == Status::Failed) {
+            WiFi.disconnect();
+            WiFi.mode(WIFI_OFF);
+            s_status = next;
+            s_connected = false;
+            s_rssi = 0;
+            SIG_LOGW("[wifi-sta] connection timed out");
+        }
+        hw = s_connected;
+    }
 
     if (hw && !s_connected && s_status != Status::Connecting) {
         // Hardware is connected but we didn't know — external reconnect.
