@@ -22,6 +22,7 @@
 #include "../hal/trackball.h"
 #include <lvgl.h>
 #include <cstdint>
+#include "chat_history_checkpoint.h"
 #include <cstring>
 
 namespace sigurdos::ui {
@@ -37,13 +38,6 @@ inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)
     if (cap < CHAT_SCREEN_MESSAGE_CAP_MIN) return CHAT_SCREEN_MESSAGE_CAP_MIN;
     if (cap > CHAT_SCREEN_MESSAGE_CAP_MAX) return CHAT_SCREEN_MESSAGE_CAP_MAX;
     return cap;
-}
-
-static constexpr uint32_t CHAT_SAVE_DEBOUNCE_MS = 5000;
-inline bool chat_screen_save_is_due(bool dirty, uint32_t dirty_since,
-                                    uint32_t now) {
-    return dirty && static_cast<uint32_t>(now - dirty_since) >=
-                        CHAT_SAVE_DEBOUNCE_MS;
 }
 
 inline bool chat_screen_is_dm_name(const char* name)

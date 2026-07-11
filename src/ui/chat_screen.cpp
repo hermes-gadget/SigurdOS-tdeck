@@ -134,13 +134,11 @@ static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
 static int   active_channel = 0;
-static bool  chat_history_dirty = false;
-static uint32_t chat_history_dirty_since = 0;
+static ChatHistoryCheckpoint chat_checkpoint;
 
 static void mark_chat_history_dirty()
 {
-    if (!chat_history_dirty) chat_history_dirty_since = millis();
-    chat_history_dirty = true;
+    chat_checkpoint.markDirty(millis());
 }
 
 // ── Channel filter mode ────────────────────────────────────
@@ -2790,14 +2788,13 @@ void chat_save_messages()
     }
     if (chatHistorySave(stored_count, read_history_channel,
                         read_history_message, &ctx)) {
-        chat_history_dirty = false;
+        chat_checkpoint.saved();
     }
 }
 
 void chat_save_messages_if_due(uint32_t now)
 {
-    if (chat_screen_save_is_due(chat_history_dirty,
-                                chat_history_dirty_since, now)) {
+    if (chat_checkpoint.isDue(now)) {
         chat_save_messages();
     }
 }
