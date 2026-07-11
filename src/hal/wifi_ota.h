@@ -7,7 +7,7 @@
 
 #pragma once
 #include <cstdint>
-#include <cstdlib>
+#include <climits>
 
 namespace sigurdos {
 namespace ota {
@@ -18,7 +18,19 @@ namespace ota {
 // or an empty submission is treated as unauthenticated (#687).
 inline bool otaPinAccepts(uint32_t device_pin, const char* entered) {
     if (device_pin == 0 || entered == nullptr || entered[0] == '\0') return false;
-    return (uint32_t)strtoul(entered, nullptr, 10) == device_pin;
+    uint32_t value = 0;
+    for (const char* p = entered; *p; ++p) {
+        if (*p < '0' || *p > '9') return false;
+        const uint32_t digit = static_cast<uint32_t>(*p - '0');
+        if (value > (UINT32_MAX - digit) / 10U) return false;
+        value = value * 10U + digit;
+    }
+    return value == device_pin;
+}
+
+static constexpr uint32_t OTA_SESSION_MAX_MS = 10U * 60U * 1000U;
+inline bool otaSessionExpired(uint32_t started_at, uint32_t now) {
+    return static_cast<uint32_t>(now - started_at) >= OTA_SESSION_MAX_MS;
 }
 
 // Start WiFi AP + web server for OTA upload.
@@ -39,6 +51,9 @@ bool isActive();
 // Returns the AP IP address as a string ("192.168.4.1" format).
 // Returns empty string if not active.
 const char* getIP();
+
+// WPA2 password for an AP-mode session; empty when OTA uses an existing STA.
+const char* getAPPassword();
 
 }  // namespace ota
 

@@ -18,6 +18,8 @@ namespace ota {
 static WebServer* server = nullptr;
 static bool active = false;
 static char server_ip[16] = "";
+static char ap_password[17] = "";
+static uint32_t session_started_at = 0;
 static String csrf_token;  // regenerated per OTA session
 
 // OTA PIN brute-force protection (SEC-001)
@@ -54,10 +56,17 @@ bool start(const char* ssid, const char* password) {
         // Not connected — start AP mode
         WiFi.mode(WIFI_AP);
         if (password && password[0]) {
-            WiFi.softAP(ssid, password);
+            strncpy(ap_password, password, sizeof(ap_password) - 1);
+            ap_password[sizeof(ap_password) - 1] = '\0';
         } else {
-            WiFi.softAP(ssid);
+            static constexpr char alphabet[] =
+                "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+            for (size_t i = 0; i < 12; ++i) {
+                ap_password[i] = alphabet[esp_random() % (sizeof(alphabet) - 1)];
+            }
+            ap_password[12] = '\0';
         }
+        WiFi.softAP(ssid, ap_password);
 
         ip = WiFi.softAPIP();
         snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
@@ -211,10 +220,16 @@ bool start(const char* ssid, const char* password) {
 
     server->begin();
     active = true;
+    session_started_at = millis();
     return true;
 }
 
 void loop() {
+    if (active && otaSessionExpired(session_started_at, millis())) {
+        SIG_LOGW("[ota] session expired");
+        stop();
+        return;
+    }
     if (active && server) {
         server->handleClient();
     }
@@ -230,6 +245,8 @@ void stop() {
     WiFi.mode(WIFI_OFF);
     active = false;
     server_ip[0] = '\0';
+    ap_password[0] = '\0';
+    session_started_at = 0;
 }
 
 bool isActive() {
@@ -238,6 +255,10 @@ bool isActive() {
 
 const char* getIP() {
     return server_ip;
+}
+
+const char* getAPPassword() {
+    return ap_password;
 }
 
 }  // namespace ota

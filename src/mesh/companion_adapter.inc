@@ -55,7 +55,6 @@ static void generate_random_ble_pin() {
     uint32_t pin = SIGURDOS_BLE_PIN_MIN + (esp_random() % (SIGURDOS_BLE_PIN_MAX - SIGURDOS_BLE_PIN_MIN + 1));
     p.ble_pin = pin;
     sigurdos::prefs_set(p);
-    Serial.printf("[mesh] Generated random BLE PIN: %06lu\n", (unsigned long)pin);
 }
 
 static void queue_push_outgoing(const char* conversation, const char* sender,

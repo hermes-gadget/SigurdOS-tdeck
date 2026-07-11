@@ -25,6 +25,7 @@
 #include "hal/wifi_ota.h"
 
 using sigurdos::ota::otaPinAccepts;
+using sigurdos::ota::otaSessionExpired;
 
 // ── No PIN configured (the factory default) is never authenticated ──────────
 TEST(OtaAuth, RejectsWhenNoPinConfigured) {
@@ -57,4 +58,17 @@ TEST(OtaAuth, HandlesLargeAndPaddedValues) {
     // PIN near the top of the uint32 range matches exactly.
     EXPECT_TRUE(otaPinAccepts(4000000000u, "4000000000"));
     EXPECT_FALSE(otaPinAccepts(4000000000u, "4000000001"));
+}
+
+TEST(OtaAuth, RejectsSuffixesSignsWhitespaceAndOverflow) {
+    EXPECT_FALSE(otaPinAccepts(1234, "1234junk"));
+    EXPECT_FALSE(otaPinAccepts(1234, "+1234"));
+    EXPECT_FALSE(otaPinAccepts(1234, " 1234"));
+    EXPECT_FALSE(otaPinAccepts(1, "4294967297"));
+}
+
+TEST(OtaAuth, SessionExpiryIsDeadlineAndWrapSafe) {
+    EXPECT_FALSE(otaSessionExpired(100, 100 + 599999));
+    EXPECT_TRUE(otaSessionExpired(100, 100 + 600000));
+    EXPECT_FALSE(otaSessionExpired(0xFFFFFF00U, 0x00000010U));
 }

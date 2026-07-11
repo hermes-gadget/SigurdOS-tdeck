@@ -824,7 +824,7 @@ void settings_system_show()
             return;
         }
 
-        auto dlg_sz = dialog_size(260, 120);
+        auto dlg_sz = dialog_size(280, 150);
         lv_obj_t* dlg = lv_obj_create(scr_ota);
         lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
         lv_obj_center(dlg);
@@ -862,11 +862,18 @@ void settings_system_show()
         lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
-        char info[96];
-        snprintf(info, sizeof(info),
-            "WiFi: SigurdOS-OTA\n"
-            "IP: %s\n"
-            "Browser: enter device PIN,\nupload firmware.bin", ip);
+        char info[160];
+        const char* ap_password = sigurdos::ota::getAPPassword();
+        if (ap_password[0]) {
+            snprintf(info, sizeof(info),
+                "WiFi: SigurdOS-OTA\nPassword: %s\nIP: %s\n"
+                "Enter device PIN + firmware.bin\nExpires in 10 minutes",
+                ap_password, ip);
+        } else {
+            snprintf(info, sizeof(info),
+                "Connected WiFi\nIP: %s\n"
+                "Enter device PIN + firmware.bin\nExpires in 10 minutes", ip);
+        }
         lv_obj_t* msg = lv_label_create(dlg);
         lv_label_set_text(msg, info);
         lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_PRIMARY), 0);
