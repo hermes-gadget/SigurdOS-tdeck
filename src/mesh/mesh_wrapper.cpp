@@ -1579,7 +1579,16 @@ static bool readStoredContact(int index, sigurdos::mesh::StoredContact* out, voi
     memcpy(out->pub_key, c.id.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
     memcpy(out->name, c.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
     out->type = c.type;
-    out->perm = (c.flags >> 1) & 0x03;
+    out->flags = c.flags;
+    out->out_path_len = c.out_path_len;
+    static_assert(sizeof(out->out_path) == sizeof(c.out_path),
+                  "Stored contact path must match MeshCore");
+    memcpy(out->out_path, c.out_path, sizeof(out->out_path));
+    out->last_advert_timestamp = c.last_advert_timestamp;
+    out->lastmod = c.lastmod;
+    out->gps_lat = c.gps_lat;
+    out->gps_lon = c.gps_lon;
+    out->sync_since = c.sync_since;
     return true;
 }
 
@@ -1591,9 +1600,19 @@ static bool writeStoredContact(const sigurdos::mesh::StoredContact& stored, void
     memcpy(c.id.pub_key, stored.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
     memcpy(c.name, stored.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
     c.type = stored.type;
-    c.flags = (c.flags & 0x01) | ((stored.perm & 0x03) << 1);
+    c.flags = stored.flags;
     c.name[31] = '\0';
-    c.out_path_len = OUT_PATH_UNKNOWN;
+    c.out_path_len = stored.out_path_len;
+    static_assert(sizeof(c.out_path) == sizeof(stored.out_path),
+                  "Stored contact path must match MeshCore");
+    memcpy(c.out_path, stored.out_path, sizeof(c.out_path));
+    c.last_advert_timestamp = stored.last_advert_timestamp;
+    c.lastmod = stored.lastmod;
+    c.gps_lat = stored.gps_lat;
+    c.gps_lon = stored.gps_lon;
+    c.sync_since = stored.sync_since;
+    // Shared secrets are derived from the local identity and are intentionally
+    // never serialized. Recompute lazily after every load/identity change.
     c.shared_secret_valid = false;
     g_mesh->addContact(c);
     return true;

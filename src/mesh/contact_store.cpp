@@ -104,6 +104,12 @@ struct ContactSaveCtx {
     void* read_ctx;
 };
 
+static bool contactValid(const StoredContact& contact)
+{
+    return contact.out_path_len == SIGURDOS_CONTACT_PATH_UNKNOWN ||
+        contact.out_path_len <= SIGURDOS_CONTACT_PATH_LEN;
+}
+
 static bool writeContacts(sigurdos::storage::AtomicFileWriter& writer, void* raw)
 {
     ContactSaveCtx* ctx = static_cast<ContactSaveCtx*>(raw);
@@ -121,7 +127,7 @@ static bool writeContacts(sigurdos::storage::AtomicFileWriter& writer, void* raw
     uint8_t rec[detail::CONTACT_STORE_RECORD_SIZE];
     for (int i = 0; i < ctx->count; ++i) {
         StoredContact contact{};
-        if (!ctx->read(i, &contact, ctx->read_ctx)) return false;
+        if (!ctx->read(i, &contact, ctx->read_ctx) || !contactValid(contact)) return false;
         detail::writeContactRecord(contact, rec, sizeof(rec));
         if (writer.write(rec, sizeof(rec)) != sizeof(rec)) return false;
     }
@@ -136,8 +142,8 @@ static bool validateContacts(sigurdos::storage::AtomicFileReader& reader, void*)
 
     int count = 0;
     size_t header_size = sizeof(int);
+    uint8_t version = 0;
     if (std::memcmp(head, detail::CONTACT_STORE_MAGIC, sizeof(head)) == 0) {
-        uint8_t version = 0;
         if (reader.read(&version, 1) != 1 ||
             version == 0 || version > detail::CONTACT_STORE_VERSION ||
             reader.read(&count, sizeof(count)) != sizeof(count)) {
@@ -148,8 +154,21 @@ static bool validateContacts(sigurdos::storage::AtomicFileReader& reader, void*)
         std::memcpy(&count, head, sizeof(count));
     }
     if (count <= 0 || count > MAX_CONTACTS) return false;
-    return reader.size() == header_size +
-        (size_t)count * detail::CONTACT_STORE_RECORD_SIZE;
+    const size_t record_size = version >= 2
+        ? detail::CONTACT_STORE_RECORD_SIZE
+        : detail::CONTACT_STORE_V1_RECORD_SIZE;
+    if (reader.size() != header_size + (size_t)count * record_size) return false;
+
+    uint8_t rec[detail::CONTACT_STORE_RECORD_SIZE];
+    for (int i = 0; i < count; ++i) {
+        if (reader.read(rec, record_size) != record_size) return false;
+        StoredContact contact{};
+        const bool ok = version >= 2
+            ? detail::readContactRecord(contact, rec, record_size)
+            : detail::readContactRecordV1(contact, rec, record_size);
+        if (!ok) return false;
+    }
+    return true;
 }
 
 struct SaveAllCtx {
@@ -194,7 +213,15 @@ void writeContactRecord(const StoredContact& contact, uint8_t* rec, size_t len)
     pos += SIGURDOS_CONTACT_NAME_LEN;
 
     rec[pos++] = contact.type;
-    rec[pos++] = contact.perm;
+    rec[pos++] = contact.flags;
+    rec[pos++] = contact.out_path_len;
+    std::memcpy(rec + pos, contact.out_path, SIGURDOS_CONTACT_PATH_LEN);
+    pos += SIGURDOS_CONTACT_PATH_LEN;
+    std::memcpy(rec + pos, &contact.last_advert_timestamp, 4); pos += 4;
+    std::memcpy(rec + pos, &contact.lastmod, 4); pos += 4;
+    std::memcpy(rec + pos, &contact.gps_lat, 4); pos += 4;
+    std::memcpy(rec + pos, &contact.gps_lon, 4); pos += 4;
+    std::memcpy(rec + pos, &contact.sync_since, 4);
 }
 
 bool readContactRecord(StoredContact& contact, const uint8_t* rec, size_t len)
@@ -211,7 +238,33 @@ bool readContactRecord(StoredContact& contact, const uint8_t* rec, size_t len)
     pos += SIGURDOS_CONTACT_NAME_LEN;
 
     contact.type = rec[pos++];
-    contact.perm = rec[pos++];
+    contact.flags = rec[pos++];
+    contact.out_path_len = rec[pos++];
+    if (!contactValid(contact)) return false;
+    std::memcpy(contact.out_path, rec + pos, SIGURDOS_CONTACT_PATH_LEN);
+    pos += SIGURDOS_CONTACT_PATH_LEN;
+    std::memcpy(&contact.last_advert_timestamp, rec + pos, 4); pos += 4;
+    std::memcpy(&contact.lastmod, rec + pos, 4); pos += 4;
+    std::memcpy(&contact.gps_lat, rec + pos, 4); pos += 4;
+    std::memcpy(&contact.gps_lon, rec + pos, 4); pos += 4;
+    std::memcpy(&contact.sync_since, rec + pos, 4);
+    return true;
+}
+
+bool readContactRecordV1(StoredContact& contact, const uint8_t* rec, size_t len)
+{
+    if (!rec || len < CONTACT_STORE_V1_RECORD_SIZE) return false;
+    size_t pos = 0;
+    std::memset(&contact, 0, sizeof(contact));
+    std::memcpy(contact.pub_key, rec + pos, SIGURDOS_CONTACT_PUBKEY_LEN);
+    pos += SIGURDOS_CONTACT_PUBKEY_LEN;
+    std::memcpy(contact.name, rec + pos, SIGURDOS_CONTACT_NAME_LEN);
+    contact.name[SIGURDOS_CONTACT_NAME_LEN - 1] = '\0';
+    pos += SIGURDOS_CONTACT_NAME_LEN;
+    contact.type = rec[pos++];
+    const uint8_t legacy_perm = rec[pos];
+    contact.flags = (uint8_t)((legacy_perm & 0x03) << 1);
+    contact.out_path_len = SIGURDOS_CONTACT_PATH_UNKNOWN;
     return true;
 }
 
@@ -263,9 +316,9 @@ int contactStoreLoad(ContactStoreWriteFn write, void* ctx)
 #endif
 
     int count = 0;
+    uint8_t version = 0;
     if (ok && std::memcmp(head, detail::CONTACT_STORE_MAGIC, sizeof(head)) == 0) {
         // Versioned format: magic + version + count + records.
-        uint8_t version = 0;
 #if defined(ESP32_PLATFORM)
         ok = f.read(&version, 1) == 1;
         ok = ok && version <= detail::CONTACT_STORE_VERSION;
@@ -294,14 +347,20 @@ int contactStoreLoad(ContactStoreWriteFn write, void* ctx)
 
     int loaded = 0;
     uint8_t rec[detail::CONTACT_STORE_RECORD_SIZE];
+    const size_t record_size = version >= 2
+        ? detail::CONTACT_STORE_RECORD_SIZE
+        : detail::CONTACT_STORE_V1_RECORD_SIZE;
     for (int i = 0; i < count; i++) {
 #if defined(ESP32_PLATFORM)
-        if (f.read(rec, sizeof(rec)) != sizeof(rec)) break;
+        if (f.read(rec, record_size) != record_size) break;
 #else
-        if (std::fread(rec, 1, sizeof(rec), f) != sizeof(rec)) break;
+        if (std::fread(rec, 1, record_size, f) != record_size) break;
 #endif
         StoredContact contact{};
-        if (!detail::readContactRecord(contact, rec, sizeof(rec))) break;
+        const bool record_ok = version >= 2
+            ? detail::readContactRecord(contact, rec, record_size)
+            : detail::readContactRecordV1(contact, rec, record_size);
+        if (!record_ok) break;
         if (!write(contact, ctx)) break;
         loaded++;
     }

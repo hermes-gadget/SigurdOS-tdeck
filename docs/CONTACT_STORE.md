@@ -43,14 +43,24 @@ Convenience wrappers `contactStoreSaveAll` and `contactStoreLoadAll` use interna
 ```cpp
 static constexpr size_t SIGURDOS_CONTACT_PUBKEY_LEN = 32;
 static constexpr size_t SIGURDOS_CONTACT_NAME_LEN    = 32;
+static constexpr size_t SIGURDOS_CONTACT_PATH_LEN    = 64;
 
 struct StoredContact {
     uint8_t pub_key[SIGURDOS_CONTACT_PUBKEY_LEN];  // 32-byte X25519 public key
     char    name[SIGURDOS_CONTACT_NAME_LEN];         // 32-byte display name (null-terminated)
     uint8_t type;                                     // contact type (see ContactInfo::Type)
-    uint8_t perm;                                     // permission / flags
+    uint8_t flags;                                    // complete MeshCore flags byte
+    uint8_t out_path_len;                             // 0..64, or 0xFF when unknown
+    uint8_t out_path[SIGURDOS_CONTACT_PATH_LEN];
+    uint32_t last_advert_timestamp;
+    uint32_t lastmod;
+    int32_t gps_lat, gps_lon;                         // six decimal places
+    uint32_t sync_since;
 };
 ```
+
+The derived ECDH shared secret and its validity flag are deliberately absent.
+They depend on the local identity and are recomputed lazily after loading.
 
 The maximum number of contacts (`MAX_CONTACTS`, defined in `BaseChatMesh.h`) is **32** for the T-Deck configuration.
 
@@ -60,22 +70,22 @@ The maximum number of contacts (`MAX_CONTACTS`, defined in `BaseChatMesh.h`) is 
 
 The file stored on SPIFFS (or the native filesystem on host builds) has a **versioned binary format** introduced in PR #603.
 
-### On-Disk Layout (Version 1)
+### On-Disk Layout (Version 2)
 
 ```
 Offset  Size  Field             Description
 ------  ----  ----------------- -------------------------------------------
   0      4    MAGIC             Bytes: 'S' (0x53), 'G' (0x47), 'C' (0x43), 0xB1
-  4      1    VERSION           Format version byte (1)
+  4      1    VERSION           Format version byte (2)
   5      4    RECORD_COUNT      int32 little-endian — number of contacts
 
-  9     66    RECORD[0]         First contact record
- 75     66    RECORD[1]         Second contact record
+  9    151    RECORD[0]         First contact record
+160    151    RECORD[1]         Second contact record
   ...         ...
-          66 * N               Remaining records
+         151 * N               Remaining records
 ```
 
-### Record Layout (66 bytes per contact)
+### Record Layout (151 bytes per contact)
 
 ```
 Offset  Size  Field         Description
@@ -83,9 +93,16 @@ Offset  Size  Field         Description
   0     32    pub_key        X25519 public key (raw bytes)
  32     32    name           Display name (bytes, zero-padded)
  64      1    type           Contact type (uint8_t)
- 65      1    perm           Permission / flags (uint8_t)
+ 65      1    flags          Complete MeshCore flags byte
+ 66      1    out_path_len   Route length 0..64, or 0xFF unknown
+ 67     64    out_path       Route bytes (fixed-width storage)
+131      4    last_advert    Advert timestamp by the contact's clock
+135      4    lastmod        Modification timestamp by the local clock
+139      4    gps_lat        Signed latitude, six decimal places
+143      4    gps_lon        Signed longitude, six decimal places
+147      4    sync_since     Message synchronization cursor
         --                   ------------------------------
-         66    TOTAL
+        151    TOTAL
 ```
 
 ### Constants
@@ -93,37 +110,48 @@ Offset  Size  Field         Description
 | Symbol | Value | Notes |
 |--------|-------|-------|
 | `CONTACT_STORE_MAGIC` | `{'S', 'G', 'C', 0xB1}` | 4-byte magic — when read as a little-endian `int32` = `0xB1434753` |
-| `CONTACT_STORE_VERSION` | 1 | Current file format version |
-| `CONTACT_STORE_RECORD_SIZE` | 66 | `32 + 32 + 1 + 1` |
+| `CONTACT_STORE_VERSION` | 2 | Current file format version |
+| `CONTACT_STORE_V1_RECORD_SIZE` | 66 | Legacy and version-1 record width |
+| `CONTACT_STORE_RECORD_SIZE` | 151 | Current version-2 record width |
 | `SIGURDOS_CONTACT_PUBKEY_LEN` | 32 | Public key field width |
 | `SIGURDOS_CONTACT_NAME_LEN` | 32 | Name field width |
 
-### Binary Layout of a Complete File (Version 1, 2 contacts)
+### Binary Layout of a Complete File (Version 2, 2 contacts)
 
 ```
-53 47 43 B1 01 02 00 00 00  [magic, ver=1, count=2]
-<66-byte record>             [contact 0]
-<66-byte record>             [contact 1]
+53 47 43 B1 02 02 00 00 00  [magic, ver=2, count=2]
+<151-byte record>            [contact 0]
+<151-byte record>            [contact 1]
 ```
 
-Total overhead: 9 bytes (magic 4 + version 1 + count 4). Each contact record is fixed at 66 bytes. A store with 32 contacts fits in 2121 bytes.
+Total overhead is 9 bytes. Each v2 contact record is fixed at 151 bytes, so a
+32-contact store occupies 4,841 bytes.
 
 ---
 
 ## III. Versioning & Legacy Support
 
-### Legacy Format Detection
+### Legacy and Version-1 Detection
 
-Before PR #603, the contact store wrote a bare `int32 count` followed by records — no magic, no version. The load path in `contactStoreLoad` handles both formats:
+Before PR #603, the contact store wrote a bare `int32 count` followed by
+66-byte records. Version 1 added the magic/version header but retained that
+record shape. The current loader handles all three shapes:
 
 1. Read the first 4 bytes into `head[]`.
 2. If `head` matches `CONTACT_STORE_MAGIC` → **versioned format**:
    - Read VERSION byte.
-   - Reject if `version > CONTACT_STORE_VERSION`.
+   - Reject if `version == 0` or `version > CONTACT_STORE_VERSION`.
    - Read `int32 count`.
    - Clamp `count` to `MAX_CONTACTS`.
-3. Else → **legacy format**:
+   - Use 66-byte records for version 1 or 151-byte records for version 2.
+3. Else → **bare legacy format**:
    - Interpret `head` directly as a bare `int32 count`.
+   - Read version-1 66-byte records.
+
+Fields absent from legacy/version-1 records receive safe defaults: permission
+bits are expanded into the flags byte, route length becomes `0xFF` (unknown),
+and timestamps, GPS coordinates, path bytes, and sync cursor are zero. The next
+successful save migrates the data to version 2.
 
 ### Downgrade Safety: Magic as Negative int32
 
@@ -175,8 +203,9 @@ All symbols live in `sigurdos::mesh::`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `writeContactRecord` | `void (const StoredContact&, uint8_t* rec, size_t len)` | Serialise one contact into a 66-byte record buffer. No-op if `len < CONTACT_STORE_RECORD_SIZE`. |
-| `readContactRecord` | `bool (StoredContact&, const uint8_t* rec, size_t len)` | Deserialise a 66-byte record buffer into a `StoredContact`. Returns false on invalid input. Zeroes the output struct first. |
+| `writeContactRecord` | `void (const StoredContact&, uint8_t* rec, size_t len)` | Serialise one contact into a 151-byte v2 record buffer. |
+| `readContactRecord` | `bool (StoredContact&, const uint8_t* rec, size_t len)` | Deserialise a v2 record and reject invalid route lengths. |
+| `readContactRecordV1` | `bool (StoredContact&, const uint8_t* rec, size_t len)` | Deserialise a 66-byte legacy/v1 record with safe defaults. |
 
 ### Callback Type Aliases
 
@@ -207,13 +236,16 @@ Tests live in `test/test_contact_store/test_contact_store.cpp` (native-only, no 
 | Test | What It Verifies |
 |------|-----------------|
 | `EmptyStoreRemovesExistingFile` | Saving 0 contacts deletes any existing file on disk. |
-| `SaveWritesVersionedBytes` | `contactStoreSaveAll` produces exact golden bytes: magic + version(1) + count + records. |
-| `LegacyFileLoadsUnchanged` | A hand-written legacy file (bare count + records, no magic/version) loads correctly, preserving pub_key, name, type, and perm. |
+| `SaveWritesVersionedBytes` | `contactStoreSaveAll` produces exact v2 golden bytes. |
+| `LegacyFileLoadsUnchanged` | A hand-written bare legacy file loads and expands permission bits safely. |
+| `VersionOneFileMigratesWithSafeDefaults` | A version-1 file loads with unknown route and zero metadata. |
 | `MagicParsesAsNegativeCountOnOldFirmware` | Versioned file's first 4 bytes, when interpreted as `int32` by legacy code, produce a negative value. |
 | `UnknownVersionRejected` | A file with `VERSION = CONTACT_STORE_VERSION + 1` is rejected (load returns 0). |
 | `VersionedCountClampedToMaxContacts` | If the file's record count exceeds `MAX_CONTACTS`, it is clamped to `MAX_CONTACTS` during load. |
 | `TruncatedVersionedFileKeepsCompleteRecords` | Read stops at first incomplete record — only fully-decodable records are returned. |
-| `RoundTripPreservesOrderAndTerminatesName` | Save then load preserves contact order, pub_key, type, perm, and ensures names are null-terminated. |
+| `RoundTripPreservesOrderAndTerminatesName` | Save then load preserves order/basic fields and terminates names. |
+| `VersionTwoRoundTripPreservesAllNonDerivedMetadata` | Flags, route, timestamps, GPS, and sync cursor round-trip. |
+| `InvalidRouteLength*` | Invalid stored or callback-provided route lengths are rejected safely. |
 | `TruncatedFileKeepsCompleteRecordsBeforeEof` | Same as the versioned truncation test, but for legacy-format files. |
 | `NonPositiveCountRejected` | Files containing count 0 or -3 are ignored (returns 0 contacts). |
 | `LoadAllStopsAtCallerCapacity` | `contactStoreLoadAll` returns at most `max` contacts even if the file has more. |

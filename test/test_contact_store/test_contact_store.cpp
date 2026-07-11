@@ -15,7 +15,7 @@ using sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN;
 using sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN;
 using sigurdos::mesh::StoredContact;
 
-StoredContact makeContact(uint8_t seed, const char* name, uint8_t type, uint8_t perm)
+StoredContact makeContact(uint8_t seed, const char* name, uint8_t type, uint8_t flags)
 {
     StoredContact contact{};
     for (size_t i = 0; i < SIGURDOS_CONTACT_PUBKEY_LEN; i++) {
@@ -23,7 +23,23 @@ StoredContact makeContact(uint8_t seed, const char* name, uint8_t type, uint8_t 
     }
     std::strncpy(contact.name, name, sizeof(contact.name) - 1);
     contact.type = type;
-    contact.perm = perm;
+    contact.flags = flags;
+    contact.out_path_len = sigurdos::mesh::SIGURDOS_CONTACT_PATH_UNKNOWN;
+    return contact;
+}
+
+StoredContact makeRichContact(uint8_t seed, const char* name)
+{
+    StoredContact contact = makeContact(seed, name, 3, 0xA7);
+    contact.out_path_len = 5;
+    for (size_t i = 0; i < sizeof(contact.out_path); ++i) {
+        contact.out_path[i] = (uint8_t)(seed ^ i);
+    }
+    contact.last_advert_timestamp = 0x10203040U + seed;
+    contact.lastmod = 0x20304050U + seed;
+    contact.gps_lat = 51501234 + seed;
+    contact.gps_lon = -1234567 - seed;
+    contact.sync_since = 0x30405060U + seed;
     return contact;
 }
 
@@ -52,12 +68,20 @@ void appendInt(std::vector<uint8_t>& bytes, int value)
     bytes.insert(bytes.end(), raw, raw + sizeof(value));
 }
 
-void appendRecord(std::vector<uint8_t>& bytes, const StoredContact& contact)
+void appendV1Record(std::vector<uint8_t>& bytes, const StoredContact& contact,
+                    uint8_t legacy_perm)
 {
     bytes.insert(bytes.end(), contact.pub_key, contact.pub_key + SIGURDOS_CONTACT_PUBKEY_LEN);
     bytes.insert(bytes.end(), contact.name, contact.name + SIGURDOS_CONTACT_NAME_LEN);
     bytes.push_back(contact.type);
-    bytes.push_back(contact.perm);
+    bytes.push_back(legacy_perm);
+}
+
+void appendRecord(std::vector<uint8_t>& bytes, const StoredContact& contact)
+{
+    uint8_t record[sigurdos::mesh::detail::CONTACT_STORE_RECORD_SIZE] = {};
+    sigurdos::mesh::detail::writeContactRecord(contact, record, sizeof(record));
+    bytes.insert(bytes.end(), record, record + sizeof(record));
 }
 
 void appendVersionedHeader(std::vector<uint8_t>& bytes, int count, uint8_t version)
@@ -120,15 +144,15 @@ TEST_F(ContactStoreTest, SaveWritesVersionedBytes) {
 
 TEST_F(ContactStoreTest, LegacyFileLoadsUnchanged) {
     StoredContact contacts[2] = {
-        makeContact(0x10, "Alice", 2, 1),
-        makeContact(0x40, "Bob", 3, 2),
+        makeContact(0x10, "Alice", 2, 0),
+        makeContact(0x40, "Bob", 3, 0),
     };
 
     // Hand-written legacy file: bare count + records, no magic/version.
     std::vector<uint8_t> legacy;
     appendInt(legacy, 2);
-    appendRecord(legacy, contacts[0]);
-    appendRecord(legacy, contacts[1]);
+    appendV1Record(legacy, contacts[0], 1);
+    appendV1Record(legacy, contacts[1], 2);
     writeBytes(path, legacy);
 
     StoredContact out[2]{};
@@ -136,10 +160,29 @@ TEST_F(ContactStoreTest, LegacyFileLoadsUnchanged) {
     EXPECT_EQ(std::memcmp(out[0].pub_key, contacts[0].pub_key, SIGURDOS_CONTACT_PUBKEY_LEN), 0);
     EXPECT_STREQ(out[0].name, "Alice");
     EXPECT_EQ(out[0].type, 2);
-    EXPECT_EQ(out[0].perm, 1);
+    EXPECT_EQ(out[0].flags, 0x02);
+    EXPECT_EQ(out[0].out_path_len, sigurdos::mesh::SIGURDOS_CONTACT_PATH_UNKNOWN);
     EXPECT_STREQ(out[1].name, "Bob");
     EXPECT_EQ(out[1].type, 3);
-    EXPECT_EQ(out[1].perm, 2);
+    EXPECT_EQ(out[1].flags, 0x04);
+    EXPECT_EQ(out[1].lastmod, 0U);
+}
+
+TEST_F(ContactStoreTest, VersionOneFileMigratesWithSafeDefaults) {
+    StoredContact contact = makeContact(0x10, "Alice", 2, 0);
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, 1, 1);
+    appendV1Record(raw, contact, 3);
+    writeBytes(path, raw);
+
+    StoredContact out{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.name, "Alice");
+    EXPECT_EQ(out.flags, 0x06);
+    EXPECT_EQ(out.out_path_len, sigurdos::mesh::SIGURDOS_CONTACT_PATH_UNKNOWN);
+    EXPECT_EQ(out.last_advert_timestamp, 0U);
+    EXPECT_EQ(out.gps_lat, 0);
+    EXPECT_EQ(out.sync_since, 0U);
 }
 
 TEST_F(ContactStoreTest, MagicParsesAsNegativeCountOnOldFirmware) {
@@ -196,7 +239,7 @@ TEST_F(ContactStoreTest, TruncatedVersionedFileKeepsCompleteRecords) {
     ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 4), 1);
     EXPECT_STREQ(out[0].name, "First");
     EXPECT_EQ(out[0].type, 1);
-    EXPECT_EQ(out[0].perm, 1);
+    EXPECT_EQ(out[0].flags, 1);
 }
 
 TEST_F(ContactStoreTest, RoundTripPreservesOrderAndTerminatesName) {
@@ -214,12 +257,56 @@ TEST_F(ContactStoreTest, RoundTripPreservesOrderAndTerminatesName) {
     EXPECT_EQ(std::memcmp(out[0].pub_key, contacts[0].pub_key, SIGURDOS_CONTACT_PUBKEY_LEN), 0);
     EXPECT_STREQ(out[0].name, "Alice");
     EXPECT_EQ(out[0].type, 7);
-    EXPECT_EQ(out[0].perm, 0);
+    EXPECT_EQ(out[0].flags, 0);
 
     EXPECT_EQ(std::memcmp(out[1].pub_key, contacts[1].pub_key, SIGURDOS_CONTACT_PUBKEY_LEN), 0);
     EXPECT_EQ(out[1].name[SIGURDOS_CONTACT_NAME_LEN - 1], '\0');
     EXPECT_EQ(out[1].type, 8);
-    EXPECT_EQ(out[1].perm, 3);
+    EXPECT_EQ(out[1].flags, 3);
+}
+
+TEST_F(ContactStoreTest, VersionTwoRoundTripPreservesAllNonDerivedMetadata) {
+    StoredContact contact = makeRichContact(0x21, "Rich");
+    ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(&contact, 1));
+
+    StoredContact out{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 1);
+    EXPECT_EQ(std::memcmp(out.pub_key, contact.pub_key, sizeof(out.pub_key)), 0);
+    EXPECT_STREQ(out.name, "Rich");
+    EXPECT_EQ(out.type, contact.type);
+    EXPECT_EQ(out.flags, 0xA7);
+    EXPECT_EQ(out.out_path_len, 5);
+    EXPECT_EQ(std::memcmp(out.out_path, contact.out_path, sizeof(out.out_path)), 0);
+    EXPECT_EQ(out.last_advert_timestamp, contact.last_advert_timestamp);
+    EXPECT_EQ(out.lastmod, contact.lastmod);
+    EXPECT_EQ(out.gps_lat, contact.gps_lat);
+    EXPECT_EQ(out.gps_lon, contact.gps_lon);
+    EXPECT_EQ(out.sync_since, contact.sync_since);
+}
+
+TEST_F(ContactStoreTest, InvalidRouteLengthIsRejectedWithoutReplacingLive) {
+    StoredContact live = makeRichContact(0x10, "Live");
+    StoredContact invalid = makeRichContact(0x40, "Invalid");
+    ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(&live, 1));
+    invalid.out_path_len = sigurdos::mesh::SIGURDOS_CONTACT_PATH_LEN + 1;
+    EXPECT_FALSE(sigurdos::mesh::contactStoreSaveAll(&invalid, 1));
+
+    StoredContact out{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.name, "Live");
+    EXPECT_EQ(out.flags, live.flags);
+}
+
+TEST_F(ContactStoreTest, InvalidRouteLengthInVersionTwoRecordStopsLoad) {
+    StoredContact invalid = makeRichContact(0x40, "Invalid");
+    invalid.out_path_len = sigurdos::mesh::SIGURDOS_CONTACT_PATH_LEN + 1;
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, 1, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
+    appendRecord(raw, invalid);
+    writeBytes(path, raw);
+
+    StoredContact out{};
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 0);
 }
 
 TEST_F(ContactStoreTest, TruncatedFileKeepsCompleteRecordsBeforeEof) {
@@ -228,9 +315,9 @@ TEST_F(ContactStoreTest, TruncatedFileKeepsCompleteRecordsBeforeEof) {
 
     std::vector<uint8_t> raw;
     appendInt(raw, 2);
-    appendRecord(raw, first);
-    appendRecord(raw, second);
-    raw.resize(sizeof(int) + sigurdos::mesh::detail::CONTACT_STORE_RECORD_SIZE + 12);
+    appendV1Record(raw, first, 1);
+    appendV1Record(raw, second, 2);
+    raw.resize(sizeof(int) + sigurdos::mesh::detail::CONTACT_STORE_V1_RECORD_SIZE + 12);
     writeBytes(path, raw);
 
     StoredContact out[4]{};
@@ -238,7 +325,7 @@ TEST_F(ContactStoreTest, TruncatedFileKeepsCompleteRecordsBeforeEof) {
     ASSERT_EQ(loaded, 1);
     EXPECT_STREQ(out[0].name, "First");
     EXPECT_EQ(out[0].type, 1);
-    EXPECT_EQ(out[0].perm, 1);
+    EXPECT_EQ(out[0].flags, 0x02);
 }
 
 TEST_F(ContactStoreTest, NonPositiveCountRejected) {
