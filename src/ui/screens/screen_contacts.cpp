@@ -449,6 +449,9 @@ void show_login_password_dialog(const char* contact_name)
         }
     }, LV_EVENT_DELETE, nullptr);
     lv_obj_set_user_data(dlg, dd);
+    // dd and dd->name are owned by the dialog's user_data and freed in the
+    // LV_EVENT_DELETE handler above; cppcheck cannot see through the callback.
+    // cppcheck-suppress memleak
 }
 
 // ── Login status polling timer ────────────────────
@@ -739,6 +742,9 @@ void show_admin_cmd_dialog(const char* contact_name)
         }
         sigurdos::mesh::clearCmdResponses();
     }, LV_EVENT_DELETE, nullptr);
+    // td and td->name are owned by the dialog's user_data (set at creation)
+    // and freed in the LV_EVENT_DELETE handler above; not a leak.
+    // cppcheck-suppress memleak
 }
 
 // Public test hook — callable from test_controller
@@ -867,6 +873,9 @@ void show_fetch_msgs_dialog(const char* contact_name)
         }
     }, LV_EVENT_DELETE, nullptr);
     lv_obj_set_user_data(dlg, fd);
+    // fd and fd->name are owned by the dialog's user_data and freed in the
+    // LV_EVENT_DELETE handler above; cppcheck cannot see through the callback.
+    // cppcheck-suppress memleak
 }
 
 // ════════════════════════════════════════════════════════

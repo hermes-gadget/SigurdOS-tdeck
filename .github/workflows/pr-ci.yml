@@ -162,12 +162,16 @@ jobs:
         run: python -m pip install --upgrade platformio
 
       - name: Static analysis (first-party high-severity gate)
+        # --suppress=*:*/.pio/* keeps third-party libdeps headers (e.g. the
+        # LovyanGFX #if cppcheck cannot evaluate) out of the first-party gate;
+        # --inline-suppr honours justified // cppcheck-suppress comments.
         run: >-
           pio check -e SigurdOS_TDeck
           --skip-packages
-          --src-filters 'src/**'
+          --src-filters '+<src/>'
           --severity high
           --fail-on-defect high
+          --flags 'cppcheck: --inline-suppr --suppress=*:*/.pio/*'
 
       - name: Logging policy grep
         run: |

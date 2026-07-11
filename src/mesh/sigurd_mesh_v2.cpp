@@ -752,7 +752,7 @@ namespace mesh {
                 uint32_t tag = 0, est_timeout = 0;
                 // Force flood by temporarily clearing path
                 uint8_t saved_len = c->out_path_len;
-                uint8_t saved_path[32];
+                uint8_t saved_path[32] = {0};
                 if (saved_len <= 32 && saved_len != OUT_PATH_UNKNOWN)
                     memcpy(saved_path, c->out_path, saved_len);
                 c->out_path_len = OUT_PATH_UNKNOWN;
