@@ -31,11 +31,11 @@
 #include "../mesh/public_channel.h"
 #include "../mesh/message_store.h"
 #include "../hal/prefs.h"
+#include "chat_history_store.h"
 #include "../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstring>
 #include <cstdio>
-#include <SPIFFS.h>
 #include <esp_heap_caps.h>
 #include "utils/utf8_util.h"
 
@@ -2700,70 +2700,85 @@ const char* chat_screen_get_active_channel_name()
 }
 
 // ════════════════════════════════════════════════════
-// Message persistence via SPIFFS
+// Message persistence
 // ════════════════════════════════════════════════════
 
-static constexpr uint32_t MSG_MAGIC = 0x536d534c; // "SLmS"
-static constexpr uint8_t  MSG_VERSION = 1;
-static constexpr size_t   MSG_MAX_CHANNELS = 16;
-static constexpr size_t   MSG_MAX_PER_CHANNEL = CHAT_MSGS_MAX;
-static constexpr size_t   MSG_RECORD_BYTES = 32 + 160 + 4 + 1;
-static constexpr size_t   MSG_MAX_FILE_SIZE =
-    4 + 1 + 1 +
-    MSG_MAX_CHANNELS * (32 + 1 + MSG_MAX_PER_CHANNEL * MSG_RECORD_BYTES);
+struct ChatHistorySaveCtx {
+    int channel_indices[CHAT_HISTORY_MAX_CHANNELS];
+    uint16_t message_cap;
+};
+
+static bool read_history_channel(int stored_index, char* name_out,
+                                 size_t name_len, uint8_t* message_count_out,
+                                 void* raw)
+{
+    ChatHistorySaveCtx* ctx = static_cast<ChatHistorySaveCtx*>(raw);
+    if (!ctx || !name_out || name_len == 0 || !message_count_out ||
+        stored_index < 0 || stored_index >= (int)CHAT_HISTORY_MAX_CHANNELS) {
+        return false;
+    }
+    const int channel = ctx->channel_indices[stored_index];
+    if (channel < 0 || channel >= dyn_count || !has_channel_buffer(channel)) {
+        return false;
+    }
+    std::strncpy(name_out, dyn_channels[channel], name_len - 1);
+    name_out[name_len - 1] = '\0';
+    const uint16_t count = ch_msg_count[channel] > ctx->message_cap
+        ? ctx->message_cap : ch_msg_count[channel];
+    *message_count_out = (uint8_t)count;
+    return true;
+}
+
+static bool read_history_message(int stored_index, int message_index,
+                                 PersistedChatMessage* out, void* raw)
+{
+    ChatHistorySaveCtx* ctx = static_cast<ChatHistorySaveCtx*>(raw);
+    if (!ctx || !out || stored_index < 0 ||
+        stored_index >= (int)CHAT_HISTORY_MAX_CHANNELS) return false;
+    const int channel = ctx->channel_indices[stored_index];
+    if (channel < 0 || channel >= dyn_count || !has_channel_buffer(channel) ||
+        message_index < 0 || message_index >= ch_msg_count[channel]) return false;
+
+    const ChannelMessage& source = ch_msgs[channel][message_index];
+    std::strncpy(out->sender, source.sender, sizeof(out->sender) - 1);
+    std::strncpy(out->text, source.text, sizeof(out->text) - 1);
+    out->timestamp = source.timestamp;
+    out->is_self = source.is_self;
+    return true;
+}
+
+static bool write_history_message(const char* channel,
+                                  const PersistedChatMessage& message,
+                                  void*)
+{
+    int idx = find_channel_idx(channel);
+    // DM pseudo-channels are not returned by exportChannels(), so restore them
+    // on demand when their first persisted message is read.
+    if (idx < 0 && std::strncmp(channel, "DM: ", 4) == 0 &&
+        dyn_count < MAX_CHANNELS) {
+        idx = dyn_count;
+        std::strncpy(dyn_channels[idx], channel, sizeof(dyn_channels[idx]) - 1);
+        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
+        ++dyn_count;
+    }
+    if (idx < 0 || idx >= MAX_CHANNELS) return true;
+    append_channel_message(idx, message.sender, message.text,
+                           message.timestamp, message.is_self);
+    return true;
+}
 
 void chat_save_messages()
 {
-    {
-        static bool mounted = false;
-        if (!mounted) {
-            if (!SPIFFS.begin(false)) return;
-            mounted = true;
+    ChatHistorySaveCtx ctx{{}, chat_msg_cap()};
+    int stored_count = 0;
+    for (int channel = 0; channel < dyn_count &&
+         stored_count < (int)CHAT_HISTORY_MAX_CHANNELS; ++channel) {
+        if (ch_msg_count[channel] > 0 && has_channel_buffer(channel)) {
+            ctx.channel_indices[stored_count++] = channel;
         }
     }
-    File f = SPIFFS.open("/msgs", "w");
-    if (!f) return;
-
-    const uint16_t cap = chat_msg_cap();
-
-    uint32_t magic = MSG_MAGIC;
-    f.write((const uint8_t*)&magic, 4);
-    f.write(&MSG_VERSION, 1);
-
-    int ch_count = 0;
-    for (int i = 0; i < dyn_count && i < MSG_MAX_CHANNELS; i++) {
-        if (ch_msg_count[i] > 0) ch_count++;
-    }
-    uint8_t cc = (uint8_t)ch_count;
-    f.write(&cc, 1);
-
-    for (int i = 0; i < dyn_count && i < MSG_MAX_CHANNELS; i++) {
-        if (ch_msg_count[i] == 0) continue;
-        if (!has_channel_buffer(i)) continue;
-        uint8_t mc = ch_msg_count[i] > cap ? (uint8_t)cap : (uint8_t)ch_msg_count[i];
-
-        uint8_t ch_buf[32] = {0};
-        memcpy(ch_buf, dyn_channels[i], strnlen(dyn_channels[i], 31));
-        f.write(ch_buf, 32);
-
-        f.write(&mc, 1);
-        for (int j = 0; j < mc; j++) {
-            const ChannelMessage& msg = ch_msgs[i][j];
-
-            uint8_t sender_buf[32] = {0};
-            memcpy(sender_buf, msg.sender, strnlen(msg.sender, 31));
-            f.write(sender_buf, 32);
-
-            uint8_t text_buf[160] = {0};
-            memcpy(text_buf, msg.text, strnlen(msg.text, 159));
-            f.write(text_buf, 160);
-
-            f.write((const uint8_t*)&msg.timestamp, 4);
-            uint8_t self = msg.is_self ? 1 : 0;
-            f.write(&self, 1);
-        }
-    }
-    f.close();
+    chatHistorySave(stored_count, read_history_channel,
+                    read_history_message, &ctx);
 }
 
 void chat_load_messages()
@@ -2780,101 +2795,7 @@ void chat_load_messages()
         }
     }
 
-    {
-        static bool mounted = false;
-        if (!mounted) {
-            if (!SPIFFS.begin(false)) {
-                chat_load_companion_messages();
-                return;
-            }
-            mounted = true;
-        }
-    }
-    if (!SPIFFS.exists("/msgs")) {
-        chat_load_companion_messages();
-        return;
-    }
-    File f = SPIFFS.open("/msgs", "r");
-    if (!f) return;
-
-    size_t file_size = f.size();
-    if (file_size < 6 || file_size > MSG_MAX_FILE_SIZE) { f.close(); return; }
-
-    uint32_t magic;
-    if (f.read((uint8_t*)&magic, 4) != 4 || magic != MSG_MAGIC) { f.close(); return; }
-
-    uint8_t ver;
-    if (f.read(&ver, 1) != 1 || ver != MSG_VERSION) { f.close(); return; }
-
-    uint8_t ch_count;
-    if (f.read(&ch_count, 1) != 1) { f.close(); return; }
-    if (ch_count > MSG_MAX_CHANNELS) { f.close(); return; }
-
-    for (int ci = 0; ci < ch_count; ci++) {
-        if (f.position() + 33 > file_size) break;
-
-        char ch_name[33] = {0};
-        if (f.read((uint8_t*)ch_name, 32) != 32) break;
-
-        uint8_t msg_count;
-        if (f.read(&msg_count, 1) != 1) break;
-        if (msg_count > MSG_MAX_PER_CHANNEL) msg_count = MSG_MAX_PER_CHANNEL;
-
-        int idx = find_channel_idx(ch_name);
-
-        // DM pseudo-channels ("DM: <name>") aren't returned by exportChannels(),
-        // so they won't be found in dyn_channels. Create them on demand.
-        if (idx < 0 && strncmp(ch_name, "DM: ", 4) == 0 && dyn_count < MAX_CHANNELS) {
-            idx = dyn_count;
-            strncpy(dyn_channels[idx], ch_name, sizeof(dyn_channels[idx]) - 1);
-            dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
-            dyn_count++;
-        }
-
-        // Keep loaded history bounded by the normal append-path. This preserves
-        // existing cap semantics and keeps the newest messages when historical
-        // files contain more entries than the configured runtime cap.
-        for (int j = 0; j < msg_count; j++) {
-            if (f.position() + MSG_RECORD_BYTES > file_size) {
-                f.close();
-                return;
-            }
-
-            char sender[32] = {0};
-            if (f.read((uint8_t*)sender, 32) != 32) {
-                f.close();
-                return;
-            }
-
-            char text[160] = {0};
-            if (f.read((uint8_t*)text, 160) != 160) {
-                f.close();
-                return;
-            }
-
-            uint32_t timestamp;
-            if (f.read((uint8_t*)&timestamp, 4) != 4) {
-                f.close();
-                return;
-            }
-
-            uint8_t self;
-            if (f.read(&self, 1) != 1) {
-                f.close();
-                return;
-            }
-
-            sender[31] = '\0';
-            text[159] = '\0';
-
-            if (idx < 0 || idx >= MAX_CHANNELS) {
-                continue;
-            }
-
-            append_channel_message(idx, sender, text, timestamp, self != 0);
-        }
-    }
-    f.close();
+    chatHistoryLoad(write_history_message, nullptr);
     chat_load_companion_messages();
 }
 
