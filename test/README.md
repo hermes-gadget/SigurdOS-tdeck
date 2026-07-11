@@ -35,6 +35,7 @@ test/
 |-- test_battery/                   Battery conversion and ADC math
 |-- test_advert_blob/               Advert persistence size and key-path invariants
 |-- test_atomic_file/               Validated atomic replacement and fault recovery
+|-- test_ble_frame_queue/           BLE host-to-loop frame handoff, incl. thread stress
 |-- test_build/                     Header inclusion and cross-module sanity checks
 |-- test_build_info/                Firmware version string and build info defaults
 |-- test_buzzer/                    Buzzer notification patterns and duration bounds

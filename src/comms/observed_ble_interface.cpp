@@ -18,6 +18,7 @@ void ObservedSerialBLEInterface::refreshConnectionState()
 void ObservedSerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code)
 {
     SerialBLEInterface::begin(prefix, name, pin_code);
+    _rx_queue.clear();
     _stats = BleSerialObserverStats{};
     _stats.begun = true;
     _stats.begin_count = 1;
@@ -26,7 +27,8 @@ void ObservedSerialBLEInterface::begin(const char* prefix, char* name, uint32_t 
 
 void ObservedSerialBLEInterface::enable()
 {
-    SerialBLEInterface::enable();
+    SerialBLEInterface::enable();  // also clears the (now unused) base buffers
+    _rx_queue.clear();
     _stats.enable_count++;
     refreshConnectionState();
 }
@@ -34,6 +36,7 @@ void ObservedSerialBLEInterface::enable()
 void ObservedSerialBLEInterface::disable()
 {
     SerialBLEInterface::disable();
+    _rx_queue.clear();
     _stats.disable_count++;
     refreshConnectionState();
 }
@@ -58,7 +61,13 @@ size_t ObservedSerialBLEInterface::writeFrame(const uint8_t src[], size_t len)
 
 size_t ObservedSerialBLEInterface::checkRecvFrame(uint8_t dest[])
 {
+    // Drives the base transmit queue and connection housekeeping. The base
+    // receive queue stays empty (onWrite no longer feeds it), so any frame
+    // returned here comes from _rx_queue.
     size_t len = SerialBLEInterface::checkRecvFrame(dest);
+    if (len == 0) {
+        len = _rx_queue.pop(dest);
+    }
     if (len > 0) {
         _stats.rx_frame_count++;
         _stats.last_rx_code = dest ? dest[0] : 0;
@@ -131,20 +140,27 @@ void ObservedSerialBLEInterface::onDisconnect(BLEServer* server)
 {
     _stats.disconnect_count++;
     SerialBLEInterface::onDisconnect(server);
+    // Pending frames belong to the dead connection; the base class drops its
+    // own buffers on the disconnect transition, mirror that for _rx_queue.
+    _rx_queue.clear();
     refreshConnectionState();
 }
 
 void ObservedSerialBLEInterface::onWrite(BLECharacteristic* characteristic,
                                          esp_ble_gatts_cb_param_t* param)
 {
-    int len = characteristic ? characteristic->getLength() : 0;
-    if (len > 0) {
-        _stats.ble_write_count++;
-        if (len > MAX_FRAME_SIZE) {
-            _stats.ble_write_drop_count++;
-        }
+    (void)param;
+    // NET-002 (#813): deliberately NOT forwarded to the base class. Its
+    // receive queue is written here on the Bluedroid host task and drained
+    // on the app loop task with no synchronization — concurrent access tears
+    // the queue index and frame contents. _rx_queue locks the handoff.
+    if (!characteristic) return;
+    const size_t len = characteristic->getLength();
+    if (len == 0) return;
+    _stats.ble_write_count++;
+    if (!_rx_queue.push(characteristic->getData(), len)) {
+        _stats.ble_write_drop_count++;  // oversize frame or queue full
     }
-    SerialBLEInterface::onWrite(characteristic, param);
     refreshConnectionState();
 }
 

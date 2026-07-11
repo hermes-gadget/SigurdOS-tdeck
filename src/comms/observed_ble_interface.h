@@ -9,6 +9,7 @@
 #if defined(ESP32_PLATFORM) && defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 
 #include <helpers/esp32/SerialBLEInterface.h>
+#include "ble_frame_queue.h"
 
 namespace sigurdos {
 namespace comms {
@@ -64,6 +65,12 @@ private:
     void refreshConnectionState();
 
     BleSerialObserverStats _stats{};
+
+    // NET-002 (#813): the base class receive queue is written from the
+    // Bluedroid host task (onWrite) and drained from the app loop task
+    // (checkRecvFrame) without synchronization. Received frames are kept
+    // here instead — the base queue stays empty. Same capacity as upstream.
+    BleFrameQueue<MAX_FRAME_SIZE, FRAME_QUEUE_SIZE> _rx_queue;
 };
 
 } // namespace comms

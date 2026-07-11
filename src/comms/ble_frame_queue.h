@@ -1,0 +1,111 @@
+#pragma once
+
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ben
+
+#include <cstdint>
+#include <cstddef>
+#include <cstring>
+
+#if defined(ESP32_PLATFORM)
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#else
+#include <mutex>
+#endif
+
+namespace sigurdos {
+namespace comms {
+
+// Bounded FIFO carrying BLE frames across the Bluedroid host-task to
+// app-loop-task boundary (audit NET-002, issue #813). Both sides run in task
+// context, so the target locks with a FreeRTOS critical section — the hold
+// time is one bounded memcpy. The native build locks with std::mutex so tests
+// can stress producer/consumer with real threads.
+template <size_t MAX_LEN, size_t CAPACITY>
+class BleFrameQueue {
+public:
+    // Producer side (BLE host task). Returns false and drops the frame when
+    // the queue is full or the frame is empty/oversize.
+    bool push(const uint8_t* data, size_t len)
+    {
+        if (!data || len == 0 || len > MAX_LEN) return false;
+        LockGuard guard(*this);
+        if (_count >= CAPACITY) return false;
+        Frame& slot = _frames[(_head + _count) % CAPACITY];
+        slot.len = (uint16_t)len;
+        memcpy(slot.buf, data, len);
+        _count++;
+        return true;
+    }
+
+    // Consumer side (app loop task). Copies the oldest frame into dest,
+    // which must hold at least MAX_LEN bytes. Returns 0 when empty.
+    size_t pop(uint8_t* dest)
+    {
+        if (!dest) return 0;
+        LockGuard guard(*this);
+        if (_count == 0) return 0;
+        const Frame& slot = _frames[_head];
+        const size_t len = slot.len;
+        memcpy(dest, slot.buf, len);
+        _head = (_head + 1) % CAPACITY;
+        _count--;
+        return len;
+    }
+
+    void clear()
+    {
+        LockGuard guard(*this);
+        _head = 0;
+        _count = 0;
+    }
+
+    size_t size() const
+    {
+        LockGuard guard(*this);
+        return _count;
+    }
+
+private:
+    struct Frame {
+        uint16_t len;
+        uint8_t buf[MAX_LEN];
+    };
+
+    void lock() const
+    {
+#if defined(ESP32_PLATFORM)
+        portENTER_CRITICAL(&_mux);
+#else
+        _mutex.lock();
+#endif
+    }
+
+    void unlock() const
+    {
+#if defined(ESP32_PLATFORM)
+        portEXIT_CRITICAL(&_mux);
+#else
+        _mutex.unlock();
+#endif
+    }
+
+    struct LockGuard {
+        const BleFrameQueue& queue;
+        explicit LockGuard(const BleFrameQueue& q) : queue(q) { queue.lock(); }
+        ~LockGuard() { queue.unlock(); }
+    };
+
+    Frame _frames[CAPACITY];
+    size_t _head = 0;
+    size_t _count = 0;
+#if defined(ESP32_PLATFORM)
+    mutable portMUX_TYPE _mux = portMUX_INITIALIZER_UNLOCKED;
+#else
+    mutable std::mutex _mutex;
+#endif
+};
+
+} // namespace comms
+} // namespace sigurdos
