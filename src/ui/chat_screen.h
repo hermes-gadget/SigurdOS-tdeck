@@ -51,6 +51,12 @@ inline bool chat_screen_filter_accepts_channel(int mode, const char* name)
     return true;
 }
 
+inline uint32_t chat_screen_resolve_message_timestamp(
+    uint32_t authoritative_timestamp, uint32_t fallback_now)
+{
+    return authoritative_timestamp ? authoritative_timestamp : fallback_now;
+}
+
 // Create and show the chat screen
 void chat_screen_show();
 
@@ -62,6 +68,8 @@ void chat_screen_set_filter(int mode);
 
 // Add a message to the chat display
 void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self);
+void chat_screen_add_msg_at(const char* channel, const char* sender, const char* text,
+                            uint32_t timestamp, bool is_self);
 
 // Handle trackball events for the chat screen. Returns true if consumed.
 bool chat_screen_handle_trackball(SigurdOSTrackballEvent event);

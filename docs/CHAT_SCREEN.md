@@ -22,7 +22,7 @@ The Chat screen is reached through three paths:
 |---------|----------|--------------|
 | Home "CHATS" tile | `navigate_to(Screen::Chat)` → `chat_screen_show()` | Opens the **channel list view** |
 | Contacts screen (tap a contact) | `chat_screen_open_dm("name")` | Creates or opens a "DM: name" conversation directly |
-| Incoming mesh message | `chat_screen_add_msg(channel, sender, text, is_self)` | Appends to the per-channel history buffer; renders immediately if the channel's messaging view is currently visible |
+| Incoming mesh message | `chat_screen_add_msg_at(channel, sender, text, timestamp, is_self)` | Appends with the protocol timestamp; renders immediately if the channel's messaging view is currently visible |
 
 ---
 
@@ -451,6 +451,16 @@ Adds a message to the per-channel history. The primary entry point for incoming 
 - If the channel's messaging view is currently visible, the bubble is rendered immediately
 - Unread count is incremented for background channels
 - Automatically trims excess LVGL label widgets if display cap is exceeded
+
+This compatibility entry point supplies timestamp zero, which falls back once
+to `mesh::getCurrentTime()`.
+
+### `chat_screen_add_msg_at(..., uint32_t timestamp, bool is_self)`
+
+Timestamp-aware ingress used by `ui::loop()`. The authoritative
+`MeshMessage.timestamp` is stored in channel history, channel metadata, the
+rendered bubble, and the next `/msgs` save. A zero protocol timestamp uses the
+same local-clock fallback as the compatibility entry point.
 
 ### `chat_screen_handle_trackball(SigurdOSTrackballEvent event) -> bool`
 

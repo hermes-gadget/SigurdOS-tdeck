@@ -2453,7 +2453,15 @@ void chat_screen_open_dm(const char* contact_name)
 
 void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self)
 {
-    uint32_t now = sigurdos::mesh::getCurrentTime();
+    chat_screen_add_msg_at(channel, sender, text, 0, is_self);
+}
+
+void chat_screen_add_msg_at(const char* channel, const char* sender, const char* text,
+                            uint32_t timestamp, bool is_self)
+{
+    const uint32_t fallback_now = timestamp ? 0 : sigurdos::mesh::getCurrentTime();
+    const uint32_t message_time = chat_screen_resolve_message_timestamp(
+        timestamp, fallback_now);
 
     // Map DM messages (empty channel) to "DM: <sender>" conversation
     char dm_buf[CHANNEL_NAME_CAP];
@@ -2475,7 +2483,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     }
     if (idx >= MAX_CHANNELS) return;
 
-    append_channel_message(idx, sender, text, now, is_self);
+    append_channel_message(idx, sender, text, message_time, is_self);
 
     bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
     if (!is_self && !visible) ch_meta[idx].unread++;
@@ -2484,7 +2492,7 @@ void chat_screen_add_msg(const char* channel, const char* sender, const char* te
     // Check if user is at the bottom BEFORE adding the new bubble
     bool at_bottom = (lv_obj_get_scroll_bottom(msg_list) <= 4);
 
-    create_bubble(msg_list, sender, text, now, is_self, false);
+    create_bubble(msg_list, sender, text, message_time, is_self, false);
 
     const uint16_t cap = chat_msg_cap();
     if (lv_obj_get_child_cnt(msg_list) > cap)
