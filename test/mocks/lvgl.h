@@ -58,6 +58,12 @@ struct _lv_indev_t {
 };
 typedef _lv_indev_t lv_indev_t;
 
+struct _lv_timer_t {
+    int delete_count;
+    void* user_data;
+};
+typedef _lv_timer_t lv_timer_t;
+
 // ── Event ────────────────────────────────────────────────
 typedef struct _lv_event_t {
     lv_obj_t* target;
@@ -113,6 +119,7 @@ typedef void (*lv_event_cb_t)(lv_event_t* e);
 // ── Events ───────────────────────────────────────────────
 #define LV_EVENT_CLICKED    0x07
 #define LV_EVENT_PRESSED    0x01
+#define LV_EVENT_DELETE     0x21
 
 // ── Input device types ───────────────────────────────────
 #define LV_INDEV_TYPE_POINTER  0
@@ -284,6 +291,9 @@ inline void lv_indev_set_read_cb(lv_indev_t*, void(*)(lv_indev_t*, lv_indev_data
 
 // ── Timer ────────────────────────────────────────────────
 inline uint32_t lv_timer_handler() { return 5; }
+inline void lv_timer_del(lv_timer_t* timer) {
+    if (timer) timer->delete_count++;
+}
 
 // ── Fonts (forward-declared as extern) ───────────────────
 #ifdef __cplusplus

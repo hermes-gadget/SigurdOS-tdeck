@@ -21,6 +21,7 @@
 #include "../navigation.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../lv_timer_owner.h"
 #include "../home_screen.h"
 #include "../../hal/keyboard.h"
 #include "../../hal/prefs.h"
@@ -47,6 +48,11 @@ using namespace responsive;
 
 static lv_obj_t* g_date_row = nullptr;   // for live update after setting time
 static lv_obj_t* g_time_row = nullptr;
+
+struct GitHubOtaDialogCtx {
+    lv_obj_t* dialog;
+    LvTimerOwner poll_timer;
+};
 
 static void show_build_info_dialog(lv_obj_t* parent)
 {
@@ -1026,10 +1032,20 @@ void settings_system_show()
             lv_obj_set_style_text_color(status_lbl, lv_color_hex(ACCENT_RED), 0);
         }
 
-        // Polling timer — finds label/bar from dialog children each tick
-        (void)lv_timer_create([](lv_timer_t* t) {
-            lv_obj_t* dlg = (lv_obj_t*)lv_timer_get_user_data(t);
-            if (!dlg) { lv_timer_del(t); return; }
+        auto* ota_ctx = new GitHubOtaDialogCtx{dlg, {}};
+        lv_obj_add_event_cb(dlg, [](lv_event_t* ev) {
+            delete (GitHubOtaDialogCtx*)lv_event_get_user_data(ev);
+        }, LV_EVENT_DELETE, ota_ctx);
+
+        // Polling timer — finds label/bar from dialog children each tick.
+        ota_ctx->poll_timer.attach(lv_timer_create([](lv_timer_t* t) {
+            auto* ctx = (GitHubOtaDialogCtx*)lv_timer_get_user_data(t);
+            if (!ctx || !lv_obj_is_valid(ctx->dialog)) {
+                if (ctx) ctx->poll_timer.complete(t);
+                else lv_timer_del(t);
+                return;
+            }
+            lv_obj_t* dlg = ctx->dialog;
 
             const auto& st = sigurdos::github_ota::getStatus();
             // Find status label (second label) and bar
@@ -1058,9 +1074,9 @@ void settings_system_show()
             }
             if (st.state == sigurdos::github_ota::GitHubOTAState::Success ||
                 st.state == sigurdos::github_ota::GitHubOTAState::Failed) {
-                lv_timer_del(t);
+                ctx->poll_timer.complete(t);
             }
-        }, 500, dlg);
+        }, 500, ota_ctx));
 
         // Close button
         lv_obj_t* close_btn = lv_btn_create(dlg);

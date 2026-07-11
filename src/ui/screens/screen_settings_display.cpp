@@ -21,6 +21,7 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../chat_screen.h"
+#include "../display_settings_helpers.h"
 #include "../../hal/prefs.h"
 #include "../../hal/display.h"
 #include "../../hal/keyboard.h"
@@ -281,8 +282,17 @@ static void auto_off_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     int total_w = 3 * btn_w + 2 * gap_x;
     int start_x = (dlg_sz.w - total_w) / 2;
 
-    uint16_t current = sigurdos::prefs_get().auto_off_timeout;
-    static lv_obj_t* selected = nullptr;
+    struct AutoOffCtx {
+        lv_obj_t* selected;
+        lv_obj_t* row_label;
+    };
+    auto* ctx = new AutoOffCtx{nullptr, row_label};
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        delete (AutoOffCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, ctx);
+
+    uint16_t current = normalize_auto_off_timeout(
+        sigurdos::prefs_get().auto_off_timeout);
 
     for (int i = 0; i < 5; i++) {
         int col = i % 3;
@@ -303,16 +313,17 @@ static void auto_off_dialog(lv_obj_t* parent, lv_obj_t* row_label)
         lv_obj_center(lbl);
 
         lv_obj_add_event_cb(btn, [](lv_event_t* e) {
+            auto* ctx = (AutoOffCtx*)lv_event_get_user_data(e);
             lv_obj_t* clicked = (lv_obj_t*)lv_event_get_target(e);
-            if (selected) {
-                lv_obj_set_style_bg_color(selected, lv_color_hex(BG_TERTIARY), 0);
+            if (ctx->selected && lv_obj_is_valid(ctx->selected)) {
+                lv_obj_set_style_bg_color(ctx->selected, lv_color_hex(BG_TERTIARY), 0);
             }
             lv_obj_set_style_bg_color(clicked, lv_color_hex(ACCENT), 0);
-            selected = clicked;
-        }, LV_EVENT_CLICKED, nullptr);
+            ctx->selected = clicked;
+        }, LV_EVENT_CLICKED, ctx);
 
         if (OPTIONS[i].value == current) {
-            selected = btn;
+            ctx->selected = btn;
         }
     }
 
@@ -326,9 +337,9 @@ static void auto_off_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     lv_obj_center(sl);
 
     lv_obj_add_event_cb(set_btn, [](lv_event_t* e) {
-        lv_obj_t* row_lbl = (lv_obj_t*)lv_event_get_user_data(e);
-        if (!selected) return;
-        lv_obj_t* lbl = lv_obj_get_child(selected, 0);
+        auto* ctx = (AutoOffCtx*)lv_event_get_user_data(e);
+        if (!ctx->selected || !lv_obj_is_valid(ctx->selected)) return;
+        lv_obj_t* lbl = lv_obj_get_child(ctx->selected, 0);
         if (!lbl) return;
         const char* label = lv_label_get_text(lbl);
 
@@ -351,15 +362,10 @@ static void auto_off_dialog(lv_obj_t* parent, lv_obj_t* row_label)
         } else {
             snprintf(row_buf, sizeof(row_buf), "  Auto-off: %ds", value);
         }
-        update_row_label(row_lbl, row_buf);
+        update_row_label(ctx->row_label, row_buf);
 
-        selected = nullptr;
         lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
-    }, LV_EVENT_CLICKED, (void*)row_label);
-
-    lv_obj_add_event_cb(dlg, [](lv_event_t*) {
-        selected = nullptr;
-    }, LV_EVENT_DELETE, nullptr);
+    }, LV_EVENT_CLICKED, ctx);
 }
 
 // ════════════════════════════════════════════════════════

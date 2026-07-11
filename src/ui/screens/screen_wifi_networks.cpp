@@ -20,6 +20,7 @@
 #include "../screens_common.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../lv_timer_owner.h"
 #include "../../hal/wifi_ota.h"
 #include "../../hal/prefs.h"
 #include "../../fonts/emoji_font.h"
@@ -41,8 +42,19 @@ static bool g_wifi_scan_done = false;
 static sigurdos::wifi_scan::APInfo g_wifi_aps[30];
 static int g_wifi_ap_count = 0;
 
+struct WifiScanCtx {
+    lv_obj_t* list;
+    LvTimerOwner timer;
+};
+
 static void wifi_do_scan(lv_timer_t* timer) {
-    lv_obj_t* list = (lv_obj_t*)lv_timer_get_user_data(timer);
+    auto* ctx = (WifiScanCtx*)lv_timer_get_user_data(timer);
+    if (!ctx || !lv_obj_is_valid(ctx->list)) {
+        if (ctx) ctx->timer.complete(timer);
+        else lv_timer_del(timer);
+        return;
+    }
+    lv_obj_t* list = ctx->list;
     
     g_wifi_ap_count = sigurdos::wifi_scan::scan(g_wifi_aps, 30);
     g_wifi_scan_done = true;
@@ -269,7 +281,7 @@ static void wifi_do_scan(lv_timer_t* timer) {
             }
         }
     }
-    lv_timer_del(timer);
+    ctx->timer.complete(timer);
 }
 
 void wifi_networks_screen_show()
@@ -315,8 +327,13 @@ void wifi_networks_screen_show()
     g_wifi_scan_done = false;
     g_wifi_ap_count = 0;
     
-    // Defer scan to let screen render first
-    lv_timer_create(wifi_do_scan, 400, list);
+    // Defer scan to let the screen render first. The list owns this context,
+    // so navigation cancels the pending timer before LVGL frees the list.
+    auto* scan_ctx = new WifiScanCtx{list, {}};
+    lv_obj_add_event_cb(list, [](lv_event_t* e) {
+        delete (WifiScanCtx*)lv_event_get_user_data(e);
+    }, LV_EVENT_DELETE, scan_ctx);
+    scan_ctx->timer.attach(lv_timer_create(wifi_do_scan, 400, scan_ctx));
     
     show_screen(scr);
 }

@@ -86,6 +86,7 @@ test/
 |-- test_touch/                     GT911 coordinate parsing and screen mapping
 |-- test_trackball/                 Trackball debounce, direction, and click events
 |-- test_ui_contract/               UI screen show APIs and screen function stability
+|-- test_ui_lifecycle/              LVGL timer ownership and display timeout normalization
 |-- test_ui_timing/                 Splash screen timing and millisecond rollover
 |-- test_wifi_scan/                 Wi-Fi scan AP count, sorting, and input validation
 ```
