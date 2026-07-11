@@ -18,6 +18,7 @@
 
 
 #include "display.h"
+#include "display_buffer_policy.h"
 #include "touch.h"
 #include "keyboard.h"
 #include "keyboard_layouts.h"
@@ -782,14 +783,18 @@ bool sigurdos_display_init()
     const uint32_t full_buf_bytes = full_stride * TFT_HEIGHT;
 
     draw_buf = (uint8_t*)heap_caps_malloc(full_buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    draw_buf2 = (uint8_t*)heap_caps_malloc(full_buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    // Do not reserve a second full framebuffer unless the first succeeded.
+    // This also makes the fallback path incapable of leaking a second-only
+    // allocation when PSRAM is fragmented.
+    draw_buf2 = draw_buf
+        ? (uint8_t*)heap_caps_malloc(full_buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+        : nullptr;
     if (draw_buf && draw_buf2) {
         lv_display_set_buffers(lv_disp, draw_buf, draw_buf2,
                                full_buf_bytes,
                                LV_DISPLAY_RENDER_MODE_FULL);
     } else if (draw_buf) {
         // Second buffer failed — fall back to single-buffer full mode
-        heap_caps_free(draw_buf2);
         draw_buf2 = nullptr;
         lv_display_set_buffers(lv_disp, draw_buf, nullptr,
                                full_buf_bytes,
@@ -819,11 +824,8 @@ bool sigurdos_display_init()
                                        emergency_buf_bytes,
                                        LV_DISPLAY_RENDER_MODE_PARTIAL);
             } else {
-                // Truly out of memory — LVGL will render to a null buffer
-                // (functional but slow, pixels drawn one at a time via
-                // set_px_cb).  Better than crashing.
-                Serial.printf("[disp] WARNING: no draw buffer available — "
-                              "rendering will be degraded\n");
+                Serial.println("[disp] FATAL: no LVGL draw buffer available");
+                return false;
             }
         }
     }

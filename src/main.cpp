@@ -70,9 +70,10 @@ void setup()
         Serial.printf("[boot] FATAL: Display init failed (%u/%u attempts)\n",
                       display_failures, MAX_DISPLAY_FAILURES);
         if (display_failures >= MAX_DISPLAY_FAILURES) {
-            Serial.println("[boot] SAFE MODE: Too many display failures - staying alive for serial/USB recovery.");
-            Serial.println("[boot] Connect via serial or USB to recover. Reset to retry.");
-            // Stay alive - don't reboot. Serial/USB/BLE remain functional for recovery.
+            Serial.println("[boot] HALTED: Too many display failures.");
+            Serial.println("[boot] USB reflashing remains available; reset to retry.");
+            // Mesh, BLE, OTA, and interactive command services have not started.
+            // Halt to break the reboot loop while retaining ROM/USB reflashing.
             while (true) { delay(1000); }
         }
         Serial.printf("[boot] Restarting in 5s...\n");
