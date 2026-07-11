@@ -1,7 +1,12 @@
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
 
+#include "hal/atomic_file.h"
 #include "mesh/message_store.h"
 
 namespace {
@@ -26,6 +31,20 @@ sigurdos::mesh::StoredMessage makeMsg(const char* conversation,
     return msg;
 }
 
+std::vector<uint8_t> readFile(const char* path)
+{
+    std::ifstream in(path, std::ios::binary);
+    return std::vector<uint8_t>(std::istreambuf_iterator<char>(in),
+                                std::istreambuf_iterator<char>());
+}
+
+void writeFile(const char* path, const std::vector<uint8_t>& bytes)
+{
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              (std::streamsize)bytes.size());
+}
+
 class MessageStoreTest : public ::testing::Test {
 protected:
     char path[128]{};
@@ -34,13 +53,19 @@ protected:
         std::snprintf(path, sizeof(path), "/tmp/sigurdos_msg_store_%d.bin",
                       ::testing::UnitTest::GetInstance()->random_seed());
         sigurdos::mesh::messageStoreSetNativePath(path);
+        sigurdos::storage::atomicFileSetNativeFault(
+            sigurdos::storage::AtomicFileNativeFault::None);
         std::remove(path);
+        std::remove((std::string(path) + ".tmp").c_str());
         ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
         ASSERT_TRUE(sigurdos::mesh::messageStoreClear());
     }
 
     void TearDown() override {
+        sigurdos::storage::atomicFileSetNativeFault(
+            sigurdos::storage::AtomicFileNativeFault::None);
         std::remove(path);
+        std::remove((std::string(path) + ".tmp").c_str());
     }
 };
 
@@ -206,6 +231,81 @@ TEST_F(MessageStoreTest, MetadataRoundTrips) {
     EXPECT_EQ(out[0].sender_prefix[0], 0x11);
     EXPECT_EQ(out[0].sender_prefix[1], 0x22);
     EXPECT_EQ(out[0].sender_prefix[2], 0x33);
+}
+
+TEST_F(MessageStoreTest, BeginRecoversRecordWrittenBeforeHeaderCount) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "complete", 42, false, false)));
+    auto raw = readFile(path);
+    ASSERT_GE(raw.size(), 9U + sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
+    const uint32_t stale_count = 0;
+    std::memcpy(raw.data() + 5, &stale_count, sizeof(stale_count));
+    writeFile(path, raw);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.text, "complete");
+}
+
+TEST_F(MessageStoreTest, BeginDropsOnlyTornTailAndCorrectsCount) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "first", 1, false, false)));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "second", 2, false, false)));
+    auto raw = readFile(path);
+    raw.resize(9 + sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE + 13);
+    writeFile(path, raw);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.text, "first");
+}
+
+TEST_F(MessageStoreTest, RenameFailureRecoversValidatedWholeStoreUpdate) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "self", "sent", 77, true, false)));
+    sigurdos::storage::atomicFileSetNativeFault(
+        sigurdos::storage::AtomicFileNativeFault::Rename);
+    EXPECT_FALSE(sigurdos::mesh::messageStoreMarkAcked("DM: Alice", 77));
+    EXPECT_FALSE(readFile((std::string(path) + ".tmp").c_str()).empty());
+
+    sigurdos::storage::atomicFileSetNativeFault(
+        sigurdos::storage::AtomicFileNativeFault::None);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_TRUE(out.acked);
+}
+
+TEST_F(MessageStoreTest, InvalidTempNeverReplacesLiveStore) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "live", 1, false, false)));
+    const std::string temp_path = std::string(path) + ".tmp";
+    writeFile(temp_path.c_str(), {0x47, 0x53, 0x4d, 0x53, 0x04, 0x01});
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.text, "live");
+    EXPECT_TRUE(readFile(temp_path.c_str()).empty());
+}
+
+TEST_F(MessageStoreTest, WholeStoreWriteFailurePreservesLiveStore) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "self", "sent", 77, true, false)));
+    sigurdos::storage::atomicFileSetNativeFault(
+        sigurdos::storage::AtomicFileNativeFault::Write);
+    EXPECT_FALSE(sigurdos::mesh::messageStoreMarkAcked("DM: Alice", 77));
+    sigurdos::storage::atomicFileSetNativeFault(
+        sigurdos::storage::AtomicFileNativeFault::None);
+
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_FALSE(out.acked);
 }
 
 } // namespace

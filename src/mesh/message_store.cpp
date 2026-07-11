@@ -3,6 +3,8 @@
 
 #include "message_store.h"
 
+#include "hal/atomic_file.h"
+
 #include <cstdlib>
 #include <cstring>
 
@@ -23,6 +25,7 @@ static constexpr const char* STORE_PATH = "/companion_msgs";
 #endif
 
 static constexpr uint32_t MESSAGE_STORE_MAX_RECORDS = 64;
+static constexpr uint32_t MESSAGE_STORE_RECOVERY_MAX_RECORDS = 256;
 
 #if !defined(ESP32_PLATFORM)
 static char g_native_path[160] = "/tmp/sigurdos_companion_msgs.bin";
@@ -56,6 +59,7 @@ static void applyFlags(StoredMessage& msg, uint8_t flags)
 
 static bool readHeader(uint32_t* out_count);
 static bool writeHeaderIfNeeded();
+static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count);
 
 #if defined(ESP32_PLATFORM)
 static bool ensureFs()
@@ -74,10 +78,6 @@ static bool existsStore()
     return SPIFFS.exists(STORE_PATH);
 }
 
-static bool removeStore()
-{
-    return SPIFFS.remove(STORE_PATH);
-}
 #else
 static bool ensureFs()
 {
@@ -92,11 +92,16 @@ static bool existsStore()
     return true;
 }
 
-static bool removeStore()
-{
-    return std::remove(g_native_path) == 0 || !existsStore();
-}
 #endif
+
+static const char* storePath()
+{
+#if defined(ESP32_PLATFORM)
+    return STORE_PATH;
+#else
+    return g_native_path;
+#endif
+}
 
 static bool readRecordRaw(StoredMessage& msg, const uint8_t* rec, size_t len)
 {
@@ -263,8 +268,7 @@ static bool writeHeaderIfNeeded()
 {
     uint32_t count = 0;
     if (readHeader(&count)) return true;
-    removeStore();
-    return writeHeaderCount(0);
+    return atomicReplaceStore(nullptr, 0);
 }
 
 static int loadAllInternal(StoredMessage* out, int max)
@@ -372,76 +376,141 @@ static bool messageExists(const StoredMessage& msg)
 #endif
 }
 
-// Atomically replace the entire message store with the given records.
-// Writes to a temp file first, then uses rename() to swap it in —
-// power loss after the initial write leaves the original file intact.
+struct StoreWriteCtx {
+    const StoredMessage* messages;
+    uint32_t count;
+};
+
+static bool writeStore(sigurdos::storage::AtomicFileWriter& writer, void* raw)
+{
+    StoreWriteCtx* ctx = static_cast<StoreWriteCtx*>(raw);
+    if (!ctx || ctx->count > MESSAGE_STORE_RECOVERY_MAX_RECORDS ||
+        (ctx->count > 0 && !ctx->messages)) return false;
+    const uint32_t magic = detail::MESSAGE_STORE_MAGIC;
+    const uint8_t version = detail::MESSAGE_STORE_VERSION;
+    if (writer.write(&magic, sizeof(magic)) != sizeof(magic) ||
+        writer.write(&version, 1) != 1 ||
+        writer.write(&ctx->count, sizeof(ctx->count)) != sizeof(ctx->count)) {
+        return false;
+    }
+    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
+    for (uint32_t i = 0; i < ctx->count; ++i) {
+        writeRecordRaw(ctx->messages[i], record, sizeof(record));
+        if (writer.write(record, sizeof(record)) != sizeof(record)) return false;
+    }
+    return true;
+}
+
+static bool validateStore(sigurdos::storage::AtomicFileReader& reader, void*)
+{
+    if (reader.size() < 9 || !reader.seek(0)) return false;
+    uint32_t magic = 0;
+    uint8_t version = 0;
+    uint32_t count = 0;
+    if (reader.read(&magic, sizeof(magic)) != sizeof(magic) ||
+        reader.read(&version, 1) != 1 ||
+        reader.read(&count, sizeof(count)) != sizeof(count) ||
+        magic != detail::MESSAGE_STORE_MAGIC ||
+        version != detail::MESSAGE_STORE_VERSION ||
+        count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) {
+        return false;
+    }
+    return reader.size() == 9 +
+        (size_t)count * detail::MESSAGE_STORE_RECORD_SIZE;
+}
+
+// Atomically replace the entire message store with the given records. A valid
+// temp remains available for boot recovery if only the final rename fails.
 static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count)
 {
     if (!ensureFs()) return false;
-    if (!msgs || count == 0) return messageStoreClear();
+    StoreWriteCtx ctx{msgs, count};
+    return sigurdos::storage::atomicFileReplace(
+        storePath(), writeStore, &ctx, validateStore, nullptr);
+}
 
+static bool readCompleteRecords(StoredMessage* out, uint32_t count)
+{
+    if (count > 0 && !out) return false;
 #if defined(ESP32_PLATFORM)
-    static constexpr const char* TMP_PATH = "/companion_msgs.tmp";
-    SPIFFS.remove(TMP_PATH);
-    File f = SPIFFS.open(TMP_PATH, "w");
-    if (!f) return false;
-    uint32_t magic = detail::MESSAGE_STORE_MAGIC;
-    uint8_t version = detail::MESSAGE_STORE_VERSION;
-    bool ok = f.write((const uint8_t*)&magic, 4) == 4 &&
-              f.write(&version, 1) == 1 &&
-              f.write((const uint8_t*)&count, 4) == 4;
-    if (ok) {
-        uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
-        for (uint32_t i = 0; ok && i < count; i++) {
-            writeRecordRaw(msgs[i], rec, sizeof(rec));
-            ok = f.write(rec, sizeof(rec)) == sizeof(rec);
-        }
-    }
-    f.close();
-    if (!ok) {
-        SPIFFS.remove(TMP_PATH);
+    File file = SPIFFS.open(STORE_PATH, "r");
+    if (!file || !file.seek(9, SeekSet)) {
+        if (file) file.close();
         return false;
     }
-    // SPIFFS rename atomically overwrites the destination — no need
-    // to remove STORE_PATH first, which would create a window where
-    // a power loss leaves no live store (RELI-003).
-    if (!SPIFFS.rename(TMP_PATH, STORE_PATH)) {
-        SPIFFS.remove(TMP_PATH);
-        return false;
-    }
-    return true;
 #else
-    char tmp_path[180];
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", g_native_path);
-    std::remove(tmp_path);
-    FILE* f = std::fopen(tmp_path, "wb");
-    if (!f) return false;
-    uint32_t magic = detail::MESSAGE_STORE_MAGIC;
-    uint8_t version = detail::MESSAGE_STORE_VERSION;
-    bool ok = std::fwrite(&magic, 1, 4, f) == 4 &&
-              std::fwrite(&version, 1, 1, f) == 1 &&
-              std::fwrite(&count, 1, 4, f) == 4;
-    if (ok) {
-        uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
-        for (uint32_t i = 0; ok && i < count; i++) {
-            writeRecordRaw(msgs[i], rec, sizeof(rec));
-            ok = std::fwrite(rec, 1, sizeof(rec), f) == sizeof(rec);
-        }
-    }
-    std::fclose(f);
-    if (!ok) {
-        std::remove(tmp_path);
+    FILE* file = std::fopen(g_native_path, "rb");
+    if (!file || std::fseek(file, 9, SEEK_SET) != 0) {
+        if (file) std::fclose(file);
         return false;
     }
-    // POSIX rename atomically replaces the destination — no need
-    // to remove first, which would create a window where power loss
-    // leaves no live store (RELI-003).
-    if (std::rename(tmp_path, g_native_path) != 0) {
-        std::remove(tmp_path);
-        return false;
-    }
-    return true;
 #endif
+    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < count; ++i) {
+#if defined(ESP32_PLATFORM)
+        ok = file.read(record, sizeof(record)) == sizeof(record);
+#else
+        ok = std::fread(record, 1, sizeof(record), file) == sizeof(record);
+#endif
+        if (ok) ok = readRecordRaw(out[i], record, sizeof(record));
+    }
+#if defined(ESP32_PLATFORM)
+    file.close();
+#else
+    std::fclose(file);
+#endif
+    return ok;
+}
+
+static bool repairInterruptedAppend()
+{
+    if (!existsStore()) return true;
+    uint32_t magic = 0;
+    uint8_t version = 0;
+    uint32_t declared_count = 0;
+    size_t file_size = 0;
+#if defined(ESP32_PLATFORM)
+    File file = SPIFFS.open(STORE_PATH, "r");
+    if (!file) return false;
+    file_size = file.size();
+    const bool header_ok = file.read((uint8_t*)&magic, 4) == 4 &&
+        file.read(&version, 1) == 1 &&
+        file.read((uint8_t*)&declared_count, 4) == 4;
+    file.close();
+#else
+    FILE* file = std::fopen(g_native_path, "rb");
+    if (!file) return false;
+    std::fseek(file, 0, SEEK_END);
+    const long end = std::ftell(file);
+    file_size = end > 0 ? (size_t)end : 0;
+    std::fseek(file, 0, SEEK_SET);
+    const bool header_ok = std::fread(&magic, 1, 4, file) == 4 &&
+        std::fread(&version, 1, 1, file) == 1 &&
+        std::fread(&declared_count, 1, 4, file) == 4;
+    std::fclose(file);
+#endif
+    if (!header_ok || magic != detail::MESSAGE_STORE_MAGIC ||
+        version != detail::MESSAGE_STORE_VERSION || file_size < 9) {
+        return true; // writeHeaderIfNeeded() will replace an invalid header.
+    }
+
+    const size_t payload_size = file_size - 9;
+    const uint32_t complete_count =
+        (uint32_t)(payload_size / detail::MESSAGE_STORE_RECORD_SIZE);
+    const bool has_torn_tail =
+        payload_size % detail::MESSAGE_STORE_RECORD_SIZE != 0;
+    if (complete_count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
+    if (!has_torn_tail && declared_count == complete_count) return true;
+
+    StoredMessage* messages = complete_count > 0
+        ? (StoredMessage*)std::malloc(sizeof(StoredMessage) * complete_count)
+        : nullptr;
+    if (complete_count > 0 && !messages) return false;
+    const bool read_ok = readCompleteRecords(messages, complete_count);
+    const bool replace_ok = read_ok && atomicReplaceStore(messages, complete_count);
+    std::free(messages);
+    return replace_ok;
 }
 
 static bool trimStoreToRecent(uint32_t max_records)
@@ -483,19 +552,11 @@ void storedMessageNormalize(StoredMessage& msg)
 
 bool messageStoreBegin()
 {
-#if defined(ESP32_PLATFORM)
-    // Recovery: if a .tmp file survived a power loss during
-    // atomicReplaceStore, promote it to the live store (RELI-003).
-    // The temp was fully written before the rename was attempted,
-    // so it contains the most recent complete state.
-    static constexpr const char* TMP_PATH = "/companion_msgs.tmp";
-    if (SPIFFS.exists(TMP_PATH)) {
-        SPIFFS.remove(STORE_PATH);
-        SPIFFS.rename(TMP_PATH, STORE_PATH);
-        // If rename fails, the temp is discarded (orphaned, can't recover)
-    }
-#endif
-
+    if (!ensureFs()) return false;
+    // A valid whole-store replacement wins. Invalid temps are removed without
+    // touching the live file, which may still be repairable after an append.
+    sigurdos::storage::atomicFileRecover(storePath(), validateStore, nullptr);
+    if (!repairInterruptedAppend()) return false;
     if (!writeHeaderIfNeeded()) return false;
     uint32_t count = 0;
     if (readHeader(&count) && count > MESSAGE_STORE_MAX_RECORDS) {
@@ -506,8 +567,7 @@ bool messageStoreBegin()
 
 bool messageStoreClear()
 {
-    removeStore();
-    return writeHeaderCount(0);
+    return atomicReplaceStore(nullptr, 0);
 }
 
 bool messageStoreAppend(const StoredMessage& msg)
