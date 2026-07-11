@@ -62,7 +62,7 @@ Effort levels on the still-missing items below estimate the work remaining:
 
 ## Regions — Companion Flood Scope ✅ IMPLEMENTED
 
-> **✅ IMPLEMENTED** — Full RegionMap CRUD API, NVS-persisted region list with active scope state, flood scope stamping in `SigurdMeshV2::sendFloodScoped()`, dedicated UI screen (add/set-active/delete), navigation entry, Settings hook, and 43 native tests. The detailed plan below is preserved as historical reference.
+> **✅ IMPLEMENTED** — Full RegionMap CRUD API, SPIFFS-persisted region list with active scope state, flood scope stamping in `SigurdMeshV2::sendFloodScoped()`, dedicated UI screen (add/set-active/delete), navigation entry, and Settings hook. The detailed plan below is preserved as historical reference.
 
 **Goal:** let the user pick a *region* (a named flood scope) so that outgoing flood traffic is stamped with a MeshCore **transport code**. Region-aware repeaters then only re-flood packets for the regions they serve, keeping traffic contained. This is the **companion half** of MeshCore regions — send-side scope stamping plus a small management UI. It deliberately does **not** implement the repeater half (the `RegionMap` deny-flood gating that decides what to forward); a handheld does not relay floods.
 
@@ -256,7 +256,7 @@ BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queu
 
 ### PIN / pairing / security
 
-- Reuse the existing `NodePrefs.device_pin` as the BLE pairing PIN (maps to the protocol's `ble_pin`). MITM bonding ⇒ one-time PIN prompt on the phone.
+- Use the independently generated `NodePrefs.ble_pin` as the BLE pairing PIN. MITM bonding ⇒ one-time PIN prompt on the phone. The four-digit `device_pin` protects device-admin actions and is not reused for BLE pairing.
 - **A paired phone gets full device access**, including `CMD_EXPORT_PRIVATE_KEY` (exports the node's Ed25519 private key) and `CMD_IMPORT_PRIVATE_KEY`. This matches the official app's backup/restore, and is gated by PIN pairing — but it is sensitive. Decide policy: support it (interop) with a UI indicator when BLE is connected, and consider a toggle to disable private-key export.
 
 ### Phased implementation
@@ -273,7 +273,7 @@ BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queu
 3. **`src/comms/companion_bridge.{h,cpp}` (new)** — owns the `SerialBLEInterface` + a `SigurdMeshV2&`; ports `handleCmdFrame`, `writeOKFrame`/`writeErrFrame`/`writeContactRespFrame`, the offline queue, and the contacts/sync iterators. Driven by `loop()`. **L**
 4. **`src/mesh/sigurd_mesh_v2.h`** — add an event-listener hook (message/advert/ack/path-updated) so the **persistent log, the UI, and the bridge** all receive the same mesh events (the fan-out point for R1/R2); bump `contact.lastmod` + `saveContacts()` on local contact changes for R3; expose any `BaseChatMesh` accessors the bridge needs. **M**
 5. **`src/mesh/mesh_wrapper.{h,cpp}`** — construct/init/loop the bridge; map the protocol's persistence + identity commands onto existing SigurdOS storage; wire the message store into the existing message path. **M**
-6. **`src/hal/prefs.{h,cpp}`** — surface `device_pin` as the BLE PIN; add `ble_enabled`. **S**
+6. **`src/hal/prefs.{h,cpp}`** — persist a separate six-digit `ble_pin`; add `ble_enabled`. **S**
 7. **`src/main.cpp`** — bring up the bridge after mesh init; call `bridge.loop()` in the main loop. **S**
 8. **`src/ui/screens.cpp` (+ home/nav)** — a **Bluetooth / Phone App** screen: enable toggle, PIN display, connection status; a connected indicator on the top bar; optional connect buzzer. Follow screen conventions (`make_screen_full`, `apply_dark_bg`, `theme.h`). **M**
 

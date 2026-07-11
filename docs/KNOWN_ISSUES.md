@@ -28,7 +28,7 @@ SigurdOS can now be installed as a Launcher app. See [`firmware/README.md`](../f
 - ✅ Retry loop: keyboard init now retries 3× with 100ms delay instead of single-NACK-abort
 - ✅ Mode reset: sends `CMD_MODE_KEY` (0x04) before each probe to reset C3 to known state
 - ✅ 2 new native tests covering transient-NACK recovery and exhaustion
-- ✅ 748/748 native tests pass, release build clean
+- Run `pio test -e native_test -v` and `pio run -e SigurdOS_TDeck` against the current commit; changing test totals are intentionally not recorded as a permanent status claim.
 
 **Remaining gaps (Phase 2b/5/6):**
 - 🔜 Phase 2b: Actual Launcher boot handoff (T4/T9) — requires physical SD card or WebUI interaction on T-Deck

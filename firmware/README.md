@@ -1,5 +1,11 @@
 # SigurdOS T-Deck Firmware Binaries
 
+> **Legacy tracked artifacts:** `sigurdos-tdeck.bin` and
+> `sigurdos-tdeck-merged.bin` in this directory identify as
+> `SlopOS beta-0.1.30`. They are retained only for historical recovery and are
+> not current release outputs. Install a versioned artifact from GitHub
+> Releases or rebuild from the desired commit.
+
 Pre-built firmware for the LilyGo T-Deck (ESP32-S3, 16 MB flash).
 
 | File | Use |
@@ -137,4 +143,3 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash 0x0 sigurdos-tdeck-mer
 ```
 
 This replaces Launcher entirely with standalone SigurdOS. Your mesh identity will regenerate (it's stored in a differently-located SPIFFS), and NVS settings will reset. Re-onboard via the setup wizard and reconfigure your radio preferences.
-

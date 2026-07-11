@@ -224,7 +224,7 @@ pio test -e native_test -v
 pio test -e native_test -f test_log -v
 ```
 
-**Note**: The native test environment does not define `SIGURCOS_DEBUG`, so `SIG_LOGD` compiles out and the test verifies empty output. To test `SIG_LOGD` live, flash a debug build:
+**Note**: The native test environment does not define `SIGURDOS_DEBUG`, so `SIG_LOGD` compiles out and the test verifies empty output. To test `SIG_LOGD` live, flash a debug build:
 
 ```bash
 pio run -e SigurdOS_TDeck_debug

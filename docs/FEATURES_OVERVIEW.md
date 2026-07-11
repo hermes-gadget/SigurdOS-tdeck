@@ -129,7 +129,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 
 ### Display & LVGL
 - **LovyanGFX** driver for ST7789 240×320 TFT via SPI
-- **LVGL v9.3.0** — full widget toolkit with partial renderer, 16-bit color, animation support
+- **LVGL v9.3.0** — full widget toolkit, 16-bit color, animation support, and full-frame double buffering in PSRAM with single/partial fallbacks
 - **Auto-off** backlight timeout (30s default) with wake on touch/keyboard input
 - **Programmable brightness** via PWM (0–255)
 - **Screen capture** via serial hex dump (`lv_snapshot_take_to_draw_buf`)
@@ -149,7 +149,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Node Discovery Protocol** — answers MeshCore `0x80`/`0x81` discovery requests with `0x90|node_type` responses
 - **Telemetry request/answer** — request remote CayenneLPP telemetry and answer inbound telemetry requests with local battery/GPS data
 - **Client repeat + multi-ACK** — optional opportunistic relay and redundant ACK transmission settings
-- **Regions (Companion Flood Scope)** — RegionMap CRUD with active scope selection, NVS-persisted region list, flood scope stamping on all outgoing packets via `SigurdMeshV2::sendFloodScoped()` override (public hashtag `#name`, private `$key`, wildcard). Dedicated UI screen for add/set-active/delete; adverts remain unscoped by design. 43 native tests.
+- **Regions (Companion Flood Scope)** — RegionMap CRUD with active scope selection, SPIFFS-persisted region list, flood scope stamping on outgoing packets via `SigurdMeshV2::sendFloodScoped()` override (public hashtag `#name`, private `$key`, wildcard). Dedicated UI screen for add/set-active/delete; adverts remain unscoped by design.
 - **Packet logging** — per-packet RX log with type, RSSI, SNR
 - **RTC time sync** — mesh-synchronised clock for message timestamps
 - **Advert broadcast** — manual send with optional GPS coordinates
@@ -283,7 +283,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **SPIFFS message store** — persistent, append-only, dedup-keyed by (conversation, sender, timestamp); survives reboot; shared between chat UI and BLE sync
 - **Bluetooth UI screen** — enable/disable toggle, PIN display, connection status indicator, Settings → Network entry
 - **Build envs** — BLE is in the default env (`[env:SigurdOS_TDeck]` sets `-D SIGURDOS_COMPANION_BLE=1`; `SigurdOS_TDeck_ble_validation` adds the validation harness); 53 companion protocol + 5 message store native tests
-- **PIN pairing** — static PIN from `NodePrefs.device_pin` with MITM bonding
+- **PIN pairing** — independently generated six-digit `NodePrefs.ble_pin` with MITM bonding
 - **Phased implementation** — Phase 0 (message store persistence), Phase 1 (MVP: handshake, contact sync, DM send/recv), Phase 2 (channels, adverts, radio config), Phase 3 (repeater login, trace, telemetry, private-key export)
 **Sources:** [`src/comms/companion_bridge.h`](../src/comms/companion_bridge.h), [`src/comms/companion_bridge.cpp`](../src/comms/companion_bridge.cpp), [`src/comms/companion_adapter.inc`](../src/comms/companion_adapter.inc), [`src/mesh/message_store.h`](../src/mesh/message_store.h), [`src/mesh/message_store.cpp`](../src/mesh/message_store.cpp), [`src/ui/screens/screen_bluetooth.cpp`](../src/ui/screens/screen_bluetooth.cpp), [`platformio.ini`](../platformio.ini), [`test/test_companion_protocol/`](../test/test_companion_protocol/), [`test/test_message_store/`](../test/test_message_store/)
 
@@ -294,7 +294,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 ### ST7789 Display
 - **Driver:** LovyanGFX on shared SPI bus (SPI2_HOST, CS=12, DC=11, BL=42)
 - **Resolution:** 320×240 (landscape via rotation 1)
-- **Color:** 16-bit RGB565, LVGL partial renderer
+- **Color:** 16-bit RGB565; full double buffers in PSRAM with single/full and partial fallbacks
 - **Backlight:** PWM via GPIO 42, auto-off timeout, programmable brightness
 - **Framebuffer capture** for debugging and screenshots (PSRAM full-buffer mode)
 - **Coexistence** with LoRa + SD on same SPI bus (different CS lines)
@@ -364,7 +364,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 - **Interface:** SPI (NSS=9, SCK=40, MISO=38, MOSI=41, DIO1=45, RST=17, BUSY=13)
 - **Defaults:** 869.618 MHz, BW 62.5 kHz, SF 8, CR 4/5, TX power 22 dBm
 - **Driver:** RadioLib-based wrappers via MeshCore
-- **Wake-on-radio:** DIO1 wake from deep sleep for RX packet reception
+- **Wake-on-radio:** unavailable in deep sleep because DIO1/GPIO45 is not RTC-capable on ESP32-S3
 - **Configurable:** Frequency, bandwidth, spreading factor, coding rate, TX power via Radio Setup screen
 **Sources:** [`src/hal/tdeck_pins.h`](../src/hal/tdeck_pins.h), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`lib/meshcore/`](../lib/meshcore/)
 
