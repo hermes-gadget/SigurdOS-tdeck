@@ -1599,10 +1599,26 @@ static bool writeStoredContact(const sigurdos::mesh::StoredContact& stored, void
     return true;
 }
 
+static bool     g_contacts_dirty = false;
+static uint32_t g_contacts_dirty_since = 0;
+
 void saveContacts() {
     if (!g_mesh) return;
     int n = g_mesh->getNumContacts();
     sigurdos::mesh::contactStoreSave(n, readStoredContact, nullptr);
+    g_contacts_dirty = false;  // explicit saves cover any pending checkpoint
+}
+
+void markContactsDirty() {
+    if (!g_contacts_dirty) g_contacts_dirty_since = millis();
+    g_contacts_dirty = true;
+}
+
+void saveContactsIfDue(uint32_t now) {
+    if (!contacts_save_is_due(g_contacts_dirty, g_contacts_dirty_since, now)) {
+        return;
+    }
+    saveContacts();
 }
 
 void loadContacts() {

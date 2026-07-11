@@ -426,6 +426,10 @@ namespace mesh {
         // Fan out to the phone app (NEW_ADVERT for a new contact, else ADVERT).
         sigurdos::mesh::mesh_v2_companion_advert_push(&contact, is_new);
 
+        // Advert discovery mutates the contact table with no UI event site;
+        // schedule a debounced save so the contact survives a power cut.
+        sigurdos::mesh::markContactsDirty();
+
 #if SIGURDOS_DEBUG_MESH
         Serial.printf("[mesh] %s contact: %s (type=%d)\n",
                       is_new ? "new" : "updated", contact.name, contact.type);
@@ -723,6 +727,9 @@ namespace mesh {
                       contact.name, contact.out_path_len);
 #endif
         sigurdos::mesh::mesh_v2_companion_path_push(contact.id.pub_key);
+        // Path updates mutate the contact table with no UI event site;
+        // schedule a debounced save so the route survives a power cut.
+        sigurdos::mesh::markContactsDirty();
         // If we had a pending discovery for this contact, mark it complete
         for (int i = 0; i < MAX_DISCOVERY_PENDING; i++) {
             if (_discovery_pending[i].in_use &&

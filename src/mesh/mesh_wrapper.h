@@ -164,6 +164,19 @@ void saveContacts();
 void loadContacts();
 void reloadContactsAfterIdentityChange();  // after private key import
 
+// Deferred contact persistence. Mesh-driven contact mutations (advert
+// discovery, path updates) have no UI event site, so they mark the store
+// dirty and the main loop flushes it after a debounce — advert bursts batch
+// into a single SPIFFS rewrite instead of one per packet.
+static constexpr uint32_t CONTACT_SAVE_DEBOUNCE_MS = 30000;
+inline bool contacts_save_is_due(bool dirty, uint32_t dirty_since,
+                                 uint32_t now) {
+    return dirty && static_cast<uint32_t>(now - dirty_since) >=
+                        CONTACT_SAVE_DEBOUNCE_MS;
+}
+void markContactsDirty();
+void saveContactsIfDue(uint32_t now);
+
 // RTC time for UI comparisons
 uint32_t getCurrentTime();
 bool setSystemTime(uint32_t epoch_seconds);

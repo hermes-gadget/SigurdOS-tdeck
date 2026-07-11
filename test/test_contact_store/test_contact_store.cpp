@@ -8,6 +8,7 @@
 
 #include "mesh/contact_store.h"
 #include "hal/atomic_file.h"
+#include "mesh/mesh_wrapper.h"
 
 namespace {
 
@@ -306,6 +307,18 @@ TEST_F(ContactStoreTest, InvalidTempNeverReplacesLiveStore) {
     ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 1);
     EXPECT_STREQ(out.name, "Old");
     EXPECT_FALSE(fileExists(temp_path.c_str()));
+}
+
+TEST(ContactSaveDebounce, FlushesOnlyWhenDirtyAndDue) {
+    using sigurdos::mesh::contacts_save_is_due;
+    EXPECT_FALSE(contacts_save_is_due(false, 100, 1000000));
+    EXPECT_FALSE(contacts_save_is_due(true, 100, 30099));
+    EXPECT_TRUE(contacts_save_is_due(true, 100, 30100));
+}
+
+TEST(ContactSaveDebounce, HandlesMillisWrap) {
+    EXPECT_TRUE(sigurdos::mesh::contacts_save_is_due(true, 0xFFFFFF00U,
+                                                     0x00007600U));
 }
 
 } // namespace
