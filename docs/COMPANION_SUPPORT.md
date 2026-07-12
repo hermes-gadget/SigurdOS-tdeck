@@ -14,10 +14,9 @@ This matrix describes the pinned MeshCore protocol at submodule commit
 | Contacts and adverts | Supported | Import/export/update/remove/share, advert path/name/location, self advert, and path reset |
 | Channels and text messages | Supported | Channel configuration/data/text, direct text, login, path discovery, and offline message sync |
 | Radio, tuning, flood scope, and custom variables | Supported | Subject to T-Deck radio-region and TX-safety gates |
-| Status, telemetry, and trace | Supported | Request and response push paths are implemented |
+| Status, telemetry, trace, and binary peer requests | Supported | Request tags are matched to stock async response push frames |
 | Identity import/export and signing | Supported | Factory reset remains guarded by the authenticated protocol contract |
 | `CMD_SEND_RAW_DATA` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD` |
-| `CMD_SEND_BINARY_REQ` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD` |
 | `CMD_SEND_CONTROL_DATA` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD` |
 | `CMD_SEND_ANON_REQ` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD` |
 | `CMD_SEND_RAW_PACKET` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD`; arbitrary packet injection is not exposed |

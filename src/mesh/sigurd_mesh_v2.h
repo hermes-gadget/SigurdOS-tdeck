@@ -203,6 +203,7 @@ public:
         uint8_t  req_type;       // request type (0 = unknown/data)
         char     channel_name[32]; // for REQ_TYPE_GET_ROOM_MSGS: which channel to fetch
         uint32_t sent_at_ms;
+        bool     companion_binary = false;
         bool     in_use = false;
     };
     PendingRequest _pending_reqs[MAX_PENDING_REQUESTS];
@@ -226,6 +227,14 @@ public:
 
     // Send a custom-data REQ to a contact by name.
     bool sendRequestWithData(const char* name, const uint8_t* data, uint8_t data_len);
+
+    // Companion CMD_SEND_BINARY_REQ: sends arbitrary request bytes to a known
+    // contact and registers the tag for an asynchronous BINARY_RESPONSE push.
+    int sendBinaryRequestCompanion(const ::ContactInfo& contact,
+                                   const uint8_t* data, uint8_t data_len,
+                                   uint32_t& tag, uint32_t& est_timeout);
+
+    void cancelCompanionBinaryRequests();
 
 
     // Polling API for received responses

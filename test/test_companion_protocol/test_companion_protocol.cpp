@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <vector>
 
 #include "comms/companion_bridge.h"
@@ -37,6 +38,11 @@ public:
 class FakeHost final : public sigurdos::comms::CompanionBridgeHost {
 public:
     bool sent_dm = false;
+    bool sent_binary = false;
+    int binary_send_calls = 0;
+    uint32_t next_binary_tag = 0x10203040u;
+    bool cancelled_binary = false;
+    std::vector<uint8_t> last_binary_data;
     bool sent_channel_data = false;
     uint8_t last_prefix[6]{};
     int last_channel_data_index = -1;
@@ -301,6 +307,15 @@ public:
     sigurdos::comms::CompanionSendResult sendTelemetryReq(const uint8_t*) override {
         return {last_send_ok, false, 0xBBu, 3000};
     }
+    sigurdos::comms::CompanionSendResult sendBinaryReq(
+        const uint8_t*, const uint8_t* data, uint8_t data_len) override {
+        sent_binary = true;
+        ++binary_send_calls;
+        last_binary_data.assign(data, data + data_len);
+        if (!last_send_ok) return {false, false, 0, 0};
+        return {true, false, next_binary_tag++, 3000};
+    }
+    void cancelBinaryReqs() override { cancelled_binary = true; }
     sigurdos::comms::CompanionSendResult sendTracePath(uint32_t tag, uint32_t, uint8_t,
                                                        const uint8_t*, uint8_t path_len) override {
         last_trace_tag = tag; last_trace_path_len = path_len;
@@ -344,6 +359,26 @@ protected:
         std::remove(store_path);
     }
 };
+
+std::vector<uint8_t> binaryRequestFrame(std::initializer_list<uint8_t> payload)
+{
+    std::vector<uint8_t> frame{sigurdos::comms::CMD_SEND_BINARY_REQ};
+    for (int i = 0; i < 32; ++i) frame.push_back((uint8_t)(0xA0 + i));
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    return frame;
+}
+
+TEST(CompanionProtocolConstants, AsyncPushCodesMatchPinnedStockProtocol)
+{
+    namespace cc = sigurdos::comms;
+    EXPECT_EQ(cc::PUSH_CODE_LOG_RX_DATA, 0x88);
+    EXPECT_EQ(cc::PUSH_CODE_TRACE_DATA, 0x89);
+    EXPECT_EQ(cc::PUSH_CODE_NEW_ADVERT, 0x8A);
+    EXPECT_EQ(cc::PUSH_CODE_TELEMETRY_RESPONSE, 0x8B);
+    EXPECT_EQ(cc::PUSH_CODE_BINARY_RESPONSE, 0x8C);
+    EXPECT_EQ(cc::PUSH_CODE_PATH_DISCOVERY_RESPONSE, 0x8D);
+    EXPECT_EQ(cc::PUSH_CODE_CONTROL_DATA, 0x8E);
+}
 
 TEST_F(CompanionProtocolTest, DeviceQueryFrameMatchesOfficialShape) {
     uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
@@ -943,6 +978,147 @@ TEST_F(CompanionProtocolTest, GetCustomVarsEmptyAndAllowedFreq) {
     uint8_t rf[1] = { cc::CMD_GET_ALLOWED_REPEAT_FREQ };
     ASSERT_TRUE(bridge.handleFrame(rf, sizeof(rf)));
     EXPECT_EQ(serial.writes[0][0], cc::RESP_ALLOWED_REPEAT_FREQ);
+}
+
+TEST_F(CompanionProtocolTest, BinaryRequestReturnsStockSentFrame)
+{
+    const auto frame = binaryRequestFrame({0x03, 0xAA, 0x55});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    ASSERT_TRUE(host.sent_binary);
+    ASSERT_EQ(host.last_binary_data, (std::vector<uint8_t>{0x03, 0xAA, 0x55}));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 10U);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_SENT);
+    EXPECT_EQ(out[1], 0);
+    uint32_t tag = 0;
+    uint32_t timeout = 0;
+    std::memcpy(&tag, &out[2], sizeof(tag));
+    std::memcpy(&timeout, &out[6], sizeof(timeout));
+    EXPECT_EQ(tag, 0x10203040U);
+    EXPECT_EQ(timeout, 3000U);
+}
+
+TEST_F(CompanionProtocolTest, BinaryResponsePushCarriesTagAndPayload)
+{
+    const auto frame = binaryRequestFrame({0x03});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    serial.writes.clear();
+
+    const uint8_t response[] = {0xDE, 0xAD, 0xBE, 0xEF};
+    ASSERT_TRUE(bridge.pushBinaryResponse(
+        0x10203040U, response, sizeof(response)));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 10U);
+    EXPECT_EQ(out[0], 0x8C);
+    EXPECT_EQ(out[1], 0);
+    uint32_t tag = 0;
+    std::memcpy(&tag, &out[2], sizeof(tag));
+    EXPECT_EQ(tag, 0x10203040U);
+    EXPECT_EQ(std::vector<uint8_t>(out.begin() + 6, out.end()),
+              (std::vector<uint8_t>{0xDE, 0xAD, 0xBE, 0xEF}));
+
+    EXPECT_FALSE(bridge.pushBinaryResponse(
+        0x10203040U, response, sizeof(response)));
+    EXPECT_EQ(serial.writes.size(), 1U);
+}
+
+TEST_F(CompanionProtocolTest, BinaryResponseRejectsUnmatchedTag)
+{
+    const uint8_t response[] = {0x01};
+    EXPECT_FALSE(bridge.pushBinaryResponse(
+        0x55667788U, response, sizeof(response)));
+    EXPECT_TRUE(serial.writes.empty());
+}
+
+TEST_F(CompanionProtocolTest, DisconnectClearsPendingBinaryTags)
+{
+    const auto frame = binaryRequestFrame({0x03});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    serial.enabled = true;
+    bridge.loop();
+    serial.connected = false;
+    bridge.loop();
+    serial.connected = true;
+    serial.writes.clear();
+    EXPECT_TRUE(host.cancelled_binary);
+
+    const uint8_t response[] = {0x01};
+    EXPECT_FALSE(bridge.pushBinaryResponse(
+        0x10203040U, response, sizeof(response)));
+    EXPECT_TRUE(serial.writes.empty());
+}
+
+TEST_F(CompanionProtocolTest, DisablingBridgeClearsPendingBinaryTags)
+{
+    const auto frame = binaryRequestFrame({0x03});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    serial.enabled = true;
+    ASSERT_TRUE(bridge.setEnabled(false));
+    EXPECT_TRUE(host.cancelled_binary);
+    serial.connected = true;
+    serial.writes.clear();
+
+    const uint8_t response[] = {0x01};
+    EXPECT_FALSE(bridge.pushBinaryResponse(
+        0x10203040U, response, sizeof(response)));
+    EXPECT_TRUE(serial.writes.empty());
+}
+
+TEST_F(CompanionProtocolTest, BinaryRequestRequiresKnownContact)
+{
+    host.contact_found = false;
+    const auto frame = binaryRequestFrame({0x03});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    EXPECT_FALSE(host.sent_binary);
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_NOT_FOUND);
+}
+
+TEST_F(CompanionProtocolTest, BinaryRequestRejectsMissingPayload)
+{
+    const auto frame = binaryRequestFrame({});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    EXPECT_FALSE(host.sent_binary);
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, BinaryRequestMapsMeshSendFailureToTableFull)
+{
+    host.last_send_ok = false;
+    const auto frame = binaryRequestFrame({0x03});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_TABLE_FULL);
+}
+
+TEST_F(CompanionProtocolTest, BinaryPendingTableIsBounded)
+{
+    for (int i = 0; i < 4; ++i) {
+        const auto frame = binaryRequestFrame({(uint8_t)i});
+        ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+        ASSERT_EQ(serial.writes.back()[0], sigurdos::comms::RESP_CODE_SENT);
+    }
+    const auto fifth = binaryRequestFrame({0xFF});
+    ASSERT_TRUE(bridge.handleFrame(fifth.data(), fifth.size()));
+    EXPECT_EQ(host.binary_send_calls, 4);
+    ASSERT_EQ(serial.writes.back().size(), 2U);
+    EXPECT_EQ(serial.writes.back()[0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes.back()[1], sigurdos::comms::ERR_CODE_TABLE_FULL);
+
+    serial.writes.clear();
+    const uint8_t response[] = {0x01};
+    ASSERT_TRUE(bridge.pushBinaryResponse(
+        0x10203040U, response, sizeof(response)));
+    const auto replacement = binaryRequestFrame({0xEE});
+    ASSERT_TRUE(bridge.handleFrame(replacement.data(), replacement.size()));
+    EXPECT_EQ(host.binary_send_calls, 5);
+    EXPECT_EQ(serial.writes.back()[0], sigurdos::comms::RESP_CODE_SENT);
 }
 
 // ── Live / async pushes ───────────────────────────────────────
