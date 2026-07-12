@@ -38,12 +38,15 @@ class FakeHost final : public sigurdos::comms::CompanionBridgeHost {
 public:
     bool sent_dm = false;
     bool sent_channel_data = false;
+    bool sent_raw_data = false;
     uint8_t last_prefix[6]{};
     int last_channel_data_index = -1;
     uint8_t last_channel_data_path_len = 0;
     uint16_t last_channel_data_type = 0;
     std::vector<uint8_t> last_channel_data_path;
     std::vector<uint8_t> last_channel_data_payload;
+    std::vector<uint8_t> last_raw_path;
+    std::vector<uint8_t> last_raw_payload;
     bool set_advert_name_called = false;
     char advert_name[32]{};
     bool set_advert_latlon_called = false;
@@ -143,6 +146,17 @@ public:
             last_channel_data_payload.assign(payload, payload + payload_len);
         }
         return channel_index == 0;
+    }
+    bool sendRawData(const uint8_t* path, uint8_t path_len,
+                     const uint8_t* payload, size_t payload_len) override {
+        sent_raw_data = true;
+        last_raw_path.clear();
+        last_raw_payload.clear();
+        if (path && path_len > 0) last_raw_path.assign(path, path + path_len);
+        if (payload && payload_len > 0) {
+            last_raw_payload.assign(payload, payload + payload_len);
+        }
+        return last_send_ok;
     }
     bool sendAdvert(bool) override { return true; }
     bool setAdvertName(const char* name) override {
@@ -933,6 +947,66 @@ TEST_F(CompanionProtocolTest, SendTracePathValidatesAndReturnsSent) {
     EXPECT_EQ(host.last_trace_path_len, 2);
 }
 
+TEST_F(CompanionProtocolTest, SendRawDataDirectDispatchesAndReturnsOk) {
+    uint8_t frame[] = {
+        cc::CMD_SEND_RAW_DATA,
+        2,
+        0xA1, 0xB2,
+        0x10, 0x20, 0x30, 0x40,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.sent_raw_data);
+    ASSERT_EQ(host.last_raw_path.size(), 2u);
+    EXPECT_EQ(host.last_raw_path[0], 0xA1);
+    ASSERT_EQ(host.last_raw_payload.size(), 4u);
+    EXPECT_EQ(host.last_raw_payload[3], 0x40);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SendRawDataRejectsFloodAndMalformedFrames) {
+    uint8_t flood[] = {
+        cc::CMD_SEND_RAW_DATA, 0xFF,
+        0x10, 0x20, 0x30, 0x40,
+    };
+    ASSERT_TRUE(bridge.handleFrame(flood, sizeof(flood)));
+    ASSERT_FALSE(host.sent_raw_data);
+    ASSERT_EQ(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_UNSUPPORTED_CMD);
+
+    serial.writes.clear();
+    uint8_t short_payload[] = {
+        cc::CMD_SEND_RAW_DATA, 1, 0xA1,
+        0x10, 0x20, 0x30,
+    };
+    ASSERT_TRUE(bridge.handleFrame(short_payload, sizeof(short_payload)));
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_ILLEGAL_ARG);
+
+    serial.writes.clear();
+    uint8_t encoded_path[] = {
+        cc::CMD_SEND_RAW_DATA, 0x40,
+        0x10, 0x20, 0x30, 0x40,
+    };
+    ASSERT_TRUE(bridge.handleFrame(encoded_path, sizeof(encoded_path)));
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SendRawDataReportsPacketAllocationFailure) {
+    host.last_send_ok = false;
+    uint8_t frame[] = {
+        cc::CMD_SEND_RAW_DATA, 0,
+        0x10, 0x20, 0x30, 0x40,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.sent_raw_data);
+    ASSERT_EQ(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_TABLE_FULL);
+}
+
 TEST_F(CompanionProtocolTest, GetCustomVarsEmptyAndAllowedFreq) {
     uint8_t cv[1] = { cc::CMD_GET_CUSTOM_VARS };
     ASSERT_TRUE(bridge.handleFrame(cv, sizeof(cv)));
@@ -1007,6 +1081,22 @@ TEST_F(CompanionProtocolTest, PushLoginStatusTelemetryTrace) {
     // [4..7] tag, [8..11] auth, [12..13] hashes, [14..15] snrs, [16] final snr
     ASSERT_EQ(t.size(), 17u);
     EXPECT_EQ((int8_t)t[16], -8);
+}
+
+TEST_F(CompanionProtocolTest, PushRawDataMatchesStockFrameLayout) {
+    uint8_t payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
+    ASSERT_TRUE(bridge.pushRawData(-8, -91, payload, sizeof(payload)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 8u);
+    EXPECT_EQ(out[0], cc::PUSH_CODE_RAW_DATA);
+    EXPECT_EQ((int8_t)out[1], -8);
+    EXPECT_EQ((int8_t)out[2], -91);
+    EXPECT_EQ(out[3], 0xFF);
+    EXPECT_EQ(out[4], 0xDE);
+
+    serial.connected = false;
+    EXPECT_FALSE(bridge.pushRawData(0, 0, payload, sizeof(payload)));
 }
 
 TEST_F(CompanionProtocolTest, SendChannelDataFloodDispatchesToHostAndReturnsOk) {

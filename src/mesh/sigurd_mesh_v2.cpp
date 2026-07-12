@@ -89,6 +89,18 @@ namespace mesh {
         return true;
     }
 
+    bool SigurdMeshV2::sendRawDataCompanion(const uint8_t* path, uint8_t path_len,
+                                            const uint8_t* data, size_t data_len) {
+        if (path_len > 63 || (path_len > 0 && !path) || !data ||
+            data_len < 4 || data_len > MAX_PACKET_PAYLOAD) {
+            return false;
+        }
+        ::mesh::Packet* pkt = createRawData(data, data_len);
+        if (!pkt) return false;
+        sendDirect(pkt, path, path_len);
+        return true;
+    }
+
     int SigurdMeshV2::sendLoginCompanion(const ::ContactInfo& contact, const char* password, uint32_t& est_timeout) {
         est_timeout = 0;
         int r = BaseChatMesh::sendLogin(contact, password ? password : "", est_timeout);
@@ -282,6 +294,15 @@ namespace mesh {
             }
             return;
         }
+    }
+
+    void SigurdMeshV2::onRawDataRecv(::mesh::Packet* pkt) {
+        if (!pkt || pkt->payload_len > MAX_PACKET_PAYLOAD) return;
+        sigurdos::mesh::mesh_v2_companion_raw_data_push(
+            (int8_t)(_radio->getLastSNR() * 4.0f),
+            (int8_t)_radio->getLastRSSI(),
+            pkt->payload,
+            pkt->payload_len);
     }
 
     bool SigurdMeshV2::sendRequest(const char* name, uint8_t req_type) {

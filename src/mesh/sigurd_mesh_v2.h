@@ -119,6 +119,11 @@ public:
     bool sendTracePathRaw(uint32_t tag, uint32_t auth, uint8_t flags,
                           const uint8_t* path, uint8_t path_len, uint32_t& est_timeout);
 
+    // Companion CMD_SEND_RAW_DATA: send an opaque payload on an explicit
+    // direct one-byte-hash path. Flood routing is rejected by the bridge.
+    bool sendRawDataCompanion(const uint8_t* path, uint8_t path_len,
+                              const uint8_t* data, size_t data_len);
+
 
     // Companion CMD_SEND_LOGIN: send a login and register the login entry so the
     // response is matched in onContactResponse. Returns the MSG_SEND_* result.
@@ -164,6 +169,8 @@ public:
 
 
     void onControlDataRecv(::mesh::Packet* pkt) override;
+
+    void onRawDataRecv(::mesh::Packet* pkt) override;
 
 
     bool pingIsActive() {

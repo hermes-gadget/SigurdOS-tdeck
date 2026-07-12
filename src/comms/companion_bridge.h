@@ -278,6 +278,10 @@ public:
                                  uint16_t data_type,
                                  const uint8_t* payload,
                                  size_t payload_len) = 0;
+    virtual bool sendRawData(const uint8_t* path,
+                             uint8_t path_len,
+                             const uint8_t* payload,
+                             size_t payload_len) = 0;
     virtual bool sendAdvert(bool flood) = 0;
     virtual bool setAdvertName(const char* name) = 0;
     virtual bool setAdvertLatLon(int32_t lat, int32_t lon) = 0;
@@ -389,6 +393,8 @@ public:
                             const uint8_t* blob, size_t blob_len);
     bool pushTelemetryResponse(const uint8_t* pubkey_prefix,
                                const uint8_t* blob, size_t blob_len);
+    bool pushRawData(int8_t snr_quarters, int8_t rssi,
+                     const uint8_t* payload, size_t payload_len);
     bool pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
                        const uint8_t* path_hashes, const uint8_t* path_snrs,
                        uint8_t path_len, int8_t final_snr_quarters);
