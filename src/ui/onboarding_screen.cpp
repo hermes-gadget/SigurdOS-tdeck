@@ -592,7 +592,9 @@ void onboarding_screen_show()
 
 static void show_screen(lv_obj_t* scr)
 {
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
+    lv_obj_t* old_scr = lv_screen_active();
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
 }
 
 } // namespace sigurdos::ui

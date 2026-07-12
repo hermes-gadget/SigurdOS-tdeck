@@ -244,7 +244,7 @@ static void trim_channel_history(int idx, uint16_t cap)
 }
 
 // ── Forward declarations ───────────────────────────────────
-static void show_channel_list(lv_scr_load_anim_t anim);
+static void show_channel_list();
 static void open_channel_messaging(int idx);
 static void rebuild_channel_ribbon();
 static void show_add_channel_options(lv_obj_t* parent);
@@ -915,7 +915,7 @@ static lv_obj_t* make_chat_list_screen()
 // ════════════════════════════════════════════════════
 // Channel-list view
 // ════════════════════════════════════════════════════
-static void show_channel_list(lv_scr_load_anim_t anim)
+static void show_channel_list()
 {
     // Null messaging-view pointers — they're invalid once we leave
     scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
@@ -967,7 +967,7 @@ static void show_channel_list(lv_scr_load_anim_t anim)
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* old_scr = lv_screen_active();
-    lv_scr_load_anim(s, anim, 200, 0, false);
+    lv_scr_load_anim(s, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     if (old_scr && old_scr != s) lv_obj_del_async(old_scr);
 }
 
@@ -1179,7 +1179,7 @@ static void create_top_bar()
     lv_obj_center(bl);
     disable_scroll(bl);
     lv_obj_add_event_cb(back, [](lv_event_t*) {
-        show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        show_channel_list();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Horizontal scrollable channel ribbon — exact width for no warp (matches home grid uniform sizing)
@@ -1795,7 +1795,7 @@ static void open_channel_messaging(int idx)
     }
 
     lv_obj_t* old_scr = lv_screen_active();
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
+    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
 }
 
@@ -2062,7 +2062,7 @@ static void channel_menu_action_cb(lv_event_t* e) {
     if (action == ChannelAction::LeaveChannel) {
         channel_menu_perform(action, channel, idx);
         clear_chat_private_scope(channel);
-        show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+        show_channel_list();
         return;
     }
 }
@@ -2361,7 +2361,7 @@ void chat_screen_show()
         sigurdos::mesh::resetUnreadMessageCount();
         return;
     }
-    show_channel_list(LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    show_channel_list();
     // Reset unread badge counter when the user opens chat
     sigurdos::mesh::resetUnreadMessageCount();
 }
@@ -2493,7 +2493,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             }
             case SigurdOSTrackballEvent::Left:
                 hide_search();
-                show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+                show_channel_list();
                 return true;
             default:
                 return true;
@@ -2515,7 +2515,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             return true;
         }
         case SigurdOSTrackballEvent::Left:
-            show_channel_list(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+            show_channel_list();
             return true;
         case SigurdOSTrackballEvent::Right:
             if (input_field && lv_obj_is_valid(input_field)) {
