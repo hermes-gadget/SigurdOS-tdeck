@@ -66,7 +66,8 @@ TEST(PrefsDefaultsTest, MeshBehaviorDefaultsMatchSafeCompanionSettings) {
     EXPECT_EQ(1, prefs.advert_type);
     EXPECT_FALSE(prefs.multi_acks);
     EXPECT_EQ(0, prefs.client_repeat);
-    EXPECT_FALSE(prefs.ble_enabled);
+    // Companion BLE is available immediately on first boot (PR #877).
+    EXPECT_TRUE(prefs.ble_enabled);
     // Default 1-byte path hash (mode 0) — backward compatible with pre-1.14 repeaters.
     EXPECT_EQ(0, prefs.path_hash_mode);
 }
