@@ -4,6 +4,7 @@
 // SigurdMeshV2 — method implementations split from sigurd_mesh_v2.h
 //
 #include "sigurd_mesh_v2.h"
+#include "companion_message_policy.h"
 #include "advert_blob.h"
 #include "control_parser.h"
 #include <cstring>
@@ -506,15 +507,15 @@ namespace mesh {
         sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr,
                                            sender_timestamp, companion_path_len,
                                            contact.id.pub_key,
-                                           0);  // COMPANION_TXT_PLAIN
+                                           sigurdos::mesh::COMPANION_TEXT_PLAIN);
     }
 
     void SigurdMeshV2::onCommandDataRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) {
         sigurdos::mesh::pushCmdResponse(contact.name, text);
         // Store as COMPANION_TXT_CLI_DATA with the raw app payload text so the
         // companion bridge emits the correct txt_type to official apps. The
-        // local UI queue gets this raw text (pushCmdResponse handles the
-        // command-specific display logic separately).
+        // normal chat queue skips CLI data; pushCmdResponse feeds the admin
+        // transcript instead.
         int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
         uint8_t companion_path_len =
@@ -522,7 +523,7 @@ namespace mesh {
         sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr,
                                            sender_timestamp, companion_path_len,
                                            contact.id.pub_key,
-                                           1);  // COMPANION_TXT_CLI_DATA
+                                           sigurdos::mesh::COMPANION_TEXT_CLI_DATA);
     }
 
     void SigurdMeshV2::onAnonDataRecv(::mesh::Packet* pkt, const uint8_t* secret, const ::mesh::Identity& sender, uint8_t* data, size_t len) {
@@ -555,7 +556,7 @@ namespace mesh {
         sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr,
                                            sender_timestamp, companion_path_len,
                                            contact.id.pub_key,
-                                           2,              // COMPANION_TXT_SIGNED_PLAIN
+                                           sigurdos::mesh::COMPANION_TEXT_SIGNED_PLAIN,
                                            sender_prefix, 4);
     }
 

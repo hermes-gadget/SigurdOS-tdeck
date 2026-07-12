@@ -8,6 +8,7 @@
 // (ARCH-001, #820).
 
 #include "companion_adapter.h"
+#include "companion_message_policy.h"
 #include "mesh_wrapper.h"
 #include "mesh_wrapper_internal.h"
 #include "scope_key_hex.h"
@@ -58,6 +59,16 @@ using sigurdos::comms::CompanionOtherParams;
 using sigurdos::comms::CompanionCoreStats;
 using sigurdos::comms::CompanionRadioStats;
 using sigurdos::comms::CompanionPacketStats;
+
+static_assert(sigurdos::mesh::COMPANION_TEXT_PLAIN ==
+                  sigurdos::comms::COMPANION_TXT_PLAIN,
+              "plain-text companion type must match the wire protocol");
+static_assert(sigurdos::mesh::COMPANION_TEXT_CLI_DATA ==
+                  sigurdos::comms::COMPANION_TXT_CLI_DATA,
+              "CLI-data companion type must match the wire protocol");
+static_assert(sigurdos::mesh::COMPANION_TEXT_SIGNED_PLAIN ==
+                  sigurdos::comms::COMPANION_TXT_SIGNED_PLAIN,
+              "signed-text companion type must match the wire protocol");
 
 static_assert(sigurdos::mesh::SIGURDOS_ADVERT_BLOB_MAX_LEN <= MAX_FRAME_SIZE - 1,
               "serialized adverts must fit the companion response frame");

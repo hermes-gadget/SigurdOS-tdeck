@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "comms/companion_bridge.h"
@@ -1408,6 +1409,36 @@ TEST_F(CompanionProtocolTest, CliDataFrameEmitsCorrectTxtType) {
     ASSERT_GE(serial.writes.size(), 2u);
     const auto& out = serial.writes[1];
     EXPECT_EQ(out[11], 1u);  // txt_type == COMPANION_TXT_CLI_DATA
+}
+
+TEST_F(CompanionProtocolTest, PersistedCliDataSurvivesOfflineV3Sync) {
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "version 1.2", sizeof(msg.text) - 1);
+    msg.timestamp = 0x01020304u;
+    msg.txt_type = sigurdos::comms::COMPANION_TXT_CLI_DATA;
+    for (int i = 0; i < 6; i++) msg.sender_prefix[i] = (uint8_t)(0xA0 + i);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+
+    uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    ASSERT_EQ(serial.writes.size(), 2u);
+    EXPECT_EQ(serial.writes[1][0], sigurdos::comms::PUSH_CODE_MSG_WAITING);
+
+    uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(serial.writes.size(), 3u);
+    const auto& out = serial.writes[2];
+    ASSERT_GE(out.size(), 16u);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+    EXPECT_EQ(out[11], sigurdos::comms::COMPANION_TXT_CLI_DATA);
+    EXPECT_EQ(std::string(out.begin() + 16, out.end()), "version 1.2");
+
+    sigurdos::mesh::StoredMessage stored{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
+    EXPECT_EQ(stored.txt_type, sigurdos::comms::COMPANION_TXT_CLI_DATA);
+    EXPECT_TRUE(stored.companion_sent);
 }
 
 // ── Channel slot semantics ──────────────────────────────────────

@@ -23,6 +23,7 @@
 #include "../responsive.h"
 #include "../contact_paging.h"
 #include "../chat_screen.h"
+#include "../repeater_transcript.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/qr_show.h"
@@ -686,7 +687,7 @@ void show_admin_cmd_dialog(const char* contact_name)
                             if (dd2->deleted) return;
                             if (dd2->name && strcmp(nb, dd2->name) == 0) {
                                 char rb[256];
-                                snprintf(rb, sizeof(rb), "< %s\n", tb);
+                                format_repeater_cli_reply(rb, sizeof(rb), tb);
                                 // Trim output if near max to prevent overflow
                                 const char* full = lv_textarea_get_text(dd2->out);
                                 if (full && strlen(full) > 3500) {

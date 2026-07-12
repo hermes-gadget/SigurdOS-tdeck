@@ -10,6 +10,7 @@
 #include "channel_validation.h"
 #include "public_channel.h"
 #include "message_store.h"
+#include "companion_message_policy.h"
 #include "durable_fanout.h"
 #include "contact_store.h"
 #include "persistence_store.h"
@@ -122,6 +123,9 @@ static bool presentIncomingMessage(void* raw)
 {
     IncomingMessageFanoutCtx* ctx = static_cast<IncomingMessageFanoutCtx*>(raw);
     if (!ctx) return false;
+    if (!sigurdos::mesh::companion_message_should_present_in_chat(ctx->txt_type)) {
+        return true;
+    }
     if (msg_count >= MAX_QUEUED) {
         msg_drop_count++;
 #if SIGURDOS_DEBUG_MESH
