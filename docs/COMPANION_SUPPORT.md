@@ -30,3 +30,20 @@ not infer full companion-radio parity from the advertised BLE service.
 Release interoperability should cover the official Android and iOS apps plus a
 stock MeshCore companion radio. Core text messaging compatibility is broader
 than the optional command families listed as unsupported above.
+
+## Device-authored message visibility
+
+The companion protocol has **no official PUSH code for device-authored
+messages**. The protocol's push model only surfaces:
+
+* messages the connected app **sent** (`CMD_SEND_TXT_MSG` → `SEND_CONFIRMED`)
+* messages **received over RF** (offline queue → `SYNC_NEXT_MESSAGE`)
+
+A message **typed on the T-Deck keyboard** will transmit correctly over LoRa
+but will **not appear in the official app thread**. The T-Deck is the source of
+truth for locally-authored messages; the app sees only what it sent or what
+arrived from the mesh.
+
+SigurdOS does **not** synthesize fake `CONTACT_MSG_RECV` frames for self-sent
+messages — this would misattribute the sender and break reply/ack logic.
+Future protocol extensions to close this gap require a cooperating client.
