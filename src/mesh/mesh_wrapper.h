@@ -87,6 +87,9 @@ struct ContactInfo {
     int  rssi;
     float snr;
     uint32_t last_seen;
+    bool favourite;
+    bool has_path;
+    uint8_t path_len;
 };
 
 struct PacketLogEntry {
@@ -118,6 +121,7 @@ int  getContactCount();
 int  exportContacts(char names[][32], int max);
 int  exportContactsFull(ContactInfo* out, int max);
 bool getContactByName(const char* name, ContactInfo* out);
+bool addContactManual(const char* name, const char* pubkey_hex, uint8_t type = ADV_TYPE_CHAT);
 bool isContactFavourite(const char* name);
 void setContactFavourite(const char* name, bool favourite);
 

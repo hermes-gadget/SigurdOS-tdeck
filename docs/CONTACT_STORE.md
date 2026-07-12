@@ -62,7 +62,7 @@ struct StoredContact {
 The derived ECDH shared secret and its validity flag are deliberately absent.
 They depend on the local identity and are recomputed lazily after loading.
 
-The maximum number of contacts (`MAX_CONTACTS`, defined in `BaseChatMesh.h`) is **32** for the T-Deck configuration.
+The maximum number of contacts (`MAX_CONTACTS`, defined for the T-Deck build) is **350**.
 
 ---
 
@@ -125,7 +125,12 @@ Offset  Size  Field         Description
 ```
 
 Total overhead is 9 bytes. Each v2 contact record is fixed at 151 bytes, so a
-32-contact store occupies 4,841 bytes.
+A full 350-contact store occupies 52,859 bytes.
+
+Manual contacts added from the Contacts screen are validated as a display name
+plus a 32-byte public key, inserted through `mesh_wrapper`, and immediately
+checkpointed through this same store. Duplicate names and public keys are
+rejected before persistence.
 
 ---
 

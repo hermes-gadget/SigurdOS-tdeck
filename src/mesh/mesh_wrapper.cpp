@@ -1195,6 +1195,9 @@ static void fillContactInfo(ContactInfo& dest, const ::ContactInfo& src) {
     dest.rssi = g_mesh->getContactRSSI(src.id.pub_key);
     dest.snr  = g_mesh->getContactSNR(src.id.pub_key);
     dest.last_seen = src.last_advert_timestamp;
+    dest.favourite = (src.flags & 0x01) != 0;
+    dest.has_path = src.out_path_len != OUT_PATH_UNKNOWN;
+    dest.path_len = src.out_path_len;
 }
 
 int exportContactsFull(ContactInfo* out, int max) {
@@ -1779,7 +1782,9 @@ void setDutyCycle(uint8_t percent) {
         if (!g_mesh || !name) return false;
         int idx = findContactIndex(name);
         if (idx < 0) return false;
-        return g_mesh->resetPathTo(idx);
+        if (!g_mesh->resetPathTo(idx)) return false;
+        saveContacts();
+        return true;
     }
 
     bool setContactPerm(const char* name, uint8_t perm) {
@@ -2250,6 +2255,34 @@ bool importContactByUri(const char* uri) {
     }
 
     return false;
+}
+
+bool addContactManual(const char* name, const char* pubkey_hex, uint8_t type) {
+    if (!g_mesh || !name || !name[0] || strlen(name) > 31 || !pubkey_hex ||
+        strlen(pubkey_hex) != PUB_KEY_SIZE * 2) return false;
+    if (type != ADV_TYPE_CHAT && type != ADV_TYPE_REPEATER && type != ADV_TYPE_ROOM) {
+        return false;
+    }
+    uint8_t pub_key[PUB_KEY_SIZE];
+    if (SigurdMeshV2::hexToBytes(pubkey_hex, pub_key, sizeof(pub_key)) != PUB_KEY_SIZE) {
+        return false;
+    }
+    bool nonzero = false;
+    for (uint8_t byte : pub_key) nonzero = nonzero || byte != 0;
+    if (!nonzero) return false;
+    for (int i = 0; i < g_mesh->getContactCount(); ++i) {
+        auto* existing = g_mesh->getContact(i);
+        if (existing && (strcmp(existing->name, name) == 0 ||
+            memcmp(existing->id.pub_key, pub_key, PUB_KEY_SIZE) == 0)) return false;
+    }
+    ::ContactInfo contact{};
+    strncpy(contact.name, name, sizeof(contact.name) - 1);
+    memcpy(contact.id.pub_key, pub_key, PUB_KEY_SIZE);
+    contact.type = type;
+    contact.out_path_len = OUT_PATH_UNKNOWN;
+    if (!g_mesh->addContact(contact)) return false;
+    saveContacts();
+    return true;
 }
 
 bool addChannelByUri(const char* uri) {
