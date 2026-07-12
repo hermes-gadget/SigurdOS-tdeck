@@ -554,6 +554,24 @@ bool CompanionBridge::pushRawData(int8_t snr_quarters, int8_t rssi,
     return _serial->writeFrame(_out_frame, i) == (size_t)i;
 }
 
+bool CompanionBridge::pushControlData(int8_t snr_quarters, int8_t rssi,
+                                      uint8_t path_len,
+                                      const uint8_t* payload, size_t payload_len)
+{
+    if (!isConnected() || (payload_len > 0 && !payload)) return false;
+    if (payload_len > MAX_FRAME_SIZE - 4) return false;
+    int i = 0;
+    _out_frame[i++] = PUSH_CODE_CONTROL_DATA;
+    _out_frame[i++] = (uint8_t)snr_quarters;
+    _out_frame[i++] = (uint8_t)rssi;
+    _out_frame[i++] = path_len;
+    if (payload_len > 0) {
+        std::memcpy(&_out_frame[i], payload, payload_len);
+        i += (int)payload_len;
+    }
+    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+}
+
 bool CompanionBridge::pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
                                     const uint8_t* path_hashes, const uint8_t* path_snrs,
                                     uint8_t path_len, int8_t final_snr_quarters)
@@ -1423,6 +1441,21 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
+    if (cmd == CMD_SEND_CONTROL_DATA) {
+        // Control frames are deliberately constrained to the zero-hop subset
+        // recognized by MeshCore. The high bit identifies that safe subset.
+        if (len < 2 || (_cmd_frame[1] & 0x80) == 0) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        if (_host->sendControlData(&_cmd_frame[1], len - 1)) {
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+        }
+        return true;
+    }
+
     // ── Stub handlers for upstream commands not yet implemented ──
     // These are recognized command IDs but return unsupported error until
     // full implementations and security review are added. Recognition is not
@@ -1432,6 +1465,9 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
     }
     if (cmd == CMD_SEND_CONTROL_DATA) {
+        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
+    }
+    if (cmd == CMD_SEND_ANON_REQ) {
         writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
     }
     if (cmd == CMD_SEND_RAW_PACKET) {

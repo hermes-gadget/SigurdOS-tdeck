@@ -126,6 +126,10 @@ public:
     bool sendRawDataCompanion(const uint8_t* path, uint8_t path_len,
                               const uint8_t* data, size_t data_len);
 
+    // Companion CMD_SEND_CONTROL_DATA: validated high-bit control payloads
+    // are intentionally limited to zero-hop transmission.
+    bool sendControlDataCompanion(const uint8_t* data, size_t data_len);
+
 
     // Companion CMD_SEND_LOGIN: send a login and register the login entry so the
     // response is matched in onContactResponse. Returns the MSG_SEND_* result.

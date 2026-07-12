@@ -102,6 +102,17 @@ namespace mesh {
         return true;
     }
 
+    bool SigurdMeshV2::sendControlDataCompanion(const uint8_t* data, size_t data_len) {
+        if (!data || data_len == 0 || data_len > MAX_PACKET_PAYLOAD ||
+            (data[0] & 0x80) == 0) {
+            return false;
+        }
+        ::mesh::Packet* pkt = createControlData(data, data_len);
+        if (!pkt) return false;
+        sendZeroHop(pkt);
+        return true;
+    }
+
     int SigurdMeshV2::sendLoginCompanion(const ::ContactInfo& contact, const char* password, uint32_t& est_timeout) {
         est_timeout = 0;
         int r = BaseChatMesh::sendLogin(contact, password ? password : "", est_timeout);
@@ -166,7 +177,14 @@ namespace mesh {
     }
 
     void SigurdMeshV2::onControlDataRecv(::mesh::Packet* pkt) {
-        if (!pkt || pkt->payload_len < 5) return;
+        if (!pkt || pkt->payload_len == 0 || pkt->payload_len > MAX_PACKET_PAYLOAD) return;
+        sigurdos::mesh::mesh_v2_companion_control_data_push(
+            (int8_t)(_radio->getLastSNR() * 4.0f),
+            (int8_t)_radio->getLastRSSI(),
+            (uint8_t)pkt->path_len,
+            pkt->payload,
+            pkt->payload_len);
+        if (pkt->payload_len < 5) return;
         if ((pkt->payload[0] & 0x80) == 0) return;
 
         uint8_t clean[32];

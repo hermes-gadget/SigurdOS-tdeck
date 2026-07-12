@@ -397,6 +397,10 @@ public:
         if (!meshRadioTxAllowed() || !mesh_ptr()) return false;
         return mesh_ptr()->sendRawDataCompanion(path, path_len, payload, payload_len);
     }
+    bool sendControlData(const uint8_t* payload, size_t payload_len) override {
+        if (!meshRadioTxAllowed() || !mesh_ptr()) return false;
+        return mesh_ptr()->sendControlDataCompanion(payload, payload_len);
+    }
 
     bool sendAdvert(bool flood) override {
         if (!meshRadioTxAllowed()) return false;
@@ -1037,6 +1041,16 @@ void sigurdos::mesh::mesh_v2_companion_raw_data_push(int8_t snr_quarters, int8_t
 {
     if (g_companion_bridge_ptr)
         g_companion_bridge_ptr->pushRawData(snr_quarters, rssi, payload, payload_len);
+}
+
+void sigurdos::mesh::mesh_v2_companion_control_data_push(int8_t snr_quarters, int8_t rssi,
+                                                         uint8_t path_len,
+                                                         const uint8_t* payload,
+                                                         size_t payload_len)
+{
+    if (g_companion_bridge_ptr)
+        g_companion_bridge_ptr->pushControlData(snr_quarters, rssi, path_len,
+                                                payload, payload_len);
 }
 
 void sigurdos::mesh::mesh_v2_companion_trace_push(uint32_t tag, uint32_t auth, uint8_t flags,

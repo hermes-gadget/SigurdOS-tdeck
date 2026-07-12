@@ -51,6 +51,7 @@ public:
     uint8_t last_anon_key[32]{};
     bool sent_channel_data = false;
     bool sent_raw_data = false;
+    bool sent_control_data = false;
     uint8_t last_prefix[6]{};
     int last_channel_data_index = -1;
     uint8_t last_channel_data_path_len = 0;
@@ -59,6 +60,7 @@ public:
     std::vector<uint8_t> last_channel_data_payload;
     std::vector<uint8_t> last_raw_path;
     std::vector<uint8_t> last_raw_payload;
+    std::vector<uint8_t> last_control_payload;
     bool set_advert_name_called = false;
     char advert_name[32]{};
     bool set_advert_latlon_called = false;
@@ -169,6 +171,14 @@ public:
         if (path && path_len > 0) last_raw_path.assign(path, path + path_len);
         if (payload && payload_len > 0) {
             last_raw_payload.assign(payload, payload + payload_len);
+        }
+        return last_send_ok;
+    }
+    bool sendControlData(const uint8_t* payload, size_t payload_len) override {
+        sent_control_data = true;
+        last_control_payload.clear();
+        if (payload && payload_len > 0) {
+            last_control_payload.assign(payload, payload + payload_len);
         }
         return last_send_ok;
     }
@@ -1135,6 +1145,47 @@ TEST_F(CompanionProtocolTest, SendRawDataReportsPacketAllocationFailure) {
     EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_TABLE_FULL);
 }
 
+TEST_F(CompanionProtocolTest, SendControlDataDispatchesHighBitPayloadZeroHop) {
+    uint8_t frame[] = {
+        cc::CMD_SEND_CONTROL_DATA,
+        0x80, 0x11, 0x22, 0x33,
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.sent_control_data);
+    ASSERT_EQ(host.last_control_payload.size(), 4u);
+    EXPECT_EQ(host.last_control_payload[0], 0x80);
+    EXPECT_EQ(host.last_control_payload[3], 0x33);
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+}
+
+TEST_F(CompanionProtocolTest, SendControlDataRejectsMissingOrClearFlag) {
+    uint8_t missing[] = {cc::CMD_SEND_CONTROL_DATA};
+    ASSERT_TRUE(bridge.handleFrame(missing, sizeof(missing)));
+    ASSERT_FALSE(host.sent_control_data);
+    ASSERT_EQ(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_ILLEGAL_ARG);
+
+    serial.writes.clear();
+    uint8_t clear_flag[] = {cc::CMD_SEND_CONTROL_DATA, 0x01, 0xAA};
+    ASSERT_TRUE(bridge.handleFrame(clear_flag, sizeof(clear_flag)));
+    ASSERT_FALSE(host.sent_control_data);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, SendControlDataReportsPacketAllocationFailure) {
+    host.last_send_ok = false;
+    uint8_t frame[] = {cc::CMD_SEND_CONTROL_DATA, 0x80};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_TRUE(host.sent_control_data);
+    ASSERT_EQ(serial.writes[0].size(), 2u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_TABLE_FULL);
+}
+
 TEST_F(CompanionProtocolTest, GetCustomVarsEmptyAndAllowedFreq) {
     uint8_t cv[1] = { cc::CMD_GET_CUSTOM_VARS };
     ASSERT_TRUE(bridge.handleFrame(cv, sizeof(cv)));
@@ -1450,6 +1501,24 @@ TEST_F(CompanionProtocolTest, PushRawDataMatchesStockFrameLayout) {
 
     serial.connected = false;
     EXPECT_FALSE(bridge.pushRawData(0, 0, payload, sizeof(payload)));
+}
+
+TEST_F(CompanionProtocolTest, PushControlDataMatchesPinnedFrameLayout) {
+    EXPECT_EQ((uint8_t)cc::PUSH_CODE_LOG_RX_DATA, 0x88);
+    EXPECT_EQ((uint8_t)cc::PUSH_CODE_BINARY_RESPONSE, 0x8C);
+    EXPECT_EQ((uint8_t)cc::PUSH_CODE_PATH_DISCOVERY_RESPONSE, 0x8D);
+    EXPECT_EQ((uint8_t)cc::PUSH_CODE_CONTROL_DATA, 0x8E);
+
+    uint8_t payload[] = {0x80, 0x01, 0x02};
+    ASSERT_TRUE(bridge.pushControlData(12, -70, 0, payload, sizeof(payload)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 7u);
+    EXPECT_EQ(out[0], 0x8E);
+    EXPECT_EQ((int8_t)out[1], 12);
+    EXPECT_EQ((int8_t)out[2], -70);
+    EXPECT_EQ(out[3], 0);
+    EXPECT_EQ(out[4], 0x80);
 }
 
 TEST_F(CompanionProtocolTest, SendChannelDataFloodDispatchesToHostAndReturnsOk) {
