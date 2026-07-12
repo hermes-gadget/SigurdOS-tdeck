@@ -196,6 +196,10 @@ static void packets_timer_cb(lv_timer_t*) { packets_rebuild_list(); }
 void heard_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Packets");
+    if (g_packets_timer) {
+        lv_timer_del(g_packets_timer);
+        g_packets_timer = nullptr;
+    }
 
     int list_y = CONTENT_Y + PKT_HEADER_H + DIVIDER_H;
     int list_h = DISPLAY_H - list_y - DIVIDER_H - BOT_BAR_H;

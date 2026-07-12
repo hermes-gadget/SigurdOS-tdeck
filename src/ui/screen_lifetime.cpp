@@ -11,11 +11,12 @@ void ScreenLifetime::bind(lv_obj_t* screen)
     obj_count_ = 0;
     timer_count_ = 0;
     hook_ = nullptr;
+    bound_screen_ = screen;
     bound_ = screen != nullptr;
     if (!screen) return;
     lv_obj_add_event_cb(screen, [](lv_event_t* e) {
         auto* self = static_cast<ScreenLifetime*>(lv_event_get_user_data(e));
-        if (self) self->notifyDeleted();
+        if (self) self->notifyDeleted(static_cast<lv_obj_t*>(lv_event_get_target(e)));
     }, LV_EVENT_DELETE, this);
 }
 
@@ -51,8 +52,15 @@ void ScreenLifetime::notifyDeleted()
     obj_count_ = 0;
     timer_count_ = 0;
     hook_ = nullptr;
+    bound_screen_ = nullptr;
     bound_ = false;
     if (hook) hook();
+}
+
+void ScreenLifetime::notifyDeleted(lv_obj_t* deleted_screen)
+{
+    if (!bound_ || deleted_screen != bound_screen_) return;
+    notifyDeleted();
 }
 
 } // namespace ui

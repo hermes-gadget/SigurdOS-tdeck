@@ -5,10 +5,10 @@
 
 // Nulls manually-owned LVGL pointers when their screen is deleted.
 //
-// Screens keep file-scope statics (widgets, timers) that dangle when
-// lv_scr_load_anim(..., true) auto-deletes the previous screen, so every
-// screen hand-rolled an LV_EVENT_DELETE handler to null them (ARCH-001,
-// #820). A ScreenLifetime instance replaces those handlers:
+// Screens keep file-scope statics (widgets, timers) that dangle when the
+// outgoing screen is deleted asynchronously, so every screen hand-rolled an
+// LV_EVENT_DELETE handler to null them (ARCH-001, #820). A ScreenLifetime
+// instance replaces those handlers:
 //
 //   static ScreenLifetime g_lifetime;
 //   ...
@@ -18,7 +18,8 @@
 //   g_lifetime.onDelete([]{ g_count = -1; });  // extra reset hook
 //
 // notifyDeleted() is the delete-callback core and is public so native tests
-// can drive it without a real LVGL event loop.
+// can drive it without a real LVGL event loop. The screen-aware overload is
+// used by the LVGL callback to ignore a delayed delete from an older binding.
 
 #include <lvgl.h>
 
@@ -32,7 +33,9 @@ public:
 
     // Start a fresh registration for this screen instance and install its
     // LV_EVENT_DELETE callback. Clears any previous registration, so a
-    // screen's show() can call it unconditionally on every rebuild.
+    // screen's show() can call it unconditionally on every rebuild. A screen
+    // with a live timer must cancel that timer before rebinding; unlike widget
+    // slots, an overwritten timer slot cannot safely identify the old timer.
     void bind(lv_obj_t* screen);
 
     // Track a widget pointer slot: *slot = nullptr on delete.
@@ -50,6 +53,11 @@ public:
     // every tracked timer, clear the registration, then run the hook.
     void notifyDeleted();
 
+    // Delete only when deleted_screen is the currently bound screen. Screen
+    // deletion is asynchronous, so an older screen's callback can arrive
+    // after the same ScreenLifetime has already been rebound to a new screen.
+    void notifyDeleted(lv_obj_t* deleted_screen);
+
     bool isBound() const { return bound_; }
     int trackedCount() const { return obj_count_ + timer_count_; }
 
@@ -59,6 +67,7 @@ private:
     int obj_count_ = 0;
     int timer_count_ = 0;
     void (*hook_)() = nullptr;
+    lv_obj_t* bound_screen_ = nullptr;
     bool bound_ = false;
 };
 

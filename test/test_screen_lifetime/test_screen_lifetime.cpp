@@ -93,6 +93,50 @@ TEST_F(ScreenLifetimeTest, BindResetsPreviousRegistration)
     EXPECT_EQ(g_hook_runs, 0);
 }
 
+TEST_F(ScreenLifetimeTest, DelayedDeleteFromPreviousBindingIsIgnored)
+{
+    lv_obj_t old_screen{}, new_screen{};
+    lv_obj_t* old_slot = &widget_a;
+    lv_obj_t* new_slot = &widget_b;
+
+    lt.bind(&old_screen);
+    lt.track(&old_slot);
+    lt.bind(&new_screen);
+    lt.track(&new_slot);
+
+    // lv_obj_del_async(old_screen) runs after the replacement was bound.
+    lt.notifyDeleted(&old_screen);
+    EXPECT_EQ(new_slot, &widget_b);
+    EXPECT_TRUE(lt.isBound());
+
+    lt.notifyDeleted(&new_screen);
+    EXPECT_EQ(new_slot, nullptr);
+    EXPECT_FALSE(lt.isBound());
+}
+
+TEST_F(ScreenLifetimeTest, TwentyRapidReplacementCyclesIgnoreStaleDeletes)
+{
+    lv_obj_t screens[20]{};
+    lv_obj_t widgets[20]{};
+    lv_obj_t* slot = nullptr;
+
+    for (int cycle = 0; cycle < 20; cycle++) {
+        slot = &widgets[cycle];
+        lt.bind(&screens[cycle]);
+        ASSERT_TRUE(lt.track(&slot));
+
+        if (cycle > 0) {
+            lt.notifyDeleted(&screens[cycle - 1]);
+            EXPECT_EQ(slot, &widgets[cycle]) << "cycle " << cycle;
+            EXPECT_TRUE(lt.isBound()) << "cycle " << cycle;
+        }
+    }
+
+    lt.notifyDeleted(&screens[19]);
+    EXPECT_EQ(slot, nullptr);
+    EXPECT_FALSE(lt.isBound());
+}
+
 TEST_F(ScreenLifetimeTest, RejectsNullSlotsAndOverflow)
 {
     lt.bind(&screen);
@@ -127,7 +171,7 @@ TEST_F(ScreenLifetimeTest, NotifyWithoutBindIsANoOp)
 
 TEST_F(ScreenLifetimeTest, ReusableAcrossShowCycles)
 {
-    for (int cycle = 0; cycle < 3; cycle++) {
+    for (int cycle = 0; cycle < 20; cycle++) {
         lv_obj_t* slot = &widget_a;
         lt.bind(&screen);
         EXPECT_TRUE(lt.track(&slot));

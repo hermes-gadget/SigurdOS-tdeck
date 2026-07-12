@@ -25,6 +25,7 @@
 #include "notifications.h"
 #include "theme.h"
 #include "responsive.h"
+#include "screen_lifetime.h"
 using namespace sigurdos::responsive;
 #include "../mesh/mesh_wrapper.h"
 #include "../hal/battery.h"
@@ -39,6 +40,7 @@ namespace ui {
 
 static lv_obj_t* splash_scr = nullptr;
 static lv_obj_t* splash_status = nullptr;
+static ScreenLifetime splash_lifetime;
 static uint32_t splash_start = 0;
 static bool home_shown = false;
 static bool persisted_state_loaded = false;
@@ -52,6 +54,9 @@ void init()
     // ── Splash Screen ─────────────────────────────────
     splash_scr = lv_obj_create(nullptr);
     theme::apply_dark_bg(splash_scr);
+    splash_lifetime.bind(splash_scr);
+    splash_lifetime.track(&splash_scr);
+    splash_lifetime.track(&splash_status);
 
     lv_obj_t* logo = lv_label_create(splash_scr);
     lv_label_set_text(logo, "SigurdOS");

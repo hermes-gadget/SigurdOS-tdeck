@@ -94,6 +94,10 @@ lv_obj_t* make_screen_full(const char* title)
     lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
     apply_topbar_icon_btn(back);
     s_back_btn = back; // store for back-swipe highlight
+    lv_obj_add_event_cb(back, [](lv_event_t* e) {
+        auto* deleted = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        if (s_back_btn == deleted) s_back_btn = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
     if (can_go_back()) {
         lv_obj_add_event_cb(back, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
     }
@@ -172,6 +176,10 @@ lv_obj_t* make_screen_full(const char* title)
         lv_obj_set_style_text_font(wifi, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(wifi, LV_ALIGN_RIGHT_MID, -52, 0);
         g_wifi_icon = wifi;
+        lv_obj_add_event_cb(wifi, [](lv_event_t* e) {
+            auto* deleted = static_cast<lv_obj_t*>(lv_event_get_target(e));
+            if (g_wifi_icon == deleted) g_wifi_icon = nullptr;
+        }, LV_EVENT_DELETE, nullptr);
         update_wifi_status();  // set initial state
     }
 

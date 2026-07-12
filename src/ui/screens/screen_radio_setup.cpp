@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../screen_lifetime.h"
 #include <SPIFFS.h>
 #include "../chat_screen.h"
 #include "../theme.h"
@@ -66,6 +67,8 @@ static lv_obj_t* s_main_sf_label = nullptr;
 static lv_obj_t* s_main_bw_label = nullptr;
 static lv_obj_t* s_main_cr_label = nullptr;
 static lv_obj_t* s_main_pwr_label = nullptr;
+static ScreenLifetime s_custom_rf_lifetime;
+static ScreenLifetime s_radio_setup_lifetime;
 
 static constexpr float BW_VALUES[] = {
     7.8f, 10.4f, 15.6f, 20.8f, 31.25f, 41.7f, 62.5f, 125.0f, 250.0f, 500.0f,
@@ -264,6 +267,8 @@ void custom_rf_screen_show()
 
     lv_obj_t* scr = make_screen_full("Custom RF");
     for (auto& label : s_custom_rf_labels) label = nullptr;
+    s_custom_rf_lifetime.bind(scr);
+    for (auto& label : s_custom_rf_labels) s_custom_rf_lifetime.track(&label);
 
     lv_obj_t* cont = lv_obj_create(scr);
     lv_obj_set_size(cont, CONTENT_W, CONTENT_H);
@@ -345,6 +350,12 @@ void radio_setup_screen_show()
     s_main_bw_label = nullptr;
     s_main_cr_label = nullptr;
     s_main_pwr_label = nullptr;
+    s_radio_setup_lifetime.bind(scr);
+    for (auto& btn : s_main_profile_btns) s_radio_setup_lifetime.track(&btn);
+    s_radio_setup_lifetime.track(&s_main_sf_label);
+    s_radio_setup_lifetime.track(&s_main_bw_label);
+    s_radio_setup_lifetime.track(&s_main_cr_label);
+    s_radio_setup_lifetime.track(&s_main_pwr_label);
 
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
 

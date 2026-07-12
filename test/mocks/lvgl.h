@@ -253,6 +253,7 @@ inline void lv_obj_set_scroll_dir(lv_obj_t*, int) {}
 // ── Event ────────────────────────────────────────────────
 inline void lv_obj_add_event_cb(lv_obj_t*, lv_event_cb_t, int, void*) {}
 inline void* lv_event_get_user_data(lv_event_t* e) { return e ? e->user_data : nullptr; }
+inline lv_obj_t* lv_event_get_target(lv_event_t* e) { return e ? e->target : nullptr; }
 
 // ── Label ────────────────────────────────────────────────
 inline lv_obj_t* lv_label_create(lv_obj_t* parent) { return lv_obj_create(parent); }

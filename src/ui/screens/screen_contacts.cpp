@@ -659,10 +659,21 @@ struct LoginPollCtx {
 static lv_timer_t* g_login_poll_timer = nullptr;
 static uint32_t g_login_poll_gen = 0;
 
+static void cancel_login_poll_timer() {
+    if (!g_login_poll_timer) return;
+    LoginPollCtx* ctx = (LoginPollCtx*)lv_timer_get_user_data(g_login_poll_timer);
+    if (ctx) {
+        free(ctx->name);
+        delete ctx;
+    }
+    lv_timer_del(g_login_poll_timer);
+    g_login_poll_timer = nullptr;
+}
 
 static void on_login_poll_timer(lv_timer_t* t) {
     LoginPollCtx* ctx = (LoginPollCtx*)lv_timer_get_user_data(t);
     if (!ctx || !ctx->name) {
+        delete ctx;
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
         return;
@@ -711,19 +722,19 @@ static void on_login_poll_timer(lv_timer_t* t) {
 
 static void start_session_poll_timer(const char* name, bool watch_connection) {
     if (!name) return;
-    // Cancel any existing timer first
-    if (g_login_poll_timer) {
-        LoginPollCtx* old = (LoginPollCtx*)lv_timer_get_user_data(g_login_poll_timer);
-        if (old) { free(old->name); delete old; }
-        lv_timer_del(g_login_poll_timer);
-        g_login_poll_timer = nullptr;
-    }
+    cancel_login_poll_timer();
 
     g_login_poll_gen++;
     LoginPollCtx* ctx = new LoginPollCtx{
         strdup(name), lv_scr_act(), watch_connection, g_login_poll_gen};
 
     g_login_poll_timer = lv_timer_create(on_login_poll_timer, 2000, ctx);
+    lv_obj_add_event_cb(ctx->screen, [](lv_event_t* e) {
+        const uint32_t gen = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+        if (!g_login_poll_timer) return;
+        auto* active = (LoginPollCtx*)lv_timer_get_user_data(g_login_poll_timer);
+        if (active && active->gen == gen) cancel_login_poll_timer();
+    }, LV_EVENT_DELETE, (void*)(uintptr_t)ctx->gen);
 }
 
 static void start_login_poll_timer(const char* name) {

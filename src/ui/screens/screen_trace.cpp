@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../screen_lifetime.h"
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -36,22 +37,20 @@ using namespace responsive;
 // ════════════════════════════════════════════════════════
 static lv_obj_t* trace_result_label = nullptr;
 static lv_timer_t* g_trace_poll_timer = nullptr;
-
-static void trace_screen_delete_cb(lv_event_t*) {
-    if (g_trace_poll_timer) {
-        lv_timer_del(g_trace_poll_timer);
-        g_trace_poll_timer = nullptr;
-    }
-    trace_result_label = nullptr;
-}
+static ScreenLifetime g_trace_lifetime;
 
 void trace_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Trace Route");
     sigurdos::mesh::clearTraceResult();
     trace_result_label = nullptr;
-
-    lv_obj_add_event_cb(scr, trace_screen_delete_cb, LV_EVENT_DELETE, nullptr);
+    if (g_trace_poll_timer) {
+        lv_timer_del(g_trace_poll_timer);
+        g_trace_poll_timer = nullptr;
+    }
+    g_trace_lifetime.bind(scr);
+    g_trace_lifetime.track(&trace_result_label);
+    g_trace_lifetime.trackTimer(&g_trace_poll_timer);
 
     char names[32][32];
     int total = sigurdos::mesh::exportContacts(names, 32);
@@ -148,7 +147,11 @@ void trace_screen_show()
                         g_trace_poll_timer = nullptr;
                     }
                     g_trace_poll_timer = lv_timer_create([](lv_timer_t* t) {
-                        if (!trace_result_label) { lv_timer_del(t); return; }
+                        if (!trace_result_label) {
+                            lv_timer_del(t);
+                            if (g_trace_poll_timer == t) g_trace_poll_timer = nullptr;
+                            return;
+                        }
                         if (sigurdos::mesh::hasTraceResult()) {
                             uint8_t len = sigurdos::mesh::getTracePathLen();
                             if (len > 64) len = 64;  // MAX_PATH_SIZE
@@ -167,6 +170,7 @@ void trace_screen_show()
                             lv_label_set_text(trace_result_label, res);
                             sigurdos::mesh::clearTraceResult();
                             lv_timer_del(t);
+                            if (g_trace_poll_timer == t) g_trace_poll_timer = nullptr;
                         }
                     }, 500, nullptr);
                 }
