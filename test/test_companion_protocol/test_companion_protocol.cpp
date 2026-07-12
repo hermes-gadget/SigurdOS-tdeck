@@ -40,10 +40,15 @@ class FakeHost final : public sigurdos::comms::CompanionBridgeHost {
 public:
     bool sent_dm = false;
     bool sent_binary = false;
+    bool sent_anon = false;
     int binary_send_calls = 0;
+    int anon_send_calls = 0;
     uint32_t next_binary_tag = 0x10203040u;
+    uint32_t next_anon_tag = 0x50607080u;
     bool cancelled_binary = false;
     std::vector<uint8_t> last_binary_data;
+    std::vector<uint8_t> last_anon_data;
+    uint8_t last_anon_key[32]{};
     bool sent_channel_data = false;
     bool sent_raw_data = false;
     uint8_t last_prefix[6]{};
@@ -341,6 +346,15 @@ public:
         if (!last_send_ok) return {false, false, 0, 0};
         return {true, false, next_binary_tag++, 3000};
     }
+    sigurdos::comms::CompanionSendResult sendAnonReq(
+        const uint8_t* pub_key, const uint8_t* data, uint8_t data_len) override {
+        sent_anon = true;
+        ++anon_send_calls;
+        std::memcpy(last_anon_key, pub_key, sizeof(last_anon_key));
+        last_anon_data.assign(data, data + data_len);
+        if (!last_send_ok) return {false, false, 0, 0};
+        return {true, true, next_anon_tag++, 4500};
+    }
     void cancelBinaryReqs() override { cancelled_binary = true; }
     sigurdos::comms::CompanionSendResult sendTracePath(uint32_t tag, uint32_t, uint8_t,
                                                        const uint8_t*, uint8_t path_len) override {
@@ -390,6 +404,14 @@ std::vector<uint8_t> binaryRequestFrame(std::initializer_list<uint8_t> payload)
 {
     std::vector<uint8_t> frame{sigurdos::comms::CMD_SEND_BINARY_REQ};
     for (int i = 0; i < 32; ++i) frame.push_back((uint8_t)(0xA0 + i));
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    return frame;
+}
+
+std::vector<uint8_t> anonRequestFrame(std::initializer_list<uint8_t> payload)
+{
+    std::vector<uint8_t> frame{sigurdos::comms::CMD_SEND_ANON_REQ};
+    for (int i = 0; i < 32; ++i) frame.push_back((uint8_t)(0xC0 + i));
     frame.insert(frame.end(), payload.begin(), payload.end());
     return frame;
 }
@@ -1285,6 +1307,69 @@ TEST_F(CompanionProtocolTest, AllowedRepeatFrequencySerializesRangePairs) {
     EXPECT_EQ(ranges[1], 868000u);
     EXPECT_EQ(ranges[2], 869525u);
     EXPECT_EQ(ranges[3], 869525u);
+}
+
+TEST_F(CompanionProtocolTest, AnonRequestReturnsStockSentFrame)
+{
+    const auto frame = anonRequestFrame({0x01, 0xAA, 0x55});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    ASSERT_TRUE(host.sent_anon);
+    EXPECT_EQ(host.last_anon_key[0], 0xC0);
+    EXPECT_EQ(host.last_anon_key[31], 0xDF);
+    EXPECT_EQ(host.last_anon_data,
+              (std::vector<uint8_t>{0x01, 0xAA, 0x55}));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 10U);
+    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_SENT);
+    EXPECT_EQ(out[1], 1);  // fake host reports a flood send
+    uint32_t tag = 0;
+    uint32_t timeout = 0;
+    std::memcpy(&tag, &out[2], sizeof(tag));
+    std::memcpy(&timeout, &out[6], sizeof(timeout));
+    EXPECT_EQ(tag, 0x50607080U);
+    EXPECT_EQ(timeout, 4500U);
+}
+
+TEST_F(CompanionProtocolTest, AnonResponseUsesMatchedBinaryPush)
+{
+    const auto frame = anonRequestFrame({0x01});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    serial.writes.clear();
+
+    const uint8_t response[] = {0x10, 0x20};
+    ASSERT_TRUE(bridge.pushBinaryResponse(
+        0x50607080U, response, sizeof(response)));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 8U);
+    EXPECT_EQ(out[0], 0x8C);
+    EXPECT_EQ(out[1], 0);
+    uint32_t tag = 0;
+    std::memcpy(&tag, &out[2], sizeof(tag));
+    EXPECT_EQ(tag, 0x50607080U);
+    EXPECT_EQ(out[6], 0x10);
+    EXPECT_EQ(out[7], 0x20);
+}
+
+TEST_F(CompanionProtocolTest, AnonRequestRejectsMissingPayload)
+{
+    const auto frame = anonRequestFrame({});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    EXPECT_FALSE(host.sent_anon);
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_ILLEGAL_ARG);
+}
+
+TEST_F(CompanionProtocolTest, AnonRequestMapsAllocationOrSendFailureToTableFull)
+{
+    host.last_send_ok = false;
+    const auto frame = anonRequestFrame({0x01});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_TABLE_FULL);
 }
 
 // ── Live / async pushes ───────────────────────────────────────

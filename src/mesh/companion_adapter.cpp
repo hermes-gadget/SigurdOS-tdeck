@@ -819,6 +819,25 @@ public:
         r.est_timeout = est_timeout;
         return r;
     }
+    CompanionSendResult sendAnonReq(const uint8_t* pub_key,
+                                    const uint8_t* data,
+                                    uint8_t data_len) override {
+        CompanionSendResult r{};
+        if (!meshRadioTxAllowed() || !mesh_ptr() || !pub_key ||
+            !data || data_len == 0) {
+            return r;
+        }
+        uint32_t tag = 0;
+        uint32_t est_timeout = 0;
+        const int result = mesh_ptr()->sendAnonRequestCompanion(
+            pub_key, data, data_len, tag, est_timeout);
+        if (result == MSG_SEND_FAILED) return r;
+        r.ok = true;
+        r.sent_flood = result == MSG_SEND_SENT_FLOOD;
+        r.expected_ack = tag;
+        r.est_timeout = est_timeout;
+        return r;
+    }
     void cancelBinaryReqs() override {
         if (mesh_ptr()) mesh_ptr()->cancelCompanionBinaryRequests();
     }

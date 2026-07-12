@@ -15,12 +15,11 @@ This matrix describes the pinned MeshCore protocol at submodule commit
 | Channels and text messages | Supported | Channel configuration/data/text, direct text, login, path discovery, and offline message sync |
 | Direct raw data | Supported | `CMD_SEND_RAW_DATA` accepts explicit 0–63-byte one-byte-hash paths only; flood routing is rejected; received raw payloads use `PUSH_CODE_RAW_DATA` |
 | Radio, tuning, flood scope, and custom variables | Supported | Subject to T-Deck radio-region and TX-safety gates |
-| Status, telemetry, trace, and binary peer requests | Supported | Request tags are matched to stock async response push frames |
+| Status, telemetry, trace, binary, and anonymous peer requests | Supported | Request tags are matched to stock async response push frames; anonymous requests may use transient contacts |
 | Identity import/export and signing | Supported | Factory reset remains guarded by the authenticated protocol contract |
 | `CMD_SEND_RAW_DATA` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD` |
 | `CMD_SEND_BINARY_REQ` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD` |
 | `CMD_SEND_CONTROL_DATA` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD` |
-| `CMD_SEND_ANON_REQ` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD` |
 | `CMD_SEND_RAW_PACKET` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD`; arbitrary packet injection is not exposed |
 
 The unsupported raw/control families require separate protocol semantics,

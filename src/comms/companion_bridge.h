@@ -341,6 +341,9 @@ public:
     virtual CompanionSendResult sendBinaryReq(const uint8_t* pub_key,
                                               const uint8_t* data,
                                               uint8_t data_len) = 0;
+    virtual CompanionSendResult sendAnonReq(const uint8_t* pub_key,
+                                            const uint8_t* data,
+                                            uint8_t data_len) = 0;
     virtual void cancelBinaryReqs() = 0;
     virtual CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
                                               const uint8_t* path, uint8_t path_len) = 0;

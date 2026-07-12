@@ -396,6 +396,49 @@ namespace mesh {
         return result;
     }
 
+    int SigurdMeshV2::sendAnonRequestCompanion(const uint8_t* pub_key,
+                                                const uint8_t* data,
+                                                uint8_t data_len,
+                                                uint32_t& tag,
+                                                uint32_t& est_timeout) {
+        if (!pub_key || !data || data_len == 0) return MSG_SEND_FAILED;
+        int pending = -1;
+        for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
+            if (!_pending_reqs[i].in_use) {
+                pending = i;
+                break;
+            }
+        }
+        if (pending < 0) return MSG_SEND_FAILED;
+
+        ::ContactInfo transient{};
+        ::ContactInfo* recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+        if (!recipient) {
+            std::memcpy(transient.id.pub_key, pub_key, PUB_KEY_SIZE);
+            transient.out_path_len = 0;
+            transient.type = ADV_TYPE_NONE;
+            transient.lastmod = getRTCClock()->getCurrentTime();
+            if (!addContact(transient)) return MSG_SEND_FAILED;
+            recipient = &transient;
+        }
+
+        const int result = BaseChatMesh::sendAnonReq(
+            *recipient, data, data_len, tag, est_timeout);
+        if (result == MSG_SEND_FAILED) return result;
+
+        PendingRequest& request = _pending_reqs[pending];
+        request.tag = tag;
+        request.req_type = 0;
+        request.companion_binary = true;
+        std::strncpy(request.dest_name, recipient->name,
+                     sizeof(request.dest_name) - 1);
+        request.dest_name[sizeof(request.dest_name) - 1] = '\0';
+        request.channel_name[0] = '\0';
+        request.sent_at_ms = _ms->getMillis();
+        request.in_use = true;
+        return result;
+    }
+
     void SigurdMeshV2::cancelCompanionBinaryRequests() {
         for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
             if (_pending_reqs[i].in_use && _pending_reqs[i].companion_binary) {

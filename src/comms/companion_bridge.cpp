@@ -1345,6 +1345,30 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
+    if (cmd == CMD_SEND_ANON_REQ) {
+        if (len <= 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        const int pending = findFreePendingBinary();
+        if (pending < 0) {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+            return true;
+        }
+        const uint8_t* pub_key = &_cmd_frame[1];
+        const uint8_t* request = &_cmd_frame[1 + SIGURDOS_COMPANION_PUB_KEY_SIZE];
+        const uint8_t request_len =
+            (uint8_t)(len - (1 + SIGURDOS_COMPANION_PUB_KEY_SIZE));
+        CompanionSendResult r = _host->sendAnonReq(pub_key, request, request_len);
+        if (!r.ok || r.expected_ack == 0) {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+            return true;
+        }
+        _pending_binary[pending] = r.expected_ack;
+        writeSentOrErr(r);
+        return true;
+    }
+
     if (cmd == CMD_SEND_TRACE_PATH && len > 10) {
         uint8_t path_len = (uint8_t)(len - 10);
         uint8_t flags = _cmd_frame[9];
@@ -1408,9 +1432,6 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
     }
     if (cmd == CMD_SEND_CONTROL_DATA) {
-        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
-    }
-    if (cmd == CMD_SEND_ANON_REQ) {
         writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
     }
     if (cmd == CMD_SEND_RAW_PACKET) {

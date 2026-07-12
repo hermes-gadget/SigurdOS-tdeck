@@ -243,6 +243,10 @@ public:
                                    const uint8_t* data, uint8_t data_len,
                                    uint32_t& tag, uint32_t& est_timeout);
 
+    int sendAnonRequestCompanion(const uint8_t* pub_key,
+                                 const uint8_t* data, uint8_t data_len,
+                                 uint32_t& tag, uint32_t& est_timeout);
+
     void cancelCompanionBinaryRequests();
 
 
