@@ -309,6 +309,7 @@ void contacts_screen_show()
 
 // Forward declaration of login-polling timer (defined after dialog functions)
 static void start_login_poll_timer(const char* name);
+static void start_connection_watch_timer(const char* name);
 
 // ── Login password dialog ─────────────────────────
 // Shows a modal dialog for entering a password to log into a repeater/room server.
@@ -457,12 +458,12 @@ void show_login_password_dialog(const char* contact_name)
 // ── Login status polling timer ────────────────────
 // After a login attempt, this timer polls getLoginStatus() every 2 seconds.
 // On LOGIN_OK → rebuilds the screen with the post-login (management) view.
-// On LOGIN_FAILED → rebuilds pre-login so the failure text is visible.
+// On terminal failure/timeout/drop → rebuilds pre-login so the reason is visible.
 // Cancels itself if the user navigates away.
 struct LoginPollCtx {
     char* name;
     lv_obj_t* screen;
-
+    bool watch_connection;
     uint32_t gen;        // matches g_login_poll_gen at creation time; stale if timer restarted
 };
 static lv_timer_t* g_login_poll_timer = nullptr;
@@ -491,6 +492,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
 
     uint8_t st = sigurdos::mesh::getLoginStatus(ctx->name);
     if (st == LOGIN_STATUS_OK) {
+        if (ctx->watch_connection) return;
         char* n = strdup(ctx->name);
         free(ctx->name);
         delete ctx;
@@ -498,9 +500,12 @@ static void on_login_poll_timer(lv_timer_t* t) {
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
         // Rebuild screen in post-login mode
         repeater_detail_screen_show(n, true);
+        start_connection_watch_timer(n);
         free(n);
-    } else if (st == LOGIN_STATUS_FAILED) {
-        // Rebuild pre-login view so it shows "Login failed" and the Login button
+    } else if (st == LOGIN_STATUS_FAILED || st == LOGIN_STATUS_TIMEOUT ||
+               st == LOGIN_STATUS_DROPPED ||
+               (ctx->watch_connection && st == LOGIN_STATUS_NONE)) {
+        // Rebuild pre-login view so the terminal reason and Login button show.
         char* n = strdup(ctx->name);
         free(ctx->name);
         delete ctx;
@@ -509,10 +514,10 @@ static void on_login_poll_timer(lv_timer_t* t) {
         repeater_detail_screen_show(n, false);
         free(n);
     }
-    // LOGIN_PENDING or LOGIN_NONE → keep polling
+    // LOGIN_PENDING/LOGIN_NONE while waiting, or LOGIN_OK while watching, keep polling.
 }
 
-static void start_login_poll_timer(const char* name) {
+static void start_session_poll_timer(const char* name, bool watch_connection) {
     if (!name) return;
     // Cancel any existing timer first
     if (g_login_poll_timer) {
@@ -523,9 +528,18 @@ static void start_login_poll_timer(const char* name) {
     }
 
     g_login_poll_gen++;
-    LoginPollCtx* ctx = new LoginPollCtx{strdup(name), lv_scr_act(), g_login_poll_gen};
+    LoginPollCtx* ctx = new LoginPollCtx{
+        strdup(name), lv_scr_act(), watch_connection, g_login_poll_gen};
 
     g_login_poll_timer = lv_timer_create(on_login_poll_timer, 2000, ctx);
+}
+
+static void start_login_poll_timer(const char* name) {
+    start_session_poll_timer(name, false);
+}
+
+static void start_connection_watch_timer(const char* name) {
+    start_session_poll_timer(name, true);
 }
 
 // ── Admin command dialog ──────────────────────────
@@ -1028,6 +1042,8 @@ void contact_detail_screen_show(const char* contact_name)
             case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
             case LOGIN_STATUS_OK:      login_text = "Logged in";        login_color = ACCENT_GREEN; break;
             case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
+            case LOGIN_STATUS_TIMEOUT: login_text = "Login timed out";  login_color = ACCENT_RED; break;
+            case LOGIN_STATUS_DROPPED: login_text = "Connection dropped"; login_color = ACCENT_RED; break;
         }
         add_row("Login", login_text, login_color);
 
@@ -1550,7 +1566,8 @@ void contact_detail_screen_show(const char* contact_name)
             }, LV_EVENT_DELETE, nullptr);
 
             // When login pending or failed, show Cancel button
-            if (login_st == LOGIN_STATUS_PENDING || login_st == LOGIN_STATUS_FAILED) {
+            if (login_st == LOGIN_STATUS_PENDING || login_st == LOGIN_STATUS_FAILED ||
+                login_st == LOGIN_STATUS_TIMEOUT || login_st == LOGIN_STATUS_DROPPED) {
                 char* cx_name = strdup(contact_name);
                 lv_obj_t* cx_btn = lv_btn_create(login_row);
                 lv_obj_set_size(cx_btn, 100, 24);

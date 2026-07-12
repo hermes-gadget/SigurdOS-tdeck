@@ -334,6 +334,8 @@ uint8_t getAdvertPathLen(const char* name);
 #define LOGIN_STATUS_PENDING 1   // login request sent, awaiting response
 #define LOGIN_STATUS_OK      2   // logged in successfully
 #define LOGIN_STATUS_FAILED  3   // login was rejected
+#define LOGIN_STATUS_TIMEOUT 4   // no login response before the deadline
+#define LOGIN_STATUS_DROPPED 5   // negotiated keep-alive connection expired
 
 // ── Repeater/room login (Phase 4.5) ──────────────
 bool sendLogin(const char* name, const char* password);
