@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../screen_lifetime.h"
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -33,6 +34,7 @@ using namespace responsive;
 static lv_obj_t* g_advert_status_label = nullptr;
 static lv_obj_t* g_advert_button = nullptr;
 static lv_timer_t* g_advert_status_timer = nullptr;
+static ScreenLifetime g_advertise_lifetime;
 static constexpr uint32_t ADVERT_COOLDOWN_SECONDS = 10;
 
 static void advertise_status_update()
@@ -101,16 +103,6 @@ static void advertise_status_timer_cb(lv_timer_t*)
     advertise_status_update();
 }
 
-static void advertise_screen_delete_cb(lv_event_t*)
-{
-    g_advert_button = nullptr;
-    if (g_advert_status_timer) {
-        lv_timer_del(g_advert_status_timer);
-        g_advert_status_timer = nullptr;
-    }
-    g_advert_status_label = nullptr;
-}
-
 // ════════════════════════════════════════════════════════
 // Advertise — broadcast presence
 // ════════════════════════════════════════════════════════
@@ -163,7 +155,10 @@ void advertise_screen_show()
         g_advert_status_timer = nullptr;
     }
     g_advert_status_timer = lv_timer_create(advertise_status_timer_cb, 1000, nullptr);
-    lv_obj_add_event_cb(scr, advertise_screen_delete_cb, LV_EVENT_DELETE, nullptr);
+    g_advertise_lifetime.bind(scr);
+    g_advertise_lifetime.track(&g_advert_button);
+    g_advertise_lifetime.track(&g_advert_status_label);
+    g_advertise_lifetime.trackTimer(&g_advert_status_timer);
     advertise_status_update();
 
     show_screen(scr);

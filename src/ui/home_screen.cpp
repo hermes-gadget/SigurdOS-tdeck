@@ -20,6 +20,7 @@
 #include "home_screen.h"
 #include "screens.h"
 #include "screens_common.h"
+#include "screen_lifetime.h"
 #include "chat_screen.h"
 #include "navigation.h"
 #include "theme.h"
@@ -79,6 +80,7 @@ static const IconDef icons[] = {
 
 static constexpr int ICON_COUNT = sizeof(icons) / sizeof(icons[0]);
 static lv_obj_t* icon_tiles[ICON_COUNT] = {};
+static ScreenLifetime g_home_lifetime;
 static int tile_x[ICON_COUNT] = {};
 static int tile_y[ICON_COUNT] = {};
 static int tile_w[ICON_COUNT] = {};
@@ -394,14 +396,19 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
     apply_dark_bg(scr);
     disable_scroll(scr);
 
-    // When any other screen replaces Home, LVGL frees all children. Null only
-    // Home-owned pointers; shared screen pointers may already belong to the
-    // replacement screen when this delayed delete callback runs.
-    lv_obj_add_event_cb(scr, [](lv_event_t*) {
-        scr = top_bar = bottom_bar = grid = nullptr;
-        time_label = batt_label = hashtag_label = badge_obj = nullptr;
-        for (int i = 0; i < ICON_COUNT; i++) icon_tiles[i] = nullptr;
-    }, LV_EVENT_DELETE, nullptr);
+    // When any other screen replaces Home, LVGL frees all children. Track
+    // only Home-owned pointers; shared screen pointers may already belong to
+    // the replacement screen when this delayed delete callback runs.
+    g_home_lifetime.bind(scr);
+    g_home_lifetime.track(&scr);
+    g_home_lifetime.track(&top_bar);
+    g_home_lifetime.track(&bottom_bar);
+    g_home_lifetime.track(&grid);
+    g_home_lifetime.track(&time_label);
+    g_home_lifetime.track(&batt_label);
+    g_home_lifetime.track(&hashtag_label);
+    g_home_lifetime.track(&badge_obj);
+    for (int i = 0; i < ICON_COUNT; i++) g_home_lifetime.track(&icon_tiles[i]);
 
     create_top_bar();
     create_bottom_bar();

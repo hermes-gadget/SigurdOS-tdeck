@@ -81,6 +81,7 @@ test/
 |-- test_regions/                   Region structs, binary layout, key derivation
 |-- test_responsive/                Responsive layout column offset distribution
 |-- test_sdcard/                    SD card state, path checks, size formatting
+|-- test_screen_lifetime/           Screen delete guard: tracked pointer nulling, timer teardown
 |-- test_tdeck_board/               Board power thresholds and shutdown logic
 |-- test_telemetry_collectors/      Telemetry task watermark and buffer null-safety
 |-- test_telemetry_crash/           Crash backtrace capacity and bounded count

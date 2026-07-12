@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../screen_lifetime.h"
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -35,6 +36,7 @@ using namespace responsive;
 static lv_obj_t*  g_packets_list       = nullptr;
 static lv_timer_t* g_packets_timer     = nullptr;
 static int        g_packets_last_count = -1;
+static ScreenLifetime g_packets_lifetime;
 
 // ════════════════════════════════════════════════════════
 // Packets — raw packet log (last N transmissions)
@@ -151,16 +153,6 @@ static void packets_rebuild_list()
 
 static void packets_timer_cb(lv_timer_t*) { packets_rebuild_list(); }
 
-static void packets_screen_delete_cb(lv_event_t*)
-{
-    g_packets_list = nullptr;
-    g_packets_last_count = -1;
-    if (g_packets_timer) {
-        lv_timer_del(g_packets_timer);
-        g_packets_timer = nullptr;
-    }
-}
-
 void heard_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Packets");
@@ -210,7 +202,10 @@ void heard_screen_show()
     g_packets_last_count = -1;
     packets_rebuild_list();
 
-    lv_obj_add_event_cb(scr, packets_screen_delete_cb, LV_EVENT_DELETE, nullptr);
+    g_packets_lifetime.bind(scr);
+    g_packets_lifetime.track(&g_packets_list);
+    g_packets_lifetime.trackTimer(&g_packets_timer);
+    g_packets_lifetime.onDelete([] { g_packets_last_count = -1; });
     g_packets_timer = lv_timer_create(packets_timer_cb, 1000, nullptr);
 
     show_screen(scr);
