@@ -95,7 +95,7 @@ struct NodePrefs {
         multi_acks = false;           // default: send minimum ACKs
         buzzer_quiet = false;         // default: buzzer enabled
         client_repeat = 0;            // default: no forwarding
-        ble_enabled = false;          // default: BLE companion off
+        ble_enabled = true;           // default: BLE companion on
         device_pin = 0;               // default: no PIN
         ble_pin = 0;                  // default: not generated (will generate on first BLE boot)
         telemetry_modes = 0;          // default: no telemetry sharing
