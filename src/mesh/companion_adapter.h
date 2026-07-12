@@ -34,7 +34,8 @@ bool storeIncomingMessageForCompanion(const char* sender, const char* channel,
                                       const uint8_t* sender_prefix = nullptr,
                                       uint8_t txt_type = 0,
                                       const uint8_t* extra = nullptr,
-                                      uint8_t extra_len = 0);
+                                      uint8_t extra_len = 0,
+                                      uint32_t* store_id_out = nullptr);
 
 } // namespace mesh
 } // namespace sigurdos

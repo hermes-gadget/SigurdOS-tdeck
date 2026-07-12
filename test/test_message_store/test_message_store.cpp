@@ -46,6 +46,34 @@ void writeFile(const char* path, const std::vector<uint8_t>& bytes)
               (std::streamsize)bytes.size());
 }
 
+std::vector<uint8_t> downgradeStore(const std::vector<uint8_t>& current,
+                                    uint8_t version)
+{
+    uint32_t count = 0;
+    std::memcpy(&count, current.data() + 5, sizeof(count));
+    const size_t header = version == 4
+        ? sigurdos::mesh::detail::MESSAGE_STORE_V4_HEADER_SIZE
+        : sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE;
+    std::vector<uint8_t> old(current.begin(), current.begin() + header);
+    old[4] = version;
+    constexpr size_t attempt_offset =
+        4 + sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN +
+        sigurdos::mesh::SIGURDOS_MSG_SENDER_LEN +
+        sigurdos::mesh::SIGURDOS_MSG_TEXT_LEN + 4 +
+        sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN + 2 + 1 + 1 + 1;
+    for (uint32_t i = 0; i < count; ++i) {
+        const size_t start = sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
+            (size_t)i * sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE;
+        old.insert(old.end(), current.begin() + start,
+                   current.begin() + start + attempt_offset);
+        old.insert(old.end(), current.begin() + start + attempt_offset + 1,
+                   current.begin() + start +
+                       sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
+        old.back() &= 0x0F;
+    }
+    return old;
+}
+
 class MessageStoreTest : public ::testing::Test {
 protected:
     char path[128]{};
@@ -297,6 +325,10 @@ TEST_F(MessageStoreTest, MetadataRoundTrips) {
     msg.sender_prefix[3] = 0x44;
     msg.sender_prefix[4] = 0x55;
     msg.sender_prefix[5] = 0x66;
+    msg.attempt = 2;
+    msg.attempt_known = true;
+    msg.route_known = true;
+    msg.route_flood = true;
 
     EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
 
@@ -312,6 +344,47 @@ TEST_F(MessageStoreTest, MetadataRoundTrips) {
     EXPECT_EQ(out[0].sender_prefix[0], 0x11);
     EXPECT_EQ(out[0].sender_prefix[1], 0x22);
     EXPECT_EQ(out[0].sender_prefix[2], 0x33);
+    EXPECT_EQ(out[0].attempt, 2u);
+    EXPECT_TRUE(out[0].attempt_known);
+    EXPECT_TRUE(out[0].route_known);
+    EXPECT_TRUE(out[0].route_flood);
+}
+
+TEST_F(MessageStoreTest, LookupByIdAndIdentityReturnsDetailRecord) {
+    auto msg = makeMsg("DM: Alice", "Alice", "detail", 99, false, false);
+    uint32_t store_id = 0;
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg, &store_id));
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_TRUE(sigurdos::mesh::messageStoreGetById(store_id, out));
+    EXPECT_STREQ(out.text, "detail");
+    ASSERT_TRUE(sigurdos::mesh::messageStoreFindRecent(
+        "DM: Alice", "Alice", "detail", 100, false, out));
+    EXPECT_EQ(out.store_id, store_id);
+}
+
+TEST_F(MessageStoreTest, Version5MigratesWithUnknownAttempt) {
+    auto msg = makeMsg("DM: Alice", "Alice", "legacy-v5", 42, false, false);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+    auto raw = readFile(path);
+    ASSERT_EQ(raw.size(), sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
+                          sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
+    raw[4] = 5;
+    constexpr size_t attempt_offset =
+        4 + sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN +
+        sigurdos::mesh::SIGURDOS_MSG_SENDER_LEN +
+        sigurdos::mesh::SIGURDOS_MSG_TEXT_LEN + 4 +
+        sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN + 2 + 1 + 1 + 1;
+    raw.erase(raw.begin() + sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
+              attempt_offset);
+    raw.back() &= 0x0F;
+    writeFile(path, raw);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.text, "legacy-v5");
+    EXPECT_FALSE(out.attempt_known);
+    EXPECT_TRUE(out.route_known);
 }
 
 TEST_F(MessageStoreTest, BeginRecoversRecordWrittenBeforeHeaderCount) {
@@ -420,22 +493,16 @@ TEST_F(MessageStoreTest, VersionFourMigratesAmbiguousIdsToNonZeroSequence) {
         makeMsg("DM: Alice", "Alice", "one", 1, false, false)));
     ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
         makeMsg("DM: Bob", "Bob", "two", 2, false, false)));
-    const auto v5 = readFile(path);
-    ASSERT_EQ(v5.size(), sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
+    const auto current = readFile(path);
+    ASSERT_EQ(current.size(), sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
                          2 * sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
-
-    std::vector<uint8_t> v4;
-    v4.insert(v4.end(), v5.begin(), v5.begin() +
-        sigurdos::mesh::detail::MESSAGE_STORE_V4_HEADER_SIZE);
-    v4[4] = 4;
-    v4.insert(v4.end(), v5.begin() + sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE,
-              v5.end());
+    std::vector<uint8_t> v4 = downgradeStore(current, 4);
     const uint32_t zero = 0;
     const uint32_t reused = 1;
     std::memcpy(v4.data() + sigurdos::mesh::detail::MESSAGE_STORE_V4_HEADER_SIZE,
                 &zero, sizeof(zero));
     std::memcpy(v4.data() + sigurdos::mesh::detail::MESSAGE_STORE_V4_HEADER_SIZE +
-                    sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE,
+                    sigurdos::mesh::detail::MESSAGE_STORE_V5_RECORD_SIZE,
                 &reused, sizeof(reused));
     writeFile(path, v4);
 
@@ -455,15 +522,8 @@ TEST_F(MessageStoreTest, ValidVersionFourTempIsRecoveredBeforeMigration) {
     const auto old_live = readFile(path);
     ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
         makeMsg("DM: Bob", "Bob", "new", 2, false, false)));
-    const auto v5_new = readFile(path);
-
-    std::vector<uint8_t> v4_temp;
-    v4_temp.insert(v4_temp.end(), v5_new.begin(), v5_new.begin() +
-        sigurdos::mesh::detail::MESSAGE_STORE_V4_HEADER_SIZE);
-    v4_temp[4] = 4;
-    v4_temp.insert(v4_temp.end(),
-        v5_new.begin() + sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE,
-        v5_new.end());
+    const auto current_new = readFile(path);
+    std::vector<uint8_t> v4_temp = downgradeStore(current_new, 4);
     writeFile(path, old_live);
     writeFile((std::string(path) + ".tmp").c_str(), v4_temp);
 

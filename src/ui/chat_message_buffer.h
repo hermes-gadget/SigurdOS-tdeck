@@ -15,6 +15,7 @@ struct ChannelMessage {
     char     sender[32];
     char     text[160];
     uint32_t timestamp;
+    uint32_t store_id;
     bool     is_self;
     bool     acked;
     bool     confirmation_lost;
@@ -54,7 +55,7 @@ public:
     ChannelMessage* append(const char* sender, const char* text,
                            uint32_t timestamp, bool is_self,
                            uint16_t user_cap, uint16_t full_cap,
-                           uint16_t fallback_cap);
+                           uint16_t fallback_cap, uint32_t store_id = 0);
 
     // Mark the newest message acknowledged (no-op when empty).
     void markLastAcked();

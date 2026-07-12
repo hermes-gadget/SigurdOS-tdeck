@@ -38,6 +38,9 @@ struct StoredMessage {
     // MeshCore companion text type — COMPANION_TXT_PLAIN (0),
     // COMPANION_TXT_CLI_DATA (1), or COMPANION_TXT_SIGNED_PLAIN (2).
     uint8_t txt_type;
+    // MeshCore send attempt (0 = initial send). Meaningful when
+    // attempt_known is true; receive callbacks do not expose this value.
+    uint8_t attempt;
     // Length of the extra bytes (e.g. 4 for signed message sender prefix).
     uint8_t extra_len;
     // Extra data for the companion frame (signed message: 4-byte sender prefix
@@ -48,15 +51,22 @@ struct StoredMessage {
     bool acked;
     bool confirmation_lost;
     bool companion_sent;
+    bool route_flood;
+    bool route_known;
+    bool attempt_known;
 };
 
 namespace detail {
 static constexpr uint32_t MESSAGE_STORE_MAGIC = 0x534d5347; // "SMSG"
 // v5 adds a non-zero monotonic next-ID field to the file header. Version-4
 // records are migrated by assigning fresh non-zero IDs in chronological order.
-static constexpr uint8_t MESSAGE_STORE_VERSION = 5;
+static constexpr uint8_t MESSAGE_STORE_VERSION = 6;
 static constexpr size_t MESSAGE_STORE_V4_HEADER_SIZE = 9;
 static constexpr size_t MESSAGE_STORE_HEADER_SIZE = 13;
+static constexpr size_t MESSAGE_STORE_V5_RECORD_SIZE =
+    4 + SIGURDOS_MSG_CONVERSATION_LEN + SIGURDOS_MSG_SENDER_LEN +
+    SIGURDOS_MSG_TEXT_LEN + 4 + SIGURDOS_MSG_PREFIX_LEN + 2 + 1 + 1 +
+    1 + 1 + 8 + 1;
 static constexpr size_t MESSAGE_STORE_RECORD_SIZE =
     4 +  // store_id
     SIGURDOS_MSG_CONVERSATION_LEN +
@@ -68,6 +78,7 @@ static constexpr size_t MESSAGE_STORE_RECORD_SIZE =
     1 +   // snr_quarters
     1 +   // path_len
     1 +   // txt_type
+    1 +   // attempt
     1 +   // extra_len
     8 +   // extra
     1;    // flags
@@ -85,6 +96,10 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp);
 bool messageStoreMarkConfirmationLost(const char* conversation, uint32_t timestamp);
 int  messageStoreMarkOrphanedPendingLost();
 bool messageStoreMarkCompanionSent(uint32_t store_id);
+bool messageStoreGetById(uint32_t store_id, StoredMessage& out);
+bool messageStoreFindRecent(const char* conversation, const char* sender,
+                            const char* text, uint32_t timestamp, bool is_self,
+                            StoredMessage& out);
 int  messageStoreLoadUnsent(StoredMessage* out, int max);
 int  messageStoreCount();
 

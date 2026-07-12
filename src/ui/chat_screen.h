@@ -70,6 +70,8 @@ void chat_screen_set_filter(int mode);
 void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self);
 void chat_screen_add_msg_at(const char* channel, const char* sender, const char* text,
                             uint32_t timestamp, bool is_self);
+void chat_screen_add_stored_msg(const char* channel, const char* sender, const char* text,
+                                uint32_t timestamp, bool is_self, uint32_t store_id);
 
 // Handle trackball events for the chat screen. Returns true if consumed.
 bool chat_screen_handle_trackball(SigurdOSTrackballEvent event);

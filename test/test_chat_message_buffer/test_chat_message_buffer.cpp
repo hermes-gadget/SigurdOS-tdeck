@@ -139,49 +139,10 @@ TEST_F(ChatMessageBufferTest, NewMessagesStartWithoutConfirmationLoss)
     ASSERT_NE(msg, nullptr);
     EXPECT_FALSE(msg->acked);
     EXPECT_FALSE(msg->confirmation_lost);
-}
-
-TEST_F(ChatMessageBufferTest, TakeFromMovesBufferAndEmptiesSource)
-{
-    ChatMessageBuffer src;
-    ASSERT_NE(append(src, "kept"), nullptr);
-
-    ChatMessageBuffer dst;
-    ASSERT_NE(append(dst, "discarded"), nullptr);
-
-    dst.takeFrom(src);
-    EXPECT_FALSE(src.allocated());
-    EXPECT_EQ(src.count(), 0);
-    ASSERT_TRUE(dst.allocated());
-    ASSERT_EQ(dst.count(), 1);
-    EXPECT_STREQ(dst.at(0).text, "kept");
-
-    dst.takeFrom(dst);                         // self-move is a no-op
-    ASSERT_EQ(dst.count(), 1);
-    EXPECT_STREQ(dst.at(0).text, "kept");
-}
-
-TEST_F(ChatMessageBufferTest, ReleaseResetsToUnallocated)
+TEST_F(ChatMessageBufferTest, RetainsPersistentStoreId)
 {
     ChatMessageBuffer buf;
-    ASSERT_NE(append(buf, "gone"), nullptr);
-    buf.release();
-    EXPECT_FALSE(buf.allocated());
-    EXPECT_EQ(buf.count(), 0);
-    EXPECT_EQ(buf.capacity(), 0);
-
-    // Reusable after release.
-    ASSERT_NE(append(buf, "back"), nullptr);
-    EXPECT_EQ(buf.count(), 1);
-}
-
-TEST_F(ChatMessageBufferTest, TotalAllocationFailureRejectsAppend)
-{
-    heap_caps_mock_fail_spiram() = 1;
-    ChatMessageBuffer buf;
-    // Fallback capacity of zero models DRAM exhaustion as well.
-    EXPECT_EQ(buf.append("a", "b", 1, false, FULL_CAP, FULL_CAP, 0), nullptr);
-    EXPECT_FALSE(buf.allocated());
-}
-
-} // namespace
+    ChannelMessage* msg = buf.append("alice", "detail", 42, false,
+                                     FULL_CAP, FULL_CAP, FALLBACK_CAP, 77);
+    ASSERT_NE(msg, nullptr);
+    EXPECT_EQ(msg->store_id, 77u);

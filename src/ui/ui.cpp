@@ -161,38 +161,6 @@ void loop()
                 chat_screen_add_msg_at(msgs[i].channel, msgs[i].sender,
                                        msgs[i].text, msgs[i].timestamp,
                                        msgs[i].is_self);
-            }
-            if (n > 0) home_screen_update_badges();
-            // Refresh ACK status on the current chat screen
-            chat_screen_refresh_acks();
-        }
-        notifications_loop();
-    }
-}
-
-bool handle_trackball_event(SigurdOSTrackballEvent event)
-{
-    if (!home_shown) return false;
-    // Block all trackball events while PIN entry screen is displayed
-    // Prevents back-swipe bypass of PIN authentication (#541)
-    if (is_pin_entry_active()) return true;
-    if (current_screen() == Screen::Home) {
-        home_screen_handle_trackball(event);
-        return true;
-    }
-    if (current_screen() == Screen::Chat) {
-        // Chat handles its own Left (channel list toggle); fall through
-        // for non-messaging states where chat returns false
-        if (chat_screen_handle_trackball(event)) return true;
-    }
-    if (current_screen() == Screen::Map) {
-        if (map_screen_handle_trackball(event)) return true;
-        // Allow Left to still work for back navigation
-        return handle_back_swipe(event);
-    }
-    // Universal back-swipe: two-swipe commit for all other screens
-    return handle_back_swipe(event);
-}
-
-} // namespace ui
-} // namespace sigurdos
+                chat_screen_add_stored_msg(msgs[i].channel, msgs[i].sender,
+                                           msgs[i].text, msgs[i].timestamp,
+                                           msgs[i].is_self, msgs[i].store_id);

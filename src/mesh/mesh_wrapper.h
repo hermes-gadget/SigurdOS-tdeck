@@ -77,6 +77,7 @@ struct MeshMessage {
     char channel[32];
     char text[256];
     uint32_t timestamp;
+    uint32_t store_id;
     bool is_self;
 };
 

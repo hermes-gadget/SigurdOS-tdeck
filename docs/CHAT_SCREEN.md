@@ -246,7 +246,9 @@ struct ChannelMessage {
     char     sender[32];      // Node name, null-terminated
     char     text[160];       // UTF-8 message text, null-terminated
     uint32_t timestamp;       // Unix epoch seconds (from mesh RTC)
+    uint32_t store_id;        // unified-store record ID for detail lookup
     bool     is_self;         // true if sent by the local node
+    bool     acked;           // refreshed from the live ACK table
 };
 ```
 
@@ -281,6 +283,22 @@ Controlled via `NodePrefs.chat_msg_cap` (persisted in NVS):
 5. If buffer has room, increments count and stores at the next slot
 6. Updates `ch_meta[idx].preview` and `ch_meta[idx].timestamp`
 
+### Message detail sheet
+
+Long-press any message bubble to open its detail sheet. The bubble's
+`store_id` loads the authoritative `StoredMessage` record without duplicating
+route and radio metadata in every RAM cache entry. The sheet shows:
+
+- direct, flood (with hop count), or unknown route
+- RSSI/SNR when supplied by the received packet
+- acknowledged, pending/unconfirmed, broadcast, or received delivery state
+- send attempt when the originating send path exposed it
+- plain, CLI, or signed text type
+- the sender public-key prefix, with an action that copies it to chat input
+
+The ACK row also checks the live ACK table before rendering, so an open chat
+does not need to wait for another persistence reload.
+
 ---
 
 ## Persistence (SPIFFS)
@@ -292,8 +310,10 @@ local sends, and app-initiated sends append immediately; the UI no longer
 periodically rewrites a second snapshot.
 
 Each record carries the conversation, sender and public-key prefix, text,
-timestamp, RSSI/SNR, path length, companion text type, ACK state, and companion
-delivery state. The log holds at most 512 records. Crossing that limit retains
+timestamp, RSSI/SNR, route provenance, send attempt (when known), companion
+text type, ACK state, and companion delivery state. Store format v6 migrates
+v5 records atomically, marking metadata that older callbacks did not expose as
+unknown. The log holds at most 512 records. Crossing that limit retains
 the newest 448 records in one atomic streaming compaction, leaving headroom so
 normal appends do not cause a full rewrite every time.
 
@@ -463,6 +483,12 @@ Timestamp-aware ingress used by `ui::loop()`. The authoritative
 `MeshMessage.timestamp` is stored in channel history, channel metadata, the
 rendered bubble, and the unified log. A zero protocol timestamp uses the
 same local-clock fallback as the compatibility entry point.
+
+### `chat_screen_add_stored_msg(..., uint32_t store_id)`
+
+Ingress used by `ui::loop()` after the durable-first mesh fan-out. It preserves
+the unified-store record ID in the RAM bubble cache so long-press detail lookup
+can seek the exact record, including duplicate text/timestamps.
 
 ### `chat_screen_handle_trackball(SigurdOSTrackballEvent event) -> bool`
 

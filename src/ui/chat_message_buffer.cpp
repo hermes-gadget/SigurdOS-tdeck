@@ -46,7 +46,7 @@ void ChatMessageBuffer::trim(uint16_t cap)
 ChannelMessage* ChatMessageBuffer::append(const char* sender, const char* text,
                                           uint32_t timestamp, bool is_self,
                                           uint16_t user_cap, uint16_t full_cap,
-                                          uint16_t fallback_cap)
+                                          uint16_t fallback_cap, uint32_t store_id)
 {
     if (!ensure(full_cap, fallback_cap)) return nullptr;
 
@@ -70,6 +70,7 @@ ChannelMessage* ChatMessageBuffer::append(const char* sender, const char* text,
     strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
     msg.text[sizeof(msg.text) - 1] = '\0';
     msg.timestamp = timestamp;
+    msg.store_id = store_id;
     msg.is_self = is_self;
     msg.acked = false;
     msg.confirmation_lost = false;

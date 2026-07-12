@@ -46,13 +46,16 @@ void meshRadioDriverStats(MeshRadioDriverStats& out);
 void meshSaveSelfIdentity();
 
 // Append a self-sent message to the persistent message store.
-void meshStoreOutgoingMessage(const char* conversation, const char* text,
-                              uint32_t timestamp, bool is_channel);
+uint32_t meshStoreOutgoingMessage(const char* conversation, const char* text,
+                                  uint32_t timestamp, bool is_channel,
+                                  bool sent_flood, uint8_t attempt = 0,
+                                  uint8_t txt_type = 0);
 
 // Mirror a self-sent message into the UI's incoming-message queue so open
 // chat screens show it. timestamp 0 means "now".
 void meshQueuePushOutgoing(const char* conversation, const char* sender,
-                           const char* text, uint32_t timestamp);
+                           const char* text, uint32_t timestamp,
+                           uint32_t store_id = 0);
 
 // "DM: <name>" conversation key shared by the message store, the chat UI
 // and the companion adapter. Truncates to fit; always NUL-terminates.

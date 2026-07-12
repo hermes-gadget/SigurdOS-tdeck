@@ -139,7 +139,8 @@ bool sigurdos::mesh::storeIncomingMessageForCompanion(
                                              const uint8_t* sender_prefix,
                                              uint8_t txt_type,
                                              const uint8_t* extra,
-                                             uint8_t extra_len)
+                                             uint8_t extra_len,
+                                             uint32_t* store_id_out)
 {
     sigurdos::mesh::StoredMessage msg{};
     const bool is_channel = channel && channel[0];
@@ -177,6 +178,9 @@ bool sigurdos::mesh::storeIncomingMessageForCompanion(
     // Mesh path-length byte for the V3 frame (hop count + hash size). 0xFF from
     // a direct/unknown route; the real pkt->path_len for flood-routed packets.
     msg.path_len = path_len;
+    msg.route_known = true;
+    msg.route_flood = path_len != 0xFF;
+    msg.attempt_known = false;
     msg.txt_type = txt_type;
     msg.extra_len = (extra_len > 8) ? 8 : extra_len;
     if (extra && extra_len > 0) {
@@ -191,6 +195,7 @@ bool sigurdos::mesh::storeIncomingMessageForCompanion(
     }
     uint32_t store_id = 0;
     if (sigurdos::mesh::messageStoreAppend(msg, &store_id)) {
+        if (store_id_out) *store_id_out = store_id;
         msg.store_id = store_id;
         if (CompanionBridge* b = companionBridge()) b->enqueueMessage(msg);
         return true;
@@ -338,8 +343,10 @@ public:
 
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), contact->name);
-        meshStoreOutgoingMessage(conversation, text, ts, false);
-        meshQueuePushOutgoing(conversation, meshOwnName(), text, ts);
+        const bool sent_flood = send_result == MSG_SEND_SENT_FLOOD;
+        const uint32_t store_id = meshStoreOutgoingMessage(
+            conversation, text, ts, false, sent_flood, attempt, txt_type);
+        meshQueuePushOutgoing(conversation, meshOwnName(), text, ts, store_id);
         sigurdos::mesh::pushPacketLog(meshOwnName(), 0, 0.0f, "TX_DM");
 
         result.ok = true;
@@ -360,8 +367,9 @@ public:
         if (!mesh_ptr()->sendGroupMessage(ts, cd.channel, meshOwnName(), text, (int)strlen(text))) {
             return result;
         }
-        meshStoreOutgoingMessage(cd.name, text, ts, true);
-        meshQueuePushOutgoing(cd.name, meshOwnName(), text, ts);
+        const uint32_t store_id = meshStoreOutgoingMessage(
+            cd.name, text, ts, true, true, 0, sigurdos::comms::COMPANION_TXT_PLAIN);
+        meshQueuePushOutgoing(cd.name, meshOwnName(), text, ts, store_id);
         sigurdos::mesh::pushPacketLog(meshOwnName(), 0, 0.0f, "TX_CHAN");
         result.ok = true;
         result.sent_flood = true;

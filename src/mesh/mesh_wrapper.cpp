@@ -108,6 +108,7 @@ struct IncomingMessageFanoutCtx {
     uint8_t txt_type;
     const uint8_t* extra;
     uint8_t extra_len;
+    uint32_t store_id;
 };
 
 static bool persistIncomingMessage(void* raw)
@@ -116,7 +117,7 @@ static bool persistIncomingMessage(void* raw)
     return ctx && sigurdos::mesh::storeIncomingMessageForCompanion(
         ctx->sender, ctx->channel, ctx->text, ctx->rssi, ctx->snr,
         ctx->sender_timestamp, ctx->path_len, ctx->sender_prefix,
-        ctx->txt_type, ctx->extra, ctx->extra_len);
+        ctx->txt_type, ctx->extra, ctx->extra_len, &ctx->store_id);
 }
 
 static bool presentIncomingMessage(void* raw)
@@ -145,6 +146,7 @@ static bool presentIncomingMessage(void* raw)
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = ctx->sender_timestamp
         ? ctx->sender_timestamp : rtc_clock.getCurrentTime();
+    m.store_id = ctx->store_id;
     m.is_self = false;
     if (strcmp(ctx->sender, own_name) != 0) unread_count++;
     msg_head = (msg_head + 1) % MAX_QUEUED;
@@ -176,7 +178,7 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
                          uint8_t extra_len) {
     if (!sender || !text) return;
     IncomingMessageFanoutCtx ctx{sender, channel, text, rssi, snr,
-        sender_timestamp, path_len, sender_prefix, txt_type, extra, extra_len};
+        sender_timestamp, path_len, sender_prefix, txt_type, extra, extra_len, 0};
     sigurdos::mesh::deliverMessageDurableFirst(
         persistIncomingMessage, presentIncomingMessage, &ctx);
 }
@@ -204,6 +206,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = rtc_clock.getCurrentTime();
+    m.store_id = 0;
     m.is_self = false;
     // Increment unread count for incoming messages (reset when chat is opened)
     if (strcmp(sender, own_name) != 0) unread_count++;
@@ -291,8 +294,10 @@ void sigurdos::mesh::meshSaveSelfIdentity() {
     if (g_mesh) saveIdentity(g_mesh->self_id);
 }
 
-void sigurdos::mesh::meshStoreOutgoingMessage(const char* conversation, const char* text,
-                                              uint32_t timestamp, bool is_channel)
+uint32_t sigurdos::mesh::meshStoreOutgoingMessage(const char* conversation, const char* text,
+                                                  uint32_t timestamp, bool is_channel,
+                                                  bool sent_flood, uint8_t attempt,
+                                                  uint8_t txt_type)
 {
     sigurdos::mesh::StoredMessage msg{};
     strncpy(msg.conversation, conversation ? conversation : "", sizeof(msg.conversation) - 1);
@@ -305,13 +310,20 @@ void sigurdos::mesh::meshStoreOutgoingMessage(const char* conversation, const ch
     msg.rssi = 0;
     msg.snr_quarters = 0;
     msg.path_len = 0xFF;  // self-sent; never mirrored to the app, value unused
+    msg.txt_type = txt_type;
+    msg.attempt = attempt;
+    msg.attempt_known = true;
+    msg.route_known = true;
+    msg.route_flood = sent_flood;
     if (g_mesh) memcpy(msg.sender_prefix, g_mesh->self_id.pub_key,
                        sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
-    sigurdos::mesh::messageStoreAppend(msg);
+    uint32_t store_id = 0;
+    return sigurdos::mesh::messageStoreAppend(msg, &store_id) ? store_id : 0;
 }
 
 void sigurdos::mesh::meshQueuePushOutgoing(const char* conversation, const char* sender,
-                                           const char* text, uint32_t timestamp)
+                                           const char* text, uint32_t timestamp,
+                                           uint32_t store_id)
 {
     if (!conversation || !sender || !text) return;
     if (msg_count >= MAX_QUEUED) {
@@ -326,6 +338,7 @@ void sigurdos::mesh::meshQueuePushOutgoing(const char* conversation, const char*
     strncpy(m.text, text, sizeof(m.text) - 1);
     m.text[sizeof(m.text) - 1] = '\0';
     m.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
+    m.store_id = store_id;
     m.is_self = true;
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
@@ -1164,7 +1177,9 @@ uint32_t sendMessage(const char* dest, const char* text) {
     if (ok) {
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), dest);
-        meshStoreOutgoingMessage(conversation, text, ts, false);
+        const int contact_idx = findContactIndex(dest);
+        const bool sent_flood = contact_idx < 0 || !contactHasPath(contact_idx);
+        meshStoreOutgoingMessage(conversation, text, ts, false, sent_flood);
         pushPacketLog(own_name, 0, 0.0f, "TX_DM");
     }
     return ok ? ts : 0;
@@ -1178,7 +1193,7 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
         if (ch && strcmp(ch->name, channel_name) == 0) {
             sent = g_mesh->sendGroupText(i, text);
             if (sent) {
-                meshStoreOutgoingMessage(channel_name, text, getCurrentTime(), true);
+                meshStoreOutgoingMessage(channel_name, text, getCurrentTime(), true, true);
                 pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
             }
             break;

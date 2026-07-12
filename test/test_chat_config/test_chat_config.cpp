@@ -7,6 +7,7 @@
 #include <cstdio>
 
 #include "ui/chat_screen.h"
+#include "ui/message_detail.h"
 
 namespace {
 
@@ -73,6 +74,40 @@ TEST(ChatConfig, DmFilterKeepsOnlyDmConversations) {
     EXPECT_TRUE(chat_screen_filter_accepts_channel(2, "DM: Alice"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "Public"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "#general"));
+}
+
+TEST(MessageDetail, FormatsRouteSignalTypeAndPrefix) {
+    sigurdos::mesh::StoredMessage msg{};
+    msg.route_known = true;
+    msg.route_flood = true;
+    msg.path_len = 0x83;
+    msg.rssi = -91;
+    msg.snr_quarters = 10;
+    msg.txt_type = 2;
+    msg.sender_prefix[0] = 0x11;
+    msg.sender_prefix[1] = 0x22;
+    msg.sender_prefix[2] = 0x33;
+    msg.sender_prefix[3] = 0x44;
+    msg.sender_prefix[4] = 0x55;
+    msg.sender_prefix[5] = 0x66;
+    char route[32], signal[40], prefix[20];
+    sigurdos::ui::format_message_route(route, sizeof(route), msg);
+    sigurdos::ui::format_message_signal(signal, sizeof(signal), msg);
+    EXPECT_STREQ(route, "Flood (3 hops)");
+    EXPECT_STREQ(signal, "-91 dBm / 2.5 dB");
+    EXPECT_STREQ(sigurdos::ui::message_text_type_name(msg.txt_type), "Signed");
+    EXPECT_TRUE(sigurdos::ui::format_message_prefix(prefix, sizeof(prefix), msg.sender_prefix));
+    EXPECT_STREQ(prefix, "112233445566");
+}
+
+TEST(MessageDetail, DeliveryDistinguishesAckAndBroadcast) {
+    sigurdos::mesh::StoredMessage msg{};
+    msg.is_self = true;
+    EXPECT_STREQ(sigurdos::ui::message_delivery_name(msg), "Pending / unconfirmed");
+    msg.acked = true;
+    EXPECT_STREQ(sigurdos::ui::message_delivery_name(msg), "Acknowledged");
+    msg.is_channel = true;
+    EXPECT_STREQ(sigurdos::ui::message_delivery_name(msg), "Broadcast (no ACK)");
 }
 
 // ── Issue #543: DM name buffer overflow tests ──────────────────────────
