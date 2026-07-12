@@ -603,7 +603,7 @@ namespace mesh {
     }
 
     void SigurdMeshV2::onCommandDataRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) {
-        sigurdos::mesh::pushCmdResponse(contact.name, text);
+        sigurdos::mesh::pushCmdResponse(contact.name, text, sender_timestamp);
         // Store as COMPANION_TXT_CLI_DATA with the raw app payload text so the
         // companion bridge emits the correct txt_type to official apps. The
         // normal chat queue skips CLI data; pushCmdResponse feeds the admin

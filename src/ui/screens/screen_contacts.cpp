@@ -877,7 +877,9 @@ void show_admin_cmd_dialog(const char* contact_name)
                 const char* cmd = lv_textarea_get_text(dd->ta);
                 if (!cmd || !cmd[0]) return;
                 char echo[256];
-                snprintf(echo, sizeof(echo), "\n> %s\n", cmd);
+                lv_textarea_add_text(dd->out, "\n");
+                format_repeater_cli_command(echo, sizeof(echo),
+                                             sigurdos::mesh::getCurrentTime(), cmd);
                 lv_textarea_add_text(dd->out, echo);
                 bool ok = sigurdos::mesh::sendCommand(dd->name, cmd);
                 lv_textarea_set_text(dd->ta, "");
@@ -888,11 +890,13 @@ void show_admin_cmd_dialog(const char* contact_name)
                         TermData* dd2 = (TermData*)lv_timer_get_user_data(t);
                         if (!dd2 || dd2->deleted) return;
                         char nb[32], tb[160];
-                        while (sigurdos::mesh::pollCmdResponse(nb, sizeof(nb), tb, sizeof(tb))) {
+                        uint32_t timestamp = 0;
+                        while (sigurdos::mesh::pollCmdResponse(
+                                   nb, sizeof(nb), tb, sizeof(tb), &timestamp)) {
                             if (dd2->deleted) return;
                             if (dd2->name && strcmp(nb, dd2->name) == 0) {
                                 char rb[256];
-                                format_repeater_cli_reply(rb, sizeof(rb), tb);
+                                format_repeater_cli_reply(rb, sizeof(rb), timestamp, tb);
                                 // Trim output if near max to prevent overflow
                                 const char* full = lv_textarea_get_text(dd2->out);
                                 if (full && strlen(full) > 3500) {

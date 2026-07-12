@@ -362,8 +362,9 @@ void forceLoginState(const char* name, uint8_t status, uint8_t permission);
 
 // ── Command response ring buffer (for terminal UI) ──
 #define MAX_CMD_RESPONSES 16
-void pushCmdResponse(const char* name, const char* text);
-bool pollCmdResponse(char* name_out, int name_sz, char* text_out, int text_sz);
+void pushCmdResponse(const char* name, const char* text, uint32_t timestamp);
+bool pollCmdResponse(char* name_out, int name_sz, char* text_out, int text_sz,
+                     uint32_t* timestamp_out);
 void clearCmdResponses();
 
 #if defined(SIGURDOS_REMOTE_TEST)

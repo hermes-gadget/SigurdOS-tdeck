@@ -25,6 +25,7 @@
  * command creates a new LVGL label that accumulates indefinitely, consuming heap.
  */
 #include <gtest/gtest.h>
+#include "mesh/cmd_response_queue.h"
 #include "ui/repeater_transcript.h"
 #include <cstring>
 #include <cstdio>
@@ -146,14 +147,43 @@ TEST(TermLineCapTest, ManyOverflowsKeepsCapacity) {
 
 TEST(RepeaterTranscriptTest, CliReplyHasExplicitTypeBadge) {
     char out[64];
-    EXPECT_TRUE(sigurdos::ui::format_repeater_cli_reply(out, sizeof(out), "version 1.2"));
-    EXPECT_STREQ(out, "< [CLI] version 1.2\n");
+    EXPECT_TRUE(sigurdos::ui::format_repeater_cli_reply(
+        out, sizeof(out), 3661, "version 1.2"));
+    EXPECT_STREQ(out, "[01:01:01] < [CLI] version 1.2\n");
 }
 
 TEST(RepeaterTranscriptTest, CliReplyReportsTruncationAndStaysTerminated) {
     char out[12];
-    EXPECT_FALSE(sigurdos::ui::format_repeater_cli_reply(out, sizeof(out), "long response"));
+    EXPECT_FALSE(sigurdos::ui::format_repeater_cli_reply(
+        out, sizeof(out), 3661, "long response"));
     EXPECT_EQ(out[sizeof(out) - 1], '\0');
+}
+
+TEST(RepeaterTranscriptTest, UnknownCommandTimeIsExplicit) {
+    char out[64];
+    EXPECT_TRUE(sigurdos::ui::format_repeater_cli_command(
+        out, sizeof(out), 0, "get name"));
+    EXPECT_STREQ(out, "[--:--:--] > get name\n");
+}
+
+TEST(RepeaterTranscriptTest, ResponseQueuePreservesTimestampAndOrder) {
+    sigurdos::mesh::CmdResponseQueue<2> queue;
+    ASSERT_TRUE(queue.push("alpha", "first", 101));
+    ASSERT_TRUE(queue.push("beta", "second", 202));
+    EXPECT_FALSE(queue.push("gamma", "full", 303));
+
+    char name[32];
+    char text[160];
+    uint32_t timestamp = 0;
+    ASSERT_TRUE(queue.poll(name, sizeof(name), text, sizeof(text), &timestamp));
+    EXPECT_STREQ(name, "alpha");
+    EXPECT_STREQ(text, "first");
+    EXPECT_EQ(timestamp, 101u);
+    ASSERT_TRUE(queue.poll(name, sizeof(name), text, sizeof(text), &timestamp));
+    EXPECT_STREQ(name, "beta");
+    EXPECT_STREQ(text, "second");
+    EXPECT_EQ(timestamp, 202u);
+    EXPECT_FALSE(queue.poll(name, sizeof(name), text, sizeof(text), &timestamp));
 }
 
 } // anonymous namespace
