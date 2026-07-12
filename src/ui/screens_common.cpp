@@ -350,7 +350,9 @@ void pin_entry_show(Screen target_screen) {
         lv_group_focus_obj(ta);
     }
 
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    // auto_del=false via show_screen — mixing auto_del values deadlocks LVGL
+    // after ~4-5 navigation cycles (see screens.cpp / PR #840).
+    show_screen(scr);
 }
 
 } // namespace sigurdos::ui

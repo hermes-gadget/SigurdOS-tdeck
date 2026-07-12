@@ -413,17 +413,19 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
     create_top_bar();
     create_bottom_bar();
     create_icon_grid();
-    if (duration == 0 && anim == LV_SCR_LOAD_ANIM_NONE) {
-        show_screen(scr);
-    } else {
-        lv_scr_load_anim(scr, anim, duration, 0, true);
-    }
+    // Always use show_screen (auto_del=false). The animated FADE_ON path used
+    // auto_del=true and reintroduced the LVGL screen-load deadlock after ~4-5
+    // navigation cycles (screens.cpp / PR #840). Drop animation rather than
+    // mix auto_del policies.
+    (void)anim;
+    (void)duration;
+    show_screen(scr);
 }
 
 // ── Public API ───────────────────────────────────────────
 void home_screen_create()
 {
-    build_home_screen(LV_SCR_LOAD_ANIM_FADE_ON, 300);
+    build_home_screen(LV_SCR_LOAD_ANIM_NONE, 0);
     home_screen_update_battery(sigurdos_battery_pct());
     home_screen_update_badges();
 }

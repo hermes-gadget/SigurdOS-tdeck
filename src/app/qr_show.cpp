@@ -9,6 +9,7 @@
 #include "ui/theme.h"
 #include "ui/responsive.h"
 #include "ui/navigation.h"
+#include "ui/screens_common.h"
 #include "hal/battery.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -39,7 +40,9 @@ void qr_show_error(lv_obj_t* scr, const char* message)
     lv_label_set_text(err, message);
     lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
     lv_obj_align(err, LV_ALIGN_CENTER, 0, 0);
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
+    // auto_del=false via show_screen — mixing auto_del values deadlocks LVGL
+    // after ~4-5 navigation cycles (see screens.cpp / PR #840).
+    sigurdos::ui::show_screen(scr);
 }
 
 } // namespace
@@ -223,7 +226,8 @@ void qr_show(const char* title, const char* data)
     lv_obj_set_style_border_width(bdiv, 0, 0);
 
     // ── Show the screen ────────────────────────────────────
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
+    // auto_del=false via show_screen — see screens.cpp / PR #840.
+    sigurdos::ui::show_screen(scr);
 }
 
 } // namespace app
