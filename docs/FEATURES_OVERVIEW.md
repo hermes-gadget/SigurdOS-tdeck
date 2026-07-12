@@ -229,7 +229,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 ### SPIFFS Persistence
 - **State storage** — SPIFFS filesystem for persisting identity keys, contact list, channel config, and message history
 - **Graceful fallback** — if SPIFFS mount fails at boot, device continues without persistence (warning logged)
-- **Chat persistence** — `chat_save_messages()` / `chat_load_messages()` per-channel history
+- **Chat persistence** — one `message_store` log shared by chat restore and companion offline sync, with one-time `/msgs` migration
 **Sources:** [`src/main.cpp`](../src/main.cpp), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/ui/chat_screen.h`](../src/ui/chat_screen.h)
 
 ### Contact Persistence

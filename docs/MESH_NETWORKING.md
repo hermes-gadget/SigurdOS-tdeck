@@ -628,7 +628,10 @@ These are called by `saveChannels()` / `loadChannels()` and `saveIdentity()` /
 
 *(Not part of the mesh layer directly, but relevant)*
 
-Per-channel message history is persisted in SPIFFS via `chat_save_messages()` / `chat_load_messages()` in `src/ui/chat_screen.*`. Each channel's messages are stored in a separate file under `/chats/<channel_name>`.
+Message history is persisted in the bounded SPIFFS `message_store` log and
+restored by `chat_load_messages()` in `src/ui/chat_screen.*`. The same records
+drive companion offline sync; the retired `/msgs` UI snapshot is read only for
+one-time upgrade migration.
 
 ### saveState()
 

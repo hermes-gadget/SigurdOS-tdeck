@@ -142,12 +142,8 @@ void loop()
         }
     }
 
-    // Identity and channel mutations save at their event sites. Chat bursts
-    // batch into one atomic checkpoint instead of rewriting all state every
-    // five minutes while the device is idle. Mesh-driven contact mutations
-    // (advert discovery, path updates) have no event site, so they flush
-    // through their own debounced checkpoint.
-    chat_save_messages_if_due(millis());
+    // Messages append directly to the unified store. Mesh-driven contact
+    // mutations have no UI event site, so they use a debounced checkpoint.
     sigurdos::mesh::saveContactsIfDue(millis());
 
     // Poll for new mesh messages and feed to chat
