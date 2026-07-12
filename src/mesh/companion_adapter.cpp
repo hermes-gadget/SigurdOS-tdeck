@@ -515,6 +515,10 @@ public:
         // MyMesh::CMD_IMPORT_PRIVATE_KEY — resetContacts + loadContacts).
         mesh_ptr()->resetAllContacts();
         sigurdos::mesh::loadContacts();
+        // Clear login session state — stale LOGIN_OK/permission entries from
+        // the old identity would otherwise persist against contact-name keys
+        // and present false-positive login UI after identity change (RC6-MED-002).
+        mesh_ptr()->clearAllLoginEntries();
         return true;
     }
 
