@@ -240,9 +240,9 @@ public:
 
     uint32_t currentTime() const override { return sigurdos::mesh::getCurrentTime(); }
     bool setCurrentTime(uint32_t epoch) override {
-        // Reject backwards time changes to protect replay/timestamp logic
-        uint32_t now = sigurdos::mesh::getCurrentTime();
-        if (epoch < now && now > 0) return false;
+        // Accept time from the companion client unconditionally.
+        // The official app/CLI sets time on every connect; rejecting
+        // because the device's onboard clock drifted ahead breaks sync.
         return sigurdos::mesh::setSystemTime(epoch);
     }
     uint16_t batteryMilliVolts() const override { return sigurdos_battery_mv(); }
