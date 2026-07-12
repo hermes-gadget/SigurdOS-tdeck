@@ -70,6 +70,7 @@ test/
 |-- test_mesh_contract/             Mesh advert types, contact flags, and buffer capacity stability
 |-- test_mesh_messaging/            Message queues, contacts, responses, LPP parsing
 |-- test_mesh_wrapper/              Public mesh API contracts and return ranges
+|-- test_mesh_wrapper_internal/     Wrapper seam helpers: scope-key hex codec, DM conversation key
 |-- test_message_store/             Message append, dedup, rotation, and persistence
 |-- test_navigation/                Navigation stack and back-swipe behavior
 |-- test_navigation_contract/       Screen enum stability and screen inventory checks

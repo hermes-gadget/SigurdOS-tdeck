@@ -1,13 +1,51 @@
-// Companion BLE bridge adapter for mesh_wrapper.cpp.
-// This file is intentionally included from mesh_wrapper.cpp so it can access
-// the existing singletons without widening the public mesh API.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ben
+//
+// Companion (phone app) bridge adapter — hosts the BLE/USB companion
+// protocol against the mesh wrapper. This used to be companion_adapter.inc,
+// textually #included into mesh_wrapper.cpp to reach its file-scope statics;
+// it now reaches wrapper internals only through mesh_wrapper_internal.h
+// (ARCH-001, #820).
 
+#include "companion_adapter.h"
+#include "mesh_wrapper.h"
+#include "mesh_wrapper_internal.h"
+#include "scope_key_hex.h"
+#include "message_store.h"
+#include "regions.h"
+#include "sigurd_mesh_v2.h"
 #include "advert_blob.h"
+#include "comms/companion_bridge.h"
+#include "comms/observed_ble_interface.h"
+#include "hal/tdeck_pins.h"
+#include "hal/prefs.h"
+#include "hal/gps.h"
+#include "hal/battery.h"
+
+#include <Arduino.h>
+#include <SPIFFS.h>
 #include <new>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
 
-static void saveIdentity(::mesh::LocalIdentity& id);
+// REQ_TYPE constants not defined in core BaseChatMesh.h (only in examples)
+#ifndef REQ_TYPE_GET_TELEMETRY_DATA
+#define REQ_TYPE_GET_TELEMETRY_DATA  0x03
+#endif
+
+using sigurdos::mesh::SigurdMeshV2;
+using sigurdos::mesh::meshOwnName;
+using sigurdos::mesh::meshRtcTime;
+using sigurdos::mesh::meshRtcTimeUnique;
+using sigurdos::mesh::meshRadioTxAllowed;
+using sigurdos::mesh::meshQueuePushOutgoing;
+using sigurdos::mesh::meshStoreOutgoingMessage;
+using sigurdos::mesh::meshSaveSelfIdentity;
+using sigurdos::mesh::formatDmConversation;
+
+// Local shorthand for the wrapper-owned mesh instance (was the file-scope
+// static g_mesh when this code lived inside mesh_wrapper.cpp).
+static inline SigurdMeshV2* mesh_ptr() { return sigurdos::mesh::meshInstance(); }
 
 using sigurdos::comms::CompanionBridge;
 using sigurdos::comms::CompanionBridgeHost;
@@ -61,53 +99,34 @@ static void generate_random_ble_pin() {
     sigurdos::prefs_set(p);
 }
 
-static void queue_push_outgoing(const char* conversation, const char* sender,
-                                const char* text, uint32_t timestamp)
-{
-    if (!conversation || !sender || !text) return;
-    if (msg_count >= MAX_QUEUED) {
-        msg_drop_count++;
-        return;
-    }
-    MeshMessage& m = msg_buf[msg_head];
-    strncpy(m.sender, sender, sizeof(m.sender) - 1);
-    m.sender[sizeof(m.sender) - 1] = '\0';
-    strncpy(m.channel, conversation, sizeof(m.channel) - 1);
-    m.channel[sizeof(m.channel) - 1] = '\0';
-    strncpy(m.text, text, sizeof(m.text) - 1);
-    m.text[sizeof(m.text) - 1] = '\0';
-    m.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
-    m.is_self = true;
-    msg_head = (msg_head + 1) % MAX_QUEUED;
-    msg_count++;
-}
-
 static void fillStoredPrefixForName(const char* name, uint8_t* out)
 {
     if (!out) return;
     memset(out, 0, sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
-    if (!g_mesh || !name) return;
+    if (!mesh_ptr() || !name) return;
     ::ContactInfo tmp;
-    for (int i = 0; i < g_mesh->getNumContacts(); i++) {
-        if (g_mesh->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+    for (int i = 0; i < mesh_ptr()->getNumContacts(); i++) {
+        if (mesh_ptr()->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
             memcpy(out, tmp.id.pub_key, sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
             return;
         }
     }
 }
 
-static bool storeIncomingMessageForCompanion(const char* sender, const char* channel,
+// Defaults live on the declaration in companion_adapter.h.
+// txt_type is COMPANION_TXT_PLAIN=0, COMPANION_TXT_CLI_DATA=1 or
+// COMPANION_TXT_SIGNED_PLAIN=2; extra carries e.g. the 4-byte sender prefix
+// of signed messages; sender_prefix is the exact pubkey prefix from the
+// packet metadata.
+bool sigurdos::mesh::storeIncomingMessageForCompanion(
+                                             const char* sender, const char* channel,
                                              const char* text, int rssi, float snr,
-                                             uint32_t sender_timestamp = 0,
-                                             uint8_t path_len = 0xFF,
-                                             // Exact sender pubkey prefix from packet metadata.
-                                             const uint8_t* sender_prefix = nullptr,
-                                             // Companion text type (COMPANION_TXT_PLAIN=0,
-                                             // COMPANION_TXT_CLI_DATA=1, COMPANION_TXT_SIGNED_PLAIN=2).
-                                             uint8_t txt_type = sigurdos::comms::COMPANION_TXT_PLAIN,
-                                             // Extra bytes (e.g. 4-byte sender prefix for signed msgs).
-                                             const uint8_t* extra = nullptr,
-                                             uint8_t extra_len = 0)
+                                             uint32_t sender_timestamp,
+                                             uint8_t path_len,
+                                             const uint8_t* sender_prefix,
+                                             uint8_t txt_type,
+                                             const uint8_t* extra,
+                                             uint8_t extra_len)
 {
     sigurdos::mesh::StoredMessage msg{};
     const bool is_channel = channel && channel[0];
@@ -136,7 +155,7 @@ static bool storeIncomingMessageForCompanion(const char* sender, const char* cha
     // Use the originating packet's timestamp so the app shows the real send
     // time. Fall back to the local clock only if the sender left it unset —
     // otherwise an unset RTC would surface every message as "1970".
-    msg.timestamp = sender_timestamp ? sender_timestamp : rtc_clock.getCurrentTime();
+    msg.timestamp = sender_timestamp ? sender_timestamp : meshRtcTime();
     msg.is_self = false;
     msg.is_channel = is_channel;
     msg.acked = false;
@@ -164,25 +183,6 @@ static bool storeIncomingMessageForCompanion(const char* sender, const char* cha
         return true;
     }
     return false;
-}
-
-static void storeOutgoingMessageForCompanion(const char* conversation, const char* text,
-                                             uint32_t timestamp, bool is_channel)
-{
-    sigurdos::mesh::StoredMessage msg{};
-    strncpy(msg.conversation, conversation ? conversation : "", sizeof(msg.conversation) - 1);
-    strncpy(msg.sender, own_name, sizeof(msg.sender) - 1);
-    strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
-    msg.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
-    msg.is_self = true;
-    msg.is_channel = is_channel;
-    msg.acked = false;
-    msg.rssi = 0;
-    msg.snr_quarters = 0;
-    msg.path_len = 0xFF;  // self-sent; never mirrored to the app, value unused
-    if (g_mesh) memcpy(msg.sender_prefix, g_mesh->self_id.pub_key,
-                       sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
-    sigurdos::mesh::messageStoreAppend(msg);
 }
 
 // Shared ::ContactInfo → CompanionContact conversion, used by the host accessors
@@ -213,8 +213,8 @@ public:
     void selfInfo(CompanionSelfInfo& out) const override {
         memset(&out, 0, sizeof(out));
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-        if (g_mesh) memcpy(out.pub_key, g_mesh->self_id.pub_key, sizeof(out.pub_key));
-        strncpy(out.node_name, own_name, sizeof(out.node_name) - 1);
+        if (mesh_ptr()) memcpy(out.pub_key, mesh_ptr()->self_id.pub_key, sizeof(out.pub_key));
+        strncpy(out.node_name, meshOwnName(), sizeof(out.node_name) - 1);
         out.advert_type = p.advert_type;
         out.tx_power_dbm = p.tx_power_dbm;
         out.max_tx_power_dbm = 22;
@@ -248,18 +248,18 @@ public:
     uint32_t storageUsedKb() const override { return (uint32_t)(SPIFFS.usedBytes() / 1024); }
     uint32_t storageTotalKb() const override { return (uint32_t)(SPIFFS.totalBytes() / 1024); }
 
-    int contactCount() const override { return g_mesh ? g_mesh->getNumContacts() : 0; }
+    int contactCount() const override { return mesh_ptr() ? mesh_ptr()->getNumContacts() : 0; }
     bool getContact(int index, CompanionContact& out) const override {
-        if (!g_mesh) return false;
+        if (!mesh_ptr()) return false;
         ::ContactInfo c{};
-        if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
+        if (!mesh_ptr()->getContactByIdx((uint32_t)index, c)) return false;
         companionContactFromInfo(c, out);
         return true;
     }
     bool getContactByPubKeyPrefix(const uint8_t* prefix, size_t prefix_len,
                                   CompanionContact& out) const override {
-        if (!g_mesh || !prefix) return false;
-        ::ContactInfo* c = g_mesh->lookupContactByPubKey(prefix, (int)prefix_len);
+        if (!mesh_ptr() || !prefix) return false;
+        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(prefix, (int)prefix_len);
         if (!c) return false;
         companionContactFromInfo(*c, out);
         return true;
@@ -270,22 +270,22 @@ public:
     // expect every index to be addressable).
     int channelCount() const override { return MAX_GROUP_CHANNELS; }
     bool getChannel(int index, CompanionChannel& out) const override {
-        if (!g_mesh || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
+        if (!mesh_ptr() || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
         ChannelDetails cd{};
         // Use the slot-based BaseChatMesh accessor — returns true for any
         // valid index even when the slot is empty (name="" / secret=zeros).
-        if (!g_mesh->BaseChatMesh::getChannel(index, cd)) return false;
+        if (!mesh_ptr()->BaseChatMesh::getChannel(index, cd)) return false;
         memset(&out, 0, sizeof(out));
         strncpy(out.name, cd.name, sizeof(out.name) - 1);
         memcpy(out.secret, cd.channel.secret, sizeof(out.secret));
         return true;
     }
     bool setChannel(int index, const CompanionChannel& channel) override {
-        if (!g_mesh || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
+        if (!mesh_ptr() || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
         ChannelDetails cd{};
         strncpy(cd.name, channel.name, sizeof(cd.name) - 1);
         memcpy(cd.channel.secret, channel.secret, sizeof(cd.channel.secret));
-        if (!g_mesh->BaseChatMesh::setChannel(index, cd)) return false;
+        if (!mesh_ptr()->BaseChatMesh::setChannel(index, cd)) return false;
         sigurdos::mesh::saveChannels();
         sigurdos::mesh::syncRegionsFromChannels();
         return true;
@@ -296,36 +296,36 @@ public:
                                                uint32_t timestamp,
                                                const char* text) override {
         CompanionSendResult result{};
-        if (!sigurdos_mesh_radio_tx_allowed()) return result;
-        if (!g_mesh || !prefix || !text) return result;
-        ::ContactInfo* contact = g_mesh->lookupContactByPubKey(prefix, (int)prefix_len);
+        if (!meshRadioTxAllowed()) return result;
+        if (!mesh_ptr() || !prefix || !text) return result;
+        ::ContactInfo* contact = mesh_ptr()->lookupContactByPubKey(prefix, (int)prefix_len);
         if (!contact) return result;
 
         uint32_t ts = 0;
         if (txt_type == sigurdos::comms::COMPANION_TXT_CLI_DATA) {
             // CLI data: always use the local unique RTC time to avoid replay
             // protection failures. The app-provided timestamp is ignored.
-            ts = rtc_clock.getCurrentTimeUnique();
+            ts = meshRtcTimeUnique();
         } else {
-            ts = timestamp ? timestamp : rtc_clock.getCurrentTime();
+            ts = timestamp ? timestamp : meshRtcTime();
         }
         uint32_t expected_ack = 0;
         uint32_t est_timeout = 0;
         int send_result = MSG_SEND_FAILED;
         if (txt_type == sigurdos::comms::COMPANION_TXT_CLI_DATA) {
-            send_result = g_mesh->sendCommandData(*contact, ts, attempt, text, est_timeout);
+            send_result = mesh_ptr()->sendCommandData(*contact, ts, attempt, text, est_timeout);
         } else {
-            send_result = g_mesh->sendMessage(*contact, ts, attempt, text,
+            send_result = mesh_ptr()->sendMessage(*contact, ts, attempt, text,
                                               expected_ack, est_timeout);
         }
         if (send_result == MSG_SEND_FAILED) return result;
-        if (expected_ack) g_mesh->addPendingAck(contact->name, ts, expected_ack);
+        if (expected_ack) mesh_ptr()->addPendingAck(contact->name, ts, expected_ack);
 
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), contact->name);
-        storeOutgoingMessageForCompanion(conversation, text, ts, false);
-        queue_push_outgoing(conversation, own_name, text, ts);
-        sigurdos::mesh::pushPacketLog(own_name, 0, 0.0f, "TX_DM");
+        meshStoreOutgoingMessage(conversation, text, ts, false);
+        meshQueuePushOutgoing(conversation, meshOwnName(), text, ts);
+        sigurdos::mesh::pushPacketLog(meshOwnName(), 0, 0.0f, "TX_DM");
 
         result.ok = true;
         result.sent_flood = send_result == MSG_SEND_SENT_FLOOD;
@@ -337,17 +337,17 @@ public:
     CompanionSendResult sendChannelText(int channel_index, uint32_t timestamp,
                                         const char* text) override {
         CompanionSendResult result{};
-        if (!sigurdos_mesh_radio_tx_allowed()) return result;
-        if (!g_mesh || !text) return result;
+        if (!meshRadioTxAllowed()) return result;
+        if (!mesh_ptr() || !text) return result;
         ChannelDetails cd;
-        if (!g_mesh->BaseChatMesh::getChannel(channel_index, cd)) return result;
-        uint32_t ts = timestamp ? timestamp : rtc_clock.getCurrentTime();
-        if (!g_mesh->sendGroupMessage(ts, cd.channel, own_name, text, (int)strlen(text))) {
+        if (!mesh_ptr()->BaseChatMesh::getChannel(channel_index, cd)) return result;
+        uint32_t ts = timestamp ? timestamp : meshRtcTime();
+        if (!mesh_ptr()->sendGroupMessage(ts, cd.channel, meshOwnName(), text, (int)strlen(text))) {
             return result;
         }
-        storeOutgoingMessageForCompanion(cd.name, text, ts, true);
-        queue_push_outgoing(cd.name, own_name, text, ts);
-        sigurdos::mesh::pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
+        meshStoreOutgoingMessage(cd.name, text, ts, true);
+        meshQueuePushOutgoing(cd.name, meshOwnName(), text, ts);
+        sigurdos::mesh::pushPacketLog(meshOwnName(), 0, 0.0f, "TX_CHAN");
         result.ok = true;
         result.sent_flood = true;
         result.expected_ack = 0;
@@ -361,38 +361,38 @@ public:
                          uint16_t data_type,
                          const uint8_t* payload,
                          size_t payload_len) override {
-        if (!sigurdos_mesh_radio_tx_allowed()) return false;
-        if (!g_mesh || payload_len > sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) {
+        if (!meshRadioTxAllowed()) return false;
+        if (!mesh_ptr() || payload_len > sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) {
             return false;
         }
         if (payload_len > 0 && !payload) return false;
-        return g_mesh->sendGroupDataToChannel(channel_index, path, path_len,
+        return mesh_ptr()->sendGroupDataToChannel(channel_index, path, path_len,
                                               data_type, payload, (int)payload_len);
     }
 
     bool sendAdvert(bool flood) override {
-        if (!sigurdos_mesh_radio_tx_allowed()) return false;
+        if (!meshRadioTxAllowed()) return false;
         if (flood) {
             // Flood-scoped advert via existing broadcast path
             return sigurdos::mesh::sendAdvert();
         }
         // Zero-hop self advert — the upstream companion semantics
-        if (!g_mesh) return false;
+        if (!mesh_ptr()) return false;
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
         ::mesh::Packet* pkt;
         if (p.share_location && sigurdos_gps_has_fix()) {
-            pkt = g_mesh->createSelfAdvert(own_name,
+            pkt = mesh_ptr()->createSelfAdvert(meshOwnName(),
                 (double)sigurdos_gps_latitude(),
                 (double)sigurdos_gps_longitude());
         } else if (p.share_location && p.advert_location_valid) {
-            pkt = g_mesh->createSelfAdvert(own_name,
+            pkt = mesh_ptr()->createSelfAdvert(meshOwnName(),
                 (double)p.advert_lat / 1000000.0,
                 (double)p.advert_lon / 1000000.0);
         } else {
-            pkt = g_mesh->createSelfAdvert(own_name);
+            pkt = mesh_ptr()->createSelfAdvert(meshOwnName());
         }
         if (!pkt) return false;
-        g_mesh->sendZeroHop(pkt);
+        mesh_ptr()->sendZeroHop(pkt);
         return true;
     }
 
@@ -500,19 +500,19 @@ public:
     }
 
     bool exportPrivateKey(uint8_t* out64) const override {
-        if (!g_mesh || !out64) return false;
-        return g_mesh->self_id.writeTo(out64, PRV_KEY_SIZE) >= PRV_KEY_SIZE;
+        if (!mesh_ptr() || !out64) return false;
+        return mesh_ptr()->self_id.writeTo(out64, PRV_KEY_SIZE) >= PRV_KEY_SIZE;
     }
 
     bool importPrivateKey(const uint8_t* key64) override {
-        if (!g_mesh || !key64) return false;
+        if (!mesh_ptr() || !key64) return false;
         if (!::mesh::LocalIdentity::validatePrivateKey(key64)) return false;
-        g_mesh->self_id.readFrom(key64, PRV_KEY_SIZE);
-        saveIdentity(g_mesh->self_id);
+        mesh_ptr()->self_id.readFrom(key64, PRV_KEY_SIZE);
+        meshSaveSelfIdentity();
         // Invalidate ECDH shared secrets derived from the old identity and
         // reload persisted contacts with the new identity (matches upstream
         // MyMesh::CMD_IMPORT_PRIVATE_KEY — resetContacts + loadContacts).
-        g_mesh->resetAllContacts();
+        mesh_ptr()->resetAllContacts();
         sigurdos::mesh::loadContacts();
         return true;
     }
@@ -548,16 +548,16 @@ public:
 
     // ── Contact CRUD / connection ────────────────────────────
     bool getContactByPubKey(const uint8_t* pub_key, CompanionContact& out) const override {
-        if (!g_mesh || !pub_key) return false;
-        ::ContactInfo* c = g_mesh->lookupContactByPubKey(
+        if (!mesh_ptr() || !pub_key) return false;
+        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(
             pub_key, (int)sigurdos::comms::SIGURDOS_COMPANION_PUB_KEY_SIZE);
         if (!c) return false;
         companionContactFromInfo(*c, out);
         return true;
     }
     bool addOrUpdateContact(const CompanionContact& c) override {
-        if (!g_mesh) return false;
-        ::ContactInfo* existing = g_mesh->lookupContactByPubKey((const uint8_t*)c.pub_key, 32);
+        if (!mesh_ptr()) return false;
+        ::ContactInfo* existing = mesh_ptr()->lookupContactByPubKey((const uint8_t*)c.pub_key, 32);
         ::ContactInfo ci{};
         if (existing) ci = *existing;
         memcpy(ci.id.pub_key, c.pub_key, 32);
@@ -573,50 +573,50 @@ public:
         ci.lastmod = c.lastmod;
         bool ok;
         if (existing) { *existing = ci; ok = true; }
-        else ok = g_mesh->addContact(ci);
+        else ok = mesh_ptr()->addContact(ci);
         if (ok) sigurdos::mesh::saveContacts();
         return ok;
     }
     bool removeContactByPubKey(const uint8_t* pub_key) override {
-        if (!g_mesh || !pub_key) return false;
-        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!mesh_ptr() || !pub_key) return false;
+        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return false;
-        bool ok = g_mesh->BaseChatMesh::removeContact(*c);
+        bool ok = mesh_ptr()->BaseChatMesh::removeContact(*c);
         if (ok) sigurdos::mesh::saveContacts();
         return ok;
     }
     bool resetPathByPubKey(const uint8_t* pub_key) override {
-        if (!g_mesh || !pub_key) return false;
-        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!mesh_ptr() || !pub_key) return false;
+        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return false;
-        g_mesh->BaseChatMesh::resetPathTo(*c);
+        mesh_ptr()->BaseChatMesh::resetPathTo(*c);
         sigurdos::mesh::saveContacts();
         return true;
     }
     bool shareContactByPubKey(const uint8_t* pub_key) override {
-        if (!g_mesh || !pub_key) return false;
-        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!mesh_ptr() || !pub_key) return false;
+        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return false;
-        return g_mesh->shareContactZeroHop(*c);
+        return mesh_ptr()->shareContactZeroHop(*c);
     }
     int exportContactByPubKey(const uint8_t* pub_key, uint8_t* out, size_t out_cap) override {
-        if (!g_mesh || !out) return 0;
-        if (!pub_key) return g_mesh->exportSelfContact(own_name, out, out_cap);
-        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!mesh_ptr() || !out) return 0;
+        if (!pub_key) return mesh_ptr()->exportSelfContact(meshOwnName(), out, out_cap);
+        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return 0;
-        return g_mesh->exportContactBounded(*c, out, out_cap);
+        return mesh_ptr()->exportContactBounded(*c, out, out_cap);
     }
     bool importContact(const uint8_t* data, size_t len) override {
-        if (!g_mesh || !data) return false;
-        bool ok = g_mesh->importContact(data, (uint8_t)len);
+        if (!mesh_ptr() || !data) return false;
+        bool ok = mesh_ptr()->importContact(data, (uint8_t)len);
         if (ok) sigurdos::mesh::saveContacts();
         return ok;
     }
     bool hasConnectionTo(const uint8_t* pub_key) const override {
-        return g_mesh && pub_key && g_mesh->companionHasConnection(pub_key);
+        return mesh_ptr() && pub_key && mesh_ptr()->companionHasConnection(pub_key);
     }
     void logout(const uint8_t* pub_key) override {
-        if (g_mesh && pub_key) g_mesh->companionStopConnection(pub_key);
+        if (mesh_ptr() && pub_key) mesh_ptr()->companionStopConnection(pub_key);
     }
 
     // ── System ───────────────────────────────────────────────
@@ -640,20 +640,24 @@ public:
         s.queue_len = 0;
     }
     void radioStats(CompanionRadioStats& s) const override {
+        sigurdos::mesh::MeshRadioDriverStats d{};
+        sigurdos::mesh::meshRadioDriverStats(d);
         s.noise_floor = (int16_t)sigurdos::mesh::getNoiseFloor();
-        s.last_rssi = (int8_t)(radio_driver ? radio_driver->getLastRSSI() : 0);
-        s.last_snr_quarters = (int8_t)((radio_driver ? radio_driver->getLastSNR() : 0.0f) * 4.0f);
+        s.last_rssi = (int8_t)d.last_rssi;
+        s.last_snr_quarters = (int8_t)(d.last_snr * 4.0f);
         s.tx_air_secs = (uint32_t)(sigurdos::mesh::getTotalTxAirtimeMs() / 1000);
         s.rx_air_secs = (uint32_t)(sigurdos::mesh::getTotalRxAirtimeMs() / 1000);
     }
     void packetStats(CompanionPacketStats& s) const override {
-        s.recv = radio_driver ? radio_driver->getPacketsRecv() : 0;
-        s.sent = radio_driver ? radio_driver->getPacketsSent() : 0;
+        sigurdos::mesh::MeshRadioDriverStats d{};
+        sigurdos::mesh::meshRadioDriverStats(d);
+        s.recv = d.packets_recv;
+        s.sent = d.packets_sent;
         s.sent_flood = sigurdos::mesh::getNumSentFlood();
         s.sent_direct = sigurdos::mesh::getNumSentDirect();
         s.recv_flood = sigurdos::mesh::getNumRecvFlood();
         s.recv_direct = sigurdos::mesh::getNumRecvDirect();
-        s.recv_errors = radio_driver ? radio_driver->getPacketsRecvErrors() : 0;
+        s.recv_errors = d.packets_recv_errors;
     }
     size_t allowedRepeatFreqRanges(uint32_t* pairs, size_t max_pairs) const override {
         // Return the actual supported frequency range(s) for client-repeat.
@@ -686,19 +690,7 @@ public:
             // Check if a persisted private key exists (for $private scopes)
             const sigurdos::NodePrefs& p = sigurdos::prefs_get();
             if (p.default_scope_key_hex[0] != '\0' && active[0] == '$') {
-                // Hex-decode the stored key
-                for (int i = 0; i < 16; i++) {
-                    char hi = p.default_scope_key_hex[i * 2];
-                    char lo = p.default_scope_key_hex[i * 2 + 1];
-                    uint8_t b = 0;
-                    if (hi >= '0' && hi <= '9') b = (hi - '0') << 4;
-                    else if (hi >= 'a' && hi <= 'f') b = (hi - 'a' + 10) << 4;
-                    else if (hi >= 'A' && hi <= 'F') b = (hi - 'A' + 10) << 4;
-                    if (lo >= '0' && lo <= '9') b |= (lo - '0');
-                    else if (lo >= 'a' && lo <= 'f') b |= (lo - 'a' + 10);
-                    else if (lo >= 'A' && lo <= 'F') b |= (lo - 'A' + 10);
-                    key_out[i] = b;
-                }
+                sigurdos::mesh::scopeKeyHexDecode(p.default_scope_key_hex, key_out);
             } else {
                 memcpy(key_out, keys[0].key, 16);
             }
@@ -721,12 +713,7 @@ public:
         // so it survives reboot. The companion app provides it again on connect.
         if (key && name[0] == '$') {
             sigurdos::NodePrefs p = sigurdos::prefs_get();
-            static const char hex[] = "0123456789abcdef";
-            for (int i = 0; i < 16; i++) {
-                p.default_scope_key_hex[i * 2] = hex[key[i] >> 4];
-                p.default_scope_key_hex[i * 2 + 1] = hex[key[i] & 0x0F];
-            }
-            p.default_scope_key_hex[32] = '\0';
+            sigurdos::mesh::scopeKeyHexEncode(key, p.default_scope_key_hex);
             sigurdos::prefs_set(p);
         } else if (key) {
             // Public or #hashtag key — clear any persisted $private key
@@ -738,21 +725,21 @@ public:
         sigurdos::mesh::setActiveRegion(name);
     }
     void setFloodScopeOverride(const uint8_t* key, bool unscoped) override {
-        if (!g_mesh) return;
-        if (unscoped) g_mesh->clearActiveScope();
-        else if (key) g_mesh->setActiveScope(key);
-        else g_mesh->clearActiveScope();
+        if (!mesh_ptr()) return;
+        if (unscoped) mesh_ptr()->clearActiveScope();
+        else if (key) mesh_ptr()->setActiveScope(key);
+        else mesh_ptr()->clearActiveScope();
     }
 
     // ── Async requests ───────────────────────────────────────
     CompanionSendResult sendLogin(const uint8_t* pub_key, const char* password) override {
         CompanionSendResult r{};
-        if (!sigurdos_mesh_radio_tx_allowed()) return r;
-        if (!g_mesh || !pub_key) return r;
-        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!meshRadioTxAllowed()) return r;
+        if (!mesh_ptr() || !pub_key) return r;
+        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;
         uint32_t est_timeout = 0;
-        int res = g_mesh->sendLoginCompanion(*c, password ? password : "", est_timeout);
+        int res = mesh_ptr()->sendLoginCompanion(*c, password ? password : "", est_timeout);
         if (res == MSG_SEND_FAILED) return r;
         r.ok = true;
         r.sent_flood = (res == MSG_SEND_SENT_FLOOD);
@@ -769,10 +756,10 @@ public:
     CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
                                       const uint8_t* path, uint8_t path_len) override {
         CompanionSendResult r{};
-        if (!sigurdos_mesh_radio_tx_allowed()) return r;
-        if (!g_mesh) return r;
+        if (!meshRadioTxAllowed()) return r;
+        if (!mesh_ptr()) return r;
         uint32_t est_timeout = 0;
-        if (!g_mesh->sendTracePathRaw(tag, auth, flags, path, path_len, est_timeout)) return r;
+        if (!mesh_ptr()->sendTracePathRaw(tag, auth, flags, path, path_len, est_timeout)) return r;
         r.ok = true;
         r.sent_flood = false;
         r.expected_ack = tag;
@@ -781,11 +768,11 @@ public:
     }
     CompanionSendResult sendPathDiscovery(const uint8_t* pub_key) override {
         CompanionSendResult r{};
-        if (!sigurdos_mesh_radio_tx_allowed()) return r;
-        if (!g_mesh || !pub_key) return r;
-        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!meshRadioTxAllowed()) return r;
+        if (!mesh_ptr() || !pub_key) return r;
+        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;
-        uint32_t tag = g_mesh->sendPathDiscovery(c->name);
+        uint32_t tag = mesh_ptr()->sendPathDiscovery(c->name);
         if (tag == 0) return r;
         r.ok = true;
         r.sent_flood = true;
@@ -832,15 +819,15 @@ public:
         return false;
     }
     int signData(const uint8_t* data, size_t len, uint8_t* sig_out) override {
-        if (!g_mesh || !sig_out) return 0;
-        g_mesh->self_id.sign(sig_out, data, len);
+        if (!mesh_ptr() || !sig_out) return 0;
+        mesh_ptr()->self_id.sign(sig_out, data, len);
         return (int)sigurdos::comms::SIGURDOS_COMPANION_SIGNATURE_SIZE;
     }
     uint8_t getAdvertPath(const uint8_t* pub_key,
                           uint8_t* path_out, uint8_t max_path,
                           uint32_t* timestamp_out) const override {
-        if (!g_mesh || !pub_key) return 0;
-        const auto* entry = g_mesh->getAdvertPathByKey(pub_key);
+        if (!mesh_ptr() || !pub_key) return 0;
+        const auto* entry = mesh_ptr()->getAdvertPathByKey(pub_key);
         if (!entry) return 0;
         uint8_t plen = entry->path_len;
         if (path_out && plen > 0 && max_path > 0) {
@@ -860,9 +847,9 @@ private:
     // tested wrapper helpers, and read back the assigned tag for RESP_CODE_SENT.
     CompanionSendResult sendReqByPubKey(const uint8_t* pub_key, bool telemetry) {
         CompanionSendResult r{};
-        if (!sigurdos_mesh_radio_tx_allowed()) return r;
-        if (!g_mesh || !pub_key) return r;
-        ::ContactInfo* c = g_mesh->lookupContactByPubKey(pub_key, 32);
+        if (!meshRadioTxAllowed()) return r;
+        if (!mesh_ptr() || !pub_key) return r;
+        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;
         char name[32];
         strncpy(name, c->name, sizeof(name) - 1);
@@ -873,10 +860,10 @@ private:
         uint8_t want = telemetry ? (uint8_t)REQ_TYPE_GET_TELEMETRY_DATA
                                  : (uint8_t)REQ_TYPE_GET_STATUS;
         for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (g_mesh->_pending_reqs[i].in_use &&
-                g_mesh->_pending_reqs[i].req_type == want &&
-                strcmp(g_mesh->_pending_reqs[i].dest_name, name) == 0) {
-                r.expected_ack = g_mesh->_pending_reqs[i].tag;
+            if (mesh_ptr()->_pending_reqs[i].in_use &&
+                mesh_ptr()->_pending_reqs[i].req_type == want &&
+                strcmp(mesh_ptr()->_pending_reqs[i].dest_name, name) == 0) {
+                r.expected_ack = mesh_ptr()->_pending_reqs[i].tag;
                 break;
             }
         }
@@ -892,7 +879,7 @@ static WrapperCompanionHost g_companion_host;
 // ── Mesh → companion-bridge fan-out ──────────────────────────────────
 // These forward live mesh events to the phone app. They take primitive args
 // (so the declarations in mesh_wrapper.h stay free of MeshCore types) and look
-// up the full contact via g_mesh where the bridge needs a contact frame.
+// up the full contact via mesh_ptr() where the bridge needs a contact frame.
 
 void sigurdos::mesh::mesh_v2_companion_advert_push(const void* contact_info, bool is_new)
 {
@@ -951,3 +938,168 @@ void sigurdos::mesh::mesh_v2_companion_trace_push(uint32_t tag, uint32_t auth, u
         g_companion_bridge_ptr->pushTraceData(tag, auth, flags, path_hashes,
                                               path_snrs, path_len, final_snr_quarters);
 }
+
+void sigurdos::mesh::mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_time_ms)
+{
+    // Only forward if the bridge already exists — never allocate it here just to
+    // report an ACK (it is created lazily on the first incoming/companion path).
+    if (g_companion_bridge_ptr) {
+        g_companion_bridge_ptr->notifySendConfirmed(ack, trip_time_ms);
+    }
+}
+
+void sigurdos::mesh::mesh_v2_group_data_push(uint8_t channel_index,
+                              uint8_t path_len,
+                              int8_t snr_quarters,
+                              uint16_t data_type,
+                              const uint8_t* data,
+                              size_t data_len)
+{
+    if (data_len > sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) return;
+    if (CompanionBridge* b = companionBridge()) {
+        b->enqueueChannelData(channel_index, snr_quarters, path_len, data_type, data, data_len);
+    }
+}
+
+// ── BLE hardware-validation telemetry ────────────────────────────────
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE && \
+    defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION
+static constexpr const char* BLE_VALIDATION_LOG_PATH = "/ble_hw.txt";
+static uint32_t ble_validation_last_log_ms = 0;
+
+static void bleValidationAppendLine(const char* line)
+{
+    if (!line) return;
+    File f = SPIFFS.open(BLE_VALIDATION_LOG_PATH, FILE_APPEND);
+    if (!f) return;
+    f.println(line);
+    f.close();
+}
+
+static void bleValidationEmit(bool force)
+{
+    uint32_t now = millis();
+    if (!force && (uint32_t)(now - ble_validation_last_log_ms) < 5000u) return;
+    ble_validation_last_log_ms = now;
+
+    const sigurdos::comms::BleSerialObserverStats s = g_ble_serial.stats();
+    char line[320];
+    snprintf(line, sizeof(line),
+             "@ble_hw|ms=%lu|begun=%u|en=%u|conn=%u|adv=%u|authok=%lu|authfail=%lu|connect=%lu|disconnect=%lu|mtu=%u|rxw=%lu|rxd=%lu|rx=%lu|tx=%lu|txd=%lu|lrx=%u|ltx=%u",
+             (unsigned long)now,
+             s.begun ? 1u : 0u,
+             s.enabled ? 1u : 0u,
+             s.connected ? 1u : 0u,
+             s.advertising_expected ? 1u : 0u,
+             (unsigned long)s.auth_success_count,
+             (unsigned long)s.auth_failure_count,
+             (unsigned long)s.connect_count,
+             (unsigned long)s.disconnect_count,
+             (unsigned int)s.last_mtu,
+             (unsigned long)s.ble_write_count,
+             (unsigned long)s.ble_write_drop_count,
+             (unsigned long)s.rx_frame_count,
+             (unsigned long)s.tx_frame_count,
+             (unsigned long)s.tx_drop_count,
+             (unsigned int)s.last_rx_code,
+             (unsigned int)s.last_tx_code);
+    Serial.println(line);
+    bleValidationAppendLine(line);
+}
+
+static void bleValidationStartLog()
+{
+    SPIFFS.remove(BLE_VALIDATION_LOG_PATH);
+    bleValidationAppendLine("[ble-validation] log-start");
+    bleValidationEmit(true);
+}
+#elif defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+static void bleValidationEmit(bool) {}
+static void bleValidationStartLog() {}
+#else
+static void bleValidationEmit(bool) {}
+#endif
+
+// ── Adapter lifecycle (called from mesh_wrapper.cpp) ─────────────────
+
+void sigurdos::mesh::companionAdapterInit()
+{
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    // Generate a random per-device BLE PIN on first boot if not configured.
+    // Replaces the old hardcoded default of 123456 with a unique 6-digit PIN
+    // derived from ESP32 hardware RNG.
+    generate_random_ble_pin();
+
+    char ble_name[32];
+    strncpy(ble_name, meshOwnName(), sizeof(ble_name) - 1);
+    ble_name[sizeof(ble_name) - 1] = '\0';
+    g_ble_serial.begin("MeshCore-", ble_name, g_companion_host.blePin());
+    if (CompanionBridge* b = companionBridge()) {
+        b->begin(&g_ble_serial, &g_companion_host);
+        if (sigurdos::prefs_get().ble_enabled) {
+            bool enabled = b->setEnabled(true);
+#if defined(SIGURDOS_DEBUG) || \
+    (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
+            Serial.printf("[mesh] Companion BLE advertising %s as MeshCore-%s\n",
+                          enabled ? "enabled" : "failed", ble_name);
+#endif
+            (void)enabled;
+        } else {
+#if defined(SIGURDOS_DEBUG) || \
+    (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
+            Serial.println("[mesh] Companion BLE advertising disabled by prefs");
+#endif
+        }
+        bleValidationStartLog();
+    }
+#elif defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
+    g_usb_serial.begin(Serial);
+    if (CompanionBridge* b = companionBridge()) {
+        b->begin(&g_usb_serial, &g_companion_host);
+        b->setEnabled(true);
+    }
+#endif
+}
+
+void sigurdos::mesh::companionAdapterLoop()
+{
+    if (g_companion_bridge_ptr) g_companion_bridge_ptr->loop();
+    bleValidationEmit(false);
+}
+
+// ── Companion BLE public API (declared in mesh_wrapper.h) ────────────
+
+namespace sigurdos {
+namespace mesh {
+
+bool companionBleAvailable() {
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool companionBleSetEnabled(bool enabled) {
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    CompanionBridge* b = companionBridge();
+    if (!b || !b->setEnabled(enabled)) return false;
+#endif
+    // Only persist after successful enablement to avoid state mismatch
+    sigurdos::NodePrefs p = sigurdos::prefs_get();
+    p.ble_enabled = enabled;
+    sigurdos::prefs_set(p);
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool companionBleEnabled() { CompanionBridge* b = companionBridge(); return b && b->isEnabled(); }
+bool companionBleConnected() { CompanionBridge* b = companionBridge(); return b && b->isConnected(); }
+uint32_t companionBleLastSyncTime() { CompanionBridge* b = companionBridge(); return b ? b->lastSyncTime() : 0; }
+uint32_t companionBlePin() { return g_companion_host.blePin(); }
+
+} // namespace mesh
+} // namespace sigurdos

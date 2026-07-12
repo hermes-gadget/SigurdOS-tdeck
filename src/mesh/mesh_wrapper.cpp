@@ -5,14 +5,14 @@
 // MeshCore is MIT licensed (meshcore-dev/MeshCore).
 
 #include "mesh_wrapper.h"
+#include "mesh_wrapper_internal.h"
+#include "companion_adapter.h"
 #include "channel_validation.h"
 #include "public_channel.h"
 #include "message_store.h"
 #include "durable_fanout.h"
 #include "contact_store.h"
 #include "persistence_store.h"
-#include "comms/companion_bridge.h"
-#include "comms/observed_ble_interface.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
@@ -68,22 +68,8 @@ static uint32_t last_advert_time = 0;
 static bool     last_advert_success = false;
 static bool     last_advert_used_gps = false;
 
-static void formatDmConversation(char* out, size_t out_size, const char* name)
-{
-    if (!out || out_size == 0) return;
-
-    static constexpr char prefix[] = "DM: ";
-    size_t pos = 0;
-    for (const char* p = prefix; *p && pos + 1 < out_size; ++p) {
-        out[pos++] = *p;
-    }
-
-    const char* src = name ? name : "";
-    while (*src && pos + 1 < out_size) {
-        out[pos++] = *src++;
-    }
-    out[pos] = '\0';
-}
+// formatDmConversation moved to mesh_wrapper_internal.h (shared with the
+// companion adapter).
 
 static bool sigurdos_mesh_radio_tx_allowed()
 {
@@ -109,66 +95,6 @@ static uint32_t      msg_drop_count = 0;
 // reset to 0 when the chat screen is opened. Used by the home screen badge.
 static int           unread_count = 0;
 
-#include "companion_adapter.inc"
-
-#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE && \
-    defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION
-static constexpr const char* BLE_VALIDATION_LOG_PATH = "/ble_hw.txt";
-static uint32_t ble_validation_last_log_ms = 0;
-
-static void bleValidationAppendLine(const char* line)
-{
-    if (!line) return;
-    File f = SPIFFS.open(BLE_VALIDATION_LOG_PATH, FILE_APPEND);
-    if (!f) return;
-    f.println(line);
-    f.close();
-}
-
-static void bleValidationEmit(bool force)
-{
-    uint32_t now = millis();
-    if (!force && (uint32_t)(now - ble_validation_last_log_ms) < 5000u) return;
-    ble_validation_last_log_ms = now;
-
-    const sigurdos::comms::BleSerialObserverStats s = g_ble_serial.stats();
-    char line[320];
-    snprintf(line, sizeof(line),
-             "@ble_hw|ms=%lu|begun=%u|en=%u|conn=%u|adv=%u|authok=%lu|authfail=%lu|connect=%lu|disconnect=%lu|mtu=%u|rxw=%lu|rxd=%lu|rx=%lu|tx=%lu|txd=%lu|lrx=%u|ltx=%u",
-             (unsigned long)now,
-             s.begun ? 1u : 0u,
-             s.enabled ? 1u : 0u,
-             s.connected ? 1u : 0u,
-             s.advertising_expected ? 1u : 0u,
-             (unsigned long)s.auth_success_count,
-             (unsigned long)s.auth_failure_count,
-             (unsigned long)s.connect_count,
-             (unsigned long)s.disconnect_count,
-             (unsigned int)s.last_mtu,
-             (unsigned long)s.ble_write_count,
-             (unsigned long)s.ble_write_drop_count,
-             (unsigned long)s.rx_frame_count,
-             (unsigned long)s.tx_frame_count,
-             (unsigned long)s.tx_drop_count,
-             (unsigned int)s.last_rx_code,
-             (unsigned int)s.last_tx_code);
-    Serial.println(line);
-    bleValidationAppendLine(line);
-}
-
-static void bleValidationStartLog()
-{
-    SPIFFS.remove(BLE_VALIDATION_LOG_PATH);
-    bleValidationAppendLine("[ble-validation] log-start");
-    bleValidationEmit(true);
-}
-#elif defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-static void bleValidationEmit(bool) {}
-static void bleValidationStartLog() {}
-#else
-static void bleValidationEmit(bool) {}
-#endif
-
 struct IncomingMessageFanoutCtx {
     const char* sender;
     const char* channel;
@@ -186,7 +112,7 @@ struct IncomingMessageFanoutCtx {
 static bool persistIncomingMessage(void* raw)
 {
     IncomingMessageFanoutCtx* ctx = static_cast<IncomingMessageFanoutCtx*>(raw);
-    return ctx && storeIncomingMessageForCompanion(
+    return ctx && sigurdos::mesh::storeIncomingMessageForCompanion(
         ctx->sender, ctx->channel, ctx->text, ctx->rssi, ctx->snr,
         ctx->sender_timestamp, ctx->path_len, ctx->sender_prefix,
         ctx->txt_type, ctx->extra, ctx->extra_len);
@@ -251,25 +177,8 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
         persistIncomingMessage, presentIncomingMessage, &ctx);
 }
 
-void sigurdos::mesh::mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_time_ms) {
-    // Only forward if the bridge already exists — never allocate it here just to
-    // report an ACK (it is created lazily on the first incoming/companion path).
-    if (g_companion_bridge_ptr) {
-        g_companion_bridge_ptr->notifySendConfirmed(ack, trip_time_ms);
-    }
-}
-
-void sigurdos::mesh::mesh_v2_group_data_push(uint8_t channel_index,
-                              uint8_t path_len,
-                              int8_t snr_quarters,
-                              uint16_t data_type,
-                              const uint8_t* data,
-                              size_t data_len) {
-    if (data_len > sigurdos::comms::SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD) return;
-    if (CompanionBridge* b = companionBridge()) {
-        b->enqueueChannelData(channel_index, snr_quarters, path_len, data_type, data, data_len);
-    }
-}
+// mesh_v2_notify_send_confirmed and mesh_v2_group_data_push moved to
+// companion_adapter.cpp — they exist solely to feed the companion bridge.
 
 static void queue_push(const char* sender, const char* channel, const char* text) {
     if (msg_count >= MAX_QUEUED) {
@@ -347,6 +256,75 @@ static void saveIdentity(::mesh::LocalIdentity& id) {
     uint8_t buf[128];
     size_t len = id.writeTo(buf, sizeof(buf));
     sigurdos::mesh::identityStoreSave(buf, len);
+}
+
+// ════════════════════════════════════════════════════
+// Internal seam (mesh_wrapper_internal.h)
+// ════════════════════════════════════════════════════
+// Explicit accessors to the wrapper's file-scope state for
+// companion_adapter.cpp, which used to be textually #included here
+// (ARCH-001, #820).
+
+sigurdos::mesh::SigurdMeshV2* sigurdos::mesh::meshInstance() { return g_mesh; }
+
+const char* sigurdos::mesh::meshOwnName() { return own_name; }
+
+uint32_t sigurdos::mesh::meshRtcTime() { return rtc_clock.getCurrentTime(); }
+
+uint32_t sigurdos::mesh::meshRtcTimeUnique() { return rtc_clock.getCurrentTimeUnique(); }
+
+bool sigurdos::mesh::meshRadioTxAllowed() { return sigurdos_mesh_radio_tx_allowed(); }
+
+void sigurdos::mesh::meshRadioDriverStats(sigurdos::mesh::MeshRadioDriverStats& out) {
+    out.last_rssi = radio_driver ? radio_driver->getLastRSSI() : 0;
+    out.last_snr = radio_driver ? radio_driver->getLastSNR() : 0.0f;
+    out.packets_recv = radio_driver ? radio_driver->getPacketsRecv() : 0;
+    out.packets_sent = radio_driver ? radio_driver->getPacketsSent() : 0;
+    out.packets_recv_errors = radio_driver ? radio_driver->getPacketsRecvErrors() : 0;
+}
+
+void sigurdos::mesh::meshSaveSelfIdentity() {
+    if (g_mesh) saveIdentity(g_mesh->self_id);
+}
+
+void sigurdos::mesh::meshStoreOutgoingMessage(const char* conversation, const char* text,
+                                              uint32_t timestamp, bool is_channel)
+{
+    sigurdos::mesh::StoredMessage msg{};
+    strncpy(msg.conversation, conversation ? conversation : "", sizeof(msg.conversation) - 1);
+    strncpy(msg.sender, own_name, sizeof(msg.sender) - 1);
+    strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
+    msg.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
+    msg.is_self = true;
+    msg.is_channel = is_channel;
+    msg.acked = false;
+    msg.rssi = 0;
+    msg.snr_quarters = 0;
+    msg.path_len = 0xFF;  // self-sent; never mirrored to the app, value unused
+    if (g_mesh) memcpy(msg.sender_prefix, g_mesh->self_id.pub_key,
+                       sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
+    sigurdos::mesh::messageStoreAppend(msg);
+}
+
+void sigurdos::mesh::meshQueuePushOutgoing(const char* conversation, const char* sender,
+                                           const char* text, uint32_t timestamp)
+{
+    if (!conversation || !sender || !text) return;
+    if (msg_count >= MAX_QUEUED) {
+        msg_drop_count++;
+        return;
+    }
+    MeshMessage& m = msg_buf[msg_head];
+    strncpy(m.sender, sender, sizeof(m.sender) - 1);
+    m.sender[sizeof(m.sender) - 1] = '\0';
+    strncpy(m.channel, conversation, sizeof(m.channel) - 1);
+    m.channel[sizeof(m.channel) - 1] = '\0';
+    strncpy(m.text, text, sizeof(m.text) - 1);
+    m.text[sizeof(m.text) - 1] = '\0';
+    m.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
+    m.is_self = true;
+    msg_head = (msg_head + 1) % MAX_QUEUED;
+    msg_count++;
 }
 
 // ════════════════════════════════════════════════════
@@ -1009,45 +987,7 @@ bool init(bool spiffs_ok)
 
     sigurdos::mesh::messageStoreBegin();
 
-#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-    {
-        // Generate a random per-device BLE PIN on first boot if not configured.
-        // Replaces the old hardcoded default of 123456 with a unique 6-digit PIN
-        // derived from ESP32 hardware RNG.
-        generate_random_ble_pin();
-
-        char ble_name[32];
-        strncpy(ble_name, own_name, sizeof(ble_name) - 1);
-        ble_name[sizeof(ble_name) - 1] = '\0';
-        g_ble_serial.begin("MeshCore-", ble_name, g_companion_host.blePin());
-        if (CompanionBridge* b = companionBridge()) {
-            b->begin(&g_ble_serial, &g_companion_host);
-            if (sigurdos::prefs_get().ble_enabled) {
-                bool enabled = b->setEnabled(true);
-#if defined(SIGURDOS_DEBUG) || \
-    (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
-                Serial.printf("[mesh] Companion BLE advertising %s as MeshCore-%s\n",
-                              enabled ? "enabled" : "failed", ble_name);
-#endif
-                (void)enabled;
-            } else {
-#if defined(SIGURDOS_DEBUG) || \
-    (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
-                Serial.println("[mesh] Companion BLE advertising disabled by prefs");
-#endif
-            }
-            bleValidationStartLog();
-        }
-    }
-#elif defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
-    {
-        g_usb_serial.begin(Serial);
-        if (CompanionBridge* b = companionBridge()) {
-            b->begin(&g_usb_serial, &g_companion_host);
-            b->setEnabled(true);
-        }
-    }
-#endif
+    companionAdapterInit();
 
     // Auto-advert is now exclusively duration-limited and user-enabled:
     // the periodic loop() handler below checks advert_duration_h and only
@@ -1080,8 +1020,7 @@ void loop()
     if (!initialized) return;
     if (g_mesh) {
         g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
-        if (g_companion_bridge_ptr) g_companion_bridge_ptr->loop();
-        bleValidationEmit(false);
+        companionAdapterLoop();
     }
     rtc_clock.tick();
 
@@ -1144,7 +1083,7 @@ uint32_t sendMessage(const char* dest, const char* text) {
     if (ok) {
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), dest);
-        storeOutgoingMessageForCompanion(conversation, text, ts, false);
+        meshStoreOutgoingMessage(conversation, text, ts, false);
         pushPacketLog(own_name, 0, 0.0f, "TX_DM");
     }
     return ok ? ts : 0;
@@ -1158,7 +1097,7 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
         if (ch && strcmp(ch->name, channel_name) == 0) {
             sent = g_mesh->sendGroupText(i, text);
             if (sent) {
-                storeOutgoingMessageForCompanion(channel_name, text, getCurrentTime(), true);
+                meshStoreOutgoingMessage(channel_name, text, getCurrentTime(), true);
                 pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
             }
             break;
@@ -1800,34 +1739,7 @@ void setDutyCycle(uint8_t percent) {
     g_mesh->setDutyCycle(percent);
 }
 
-bool companionBleAvailable() {
-#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-    return true;
-#else
-    return false;
-#endif
-}
-
-bool companionBleSetEnabled(bool enabled) {
-#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-    CompanionBridge* b = companionBridge();
-    if (!b || !b->setEnabled(enabled)) return false;
-#endif
-    // Only persist after successful enablement to avoid state mismatch
-    sigurdos::NodePrefs p = sigurdos::prefs_get();
-    p.ble_enabled = enabled;
-    sigurdos::prefs_set(p);
-#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
-    return true;
-#else
-    return false;
-#endif
-}
-
-bool companionBleEnabled() { CompanionBridge* b = companionBridge(); return b && b->isEnabled(); }
-bool companionBleConnected() { CompanionBridge* b = companionBridge(); return b && b->isConnected(); }
-uint32_t companionBleLastSyncTime() { CompanionBridge* b = companionBridge(); return b ? b->lastSyncTime() : 0; }
-uint32_t companionBlePin() { return g_companion_host.blePin(); }
+// companionBle* moved to companion_adapter.cpp (they wrap the bridge).
 
 // ── Contact management extensions ────────────
     bool removeContact(const char* name) {
