@@ -333,15 +333,16 @@ Row6   Mic      LShift   f        j        k
 3. Request 1 byte after selecting key mode to confirm the C3 is ready
 4. Send `CMD_BRIGHTNESS` (0x01) with stored value
 5. Send `CMD_DEFAULT_BRIGHTNESS` (0x02) with min(30) clamping
-6. Send `CMD_MODE_KEY` (0x04) and keep it as the primary operating mode
-7. During polling, use bounded `CMD_MODE_RAW` (0x03) samples for Alt/Mic/Sym,
-   then restore `CMD_MODE_KEY` before the next ASCII read
+6. Send `CMD_MODE_KEY` (0x04) and keep it as the **only** operating mode
+7. Poll with one-byte key-mode reads only — never write `CMD_MODE_RAW` (0x03)
 
 ### Known Limitations
 
 - Ctrl state is not available from the current keyboard matrix.
-- C3 firmware without raw-mode commands remains usable in key-only mode, but
-  cannot expose the host-side Alt/Mic/Sym one-shot extensions.
+- Host-side Alt/Mic/Sym one-shot overlays that previously required raw matrix
+  mode are deferred; Shift/Sym that the C3 encodes into ASCII still work.
+- Physical human typing validation on a real T-Deck is required after keyboard
+  driver changes (mocks cannot prove C3 timing).
 
 ---
 

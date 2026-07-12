@@ -51,8 +51,8 @@ inline char sigurdos_keyboard_char_picker_base(uint32_t key)
 bool sigurdos_keyboard_init();
 
 // Poll the keyboard for new keypresses (call each frame).
-// Uses the C3's model-independent ASCII key mode as the primary path and brief
-// raw samples only for host-side Alt/Mic/Sym compatibility features.
+// Uses the C3's model-independent ASCII key mode (CMD 0x04) only.
+// Raw matrix mode (CMD 0x03) is intentionally never entered.
 void sigurdos_keyboard_scan();
 
 // Get the key code of the last keypress (ASCII/LVGL Unicode codepoint, 0 if none)

@@ -42,18 +42,17 @@
 // I2C write commands (master → slave):
 //   0x01 <duty>   Set backlight brightness (0-255)
 //   0x02 <duty>   Set default brightness for Alt+B (minimum: 30)
-//   0x03          Switch to raw mode (returns bitmask per column)
+//   0x03          Switch to raw mode (returns bitmask per column) — NOT USED
 //   0x04          Switch to key mode (returns ASCII characters)
 //
 // I2C read (master ← slave):
 //   Key mode: Wire.requestFrom(0x55, 1) → pre-decoded ASCII byte
-//   Raw mode: Wire.requestFrom(0x55, 5) → one bitmask per column
+//   Raw mode: Wire.requestFrom(0x55, 5) → one bitmask per column (unsupported)
 //
-// Key mode is the primary path. It lets the keyboard MCU own the physical
-// matrix mapping, which is required for T-Deck variants with different
-// matrices. A short raw sample accompanies each ASCII byte and also runs every
-// 20 ms for modifier-only taps. This recovers the host-side Alt/Mic/Sym features
-// that the MCU's ASCII protocol cannot express without raw-decoding normal keys.
+// Key mode (CMD 0x04) is the ONLY production path. Raw matrix mode (CMD 0x03)
+// is intentionally never entered — the C3 owns matrix mapping, modifiers that
+// produce ASCII (Shift/Sym), and Alt+B backlight. Host-side Alt/Mic overlays
+// that required mode-switching are deferred rather than violating the contract.
 //
 // Keymap (col × row, 5×7 matrix):
 //   Col0: q w sym a ALT SPC Mic
@@ -66,13 +65,11 @@
 static constexpr uint8_t  KB_I2C_ADDR              = sigurdos::i2c::KEYBOARD_ADDR;
 static constexpr uint8_t  CMD_BRIGHTNESS            = 0x01;
 static constexpr uint8_t  CMD_DEFAULT_BRIGHTNESS    = 0x02;
-static constexpr uint8_t  CMD_MODE_RAW              = 0x03;  // raw bitmask mode
-static constexpr uint8_t  CMD_MODE_KEY              = 0x04;  // ASCII key mode
+// CMD 0x03 (raw matrix mode) is intentionally unsupported in production.
+static constexpr uint8_t  CMD_MODE_KEY              = 0x04;  // ASCII key mode only
 static constexpr uint32_t KB_POLL_INTERVAL_MS       = 5;    // faster polling for responsive typing (was 10)
-static constexpr uint32_t KB_RAW_SAMPLE_INTERVAL_MS = 20;
 static constexpr uint8_t  KB_RAW_COLS               = 5;
 static constexpr uint8_t  KB_RAW_ROWS               = 7;
-static constexpr uint8_t  KB_RAW_UNSUPPORTED_LIMIT  = 3;
 
 enum class RawKeyKind : uint8_t {
     Printable,
@@ -155,7 +152,6 @@ void sigurdos_keyboard_reset_init_for_test()
 }
 
 static uint32_t last_poll_ms    = 0;
-static uint32_t last_raw_sample_ms = 0;
 static bool     shift_held      = false;
 static bool     ctrl_held       = false;
 static bool     alt_held        = false;
@@ -172,8 +168,8 @@ static bool     alt_combo_used  = false;
 static bool     mic_combo_used  = false;
 static bool     pending_key_valid = false;
 static uint8_t  pending_key     = 0;
-static RawSamplerSupport raw_sampler_support = RawSamplerSupport::Unknown;
-static uint8_t  raw_single_byte_samples = 0;
+// Raw matrix sampling is permanently disabled (key-mode-only contract).
+static constexpr RawSamplerSupport raw_sampler_support = RawSamplerSupport::Unavailable;
 
 // ── Ring buffer for key events ─────────────────────────────
 // Fixes single-slot latch that dropped fast key presses:
@@ -267,6 +263,11 @@ static void enqueue_key(uint32_t key_code)
 
 static bool set_keyboard_mode(uint8_t command)
 {
+    // Hard gate: production keyboard path is CMD 0x04 (key mode) only.
+    // Never write CMD 0x03 (raw matrix mode) to the C3.
+    if (command != CMD_MODE_KEY) {
+        return false;
+    }
     Wire.beginTransmission(KB_I2C_ADDR);
     Wire.write(command);
     return Wire.endTransmission() == 0;
@@ -390,15 +391,12 @@ static void hold_keymode_byte(int key_value)
 {
     if (key_value <= 0 || key_value == 0xFF) return;
 
-    // The C3 has a single-byte latch, so a second byte here is already a newer
-    // physical event. Preserve ordering rather than silently replacing it.
+    // Key-mode only: C3 delivers pre-decoded ASCII. Enqueue immediately —
+    // there is no raw-matrix correlation step.
     if (pending_key_valid) resolve_pending_key(nullptr);
     pending_key = (uint8_t)key_value;
     pending_key_valid = true;
-
-    if (raw_sampler_support == RawSamplerSupport::Unavailable) {
-        resolve_pending_key(nullptr);
-    }
+    resolve_pending_key(nullptr);
 }
 
 static bool poll_key_mode()
@@ -431,61 +429,6 @@ static bool poll_key_mode()
     return key_value > 0 && key_value != 0xFF;
 }
 
-static void sample_raw_modifiers()
-{
-    if (!set_keyboard_mode(CMD_MODE_RAW)) {
-        key_mode_ready = set_keyboard_mode(CMD_MODE_KEY);
-        resolve_pending_key(nullptr);
-        return;
-    }
-
-    uint8_t matrix[KB_RAW_COLS] = {0};
-    const uint8_t requested = Wire.requestFrom(KB_I2C_ADDR, (uint8_t)KB_RAW_COLS);
-    if (requested != KB_RAW_COLS) {
-#if defined(SIGURDOS_DEBUG)
-        Serial.printf("[kbd] raw-mode read: %u/%u bytes\n", requested, KB_RAW_COLS);
-#endif
-    }
-    uint8_t got = 0;
-    while (Wire.available() > 0 && got < KB_RAW_COLS) {
-        const int value = Wire.read();
-        if (value < 0) break;
-        matrix[got++] = (uint8_t)value;
-    }
-
-    // Always restore key mode before interpreting the sample. If this write
-    // fails, the next regular poll retries it before reading a byte.
-    key_mode_ready = set_keyboard_mode(CMD_MODE_KEY);
-
-    if (got == KB_RAW_COLS) {
-#if defined(SIGURDOS_DEBUG)
-        if (raw_sampler_support != RawSamplerSupport::Supported) {
-            Serial.println("[kbd] raw modifier sampling active");
-        }
-#endif
-        raw_sampler_support = RawSamplerSupport::Supported;
-        raw_single_byte_samples = 0;
-        memcpy(diag_raw_matrix, matrix, sizeof(diag_raw_matrix));
-        diag_raw_valid = true;
-        update_modifier_sample(matrix);
-        resolve_pending_key(matrix);
-        return;
-    }
-
-    // Older C3 firmware ignores CMD_MODE_RAW and still returns one ASCII byte.
-    // Preserve that byte, then stop mode sampling after the behavior repeats.
-    if (got == 1) {
-        hold_keymode_byte(matrix[0]);
-        if (raw_sampler_support == RawSamplerSupport::Unknown &&
-            ++raw_single_byte_samples >= KB_RAW_UNSUPPORTED_LIMIT) {
-            raw_sampler_support = RawSamplerSupport::Unavailable;
-#if defined(SIGURDOS_DEBUG)
-            Serial.println("[kbd] raw modifier sampling unavailable; using key mode only");
-#endif
-        }
-    }
-    resolve_pending_key(nullptr);
-}
 
 // ════════════════════════════════════════════════════════
 // PUBLIC API
@@ -548,17 +491,13 @@ bool sigurdos_keyboard_init()
         return false;
     }
 
-    // Key mode is the permanent primary path. Raw mode is entered only for a
-    // bounded modifier sample and is restored immediately by scan().
+    // Permanent key-mode-only contract (CMD 0x04). Never enter raw mode.
     if (!set_keyboard_mode(CMD_MODE_KEY)) {
         initialized = false;
         return false;
     }
 
     key_mode_ready = true;
-    raw_sampler_support = RawSamplerSupport::Unknown;
-    raw_single_byte_samples = 0;
-    last_raw_sample_ms = millis();
     initialized = true;
 #if defined(SIGURDOS_DEBUG)
     Serial.println("[kbd] initialized in key mode");
@@ -574,21 +513,8 @@ void sigurdos_keyboard_scan()
     if (now - last_poll_ms < KB_POLL_INTERVAL_MS) return;
     last_poll_ms = now;
 
-    // I2C clock is set once in TDeckBoard::begin().
-    if (raw_sampler_support != RawSamplerSupport::Unavailable &&
-        now - last_raw_sample_ms >= KB_RAW_SAMPLE_INTERVAL_MS) {
-        last_raw_sample_ms = now;
-        sample_raw_modifiers();
-        return;
-    }
-
-    if (poll_key_mode() && raw_sampler_support != RawSamplerSupport::Unavailable) {
-        // Correlate the ASCII byte with the matrix state while the physical
-        // chord is still held. Periodic samples remain necessary for a tapped
-        // modifier that produces no ASCII byte of its own.
-        last_raw_sample_ms = now;
-        sample_raw_modifiers();
-    }
+    // Key mode only — one-byte ASCII reads. Never switch to CMD 0x03.
+    (void)poll_key_mode();
 }
 
 int sigurdos_keyboard_get_key()
@@ -657,7 +583,6 @@ void sigurdos_keyboard_set_default_brightness(uint8_t duty)
 void sigurdos_keyboard_reset_scan_state()
 {
     last_poll_ms    = 0;
-    last_raw_sample_ms = 0;
     key_head  = 0;
     key_tail  = 0;
     key_count = 0;
@@ -678,8 +603,6 @@ void sigurdos_keyboard_reset_scan_state()
     mic_combo_used  = false;
     pending_key_valid = false;
     pending_key = 0;
-    raw_sampler_support = RawSamplerSupport::Unknown;
-    raw_single_byte_samples = 0;
     diag_last_key_mode_byte = 0;
     memset(diag_raw_matrix, 0, sizeof(diag_raw_matrix));
     diag_raw_valid = false;
