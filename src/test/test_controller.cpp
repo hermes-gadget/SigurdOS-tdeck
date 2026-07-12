@@ -148,6 +148,7 @@ static void print_help() {
     Serial.println(F("║  inputdiag   Dump touch/trackball diag║"));
     Serial.println(F("║  gpsdiag     Dump GPS UART/fix diag   ║"));
     Serial.println(F("║  contactstats Show contact counters ║"));
+    Serial.println(F("║  ble status|on|off|pin  Companion BLE control / PIN ║"));
     Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
     Serial.println(F("║  debug <feat> <1|0>  Toggle feature: display/mesh/ui/map/diag║"));
     Serial.println(F("║  debug all <1|0>     Enable/disable all debug features      ║"));
@@ -1463,6 +1464,42 @@ static bool dispatch(const char* line) {
         cmd_gpsdiag();
     } else if (strcmp(cmd, "contactstats") == 0) {
         cmd_contactstats();
+    } else if (strcmp(cmd, "ble") == 0) {
+        // Companion BLE control for autonomous official-app protocol testing.
+        // Usage:
+        //   ble status  -> available/enabled/connected/pin/name
+        //   ble on|off  -> enable/disable advertising
+        //   ble pin     -> print 6-digit pairing PIN only
+        const char* sub = arg ? arg : "status";
+        while (*sub == ' ') ++sub;
+        if (strcmp(sub, "pin") == 0) {
+            Serial.printf("[ble] pin=%06lu\n",
+                          (unsigned long)sigurdos::mesh::companionBlePin());
+        } else if (strcmp(sub, "on") == 0 || strcmp(sub, "off") == 0) {
+            const bool want = (strcmp(sub, "on") == 0);
+            if (!sigurdos::mesh::companionBleAvailable()) {
+                Serial.println("[ble] unavailable (firmware built without SIGURDOS_COMPANION_BLE)");
+            } else {
+                const bool ok = sigurdos::mesh::companionBleSetEnabled(want);
+                Serial.printf("[ble] set enabled=%u -> %s (now=%u connected=%u pin=%06lu)\n",
+                              want ? 1u : 0u,
+                              ok ? "OK" : "FAIL",
+                              sigurdos::mesh::companionBleEnabled() ? 1u : 0u,
+                              sigurdos::mesh::companionBleConnected() ? 1u : 0u,
+                              (unsigned long)sigurdos::mesh::companionBlePin());
+            }
+        } else {
+            // status (default)
+            const char* name = sigurdos::mesh::getOwnName();
+            Serial.printf(
+                "[ble] available=%u enabled=%u connected=%u pin=%06lu name=MeshCore-%s last_sync=%lu\n",
+                sigurdos::mesh::companionBleAvailable() ? 1u : 0u,
+                sigurdos::mesh::companionBleEnabled() ? 1u : 0u,
+                sigurdos::mesh::companionBleConnected() ? 1u : 0u,
+                (unsigned long)sigurdos::mesh::companionBlePin(),
+                (name && name[0]) ? name : "?",
+                (unsigned long)sigurdos::mesh::companionBleLastSyncTime());
+        }
     } else if (strcmp(cmd, "debug") == 0) {
         cmd_debug(arg);
     } else if (strcmp(cmd, "term-log") == 0) {

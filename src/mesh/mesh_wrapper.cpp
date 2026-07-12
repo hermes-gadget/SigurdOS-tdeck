@@ -857,14 +857,34 @@ bool init(bool spiffs_ok)
     // configured=true. Debug builds without FORCE_RADIO_PARAMS will use NVS values.
     // In production builds, we hold the radio in reset until the user configures it
     // via Settings → Radio Setup.
+    //
+    // Exception: companion USB (and forced-radio automation) must still bring up
+    // BaseChatMesh + CompanionBridge so official clients (meshcore.js / app.meshcore.nz
+    // serial path) can negotiate and configure the device. Use compile-time defaults
+    // until the user/app saves real prefs; do not TX-hold the entire mesh stack.
 #if !SIGURDOS_DEBUG
     {
         const auto& cp = sigurdos::prefs_get();
-        if (!cp.configured) {
+        const bool companion_usb =
+#if defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
+            true;
+#else
+            false;
+#endif
+        const bool force_radio =
+#if defined(SIGURDOS_DEBUG_FORCE_RADIO_PARAMS) && SIGURDOS_DEBUG_FORCE_RADIO_PARAMS
+            true;
+#else
+            false;
+#endif
+        if (!cp.configured && !companion_usb && !force_radio) {
             Serial.println("[mesh] Radio not configured — holding SX1262 in reset");
             pinMode(P_LORA_RESET, OUTPUT);
             digitalWrite(P_LORA_RESET, LOW);
             return true;
+        }
+        if (!cp.configured && companion_usb) {
+            Serial.println("[mesh] Companion USB: radio unconfigured — using compile-time defaults for app bridge");
         }
     }
 #endif
@@ -1020,8 +1040,10 @@ void loop()
     if (!initialized) return;
     if (g_mesh) {
         g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
-        companionAdapterLoop();
     }
+    // Companion USB/BLE bridge must poll even if mesh radio init was deferred
+    // (host is null-safe for most commands; loop no-ops without a bridge).
+    companionAdapterLoop();
     rtc_clock.tick();
 
     // ── Periodic auto-advert (interval in hours) ──────────

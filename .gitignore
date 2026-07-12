@@ -5,3 +5,4 @@ OVERVIEW.md
 webflasher/
 platformio.local.ini
 *.bak
+scripts/official-meshcore-client-test/node_modules/

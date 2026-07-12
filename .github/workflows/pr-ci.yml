@@ -92,6 +92,12 @@ jobs:
       - name: Build USA/Canada RX-only remote radio firmware
         run: pio run -e SigurdOS_TDeck_remote_test_radio_usca_rxonly
 
+      - name: Build companion USB firmware
+        run: pio run -e SigurdOS_TDeck_companion_usb
+
+      - name: Build BLE agent firmware
+        run: pio run -e SigurdOS_TDeck_ble_agent
+
       - name: Report firmware size
         if: always()
         run: |
@@ -103,6 +109,53 @@ jobs:
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  official-companion-client:
+    name: Official meshcore.js client package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: scripts/official-meshcore-client-test/package-lock.json
+
+      - name: Install official client test deps
+        working-directory: scripts/official-meshcore-client-test
+        run: npm ci
+
+      - name: Syntax-check matrix harness
+        working-directory: scripts/official-meshcore-client-test
+        run: node --check matrix.mjs
+
+      - name: Package self-test (no hardware)
+        working-directory: scripts/official-meshcore-client-test
+        run: |
+          # Hardware matrix is optional; without a serial device the harness
+          # must fail with connect exit code 2 (not crash / hang).
+          set +e
+          timeout 20s node matrix.mjs --port /dev/ttyUSB99 --label ci-no-device --timeout 2000
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "Expected connect failure without hardware: OK (exit 2)"
+            exit 0
+          fi
+          echo "Unexpected exit code without hardware: $code"
+          exit 1
+
+      - name: Summarize
+        run: |
+          {
+            echo '### Official meshcore.js client'
+            echo 'Package install + syntax check passed.'
+            echo 'Live USB matrix (Heltec / T-Deck companion_usb) remains a hardware gate — see scripts/official-meshcore-client-test/README.md'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   sanitize:
     name: Native ASan + UBSan

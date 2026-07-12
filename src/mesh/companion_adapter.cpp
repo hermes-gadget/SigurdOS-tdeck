@@ -1043,14 +1043,16 @@ void sigurdos::mesh::companionAdapterInit()
             bool enabled = b->setEnabled(true);
 #if defined(SIGURDOS_DEBUG) || \
     (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
-            SIG_LOGW("[mesh] Companion BLE advertising %s as MeshCore-%s",
-                     enabled ? "enabled" : "failed", ble_name);
+            SIG_LOGW("[mesh] Companion BLE advertising %s as MeshCore-%s pin=%06lu",
+                     enabled ? "enabled" : "failed", ble_name,
+                     (unsigned long)g_companion_host.blePin());
 #endif
             (void)enabled;
         } else {
 #if defined(SIGURDOS_DEBUG) || \
     (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
-            SIG_LOGW("[mesh] Companion BLE advertising disabled by prefs");
+            SIG_LOGW("[mesh] Companion BLE advertising disabled by prefs pin=%06lu",
+                     (unsigned long)g_companion_host.blePin());
 #endif
         }
         bleValidationStartLog();
