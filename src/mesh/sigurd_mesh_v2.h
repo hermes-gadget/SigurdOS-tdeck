@@ -294,8 +294,10 @@ public:
     };
     static constexpr int MAX_PENDING_ACKS = 16;
     PendingAck _pending_acks[MAX_PENDING_ACKS];
+    uint32_t _ack_drop_count = 0;  // incremented when full table evicts
 
     void addPendingAck(const char* name, uint32_t ts, uint32_t expected_ack);
+    uint32_t getAckDropCount() const { return _ack_drop_count; }
 
 
     ::ContactInfo* processAck(const uint8_t* data) override;

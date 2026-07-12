@@ -452,7 +452,7 @@ namespace mesh {
                 return;
             }
         }
-        // Table full — evict oldest entry
+        // Table full — evict oldest entry; count drops for observability
         int oldest = 0;
         uint32_t oldest_ms = _pending_acks[0].sent_at_ms;
         for (int i = 1; i < MAX_PENDING_ACKS; i++) {
@@ -461,6 +461,7 @@ namespace mesh {
                 oldest_ms = _pending_acks[i].sent_at_ms;
             }
         }
+        _ack_drop_count++;
         strncpy(_pending_acks[oldest].dest_name, name, sizeof(_pending_acks[oldest].dest_name)-1);
         _pending_acks[oldest].dest_name[sizeof(_pending_acks[oldest].dest_name)-1] = '\0';
         _pending_acks[oldest].timestamp = ts;
