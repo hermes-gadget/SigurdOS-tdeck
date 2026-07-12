@@ -69,6 +69,7 @@ static char own_name[32] = "SigurdOS";
 static uint32_t last_advert_time = 0;
 static bool     last_advert_success = false;
 static bool     last_advert_used_gps = false;
+static sigurdos::mesh::TimeSyncTracker time_sync_tracker;
 
 // formatDmConversation moved to mesh_wrapper_internal.h (shared with the
 // companion adapter).
@@ -852,6 +853,7 @@ void injectMessage(const char* sender, const char* channel, const char* text)
 
 bool init(bool spiffs_ok)
 {
+    time_sync_tracker.reset();
     // Initialize the mesh-layer board instance. The main.cpp board runs
     // begin() earlier in boot for peripheral power/I2C, but this instance
     // is the one used by the radio driver (via radio_driver → RadioLibWrapper
@@ -1496,11 +1498,16 @@ uint32_t getCurrentTime() {
     return initialized ? rtc_clock.getCurrentTime() : 0;
 }
 
-bool setSystemTime(uint32_t epoch_seconds) {
+bool setSystemTime(uint32_t epoch_seconds, TimeSource source) {
     if (!initialized) return false;
     rtc_clock.setCurrentTime(epoch_seconds);
     fallback_clock.setCurrentTime(epoch_seconds);  // always keep soft RTC in sync too
+    time_sync_tracker.record(source, epoch_seconds);
     return true;
+}
+
+TimeSyncStatus getTimeSyncStatus() {
+    return time_sync_tracker.status(getCurrentTime());
 }
 
 void getCurrentLocalDateTime(int* year, int* month, int* day, int* hour, int* minute) {
@@ -1523,18 +1530,7 @@ void getCurrentLocalDateTime(int* year, int* month, int* day, int* hour, int* mi
 }
 
 uint32_t makeEpoch(int year, int month, int day, int hour, int minute) {
-    // Compute UTC epoch directly — no dependency on TZ environment or
-    // platform-specific timegm(). Uses Howard Hinnant's date algorithm,
-    // correct for all dates in the 32-bit epoch range (1970–2106).
-    int y = year;
-    unsigned m = (unsigned)(month);
-    if (m < 3) { m += 12; y -= 1; }
-    int era = (y >= 0 ? y : y - 399) / 400;
-    unsigned yoe = (unsigned)(y - era * 400);
-    unsigned doy = (153u * (m - 3u) + 2u) / 5u + (unsigned)(day - 1);
-    unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
-    int days = (int)(era * 146097) + (int)doe - 719468;
-    return (uint32_t)days * 86400u + (uint32_t)hour * 3600u + (uint32_t)minute * 60u;
+    return utcToEpoch(year, month, day, hour, minute);
 }
 
 static uint32_t trace_tag_counter = 0;

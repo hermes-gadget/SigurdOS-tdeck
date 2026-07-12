@@ -94,6 +94,7 @@ test/
 |-- test_telemetry_protocol/        Telemetry record emission and field encoding
 |-- test_terminal/                  Terminal line cap behavior
 |-- test_theme/                     Theme contrast and color distinctness
+|-- test_time_state/                UTC epoch vectors and time-source/age tracking
 |-- test_touch/                     GT911 coordinate parsing and screen mapping
 |-- test_trackball/                 Trackball debounce, direction, and click events
 |-- test_ui_contract/               UI screen show APIs and screen function stability

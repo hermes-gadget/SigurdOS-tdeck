@@ -230,22 +230,21 @@ void loop()
     {   // Persisted background cadence plus explicit map/time-sync demand.
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();
         sigurdos_gps_service(gp.gps_enabled, gp.gps_interval);
-    }
-#if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
-    sigurdos::mesh::loop();
-    sigurdos_test_controller_loop();
-#else
-    sigurdos::mesh::loop();
-#endif
-    sigurdos::ui::loop();
-
-#if SIGURDOS_TELEMETRY
-    sigurdos::telemetry::loop();
-    // Report loop timing after telemetry processing
-    uint32_t loop_elapsed_us = micros() - loop_start_us;
-    sigurdos::telemetry::report_loop_timing(loop_elapsed_us);
-#endif
-#if SIGURDOS_DEBUG_DIAG
-    sigurdos::debug::loop();
-#endif
-}
+        if (gp.gps_enabled) {
+            uint32_t now = millis();
+            uint32_t interval_ms = (uint32_t)gp.gps_interval * 1000;
+            if (interval_ms == 0 || (now - last_gps_poll >= interval_ms)) {
+                last_gps_poll = now;
+                sigurdos_gps_loop();
+                SigurdOSGpsUtcTime gps_time{};
+                if (sigurdos_gps_get_pending_time(&gps_time)) {
+                    const uint32_t epoch = sigurdos::mesh::makeEpoch(
+                        gps_time.year, gps_time.month, gps_time.day,
+                        gps_time.hour, gps_time.minute) + gps_time.second;
+                    if (sigurdos::mesh::setSystemTime(
+                            epoch, sigurdos::mesh::TimeSource::GPS)) {
+                        sigurdos_gps_mark_time_synced();
+                    }
+                }
+            }
+        }

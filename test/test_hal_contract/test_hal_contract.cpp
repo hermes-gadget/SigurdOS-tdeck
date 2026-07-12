@@ -91,11 +91,15 @@ TEST(HalContractTest, GpsLifecycleAndFixApisStayStable) {
 TEST(HalContractTest, GpsUtcTimeApisStayStable) {
     using byte_fn = uint8_t (*)();
     using bool_fn = bool (*)();
+    using pending_fn = bool (*)(SigurdOSGpsUtcTime*);
+    using void_fn = void (*)();
 
     (void)static_cast<byte_fn>(sigurdos_gps_hour);
     (void)static_cast<byte_fn>(sigurdos_gps_minute);
     (void)static_cast<byte_fn>(sigurdos_gps_second);
     (void)static_cast<bool_fn>(sigurdos_gps_time_synced);
+    (void)static_cast<pending_fn>(sigurdos_gps_get_pending_time);
+    (void)static_cast<void_fn>(sigurdos_gps_mark_time_synced);
     SUCCEED();
 }
 

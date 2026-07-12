@@ -101,6 +101,9 @@ static void gps_diag_update(GpsDiagDialogCtx* ctx)
     if (!ctx || !ctx->label) return;
 
     const char rmc = sigurdos_gps_rmc_status() ? sigurdos_gps_rmc_status() : '-';
+    char time_status[48];
+    sigurdos::mesh::formatTimeSyncStatus(
+        sigurdos::mesh::getTimeSyncStatus(), time_status, sizeof(time_status));
     char body[448];
     snprintf(body, sizeof(body),
              "State: %s\n"
@@ -110,7 +113,8 @@ static void gps_diag_update(GpsDiagDialogCtx* ctx)
              "NMEA: valid=%lu gga=%lu rmc=%lu\n"
              "More: gsv=%lu gsa=%lu cs=%lu sw=%lu\n"
              "Pos: %.5f %.5f alt=%.1f\n"
-             "UTC: %02u:%02u:%02u sync=%d",
+             "UTC: %02u:%02u:%02u sync=%d\n"
+             "Clock: %s",
              gps_diag_assessment(),
              sigurdos_gps_has_fix() ? 1 : 0,
              (unsigned)sigurdos_gps_fix_quality(),
@@ -136,7 +140,8 @@ static void gps_diag_update(GpsDiagDialogCtx* ctx)
              (unsigned)sigurdos_gps_hour(),
              (unsigned)sigurdos_gps_minute(),
              (unsigned)sigurdos_gps_second(),
-             sigurdos_gps_time_synced() ? 1 : 0);
+             sigurdos_gps_time_synced() ? 1 : 0,
+             time_status);
     lv_label_set_text(ctx->label, body);
 }
 

@@ -21,7 +21,6 @@
 #include "gps_demand.h"
 #include "tdeck_pins.h"
 #include <Arduino.h>
-#include <sys/time.h>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -471,18 +470,14 @@ void sigurdos_gps_service(bool background_enabled, uint16_t background_interval_
         sigurdos_gps_loop();
     }
 }
-uint32_t sigurdos_gps_active_baud()  { return gps.active_baud; }
-uint32_t sigurdos_gps_chars_processed() { return gps.chars_processed; }
-uint32_t sigurdos_gps_sentences_received() { return gps.sentences_received; }
-uint32_t sigurdos_gps_valid_sentences() { return gps.valid_sentences; }
-uint32_t sigurdos_gps_checksum_failures() { return gps.checksum_failures; }
-uint32_t sigurdos_gps_baud_switches() { return gps.baud_switches; }
-uint32_t sigurdos_gps_gga_sentences() { return gps.gga_sentences; }
-uint32_t sigurdos_gps_rmc_sentences() { return gps.rmc_sentences; }
-uint32_t sigurdos_gps_gsv_sentences() { return gps.gsv_sentences; }
-uint32_t sigurdos_gps_gsa_sentences() { return gps.gsa_sentences; }
-uint8_t  sigurdos_gps_satellites_in_view() { return gps.satellites_in_view; }
-uint8_t  sigurdos_gps_fix_type() { return gps.fix_type; }
-uint8_t  sigurdos_gps_gsv_snr_max() { return gps.gsv_snr_max; }
-uint8_t  sigurdos_gps_gsv_snr_count() { return gps.gsv_snr_count; }
-char     sigurdos_gps_rmc_status() { return gps.rmc_status; }
+
+bool sigurdos_gps_get_pending_time(SigurdOSGpsUtcTime* out) {
+    if (!out || gps.time_synced || !gps.has_fix || gps.year < 2020 ||
+        gps.month < 1 || gps.month > 12 || gps.day < 1 || gps.day > 31) {
+        return false;
+    }
+    *out = {gps.year, gps.month, gps.day,
+            gps.hour, gps.minute, gps.second};
+    return true;
+}
+void sigurdos_gps_mark_time_synced() { gps.time_synced = true; }

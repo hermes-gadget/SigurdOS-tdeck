@@ -37,6 +37,15 @@ uint8_t  sigurdos_gps_fix_quality(); // 0=none, 1=GPS, 2=DGPS, 4=RTK
 bool     sigurdos_gps_has_fix();
 
 // Time from GPS (UTC)
+struct SigurdOSGpsUtcTime {
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+};
+
 uint8_t sigurdos_gps_hour();
 uint8_t sigurdos_gps_minute();
 uint8_t sigurdos_gps_second();
@@ -51,20 +60,7 @@ void sigurdos_gps_cancel_time_sync();
 SigurdOSGpsSyncStatus sigurdos_gps_time_sync_status();
 uint32_t sigurdos_gps_time_sync_remaining_ms();
 void sigurdos_gps_service(bool background_enabled, uint16_t background_interval_s);
-
-// UART/parser diagnostics for hardware validation and telemetry.
-uint32_t sigurdos_gps_active_baud();
-uint32_t sigurdos_gps_chars_processed();
-uint32_t sigurdos_gps_sentences_received();
-uint32_t sigurdos_gps_valid_sentences();
-uint32_t sigurdos_gps_checksum_failures();
-uint32_t sigurdos_gps_baud_switches();
-uint32_t sigurdos_gps_gga_sentences();
-uint32_t sigurdos_gps_rmc_sentences();
-uint32_t sigurdos_gps_gsv_sentences();
-uint32_t sigurdos_gps_gsa_sentences();
-uint8_t  sigurdos_gps_satellites_in_view();
-uint8_t  sigurdos_gps_fix_type(); // GSA fix type: 1=none, 2=2D, 3=3D
-uint8_t  sigurdos_gps_gsv_snr_max(); // Max non-zero GSV SNR/CN0 in latest GSV set
-uint8_t  sigurdos_gps_gsv_snr_count(); // Satellites with non-zero GSV SNR/CN0 in latest GSV set
-char     sigurdos_gps_rmc_status(); // 'A'=active, 'V'=void, 0=unknown
+// Returns one valid, not-yet-applied GPS UTC value. The caller must route it
+// through the system clock setter and mark it synced only after that succeeds.
+bool    sigurdos_gps_get_pending_time(SigurdOSGpsUtcTime* out);
+void    sigurdos_gps_mark_time_synced();

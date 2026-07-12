@@ -48,6 +48,18 @@ using namespace responsive;
 
 static lv_obj_t* g_date_row = nullptr;   // for live update after setting time
 static lv_obj_t* g_time_row = nullptr;
+static lv_obj_t* g_time_source_row = nullptr;
+
+static void update_time_source_row()
+{
+    if (!g_time_source_row || !lv_obj_is_valid(g_time_source_row)) return;
+    char status[48];
+    sigurdos::mesh::formatTimeSyncStatus(
+        sigurdos::mesh::getTimeSyncStatus(), status, sizeof(status));
+    char row[72];
+    snprintf(row, sizeof(row), "  Time source: %s", status);
+    update_row_label(g_time_source_row, row);
+}
 
 struct GitHubOtaDialogCtx {
     lv_obj_t* dialog;
@@ -543,7 +555,8 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
             }
         }
 
-        if (valid && sigurdos::mesh::setSystemTime(epoch)) {
+        if (valid && sigurdos::mesh::setSystemTime(
+                epoch, sigurdos::mesh::TimeSource::Manual)) {
             int yy, mmo, dd, hh, mmi;
             sigurdos::mesh::getCurrentLocalDateTime(&yy, &mmo, &dd, &hh, &mmi);
             char dbuf[32], tbuf[16];
@@ -551,6 +564,7 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
             snprintf(tbuf, sizeof(tbuf), "  Time: %02d:%02d", hh, mmi);
             update_row_label(g_date_row, dbuf);
             update_row_label(g_time_row, tbuf);
+            update_time_source_row();
             home_screen_update_time(tbuf);
             lv_obj_del_async(dlg);
         }
@@ -620,6 +634,24 @@ void settings_system_show()
         g_time_row = btn_time;
         lv_obj_add_event_cb(btn_time, [](lv_event_t* e) {
             datetime_set_dialog(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e)), false);
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
+    // Time source and last-sync age
+    {
+        char status[48];
+        sigurdos::mesh::formatTimeSyncStatus(
+            sigurdos::mesh::getTimeSyncStatus(), status, sizeof(status));
+        snprintf(buf, sizeof(buf), "  Time source: %s", status);
+        lv_obj_t* source_row = lv_list_add_btn(list, LV_SYMBOL_REFRESH, buf);
+        lv_obj_set_style_bg_color(
+            source_row, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(source_row, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(source_row, lv_color_hex(TEXT_PRIMARY), 0);
+        g_time_source_row = source_row;
+        lv_obj_add_event_cb(source_row, [](lv_event_t*) {
+            update_time_source_row();
         }, LV_EVENT_CLICKED, nullptr);
         row++;
     }
@@ -1256,6 +1288,7 @@ void settings_system_show()
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         g_date_row = nullptr;
         g_time_row = nullptr;
+        g_time_source_row = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 
     show_screen(scr);

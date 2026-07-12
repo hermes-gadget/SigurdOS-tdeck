@@ -658,7 +658,8 @@ AutoDiscoverRTCClock
 | Function | Description |
 |----------|-------------|
 | `getCurrentTime()` | Returns current Unix epoch timestamp |
-| `setSystemTime(epoch)` | Sets both the hardware RTC and ESP32 fallback clock |
+| `setSystemTime(epoch, source)` | Sets both clocks and records Manual, Companion, or GPS provenance |
+| `getTimeSyncStatus()` | Returns the last explicit source, sync epoch, and current age |
 | `getCurrentLocalDateTime(y,m,d,h,min)` | Decomposes epoch into local date/time components using `gmtime()` |
 | `makeEpoch(year,month,day,hour,minute)` | Builds an epoch timestamp from date/time components (UTC) |
 
@@ -666,7 +667,7 @@ AutoDiscoverRTCClock
 
 - MeshCore synchronises time across the network automatically via protocol messages
 - Time can be set manually via Terminal commands or programmatically via `setSystemTime()`
-- GPS time sync is implemented in `hal/gps.cpp` once a valid fix/date is available (`sigurdos_gps_time_synced()`).
+- GPS parsing exposes a valid UTC fix from `hal/gps.cpp`; the main loop applies it through `setSystemTime()` only while user-enabled GPS polling is already active. GPS is never enabled solely to maintain the clock.
 
 ---
 

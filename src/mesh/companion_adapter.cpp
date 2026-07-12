@@ -260,7 +260,8 @@ public:
         // Accept time from the companion client unconditionally.
         // The official app/CLI sets time on every connect; rejecting
         // because the device's onboard clock drifted ahead breaks sync.
-        return sigurdos::mesh::setSystemTime(epoch);
+        return sigurdos::mesh::setSystemTime(
+            epoch, sigurdos::mesh::TimeSource::Companion);
     }
     uint16_t batteryMilliVolts() const override { return sigurdos_battery_mv(); }
     uint32_t storageUsedKb() const override { return (uint32_t)(SPIFFS.usedBytes() / 1024); }

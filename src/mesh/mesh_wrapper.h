@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <helpers/RegionMap.h>  // for RegionEntry (must be before namespace)
+#include "time_state.h"
 
 // Node type identifiers from MeshCore adverts — kept local so UI code can filter.
 #define ADV_TYPE_NONE      0
@@ -190,7 +191,9 @@ void saveContactsIfDue(uint32_t now);
 
 // RTC time for UI comparisons
 uint32_t getCurrentTime();
-bool setSystemTime(uint32_t epoch_seconds);
+bool setSystemTime(uint32_t epoch_seconds,
+                   TimeSource source = TimeSource::Manual);
+TimeSyncStatus getTimeSyncStatus();
 
 void getCurrentLocalDateTime(int* year, int* month, int* day, int* hour, int* minute);
 uint32_t makeEpoch(int year, int month, int day, int hour, int minute);

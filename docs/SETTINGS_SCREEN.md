@@ -144,6 +144,7 @@ Same +/- pattern. Steps by 16, clamped to `[CHAT_MSGS_MIN_CAP, CHAT_MSGS_MAX]` =
 | `Name: <node_name>` | Read-only (set via onboarding) |
 | `SD Card: Mounted / Not mounted` | Read-only status from `sigurdos_sdcard_mounted()` |
 | `Date: YYYY-MM-DD` / `Time: HH:MM` | Open the date/time dialog (below) |
+| `Time source: <source>, <age>` | Shows Manual, Companion, GPS, or Unknown; tap to refresh the age |
 | `Run Setup Wizard` | `navigate_to(Screen::Onboarding)` |
 | `Device PIN: Set/Change` | PIN protecting Settings entry (`NodePrefs::device_pin`) |
 | `WiFi: <ssid> / Not set` | Stores credentials for GitHub OTA (`NodePrefs::wifi_ssid/wifi_password`) |
@@ -169,7 +170,7 @@ Self-OTA rows refuse to start when the firmware detects it is running under bmor
 ```
 
 - **Date mode** validates `YYYY-MM-DD` (year > 2020, month 1–12, day 1–31); **time mode** validates `HH:MM` (0–23 / 0–59). Invalid input shows a red feedback label.
-- On success the dialog combines the new value with the current date/time, builds an epoch via `sigurdos::mesh::makeEpoch()`, applies it with `sigurdos::mesh::setSystemTime()`, refreshes both row labels and the home-screen clock, and closes.
+- On success the dialog combines the new value with the current date/time, builds an epoch via `sigurdos::mesh::makeEpoch()`, applies it with `sigurdos::mesh::setSystemTime()`, records Manual as the source, refreshes the date/time/source rows and the home-screen clock, and closes.
 
 ---
 

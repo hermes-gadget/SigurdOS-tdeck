@@ -273,7 +273,8 @@ static void build_step2()
         }
 
         uint32_t epoch = sigurdos::mesh::makeEpoch(ny, nm, nd, nh, nmi);
-        if (!sigurdos::mesh::setSystemTime(epoch)) {
+        if (!sigurdos::mesh::setSystemTime(
+                epoch, sigurdos::mesh::TimeSource::Manual)) {
             if (s_dt_error_label) lv_label_set_text(s_dt_error_label, "Clock not ready");
             return;
         }

@@ -509,6 +509,34 @@ TEST_F(GPSIntegrationTest, RMCWithEmptySpeedKeepsHeadingInFieldEight) {
     EXPECT_EQ(sigurdos_gps_rmc_status(), 'A');
 }
 
+TEST_F(GPSIntegrationTest, ValidFixExposesUtcUntilClockAcceptsIt) {
+    feed_body("GPRMC,123519,A,4807.038,N,01131.000,E,0.0,0.0,290224,,,A");
+    feed_body("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+
+    SigurdOSGpsUtcTime utc{};
+    ASSERT_TRUE(sigurdos_gps_get_pending_time(&utc));
+    EXPECT_EQ(utc.year, 2024);
+    EXPECT_EQ(utc.month, 2);
+    EXPECT_EQ(utc.day, 29);
+    EXPECT_EQ(utc.hour, 12);
+    EXPECT_EQ(utc.minute, 35);
+    EXPECT_EQ(utc.second, 19);
+    EXPECT_FALSE(sigurdos_gps_time_synced());
+
+    sigurdos_gps_mark_time_synced();
+
+    EXPECT_TRUE(sigurdos_gps_time_synced());
+    EXPECT_FALSE(sigurdos_gps_get_pending_time(&utc));
+}
+
+TEST_F(GPSIntegrationTest, FixWithoutValidDateDoesNotOfferClockSync) {
+    feed_body("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+
+    SigurdOSGpsUtcTime utc{};
+    EXPECT_FALSE(sigurdos_gps_get_pending_time(&utc));
+    EXPECT_FALSE(sigurdos_gps_time_synced());
+}
+
 TEST_F(GPSIntegrationTest, GsvAndGsaDiagnosticsTrackSkyViewBeforeFix) {
     feed("$GPGSV,3,1,11,03,03,111,00,04,15,270,00,06,01,010,00,13,06,292,00*74\n");
     feed("$GPGSA,A,3,04,05,,09,12,,,24,,,,,2.5,1.3,2.1*39\n");
@@ -551,53 +579,5 @@ TEST_F(GPSIntegrationTest, GNVariantsUpdateAcquisitionDiagnostics) {
     EXPECT_EQ(sigurdos_gps_gsv_snr_max(), 0);
     EXPECT_EQ(sigurdos_gps_gsv_snr_count(), 0);
 }
-
-// ── GPS epoch arithmetic validation (BUG-001 fix) ────
-// Replicates the correct Howard Hinnant algorithm used in gps.cpp
-// and validate it against known Unix epoch ground truth for a range
-// of dates the GPS parser typically feeds it, including leap years,
-// year boundaries, and the 1970 origin.
-
-static uint32_t computeEpoch(int year, int month, int day, int hour, int minute) {
-    int y = year;
-    unsigned m = (unsigned)month;
-    if (m < 3) { m += 12; y -= 1; }
-    int era = (y >= 0 ? y : y - 399) / 400;
-    unsigned yoe = (unsigned)(y - era * 400);
-    unsigned doy = (153u * (m - 3u) + 2u) / 5u + (unsigned)(day - 1);
-    unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
-    int days = (int)(era * 146097) + (int)doe - 719468;
-    return (uint32_t)days * 86400u + (uint32_t)hour * 3600u + (uint32_t)minute * 60u;
-}
-
-struct EpochCase {
-    int year, month, day, hour, minute;
-    uint32_t expected;
-};
-
-class EpochTest : public ::testing::TestWithParam<EpochCase> {};
-
-TEST_P(EpochTest, ComputesCorrectEpoch) {
-    const auto& c = GetParam();
-    uint32_t result = computeEpoch(c.year, c.month, c.day, c.hour, c.minute);
-    EXPECT_EQ(result, c.expected)
-        << "  date: " << c.year << "-" << c.month << "-" << c.day
-        << " " << c.hour << ":" << c.minute;
-}
-
-INSTANTIATE_TEST_SUITE_P(EpochTable, EpochTest,
-    ::testing::Values(
-        EpochCase{2026, 7, 10, 12, 0, 1783684800U},
-        EpochCase{2024, 1, 1, 0, 0, 1704067200U},
-        EpochCase{2020, 3, 1, 0, 0, 1583020800U},
-        EpochCase{2020, 1, 1, 0, 0, 1577836800U},
-        EpochCase{2030, 12, 31, 23, 59, 1924991940U},
-        EpochCase{1970, 1, 1, 0, 0, 0U},
-        EpochCase{2000, 1, 1, 0, 0, 946684800U},
-        EpochCase{2010, 6, 15, 8, 30, 1276590600U},
-        EpochCase{2023, 2, 28, 12, 0, 1677585600U},
-        EpochCase{2024, 2, 29, 12, 0, 1709208000U},       // leap day
-        EpochCase{2025, 12, 25, 0, 0, 1766620800U}
-    ));
 
 } // anonymous namespace
