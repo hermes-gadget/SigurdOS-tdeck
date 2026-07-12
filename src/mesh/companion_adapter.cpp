@@ -21,6 +21,7 @@
 #include "hal/prefs.h"
 #include "hal/gps.h"
 #include "hal/battery.h"
+#include "diagnostics/log.h"
 
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -1003,7 +1004,9 @@ static void bleValidationEmit(bool force)
              (unsigned long)s.tx_drop_count,
              (unsigned int)s.last_rx_code,
              (unsigned int)s.last_tx_code);
-    Serial.println(line);
+    // Route through SIG_LOG* so production sources stay clear of the raw
+    // serial print CI gate. SPIFFS retains the bare validation line for parsers.
+    SIG_LOGW("%s", line);
     bleValidationAppendLine(line);
 }
 
@@ -1040,14 +1043,14 @@ void sigurdos::mesh::companionAdapterInit()
             bool enabled = b->setEnabled(true);
 #if defined(SIGURDOS_DEBUG) || \
     (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
-            Serial.printf("[mesh] Companion BLE advertising %s as MeshCore-%s\n",
-                          enabled ? "enabled" : "failed", ble_name);
+            SIG_LOGW("[mesh] Companion BLE advertising %s as MeshCore-%s",
+                     enabled ? "enabled" : "failed", ble_name);
 #endif
             (void)enabled;
         } else {
 #if defined(SIGURDOS_DEBUG) || \
     (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
-            Serial.println("[mesh] Companion BLE advertising disabled by prefs");
+            SIG_LOGW("[mesh] Companion BLE advertising disabled by prefs");
 #endif
         }
         bleValidationStartLog();
