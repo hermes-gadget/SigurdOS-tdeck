@@ -188,6 +188,30 @@ TEST_F(MessageStoreTest, DedupIdentityIncludesTextTypeAndSenderPrefix) {
     EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 3);
 }
 
+TEST_F(MessageStoreTest, DistinctBodiesInSameSecondAreNotDeduplicated) {
+    auto first = makeMsg("DM: Alice", "Alice", "first", 42, false, false);
+    auto second = first;
+    std::strncpy(second.text, "second", sizeof(second.text) - 1);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(first));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(second));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(first));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 2);
+}
+
+TEST_F(MessageStoreTest, DistinctSignedExtrasInSameSecondAreNotDeduplicated) {
+    auto first = makeMsg("DM: Alice", "Alice", "signed", 42, false, false);
+    first.txt_type = 2;
+    first.extra_len = 4;
+    first.extra[0] = 0x11;
+    auto second = first;
+    second.extra[0] = 0x22;
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(first));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(second));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 2);
+}
+
 TEST_F(MessageStoreTest, LegacyZeroPrefixFallsBackToSenderNameForDedup) {
     auto current = makeMsg("DM: Alice", "Alice", "same", 42, false, false);
     auto legacy = current;
@@ -246,6 +270,35 @@ TEST_F(MessageStoreTest, RebootMarksOnlyPendingSelfDmsAsLost) {
     EXPECT_TRUE(out[1].confirmation_lost);
     EXPECT_FALSE(out[2].confirmation_lost);
     EXPECT_FALSE(out[3].confirmation_lost);
+}
+
+TEST_F(MessageStoreTest, DeliveryStateUpdatesAtEverySupportedStoreSize) {
+    auto appendThrough = [&](uint32_t target) {
+        for (uint32_t i = (uint32_t)sigurdos::mesh::messageStoreCount() + 1;
+             i <= target; ++i) {
+            char text[24];
+            std::snprintf(text, sizeof(text), "fill%lu", (unsigned long)i);
+            const bool self = i == 256 || i == 257 || i == 448 || i == 512;
+            ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+                makeMsg("DM: Alice", self ? "self" : "Alice", text, i,
+                        self, false)));
+        }
+    };
+
+    appendThrough(256);
+    EXPECT_TRUE(sigurdos::mesh::messageStoreMarkConfirmationLost("DM: Alice", 256));
+    appendThrough(257);
+    EXPECT_TRUE(sigurdos::mesh::messageStoreMarkConfirmationLost("DM: Alice", 257));
+    appendThrough(448);
+    EXPECT_TRUE(sigurdos::mesh::messageStoreMarkConfirmationLost("DM: Alice", 448));
+    appendThrough(512);
+    EXPECT_EQ(sigurdos::mesh::messageStoreMarkOrphanedPendingLost(), 1);
+
+    std::vector<sigurdos::mesh::StoredMessage> out(512);
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(out.data(), (int)out.size()), 512);
+    for (uint32_t timestamp : {256U, 257U, 448U, 512U}) {
+        EXPECT_TRUE(out[timestamp - 1].confirmation_lost) << timestamp;
+    }
 }
 
 TEST_F(MessageStoreTest, StoreIdIsMonotonic) {
@@ -385,6 +438,33 @@ TEST_F(MessageStoreTest, Version5MigratesWithUnknownAttempt) {
     EXPECT_STREQ(out.text, "legacy-v5");
     EXPECT_FALSE(out.attempt_known);
     EXPECT_TRUE(out.route_known);
+}
+
+TEST_F(MessageStoreTest, Version5MigrationKeepsCompleteRecordsBeforeTornTail) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "first", 1, false, false)));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Bob", "Bob", "second", 2, false, false)));
+    auto v5 = downgradeStore(readFile(path), 5);
+    v5.resize(sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
+              sigurdos::mesh::detail::MESSAGE_STORE_V5_RECORD_SIZE + 17);
+    writeFile(path, v5);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_STREQ(out.text, "first");
+}
+
+TEST_F(MessageStoreTest, UnknownVersionIsPreservedInsteadOfErased) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "future", 1, false, false)));
+    auto future = readFile(path);
+    future[4] = sigurdos::mesh::detail::MESSAGE_STORE_VERSION + 1;
+    writeFile(path, future);
+
+    EXPECT_FALSE(sigurdos::mesh::messageStoreBegin());
+    EXPECT_EQ(readFile(path), future);
 }
 
 TEST_F(MessageStoreTest, BeginRecoversRecordWrittenBeforeHeaderCount) {
