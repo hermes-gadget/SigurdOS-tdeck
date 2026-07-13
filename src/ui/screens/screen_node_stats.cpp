@@ -245,9 +245,9 @@ void node_stats_screen_show()
         lv_label_set_text(cfl, "Reset");
         lv_obj_center(cfl);
         lv_obj_add_event_cb(confirm_btn, [](lv_event_t* e_confirm) {
+            (void)e_confirm;
             sigurdos::mesh::resetPacketStats();
-            lv_obj_del_async(lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e_confirm)));
-            navigate_to(Screen::NodeStats); // refresh
+            refresh_current_screen();
         }, LV_EVENT_CLICKED, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
     row++;

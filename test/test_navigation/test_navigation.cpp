@@ -98,6 +98,10 @@ void go_back() {
     nav_log.push_back("back:" + std::to_string((int)target));
 }
 
+void refresh_current_screen() {
+    nav_log.push_back("refresh:" + std::to_string((int)current));
+}
+
 bool handle_back_swipe(SigurdOSEvent event) {
     if (event != SigurdOSEvent::Left) {
         back_swipe_commit = 0;
@@ -149,6 +153,21 @@ TEST_F(NavigationTest, NavigateToSameScreenIsNoop) {
     EXPECT_TRUE(history_empty()); // no push
     EXPECT_FALSE(can_go_back());
     EXPECT_TRUE(nav_log.empty());
+}
+
+TEST_F(NavigationTest, RefreshCurrentScreenPreservesRouteAndHistory) {
+    navigate_to(Screen::Chat);
+    const int history_before = history_top;
+
+    refresh_current_screen();
+
+    EXPECT_EQ(current, Screen::Chat);
+    EXPECT_EQ(history_top, history_before);
+    ASSERT_EQ(nav_log.size(), 2u);
+    EXPECT_EQ(nav_log.back(), "refresh:1");
+
+    go_back();
+    EXPECT_EQ(current, Screen::Home);
 }
 
 TEST_F(NavigationTest, NavigateToAllScreens) {
