@@ -396,7 +396,7 @@ protected:
         sigurdos_gps_loop();
     }
 
-    void feed_body(const char* body) {
+    void queue_body(const char* body) {
         uint8_t checksum = 0;
         for (const char* p = body; p && *p; p++) {
             checksum ^= (uint8_t)(*p);
@@ -404,7 +404,13 @@ protected:
 
         char sentence[160];
         snprintf(sentence, sizeof(sentence), "$%s*%02X\n", body, checksum);
-        feed(sentence);
+        Serial1.mock_clear_rx();
+        Serial1.mock_queue_rx(sentence);
+    }
+
+    void feed_body(const char* body) {
+        queue_body(body);
+        sigurdos_gps_loop();
     }
 };
 
@@ -621,6 +627,21 @@ TEST_F(GPSIntegrationTest, ValidFixExposesUtcUntilClockAcceptsIt) {
     EXPECT_TRUE(sigurdos_gps_time_synced());
     EXPECT_EQ(sigurdos_gps_time_sync_status(), SigurdOSGpsSyncStatus::Success);
     EXPECT_FALSE(sigurdos_gps_get_pending_time(&utc));
+}
+
+TEST_F(GPSIntegrationTest, OneShotServicePublishesTimeWithBackgroundDisabled) {
+    sigurdos_gps_start_time_sync();
+    feed_body("GPRMC,123519,A,4807.038,N,01131.000,E,0.0,0.0,290224,,,A");
+    queue_body("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+
+    arduino_mock::current_millis = 200;
+    sigurdos_gps_service(false, 60);
+
+    SigurdOSGpsUtcTime utc{};
+    ASSERT_TRUE(sigurdos_gps_get_pending_time(&utc));
+    EXPECT_EQ(utc.year, 2024);
+    EXPECT_EQ(utc.second, 19);
+    EXPECT_EQ(sigurdos_gps_time_sync_status(), SigurdOSGpsSyncStatus::Waiting);
 }
 
 TEST_F(GPSIntegrationTest, FixWithoutValidDateDoesNotOfferClockSync) {
