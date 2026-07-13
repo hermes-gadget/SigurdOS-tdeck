@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Ben
 
 #include "regions.h"
+#include "persistence_store.h"
 #include "../hal/prefs.h"
 #include <SPIFFS.h>
 #include <cstring>
@@ -13,6 +14,10 @@ namespace mesh {
 
 static RegionMap*       g_region_map = nullptr;
 static TransportKeyStore* g_region_store = nullptr;
+static bool g_regions_dirty = false;
+
+static constexpr const char* REGION_PATH = "/regions2";
+static constexpr const char* REGION_RAW_PATH = "/regions2.raw";
 
 // Active scope name cache (avoids repeated NodePrefs reads).
 // Empty string = wildcard/unscoped.
@@ -33,9 +38,23 @@ RegionMap* getRegionMap() {
 
 bool regionsLoad() {
     if (!g_region_map) return false;
-    if (!SPIFFS.begin(false)) return false;
+    if (!SPIFFS.begin(false)) {
+        g_regions_dirty = true;
+        return false;
+    }
 
-    bool ok = g_region_map->load(&SPIFFS, "/regions2");
+    const detail::RegionStoreFormat format =
+        detail::regionStorePrepareLoad(REGION_PATH);
+    bool ok = format != detail::RegionStoreFormat::Invalid &&
+        g_region_map->load(&SPIFFS, REGION_PATH);
+    g_regions_dirty = !ok;
+
+    // A validated upstream-format file is safe to load, then immediately
+    // upgraded. If the upgrade cannot commit, retain the loaded map and its
+    // dirty flag so a later regionsSave() can retry it.
+    if (ok && format == detail::RegionStoreFormat::Legacy) {
+        regionsSave();
+    }
 
     // Restore active scope from NodePrefs
     NodePrefs np = prefs_get();
@@ -51,10 +70,22 @@ bool regionsLoad() {
 
 bool regionsSave() {
     if (!g_region_map) return false;
-    if (!SPIFFS.begin(false)) return false;
+    if (!SPIFFS.begin(false)) {
+        g_regions_dirty = true;
+        return false;
+    }
 
-    bool ok = g_region_map->save(&SPIFFS, "/regions2");
+    SPIFFS.remove(REGION_RAW_PATH);
+    const bool serialized = g_region_map->save(&SPIFFS, REGION_RAW_PATH);
+    const bool ok = serialized && detail::regionStoreSaveLegacyFile(
+        REGION_PATH, REGION_RAW_PATH);
+    SPIFFS.remove(REGION_RAW_PATH);
+    g_regions_dirty = !ok;
     return ok;
+}
+
+bool regionsPersistenceDirty() {
+    return g_regions_dirty;
 }
 
 // ── CRUD ────────────────────────────────────────────────
@@ -83,8 +114,7 @@ bool regionsSave() {
     region->flags = 0;
 
     // Persist
-    regionsSave();
-
+    if (!regionsSave()) return nullptr;
     return region;
 }
 
@@ -94,6 +124,9 @@ bool removeRegion(const char* name) {
     ::RegionEntry* region = g_region_map->findByName(name);
     if (!region) return false;
 
+    const bool was_home = g_region_map->getHomeRegion() == region;
+    const bool was_default = g_region_map->getDefaultRegion() == region;
+
     // If removing the active region, clear the scope
     if (g_active_name[0] && strcmp(g_active_name, region->name) == 0) {
         setActiveRegionName("");
@@ -101,10 +134,11 @@ bool removeRegion(const char* name) {
 
     bool ok = g_region_map->removeRegion(*region);
     if (!ok) return false;
+    if (was_home) g_region_map->setHomeRegion(nullptr);
+    if (was_default) g_region_map->setDefaultRegion(nullptr);
 
     // Persist
-    regionsSave();
-    return true;
+    return regionsSave();
 }
 
 ::RegionEntry* findRegion(const char* name) {
@@ -151,8 +185,7 @@ bool setRegionFloodAllowed(const char* name, bool allowed) {
     }
 
     // Persist
-    regionsSave();
-    return true;
+    return regionsSave();
 }
 
 ::RegionEntry* regionDeniesFlood(::mesh::Packet* packet) {
@@ -180,8 +213,7 @@ bool setHomeRegion(const char* name) {
     }
 
     // Persist
-    regionsSave();
-    return true;
+    return regionsSave();
 }
 
 // ── Default scope ───────────────────────────────────────
@@ -209,8 +241,7 @@ bool setDefaultScope(const char* name) {
     }
 
     // Persist
-    regionsSave();
-    return true;
+    return regionsSave();
 }
 
 // ── Active send scope ───────────────────────────────────

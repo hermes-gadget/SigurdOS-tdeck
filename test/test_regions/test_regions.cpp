@@ -33,8 +33,78 @@
 
 #include "mesh/regions.h"
 #include "mesh/mesh_wrapper.h"
+#include "mesh/persistence_store.h"
+#include "hal/atomic_file.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
 
 namespace {
+
+static constexpr const char* REGION_LIVE =
+    "/tmp/sigurdos_region_store_test.bin";
+static constexpr const char* REGION_RAW =
+    "/tmp/sigurdos_region_store_test.raw";
+
+static void writeU16(std::vector<uint8_t>& data, size_t offset,
+                     uint16_t value) {
+    data[offset] = (uint8_t)(value & 0xFFU);
+    data[offset + 1] = (uint8_t)(value >> 8);
+}
+
+static std::vector<uint8_t> legacyRegionFile(const char* name,
+                                              uint16_t id = 1,
+                                              uint16_t parent = 0) {
+    std::vector<uint8_t> data(10 + 164, 0);
+    writeU16(data, 3, id);  // default region
+    writeU16(data, 5, id);  // home region
+    writeU16(data, 8, (uint16_t)(id + 1));
+    writeU16(data, 10, id);
+    writeU16(data, 12, parent);
+    const size_t length = std::strlen(name);
+    std::memcpy(&data[14], name, length);
+    data[14 + length] = '\0';
+    return data;
+}
+
+static void writeFile(const char* path, const std::vector<uint8_t>& data) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(out.good());
+    out.write(reinterpret_cast<const char*>(data.data()),
+              (std::streamsize)data.size());
+    ASSERT_TRUE(out.good());
+}
+
+static std::vector<uint8_t> readFile(const char* path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), {});
+}
+
+class RegionStoreTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        clean();
+        sigurdos::storage::atomicFileSetNativeFault(
+            sigurdos::storage::AtomicFileNativeFault::None);
+    }
+
+    void TearDown() override {
+        sigurdos::storage::atomicFileSetNativeFault(
+            sigurdos::storage::AtomicFileNativeFault::None);
+        clean();
+    }
+
+    static void clean() {
+        std::remove(REGION_LIVE);
+        std::remove(REGION_RAW);
+        const std::string temp = std::string(REGION_LIVE) + ".tmp";
+        std::remove(temp.c_str());
+    }
+};
 
 // Helper: remove every occurrence of a region by name (handles duplicates)
 static void removeAllRegionEntriesNamed(const char* name) {
@@ -240,6 +310,93 @@ TEST(RegionsTest, ExportRegionsDoesNotCrash) {
 }
 
 // ── API function signatures (compile-time checks) ───────
+
+TEST_F(RegionStoreTest, WrapsLegacyLayoutInVersionedChecksummedFile) {
+    const std::vector<uint8_t> raw = legacyRegionFile("#london");
+    writeFile(REGION_RAW, raw);
+    ASSERT_TRUE(sigurdos::mesh::detail::regionStoreSaveLegacyFile(
+        REGION_LIVE, REGION_RAW));
+    EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+              sigurdos::mesh::detail::RegionStoreFormat::Current);
+
+    const std::vector<uint8_t> encoded = readFile(REGION_LIVE);
+    ASSERT_EQ(encoded.size(), raw.size() + 4);
+    EXPECT_EQ(encoded[0], 'S');
+    EXPECT_EQ(encoded[1], 'R');
+    EXPECT_EQ(encoded[2], 1);
+    EXPECT_TRUE(std::equal(raw.begin() + 3, raw.end(), encoded.begin() + 3));
+}
+
+TEST_F(RegionStoreTest, AcceptsOnlyCompleteValidatedLegacyFiles) {
+    const std::vector<uint8_t> raw = legacyRegionFile("#legacy");
+    writeFile(REGION_LIVE, raw);
+    EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+              sigurdos::mesh::detail::RegionStoreFormat::Legacy);
+
+    for (size_t length = 0; length < raw.size(); ++length) {
+        writeFile(REGION_LIVE,
+                  std::vector<uint8_t>(raw.begin(), raw.begin() + length));
+        EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+                  sigurdos::mesh::detail::RegionStoreFormat::Invalid)
+            << "accepted truncated legacy length " << length;
+    }
+
+    std::vector<uint8_t> malformed = raw;
+    writeU16(malformed, 12, 99);  // missing parent
+    writeFile(REGION_RAW, malformed);
+    EXPECT_FALSE(sigurdos::mesh::detail::regionStoreSaveLegacyFile(
+        REGION_LIVE, REGION_RAW));
+}
+
+TEST_F(RegionStoreTest, RejectsTruncatedOrCorruptCurrentFiles) {
+    const std::vector<uint8_t> raw = legacyRegionFile("#valid");
+    writeFile(REGION_RAW, raw);
+    ASSERT_TRUE(sigurdos::mesh::detail::regionStoreSaveLegacyFile(
+        REGION_LIVE, REGION_RAW));
+    const std::vector<uint8_t> encoded = readFile(REGION_LIVE);
+
+    for (size_t length = 0; length < encoded.size(); ++length) {
+        writeFile(REGION_LIVE,
+                  std::vector<uint8_t>(encoded.begin(), encoded.begin() + length));
+        EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+                  sigurdos::mesh::detail::RegionStoreFormat::Invalid)
+            << "accepted truncated current length " << length;
+    }
+
+    std::vector<uint8_t> corrupt = encoded;
+    corrupt.back() ^= 0x80;
+    writeFile(REGION_LIVE, corrupt);
+    EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+              sigurdos::mesh::detail::RegionStoreFormat::Invalid);
+}
+
+TEST_F(RegionStoreTest, InterruptedReplacementKeepsAValidatedCopy) {
+    const std::vector<uint8_t> old_raw = legacyRegionFile("#old", 1);
+    const std::vector<uint8_t> new_raw = legacyRegionFile("#new", 2);
+    const sigurdos::storage::AtomicFileNativeFault faults[] = {
+        sigurdos::storage::AtomicFileNativeFault::TempOpen,
+        sigurdos::storage::AtomicFileNativeFault::Write,
+        sigurdos::storage::AtomicFileNativeFault::Close,
+        sigurdos::storage::AtomicFileNativeFault::Validate,
+        sigurdos::storage::AtomicFileNativeFault::Rename,
+    };
+
+    for (const auto fault : faults) {
+        clean();
+        writeFile(REGION_RAW, old_raw);
+        ASSERT_TRUE(sigurdos::mesh::detail::regionStoreSaveLegacyFile(
+            REGION_LIVE, REGION_RAW));
+        writeFile(REGION_RAW, new_raw);
+        sigurdos::storage::atomicFileSetNativeFault(fault);
+        EXPECT_FALSE(sigurdos::mesh::detail::regionStoreSaveLegacyFile(
+            REGION_LIVE, REGION_RAW));
+
+        sigurdos::storage::atomicFileSetNativeFault(
+            sigurdos::storage::AtomicFileNativeFault::None);
+        EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+                  sigurdos::mesh::detail::RegionStoreFormat::Current);
+    }
+}
 
 TEST(RegionsTest, AddRegionSignature) {
     using fn_t = ::RegionEntry* (*)(const char*, const char*);

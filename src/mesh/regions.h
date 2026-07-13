@@ -3,7 +3,7 @@
 //
 // Region management — thin wrapper over upstream MeshCore RegionMap.
 // Provides flood-scope gating, hierarchical region tree, home/default
-// region tracking, and persistence via /regions2 (upstream format).
+// region tracking, and atomic persistence via /regions2.
 
 #pragma once
 
@@ -24,6 +24,10 @@ bool regionsLoad();
 
 /// Save regions to SPIFFS (/regions2). Returns true on success.
 bool regionsSave();
+
+/// True when the in-memory map contains a change that did not commit. A
+/// later regionsSave() retries the complete map.
+bool regionsPersistenceDirty();
 
 // ── Access the underlying RegionMap ─────────────────────
 

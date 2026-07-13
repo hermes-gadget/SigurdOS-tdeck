@@ -39,6 +39,21 @@ bool channelStoreSaveTransactional(ChannelStoreKv& kv, int count,
 int channelStoreLoadTransactional(ChannelStoreKv& kv,
                                   ChannelLoadFn load, void* ctx);
 
+enum class RegionStoreFormat {
+    Invalid,
+    Legacy,
+    Current,
+};
+
+// Atomically wrap a validated MeshCore RegionMap file in SigurdOS's
+// versioned, checksummed envelope. The envelope deliberately retains the
+// upstream field layout so RegionMap can still consume it after validation.
+bool regionStoreSaveLegacyFile(const char* path, const char* legacy_path);
+
+// Recover an interrupted replacement and classify the live file. Legacy
+// files are accepted only when every fixed-size record is complete.
+RegionStoreFormat regionStorePrepareLoad(const char* path);
+
 } // namespace detail
 
 // Save channels list to NVS.
