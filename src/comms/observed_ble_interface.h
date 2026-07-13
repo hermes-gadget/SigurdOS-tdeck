@@ -25,6 +25,7 @@ struct BleSerialObserverStats {
     uint32_t connect_count = 0;
     uint32_t disconnect_count = 0;
     uint32_t mtu_change_count = 0;
+    uint32_t mtu_reject_count = 0;
     uint32_t auth_success_count = 0;
     uint32_t auth_failure_count = 0;
     uint32_t ble_write_count = 0;
@@ -34,6 +35,7 @@ struct BleSerialObserverStats {
     uint32_t tx_drop_count = 0;
     uint16_t last_conn_id = 0;
     uint16_t last_mtu = 0;
+    uint16_t requested_mtu = 0;
     uint8_t last_rx_code = 0;
     uint8_t last_tx_code = 0;
 };
@@ -65,6 +67,7 @@ private:
     void refreshConnectionState();
 
     BleSerialObserverStats _stats{};
+    uint16_t _peer_mtu = 0;
 
     // NET-002 (#813): the base class receive queue is written from the
     // Bluedroid host task (onWrite) and drained from the app loop task

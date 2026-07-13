@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Ben
 
 #include "observed_ble_interface.h"
+#include "ble_att_mtu.h"
 
 #if defined(ESP32_PLATFORM) && defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 
@@ -18,10 +19,19 @@ void ObservedSerialBLEInterface::refreshConnectionState()
 void ObservedSerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code)
 {
     SerialBLEInterface::begin(prefix, name, pin_code);
+    static_assert(bleAttMtuForPayload(MAX_FRAME_SIZE) <= UINT16_MAX,
+                  "companion frame does not fit in a BLE MTU value");
+    const uint16_t requested_mtu =
+        (uint16_t)bleAttMtuForPayload(MAX_FRAME_SIZE);
+    // MeshCore requests MAX_FRAME_SIZE, but an ATT value only gets MTU - 3.
+    // Override that request before a peer connects so all 176 frame bytes fit.
+    BLEDevice::setMTU(requested_mtu);
     _rx_queue.clear();
+    _peer_mtu = 0;
     _stats = BleSerialObserverStats{};
     _stats.begun = true;
     _stats.begin_count = 1;
+    _stats.requested_mtu = requested_mtu;
     refreshConnectionState();
 }
 
@@ -48,6 +58,12 @@ bool ObservedSerialBLEInterface::isConnected() const
 
 size_t ObservedSerialBLEInterface::writeFrame(const uint8_t src[], size_t len)
 {
+    if (len > 0 && _peer_mtu != 0 && !bleAttPayloadFits(len, _peer_mtu)) {
+        _stats.tx_drop_count++;
+        _stats.mtu_reject_count++;
+        refreshConnectionState();
+        return 0;
+    }
     size_t written = SerialBLEInterface::writeFrame(src, len);
     if (written > 0) {
         _stats.tx_frame_count++;
@@ -119,6 +135,10 @@ void ObservedSerialBLEInterface::onConnect(BLEServer* server,
     _stats.connect_count++;
     if (param) {
         _stats.last_conn_id = param->connect.conn_id;
+        if (server) {
+            _peer_mtu = server->getPeerMTU(param->connect.conn_id);
+            _stats.last_mtu = _peer_mtu;
+        }
     }
     SerialBLEInterface::onConnect(server, param);
     refreshConnectionState();
@@ -130,7 +150,8 @@ void ObservedSerialBLEInterface::onMtuChanged(BLEServer* server,
     _stats.mtu_change_count++;
     if (server && param) {
         _stats.last_conn_id = param->mtu.conn_id;
-        _stats.last_mtu = server->getPeerMTU(param->mtu.conn_id);
+        _peer_mtu = server->getPeerMTU(param->mtu.conn_id);
+        _stats.last_mtu = _peer_mtu;
     }
     SerialBLEInterface::onMtuChanged(server, param);
     refreshConnectionState();
@@ -139,6 +160,7 @@ void ObservedSerialBLEInterface::onMtuChanged(BLEServer* server,
 void ObservedSerialBLEInterface::onDisconnect(BLEServer* server)
 {
     _stats.disconnect_count++;
+    _peer_mtu = 0;
     SerialBLEInterface::onDisconnect(server);
     // Pending frames belong to the dead connection; the base class drops its
     // own buffers on the disconnect transition, mirror that for _rx_queue.

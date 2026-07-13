@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Ben
 
 #include <gtest/gtest.h>
+#include "comms/ble_att_mtu.h"
 #include "comms/ble_frame_queue.h"
 
 #include <atomic>
@@ -12,6 +13,24 @@
 namespace {
 
 using sigurdos::comms::BleFrameQueue;
+
+TEST(BleAttMtu, RequestsRoomForAttOverhead)
+{
+    EXPECT_EQ(sigurdos::comms::BLE_ATT_VALUE_OVERHEAD, 3u);
+    EXPECT_EQ(sigurdos::comms::bleAttMtuForPayload(176), 179u);
+    EXPECT_EQ(sigurdos::comms::bleAttPayloadCapacity(179), 176u);
+}
+
+TEST(BleAttMtu, EnforcesNegotiatedPayloadCapacity)
+{
+    EXPECT_EQ(sigurdos::comms::bleAttPayloadCapacity(176), 173u);
+    EXPECT_TRUE(sigurdos::comms::bleAttPayloadFits(173, 176));
+    EXPECT_FALSE(sigurdos::comms::bleAttPayloadFits(174, 176));
+    EXPECT_FALSE(sigurdos::comms::bleAttPayloadFits(176, 176));
+    EXPECT_TRUE(sigurdos::comms::bleAttPayloadFits(176, 179));
+    EXPECT_EQ(sigurdos::comms::bleAttPayloadCapacity(3), 0u);
+    EXPECT_EQ(sigurdos::comms::bleAttPayloadCapacity(2), 0u);
+}
 
 constexpr size_t MAX_LEN = 176;   // MAX_FRAME_SIZE on target
 constexpr size_t CAPACITY = 4;    // FRAME_QUEUE_SIZE on target
