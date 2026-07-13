@@ -23,33 +23,32 @@ jobs:
           - { env: SigurdOS_TDeck_gps_validation_wifi, requires_wifi: true }
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.11"
+          python-version: "3.11.13"
       - name: Cache PlatformIO
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.platformio/.cache
             ~/.platformio/packages
             ~/.platformio/platforms
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}-${{ matrix.env }}
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.txt') }}-${{ matrix.env }}
           restore-keys: |
             pio-${{ runner.os }}-
       - name: Install PlatformIO
         run: |
-          python -m pip install --upgrade pip
-          pip install platformio
+          python -m pip install --require-hashes -r ci/requirements-platformio.txt
       - name: Build ${{ matrix.env }}
         if: ${{ !matrix.requires_wifi || (vars.GPS_WIFI_SSID != '' && vars.GPS_WIFI_HOST != '') }}
         run: pio run -e ${{ matrix.env }}
       - name: Upload firmware artifacts for ${{ matrix.env }}
         if: ${{ !matrix.requires_wifi || (vars.GPS_WIFI_SSID != '' && vars.GPS_WIFI_HOST != '') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: firmware-${{ matrix.env }}
           path: |
