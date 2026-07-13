@@ -1,0 +1,48 @@
+# Release evidence
+
+Every release PR uses `.github/PULL_REQUEST_TEMPLATE/release.md`. The machine-readable inventory in `ci/release_evidence_requirements.json` is the source of truth; CI fails if a requirement disappears from the template.
+
+## Companion interop and golden frames
+
+Run the official USB client matrix as documented in `scripts/official-meshcore-client-test/README.md` and the BLE scenarios in `docs/COMPANION_BLE_TEST_ENV.md`. Record firmware versions, date, pass/fail per case, and links to sanitized output. Do not record device IDs, public keys, contact names, message contents, credentials, or private keys.
+
+The checked-in golden corpus is tied to the exact MeshCore submodule commit and SHA-256 of stock `examples/companion_radio/MyMesh.cpp`:
+
+```bash
+python3 scripts/verify_companion_golden_frames.py
+```
+
+When the submodule changes, review stock protocol constants and frame layouts before updating both the digest and corpus. A hash-only update is not review.
+
+## Privacy-safe soak reports
+
+Use a debug build at verbosity level 2 and capture at least 10 minutes (at least 120 `[stat]` samples spanning 600 seconds) for each scenario. Idle means the home screen with radio and configured transports running. Active means repeated screen navigation, message send/receive, map use, and companion reconnects representative of normal operation.
+
+```bash
+python3 scripts/analyze_soak_log.py idle.log \
+  --scenario idle --json-out idle.json --markdown-out idle.md
+python3 scripts/analyze_soak_log.py active.log \
+  --scenario active --json-out active.json --markdown-out active.md
+```
+
+The reports contain only numeric memory summaries and a source-log digest. Attach the reports, not raw serial logs. Review raw logs locally for secrets before retaining them. Defaults fail on fewer than 120 samples, a span shorter than 600 seconds, non-monotonic timestamps, heap range over 16 KiB, or first-to-last heap drop over 8 KiB.
+
+## OTA matrix
+
+Test the final release artifact and record evidence for:
+
+- successful authenticated upgrade with settings and stores preserved;
+- no update available;
+- missing and rejected credentials;
+- offline, TLS, HTTP error, and truncated download paths;
+- invalid image or write failure, followed by a clean reboot into a known-good image.
+
+Use versioned release URLs. A negative test passes only when the error is bounded, the UI remains usable or reboots intentionally, and a bootable image is retained.
+
+## Launcher matrix
+
+Follow `docs/LAUNCHER.md` with the final Launcher artifact. Verify environment detection, update ownership/OTA gating, handoff back to Launcher, relaunch, and persistence of settings, contacts, channels, and messages. Record Launcher and SigurdOS versions without recording a device identifier.
+
+## Release artifacts and warnings
+
+The tag workflow validates the evidence contracts before building. Confirm manifest offsets, artifact names, version strings, and SHA-256 sums in the release PR. The first-party warning gate parses only compiler warnings whose paths start with `src/`; third-party warnings do not spend this budget. When a warning is fixed, reduce `ci/first_party_warnings.json` in the same PR so the debt cannot return.
