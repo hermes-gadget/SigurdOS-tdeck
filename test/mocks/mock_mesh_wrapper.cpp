@@ -132,6 +132,10 @@ static MockAckedMsg mock_acked_msgs[MOCK_MAX_ACKED];
 static int mock_acked_head = 0;
 static int mock_acked_count = 0;
 static int mock_ack_counter = 0;
+static MockAckedMsg mock_lost_msgs[MOCK_MAX_ACKED];
+static int mock_lost_head = 0;
+static int mock_lost_count = 0;
+static int mock_delivery_counter = 0;
 
 void registerAckedMessage(const char* dest_name, uint32_t timestamp) {
     if (!dest_name) return;
@@ -144,6 +148,18 @@ void registerAckedMessage(const char* dest_name, uint32_t timestamp) {
     mock_acked_head = (mock_acked_head + 1) % MOCK_MAX_ACKED;
     if (mock_acked_count < MOCK_MAX_ACKED) mock_acked_count++;
     mock_ack_counter++;
+    mock_delivery_counter++;
+}
+
+void registerConfirmationLost(const char* dest_name, uint32_t timestamp) {
+    if (!dest_name) return;
+    MockAckedMsg& lost = mock_lost_msgs[mock_lost_head];
+    strncpy(lost.dest, dest_name, sizeof(lost.dest) - 1);
+    lost.dest[sizeof(lost.dest) - 1] = '\0';
+    lost.timestamp = timestamp;
+    mock_lost_head = (mock_lost_head + 1) % MOCK_MAX_ACKED;
+    if (mock_lost_count < MOCK_MAX_ACKED) mock_lost_count++;
+    mock_delivery_counter++;
 }
 
 bool isMessageAcked(const char* dest_name, uint32_t timestamp) {
@@ -161,9 +177,28 @@ bool isMessageAcked(const char* dest_name, uint32_t timestamp) {
     return false;
 }
 
+bool isMessageConfirmationLost(const char* dest_name, uint32_t timestamp) {
+    if (!dest_name) return false;
+    int i = mock_lost_head;
+    for (int c = 0; c < mock_lost_count; c++) {
+        i--;
+        if (i < 0) i = MOCK_MAX_ACKED - 1;
+        if (mock_lost_msgs[i].timestamp == timestamp &&
+            strcmp(mock_lost_msgs[i].dest, dest_name) == 0) return true;
+    }
+    return false;
+}
+
 int getAckCounter() {
     return mock_ack_counter;
 }
+
+int getDeliveryCounter() {
+    return mock_delivery_counter;
+}
+
+uint32_t getPendingAckDropCount() { return 0; }
+uint32_t getPendingAckExpiredCount() { return 0; }
 
 // ── Test helpers ─────────────────────────────────
 

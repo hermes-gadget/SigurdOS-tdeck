@@ -17,6 +17,7 @@ struct ChannelMessage {
     uint32_t timestamp;
     bool     is_self;
     bool     acked;
+    bool     confirmation_lost;
 };
 
 // Owns one channel's message array: allocation with PSRAM-first/DRAM-fallback

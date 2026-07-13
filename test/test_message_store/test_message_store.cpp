@@ -138,6 +138,45 @@ TEST_F(MessageStoreTest, MarkAckedUpdatesStoredMessage) {
     int n = sigurdos::mesh::messageStoreLoadAll(out, 2);
     ASSERT_EQ(n, 1);
     EXPECT_TRUE(out[0].acked);
+    EXPECT_FALSE(out[0].confirmation_lost);
+}
+
+TEST_F(MessageStoreTest, ConfirmationLostPersistsAndAckClearsIt) {
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "self", "sent", 78, true, false)));
+    EXPECT_TRUE(sigurdos::mesh::messageStoreMarkConfirmationLost("DM: Alice", 78));
+
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_FALSE(out.acked);
+    EXPECT_TRUE(out.confirmation_lost);
+
+    EXPECT_TRUE(sigurdos::mesh::messageStoreMarkAcked("DM: Alice", 78));
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_TRUE(out.acked);
+    EXPECT_FALSE(out.confirmation_lost);
+}
+
+TEST_F(MessageStoreTest, RebootMarksOnlyPendingSelfDmsAsLost) {
+    auto acked = makeMsg("DM: Acked", "self", "acked", 81, true, false);
+    acked.acked = true;
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(acked));
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Pending", "self", "pending", 82, true, false)));
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("Public", "self", "channel", 83, true, true)));
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Incoming", "peer", "incoming", 84, false, false)));
+
+    EXPECT_EQ(sigurdos::mesh::messageStoreMarkOrphanedPendingLost(), 1);
+    EXPECT_EQ(sigurdos::mesh::messageStoreMarkOrphanedPendingLost(), 0);
+
+    sigurdos::mesh::StoredMessage out[4]{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(out, 4), 4);
+    EXPECT_FALSE(out[0].confirmation_lost);
+    EXPECT_TRUE(out[1].confirmation_lost);
+    EXPECT_FALSE(out[2].confirmation_lost);
+    EXPECT_FALSE(out[3].confirmation_lost);
 }
 
 TEST_F(MessageStoreTest, StoreIdIsMonotonic) {

@@ -320,7 +320,9 @@ public:
                                               expected_ack, est_timeout);
         }
         if (send_result == MSG_SEND_FAILED) return result;
-        if (expected_ack) mesh_ptr()->addPendingAck(contact->name, ts, expected_ack);
+        if (expected_ack) {
+            mesh_ptr()->addPendingAck(contact->name, ts, expected_ack, est_timeout);
+        }
 
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), contact->name);

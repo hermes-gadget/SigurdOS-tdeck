@@ -29,6 +29,7 @@
 #include <algorithm>
 
 #include "mesh/durable_fanout.h"
+#include "mesh/pending_ack_policy.h"
 
 namespace {
 
@@ -1154,12 +1155,11 @@ TEST_F(ReqResponseTest, NonMatchingTagDoesNotClearWrongPending) {
 // ═══════════════════════════════════════════════════════════════
 //
 // Replicates SigurdMeshV2::PendingAck and the addPendingAck()/processAck()
-// slot logic from src/mesh/sigurd_mesh_v2.{h,cpp}. The production array
+// slot/expiry logic from src/mesh/sigurd_mesh_v2.{h,cpp}. The production array
 // PendingAck _pending_acks[16] is a default-constructed member; these tests
-// lock in the contract that every slot starts fully zeroed so a fresh table
-// never matches an ACK against garbage. (The mesh classes link MeshCore and
-// are not part of native_test, so the logic is mirrored here — same approach
-// as the ReqResponseTest cases above.)
+// locks in zero-init, wrap-safe expiry, and oldest-entry loss reporting. (The
+// mesh classes link MeshCore and are not part of native_test, so table wiring
+// is mirrored here; timeout math itself is imported from production.)
 
 namespace {
 
@@ -1168,6 +1168,7 @@ struct AckSlot {
     uint32_t timestamp = 0;
     uint32_t expected_ack = 0;
     uint32_t sent_at_ms = 0;
+    uint32_t expires_at_ms = 0;
     bool in_use = false;
 };
 
@@ -1176,8 +1177,26 @@ static constexpr int ACK_TABLE_SIZE = 16;
 struct AckTable {
     AckSlot slots[ACK_TABLE_SIZE];   // default-constructed, mirrors _pending_acks[16]
     uint32_t now_ms = 0;
+    uint32_t drop_count = 0;
+    uint32_t expired_count = 0;
+    uint32_t lost_count = 0;
 
-    void addPendingAck(const char* name, uint32_t ts, uint32_t expected_ack) {
+    void expirePendingAcks() {
+        for (int i = 0; i < ACK_TABLE_SIZE; i++) {
+            if (slots[i].in_use && sigurdos::mesh::pendingAckDeadlineReached(
+                                      now_ms, slots[i].expires_at_ms)) {
+                slots[i].in_use = false;
+                expired_count++;
+                lost_count++;
+            }
+        }
+    }
+
+    void addPendingAck(const char* name, uint32_t ts, uint32_t expected_ack,
+                       uint32_t est_timeout = 0) {
+        if (!name || !name[0] || expected_ack == 0) return;
+        expirePendingAcks();
+        const uint32_t expires = now_ms + sigurdos::mesh::pendingAckLifetimeMs(est_timeout);
         for (int i = 0; i < ACK_TABLE_SIZE; i++) {
             if (!slots[i].in_use) {
                 strncpy(slots[i].dest_name, name, sizeof(slots[i].dest_name) - 1);
@@ -1185,29 +1204,35 @@ struct AckTable {
                 slots[i].timestamp = ts;
                 slots[i].expected_ack = expected_ack;
                 slots[i].sent_at_ms = now_ms;
+                slots[i].expires_at_ms = expires;
                 slots[i].in_use = true;
                 return;
             }
         }
-        // Table full — evict oldest entry by sent_at_ms.
+        // Table full — evict the greatest wrap-safe age.
         int oldest = 0;
-        uint32_t oldest_ms = slots[0].sent_at_ms;
+        uint32_t oldest_age = now_ms - slots[0].sent_at_ms;
         for (int i = 1; i < ACK_TABLE_SIZE; i++) {
-            if (slots[i].sent_at_ms < oldest_ms) {
+            uint32_t age = now_ms - slots[i].sent_at_ms;
+            if (age > oldest_age) {
                 oldest = i;
-                oldest_ms = slots[i].sent_at_ms;
+                oldest_age = age;
             }
         }
+        drop_count++;
+        lost_count++;
         strncpy(slots[oldest].dest_name, name, sizeof(slots[oldest].dest_name) - 1);
         slots[oldest].dest_name[sizeof(slots[oldest].dest_name) - 1] = '\0';
         slots[oldest].timestamp = ts;
         slots[oldest].expected_ack = expected_ack;
         slots[oldest].sent_at_ms = now_ms;
+        slots[oldest].expires_at_ms = expires;
         slots[oldest].in_use = true;
     }
 
     // Returns matched slot index, or -1 if none.
     int processAck(uint32_t ack_val) {
+        expirePendingAcks();
         for (int i = 0; i < ACK_TABLE_SIZE; i++) {
             if (slots[i].in_use && slots[i].expected_ack == ack_val) {
                 slots[i].in_use = false;
@@ -1227,6 +1252,7 @@ TEST(PendingAckTest, FreshTableIsFullyZeroed) {
         EXPECT_EQ(t.slots[i].timestamp, 0u);
         EXPECT_EQ(t.slots[i].expected_ack, 0u);
         EXPECT_EQ(t.slots[i].sent_at_ms, 0u);
+        EXPECT_EQ(t.slots[i].expires_at_ms, 0u);
         EXPECT_EQ(t.slots[i].dest_name[0], '\0');
     }
 }
@@ -1268,16 +1294,57 @@ TEST(PendingAckTest, FullTableEvictsOldest) {
     // Fill all 16 slots with strictly increasing send times and ack values.
     for (int i = 0; i < ACK_TABLE_SIZE; i++) {
         t.now_ms = 1000 + i;                 // slot 0 is oldest
-        t.addPendingAck("peer", 0, 0x1000 + i);
+        t.addPendingAck("peer", 100 + i, 0x1000 + i, 300000);
     }
     // A 17th add must evict the oldest (slot 0, ack 0x1000).
     t.now_ms = 9999;
-    t.addPendingAck("late", 0, 0xBEEF);
+    t.addPendingAck("late", 999, 0xBEEF, 300000);
 
     EXPECT_EQ(t.processAck(0x1000), -1) << "oldest ack should have been evicted";
     EXPECT_GE(t.processAck(0xBEEF), 0) << "newest ack must be present";
     // The second-oldest (0x1001) must still be tracked.
     EXPECT_GE(t.processAck(0x1001), 0);
+    EXPECT_EQ(t.drop_count, 1u);
+    EXPECT_EQ(t.lost_count, 1u);
+}
+
+TEST(PendingAckTest, TimeoutPolicyIsBoundedAndWrapSafe) {
+    EXPECT_EQ(sigurdos::mesh::pendingAckLifetimeMs(0), 30000u);
+    EXPECT_EQ(sigurdos::mesh::pendingAckLifetimeMs(10000), 30000u);
+    EXPECT_EQ(sigurdos::mesh::pendingAckLifetimeMs(20000), 50000u);
+    EXPECT_EQ(sigurdos::mesh::pendingAckLifetimeMs(UINT32_MAX), 300000u);
+
+    const uint32_t deadline = 0x00000010u;
+    EXPECT_FALSE(sigurdos::mesh::pendingAckDeadlineReached(0xFFFFFFF0u, deadline));
+    EXPECT_TRUE(sigurdos::mesh::pendingAckDeadlineReached(0x00000010u, deadline));
+    EXPECT_TRUE(sigurdos::mesh::pendingAckDeadlineReached(0x00000011u, deadline));
+}
+
+TEST(PendingAckTest, ExpiredEntryIsFreedAndReportedLost) {
+    AckTable t;
+    t.now_ms = 1000;
+    t.addPendingAck("Alice", 42, 0xAABBCCDD, 0);
+    t.now_ms = 30999;
+    t.expirePendingAcks();
+    EXPECT_EQ(t.expired_count, 0u);
+    t.now_ms = 31000;
+    t.expirePendingAcks();
+    EXPECT_EQ(t.expired_count, 1u);
+    EXPECT_EQ(t.lost_count, 1u);
+    EXPECT_EQ(t.processAck(0xAABBCCDD), -1);
+}
+
+TEST(PendingAckTest, ExpirationMakesRoomBeforeOverflowEviction) {
+    AckTable t;
+    for (int i = 0; i < ACK_TABLE_SIZE; i++) {
+        t.now_ms = 1000 + i;
+        t.addPendingAck("peer", 100 + i, 0x1000 + i, 0);
+    }
+    t.now_ms = 40000;
+    t.addPendingAck("new", 999, 0xBEEF, 0);
+    EXPECT_EQ(t.expired_count, (uint32_t)ACK_TABLE_SIZE);
+    EXPECT_EQ(t.drop_count, 0u);
+    EXPECT_GE(t.processAck(0xBEEF), 0);
 }
 
 // ═══════════════════════════════════════════════════════════════

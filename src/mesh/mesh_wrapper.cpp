@@ -339,6 +339,10 @@ static AckedMsg _acked_msgs[MAX_ACKED];
 static int _acked_head = 0;
 static int _acked_count = 0;
 static int _ack_counter = 0;   // bumped on each registerAckedMessage() — used by UI to detect new ACKs
+static AckedMsg _lost_msgs[MAX_ACKED];
+static int _lost_head = 0;
+static int _lost_count = 0;
+static int _delivery_counter = 0;
 
 static uint32_t _last_telemetry_tag = 0;
 static sigurdos::mesh::TelemetryResult _cached_telemetry;
@@ -455,11 +459,30 @@ void registerAckedMessage(const char* dest, uint32_t ts) {
     _acked_head = (_acked_head + 1) % MAX_ACKED;
     if (_acked_count < MAX_ACKED) _acked_count++;
     _ack_counter++;
+    _delivery_counter++;
     char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
     formatDmConversation(conversation, sizeof(conversation), dest);
     sigurdos::mesh::messageStoreMarkAcked(conversation, ts);
 #if SIGURDOS_DEBUG_MESH
     Serial.printf("[mesh] ACK for %s (ts=%lu) — %d total tracked\n", dest, (unsigned long)ts, _acked_count);
+#endif
+}
+
+void registerConfirmationLost(const char* dest, uint32_t ts) {
+    if (!dest || !dest[0]) return;
+    AckedMsg& lost = _lost_msgs[_lost_head];
+    strncpy(lost.dest, dest, sizeof(lost.dest) - 1);
+    lost.dest[sizeof(lost.dest) - 1] = '\0';
+    lost.timestamp = ts;
+    _lost_head = (_lost_head + 1) % MAX_ACKED;
+    if (_lost_count < MAX_ACKED) _lost_count++;
+    _delivery_counter++;
+    char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
+    formatDmConversation(conversation, sizeof(conversation), dest);
+    sigurdos::mesh::messageStoreMarkConfirmationLost(conversation, ts);
+#if SIGURDOS_DEBUG_MESH
+    Serial.printf("[mesh] confirmation lost for %s (ts=%lu)\n",
+                  dest, (unsigned long)ts);
 #endif
 }
 
@@ -474,8 +497,33 @@ bool isMessageAcked(const char* dest, uint32_t ts) {
     return false;
 }
 
+bool isMessageConfirmationLost(const char* dest, uint32_t ts) {
+    if (!dest) return false;
+    int i = _lost_head;
+    for (int c = 0; c < _lost_count; c++) {
+        i--;
+        if (i < 0) i = MAX_ACKED - 1;
+        if (_lost_msgs[i].timestamp == ts && strcmp(_lost_msgs[i].dest, dest) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int getAckCounter() {
     return _ack_counter;
+}
+
+int getDeliveryCounter() {
+    return _delivery_counter;
+}
+
+uint32_t getPendingAckDropCount() {
+    return g_mesh ? g_mesh->getAckDropCount() : 0;
+}
+
+uint32_t getPendingAckExpiredCount() {
+    return g_mesh ? g_mesh->getAckExpiredCount() : 0;
 }
 
 // ── REQ/RESPONSE framework (Phase 4.1) ────────
@@ -1005,7 +1053,11 @@ bool init(bool spiffs_ok)
         }
     }
 
-    sigurdos::mesh::messageStoreBegin();
+    if (sigurdos::mesh::messageStoreBegin()) {
+        // Pending ACK hashes live in RAM. After a reboot they can no longer be
+        // matched, so persisted self-DMs must not render as pending forever.
+        sigurdos::mesh::messageStoreMarkOrphanedPendingLost();
+    }
 
     companionAdapterInit();
 
@@ -1040,6 +1092,7 @@ void loop()
     if (!initialized) return;
     if (g_mesh) {
         g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
+        g_mesh->expirePendingAcks();
     }
     // Companion USB/BLE bridge must poll even if mesh radio init was deferred
     // (host is null-safe for most commands; loop no-ops without a bridge).

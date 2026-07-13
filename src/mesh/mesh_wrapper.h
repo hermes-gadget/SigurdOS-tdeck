@@ -246,8 +246,13 @@ bool removeChannel(int idx);
 
 // ── ACK tracking ──────────────────────────────
 void registerAckedMessage(const char* dest_name, uint32_t timestamp);
+void registerConfirmationLost(const char* dest_name, uint32_t timestamp);
 bool isMessageAcked(const char* dest_name, uint32_t timestamp);
+bool isMessageConfirmationLost(const char* dest_name, uint32_t timestamp);
 int  getAckCounter();   // incremented each time registerAckedMessage is called
+int  getDeliveryCounter(); // incremented for ACK and confirmation-lost changes
+uint32_t getPendingAckDropCount();
+uint32_t getPendingAckExpiredCount();
 
 // ── Room message fetch (Phase 4.6) ────────────────
 bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name);

@@ -46,6 +46,7 @@ static uint8_t flagsFor(const StoredMessage& msg)
     if (msg.is_channel) flags |= 0x02;
     if (msg.acked) flags |= 0x04;
     if (msg.companion_sent) flags |= 0x08;
+    if (msg.confirmation_lost) flags |= 0x10;
     return flags;
 }
 
@@ -55,6 +56,7 @@ static void applyFlags(StoredMessage& msg, uint8_t flags)
     msg.is_channel = (flags & 0x02) != 0;
     msg.acked = (flags & 0x04) != 0;
     msg.companion_sent = (flags & 0x08) != 0;
+    msg.confirmation_lost = (flags & 0x10) != 0;
 }
 
 static bool readHeader(uint32_t* out_count, uint32_t* out_next_id = nullptr);
@@ -786,6 +788,7 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
         if (msgs[i].timestamp == timestamp &&
             std::strncmp(msgs[i].conversation, conversation, SIGURDOS_MSG_CONVERSATION_LEN) == 0) {
             msgs[i].acked = true;
+            msgs[i].confirmation_lost = false;
             changed = true;
         }
     }
@@ -797,6 +800,48 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
     bool ok = atomicReplaceStore(msgs, (uint32_t)n);
     std::free(msgs);
     return ok;
+}
+
+bool messageStoreMarkConfirmationLost(const char* conversation, uint32_t timestamp)
+{
+    if (!conversation || !conversation[0] || timestamp == 0) return false;
+    uint32_t count = 0;
+    if (!readHeader(&count) || count == 0 || count > 256) return false;
+    StoredMessage* msgs = (StoredMessage*)std::malloc(sizeof(StoredMessage) * count);
+    if (!msgs) return false;
+    int n = messageStoreLoadAll(msgs, (int)count);
+    bool changed = false;
+    for (int i = 0; i < n; i++) {
+        if (!msgs[i].acked && msgs[i].timestamp == timestamp &&
+            std::strncmp(msgs[i].conversation, conversation,
+                         SIGURDOS_MSG_CONVERSATION_LEN) == 0) {
+            msgs[i].confirmation_lost = true;
+            changed = true;
+        }
+    }
+    bool ok = changed && atomicReplaceStore(msgs, (uint32_t)n);
+    std::free(msgs);
+    return ok;
+}
+
+int messageStoreMarkOrphanedPendingLost()
+{
+    uint32_t count = 0;
+    if (!readHeader(&count) || count == 0 || count > 256) return 0;
+    StoredMessage* msgs = (StoredMessage*)std::malloc(sizeof(StoredMessage) * count);
+    if (!msgs) return 0;
+    int n = messageStoreLoadAll(msgs, (int)count);
+    int changed = 0;
+    for (int i = 0; i < n; i++) {
+        if (msgs[i].is_self && !msgs[i].is_channel && !msgs[i].acked &&
+            !msgs[i].confirmation_lost) {
+            msgs[i].confirmation_lost = true;
+            changed++;
+        }
+    }
+    bool ok = changed == 0 || atomicReplaceStore(msgs, (uint32_t)n);
+    std::free(msgs);
+    return ok ? changed : 0;
 }
 
 bool messageStoreMarkCompanionSent(uint32_t store_id)

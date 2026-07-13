@@ -131,6 +131,16 @@ TEST_F(ChatMessageBufferTest, MarksNewestMessageAcked)
     EXPECT_TRUE(buf.at(1).acked);
 }
 
+TEST_F(ChatMessageBufferTest, NewMessagesStartWithoutConfirmationLoss)
+{
+    ChatMessageBuffer buf;
+    ChannelMessage* msg = buf.append("me", "pending", 50, true,
+                                     FULL_CAP, FULL_CAP, FALLBACK_CAP);
+    ASSERT_NE(msg, nullptr);
+    EXPECT_FALSE(msg->acked);
+    EXPECT_FALSE(msg->confirmation_lost);
+}
+
 TEST_F(ChatMessageBufferTest, TakeFromMovesBufferAndEmptiesSource)
 {
     ChatMessageBuffer src;

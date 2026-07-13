@@ -72,6 +72,7 @@ ChannelMessage* ChatMessageBuffer::append(const char* sender, const char* text,
     msg.timestamp = timestamp;
     msg.is_self = is_self;
     msg.acked = false;
+    msg.confirmation_lost = false;
     return &msg;
 }
 

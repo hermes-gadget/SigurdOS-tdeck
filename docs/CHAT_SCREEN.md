@@ -148,6 +148,11 @@ A vertically scrollable LVGL object (`msg_list`) containing message bubbles.
   - Text: `TEXT_PRIMARY` (`#f2f3f5`)
   - Timestamp: `TEXT_MUTED` (`#6b7078`)
 - Text wraps with `LV_LABEL_LONG_WRAP` at 78% of message list width
+- Self-DM delivery state appears beside the timestamp: no suffix while the ACK
+  is pending, `✅` when confirmed, and `NO ACK` when the bounded ACK window
+  expires or the 16-entry pending table has to evict it. `NO ACK` is persisted;
+  pending DMs restored after reboot are also marked lost because their
+  RAM-only ACK hashes can no longer be matched.
 - After rendering, auto-scrolls to the last bubble
 
 #### Input Bar

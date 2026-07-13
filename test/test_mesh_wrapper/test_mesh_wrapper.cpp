@@ -216,6 +216,9 @@ TEST_F(MeshWrapperTest, NodeStatsCounterSignatures) {
     (void)static_cast<getUL>(sigurdos::mesh::getTotalRxAirtimeMs);
     (void)static_cast<getUL>(sigurdos::mesh::getRemainingTxBudget);
     (void)static_cast<getInt>(sigurdos::mesh::getAckCounter);
+    (void)static_cast<getInt>(sigurdos::mesh::getDeliveryCounter);
+    (void)static_cast<getU32>(sigurdos::mesh::getPendingAckDropCount);
+    (void)static_cast<getU32>(sigurdos::mesh::getPendingAckExpiredCount);
     (void)static_cast<void (*)()>(sigurdos::mesh::resetPacketStats);
 
     SUCCEED();
@@ -262,6 +265,22 @@ TEST_F(MeshWrapperTest, AckRingEvictsOldestEntry) {
     EXPECT_FALSE(sigurdos::mesh::isMessageAcked("AckRing353_00", kBaseTimestamp));
     EXPECT_TRUE(sigurdos::mesh::isMessageAcked("AckRing353_01", kBaseTimestamp + 1));
     EXPECT_TRUE(sigurdos::mesh::isMessageAcked("AckRing353_32", kBaseTimestamp + 32));
+}
+
+TEST_F(MeshWrapperTest, ConfirmationLossMatchesExactMessageAndRefreshesDelivery) {
+    int before = sigurdos::mesh::getDeliveryCounter();
+    sigurdos::mesh::registerConfirmationLost("LostNode353", 353200);
+
+    EXPECT_EQ(sigurdos::mesh::getDeliveryCounter(), before + 1);
+    EXPECT_TRUE(sigurdos::mesh::isMessageConfirmationLost("LostNode353", 353200));
+    EXPECT_FALSE(sigurdos::mesh::isMessageConfirmationLost("LostNode353", 353201));
+    EXPECT_FALSE(sigurdos::mesh::isMessageConfirmationLost("OtherNode353", 353200));
+}
+
+TEST_F(MeshWrapperTest, AckAlsoRefreshesDeliveryCounter) {
+    int before = sigurdos::mesh::getDeliveryCounter();
+    sigurdos::mesh::registerAckedMessage("DeliveryNode353", 353210);
+    EXPECT_EQ(sigurdos::mesh::getDeliveryCounter(), before + 1);
 }
 
 // Identity backup API surface

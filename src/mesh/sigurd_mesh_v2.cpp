@@ -440,38 +440,65 @@ namespace mesh {
         sigurdos::mesh::mesh_v2_companion_contact_deleted_push(pub_key);
     }
 
-    void SigurdMeshV2::addPendingAck(const char* name, uint32_t ts, uint32_t expected_ack) {
+    void SigurdMeshV2::addPendingAck(const char* name, uint32_t ts,
+                                     uint32_t expected_ack,
+                                     uint32_t estimated_timeout_ms) {
+        if (!name || !name[0] || expected_ack == 0) return;
+        expirePendingAcks();
+        const uint32_t now = _ms->getMillis();
+        const uint32_t expires = now + pendingAckLifetimeMs(estimated_timeout_ms);
         for (int i = 0; i < MAX_PENDING_ACKS; i++) {
             if (!_pending_acks[i].in_use) {
                 strncpy(_pending_acks[i].dest_name, name, sizeof(_pending_acks[i].dest_name)-1);
                 _pending_acks[i].dest_name[sizeof(_pending_acks[i].dest_name)-1] = '\0';
                 _pending_acks[i].timestamp = ts;
                 _pending_acks[i].expected_ack = expected_ack;
-                _pending_acks[i].sent_at_ms = _ms->getMillis();
+                _pending_acks[i].sent_at_ms = now;
+                _pending_acks[i].expires_at_ms = expires;
                 _pending_acks[i].in_use = true;
                 return;
             }
         }
         // Table full — evict oldest entry; count drops for observability
         int oldest = 0;
-        uint32_t oldest_ms = _pending_acks[0].sent_at_ms;
+        uint32_t oldest_age = now - _pending_acks[0].sent_at_ms;
         for (int i = 1; i < MAX_PENDING_ACKS; i++) {
-            if (_pending_acks[i].sent_at_ms < oldest_ms) {
+            const uint32_t age = now - _pending_acks[i].sent_at_ms;
+            if (age > oldest_age) {
                 oldest = i;
-                oldest_ms = _pending_acks[i].sent_at_ms;
+                oldest_age = age;
             }
         }
         _ack_drop_count++;
+        sigurdos::mesh::registerConfirmationLost(_pending_acks[oldest].dest_name,
+                                                  _pending_acks[oldest].timestamp);
         strncpy(_pending_acks[oldest].dest_name, name, sizeof(_pending_acks[oldest].dest_name)-1);
         _pending_acks[oldest].dest_name[sizeof(_pending_acks[oldest].dest_name)-1] = '\0';
         _pending_acks[oldest].timestamp = ts;
         _pending_acks[oldest].expected_ack = expected_ack;
-        _pending_acks[oldest].sent_at_ms = _ms->getMillis();
+        _pending_acks[oldest].sent_at_ms = now;
+        _pending_acks[oldest].expires_at_ms = expires;
         _pending_acks[oldest].in_use = true;
+    }
+
+    void SigurdMeshV2::expirePendingAcks() {
+        const uint32_t now = _ms->getMillis();
+        for (int i = 0; i < MAX_PENDING_ACKS; i++) {
+            PendingAck& pending = _pending_acks[i];
+            if (!pending.in_use ||
+                !pendingAckDeadlineReached(now, pending.expires_at_ms)) {
+                continue;
+            }
+            pending.in_use = false;
+            _ack_expired_count++;
+            sigurdos::mesh::registerConfirmationLost(pending.dest_name,
+                                                      pending.timestamp);
+        }
     }
 
     ::ContactInfo* SigurdMeshV2::processAck(const uint8_t* data) {
         if (!data) return nullptr;
+        expirePendingAcks();
         uint32_t ack_val;
         memcpy(&ack_val, data, 4);
         for (int i = 0; i < MAX_PENDING_ACKS; i++) {
@@ -1051,7 +1078,7 @@ namespace mesh {
                 int r = BaseChatMesh::sendMessage(tmp, ts, 0, text,
                                                   expected_ack, est_timeout);
                 if (r != MSG_SEND_FAILED) {
-                    addPendingAck(name, ts, expected_ack);
+                    addPendingAck(name, ts, expected_ack, est_timeout);
                 }
                 return r != MSG_SEND_FAILED;
             }
@@ -1069,7 +1096,7 @@ namespace mesh {
                 int r = BaseChatMesh::sendMessage(tmp, fixed_ts, 0, text,
                                                   expected_ack, est_timeout);
                 if (r != MSG_SEND_FAILED) {
-                    addPendingAck(name, fixed_ts, expected_ack);
+                    addPendingAck(name, fixed_ts, expected_ack, est_timeout);
                 }
                 return r != MSG_SEND_FAILED;
             }

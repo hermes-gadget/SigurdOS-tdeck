@@ -135,6 +135,28 @@ void node_stats_screen_show()
     lv_obj_set_style_pad_bottom(r7, 4, 0);
     row++;
 
+    snprintf(buf, sizeof(buf), "  ACK table drops: %u",
+             sigurdos::mesh::getPendingAckDropCount());
+    lv_obj_t* r8 = lv_list_add_btn(list, LV_SYMBOL_WARNING, buf);
+    lv_obj_set_style_bg_color(r8, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(r8, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(r8, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(r8, emoji_wrapped_montserrat_12, 0);
+    lv_obj_set_style_pad_top(r8, 4, 0);
+    lv_obj_set_style_pad_bottom(r8, 4, 0);
+    row++;
+
+    snprintf(buf, sizeof(buf), "  ACK timeouts: %u",
+             sigurdos::mesh::getPendingAckExpiredCount());
+    lv_obj_t* r9 = lv_list_add_btn(list, LV_SYMBOL_WARNING, buf);
+    lv_obj_set_style_bg_color(r9, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(r9, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(r9, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(r9, emoji_wrapped_montserrat_12, 0);
+    lv_obj_set_style_pad_top(r9, 4, 0);
+    lv_obj_set_style_pad_bottom(r9, 4, 0);
+    row++;
+
     // ── Storage ──
     {
         // SPIFFS

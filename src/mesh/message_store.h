@@ -41,6 +41,7 @@ struct StoredMessage {
     bool is_self;
     bool is_channel;
     bool acked;
+    bool confirmation_lost;
     bool companion_sent;
 };
 
@@ -76,6 +77,8 @@ bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out = nullp
 int  messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max);
 int  messageStoreLoadAll(StoredMessage* out, int max);
 bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp);
+bool messageStoreMarkConfirmationLost(const char* conversation, uint32_t timestamp);
+int  messageStoreMarkOrphanedPendingLost();
 bool messageStoreMarkCompanionSent(uint32_t store_id);
 int  messageStoreLoadUnsent(StoredMessage* out, int max);
 int  messageStoreCount();
