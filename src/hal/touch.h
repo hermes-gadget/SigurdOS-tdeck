@@ -56,7 +56,7 @@ inline bool sigurdos_touch_parse_point_raw(const uint8_t* points,
 }
 
 // Initialize the GT911 touch controller over I2C
-// Must be called after Wire.begin() and before LVGL init
+// Starts the shared I2C bus if needed; call before LVGL input registration.
 // Returns true on successful initialization
 bool sigurdos_touch_init();
 

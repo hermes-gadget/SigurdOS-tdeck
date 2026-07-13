@@ -85,7 +85,7 @@ TEST_F(I2cBusTest, RecoveryStopsAfterNineClocksWhenSdaStaysLow)
 
 TEST_F(I2cBusTest, BeginRecoversBeforeStartingWire)
 {
-  sigurdos::i2c::begin();
+  EXPECT_TRUE(sigurdos::i2c::begin());
 
   EXPECT_TRUE(Wire.mock_was_begun());
   EXPECT_EQ(Wire.mock_begin_count(), 1);
@@ -97,15 +97,63 @@ TEST_F(I2cBusTest, BeginRecoversBeforeStartingWire)
 
 TEST_F(I2cBusTest, BeginIsProcessWideIdempotent)
 {
-  sigurdos::i2c::begin();
+  ASSERT_TRUE(sigurdos::i2c::begin());
   const int scl_modes_after_first_begin = arduino_mock::pin_mode_calls[PIN_TOUCH_SCL];
 
-  sigurdos::i2c::begin();
+  EXPECT_TRUE(sigurdos::i2c::begin());
 
   EXPECT_EQ(Wire.mock_begin_count(), 1);
   EXPECT_EQ(arduino_mock::pin_mode_calls[PIN_TOUCH_SCL], scl_modes_after_first_begin);
   EXPECT_EQ(Wire.mock_clock(), sigurdos::i2c::BUS_CLOCK_HZ);
   EXPECT_EQ(Wire.mock_timeout_ms(), sigurdos::i2c::TRANSACTION_TIMEOUT_MS);
+}
+
+TEST_F(I2cBusTest, StuckBusDoesNotLatchStartupSuccess)
+{
+  arduino_mock::forced_read_value[PIN_TOUCH_SDA] = LOW;
+  arduino_mock::forced_read_count[PIN_TOUCH_SDA] = 32;
+
+  EXPECT_FALSE(sigurdos::i2c::begin());
+  EXPECT_EQ(Wire.mock_begin_count(), 0);
+
+  arduino_mock::forced_read_count[PIN_TOUCH_SDA] = 0;
+  EXPECT_TRUE(sigurdos::i2c::begin());
+  EXPECT_EQ(Wire.mock_begin_count(), 1);
+}
+
+TEST_F(I2cBusTest, WireBeginFailureRemainsRetryable)
+{
+  Wire.mock_set_begin_result(false);
+  EXPECT_FALSE(sigurdos::i2c::begin());
+  EXPECT_FALSE(Wire.mock_was_begun());
+
+  Wire.mock_set_begin_result(true);
+  EXPECT_TRUE(sigurdos::i2c::begin());
+  EXPECT_EQ(Wire.mock_begin_count(), 2);
+}
+
+TEST_F(I2cBusTest, RuntimeResetStopsWireBeforeGpioRecovery)
+{
+  ASSERT_TRUE(sigurdos::i2c::begin());
+  const int scl_modes_before_reset = arduino_mock::pin_mode_calls[PIN_TOUCH_SCL];
+
+  EXPECT_TRUE(sigurdos::i2c::reset());
+
+  EXPECT_EQ(Wire.mock_bus_end_count(), 1u);
+  EXPECT_EQ(Wire.mock_begin_count(), 2);
+  EXPECT_GT(arduino_mock::pin_mode_calls[PIN_TOUCH_SCL], scl_modes_before_reset);
+}
+
+TEST_F(I2cBusTest, FailedWireEndPreventsRuntimeBitBang)
+{
+  ASSERT_TRUE(sigurdos::i2c::begin());
+  const int scl_modes_before_reset = arduino_mock::pin_mode_calls[PIN_TOUCH_SCL];
+  Wire.mock_set_end_result(false);
+
+  EXPECT_FALSE(sigurdos::i2c::reset());
+
+  EXPECT_EQ(Wire.mock_begin_count(), 1);
+  EXPECT_EQ(arduino_mock::pin_mode_calls[PIN_TOUCH_SCL], scl_modes_before_reset);
 }
 
 } // namespace

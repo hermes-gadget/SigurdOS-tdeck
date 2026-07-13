@@ -227,15 +227,22 @@ extern HardwareSerial Serial1;
 // ── I2C ──────────────────────────────────────────────────
 class TwoWire {
 public:
-    void begin() {
-        _begun = true;
+    bool begin() {
+        _begun = _begin_result;
         _begin_count++;
+        return _begin_result;
     }
-    void begin(int sda, int scl) {
-        _begun = true;
+    bool begin(int sda, int scl) {
+        _begun = _begin_result;
         _begin_count++;
         _begin_sda = sda;
         _begin_scl = scl;
+        return _begin_result;
+    }
+    bool end() {
+        _end_bus_count++;
+        if (_end_result) _begun = false;
+        return _end_result;
     }
     void setClock(uint32_t clock) { _clock = clock; }
     void setTimeOut(uint16_t timeout_ms) { _timeout_ms = timeout_ms; }
@@ -267,6 +274,9 @@ public:
             _nack_remaining--;
             return 1;  // NACK — simulate I2C no-ACK for warm-handoff testing
         }
+        if (_end_result_pos < _end_result_len) {
+            return _end_results[_end_result_pos++];
+        }
         return _end_error;
     }
 
@@ -296,9 +306,16 @@ public:
 
     // ── Test control ──────────────────────────────────
     void mock_set_error(uint8_t err) { _end_error = err; }
+    void mock_set_begin_result(bool result) { _begin_result = result; }
+    void mock_set_end_result(bool result) { _end_result = result; }
     // How many endTransmission calls to NACK before allowing success.
     // Used to test warm-handoff retry logic after Launcher handoff.
     void mock_set_nack_count(uint8_t n) { _nack_count = n; _nack_remaining = n; }
+    void mock_queue_end_result(uint8_t result) {
+        if (_end_result_len < sizeof(_end_results)) {
+            _end_results[_end_result_len++] = result;
+        }
+    }
     void mock_queue_rx_byte(uint8_t val) {
         if (_q_len < 32) _q_buf[_q_len++] = val;
     }
@@ -311,6 +328,7 @@ public:
     int mock_begin_count() const { return _begin_count; }
     int mock_begin_sda() const { return _begin_sda; }
     int mock_begin_scl() const { return _begin_scl; }
+    size_t mock_bus_end_count() const { return _end_bus_count; }
     uint32_t mock_clock() const { return _clock; }
     uint16_t mock_timeout_ms() const { return _timeout_ms; }
     size_t mock_end_count() const { return _end_count; }
@@ -321,7 +339,10 @@ public:
 
 private:
     bool _begun = false;
+    bool _begin_result = true;
+    bool _end_result = true;
     int _begin_count = 0;
+    size_t _end_bus_count = 0;
     int _begin_sda = -1;
     int _begin_scl = -1;
     uint32_t _clock = 0;
@@ -332,6 +353,9 @@ private:
     uint8_t _end_error = 0;
     uint8_t _nack_count = 0;
     uint8_t _nack_remaining = 0;
+    uint8_t _end_results[32] = {};
+    size_t _end_result_pos = 0;
+    size_t _end_result_len = 0;
     size_t _end_count = 0;
     uint8_t _address_history[64] = {};
     size_t _address_count = 0;

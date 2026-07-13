@@ -46,7 +46,7 @@ inline char sigurdos_keyboard_char_picker_base(uint32_t key)
 // The main ESP32-S3 reads key codes over I2C.
 
 // Initialize communication with the keyboard MCU
-// Must be called after I2C bus is configured (Wire.begin)
+// Starts the shared I2C bus if needed and restores the C3's key mode.
 // Returns true if keyboard is detected
 bool sigurdos_keyboard_init();
 

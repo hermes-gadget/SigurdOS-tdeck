@@ -144,11 +144,22 @@ enum class RawSamplerSupport : uint8_t {
 
 static bool     initialized     = false;
 static bool     init_attempted  = false;
+static uint8_t  keyboard_i2c_errors = 0;
+static uint8_t  keyboard_recovery_attempts = 0;
+static bool     keyboard_recovery_pending = false;
+static uint32_t keyboard_next_recovery_ms = 0;
+static constexpr uint8_t KEYBOARD_MAX_CONSECUTIVE_ERRORS = 3;
+static constexpr uint8_t KEYBOARD_MAX_RECOVERY_ATTEMPTS = 3;
+static constexpr uint32_t KEYBOARD_RECOVERY_RETRY_MS = 250;
 
 void sigurdos_keyboard_reset_init_for_test()
 {
     initialized = false;
     init_attempted = false;
+    keyboard_i2c_errors = 0;
+    keyboard_recovery_attempts = 0;
+    keyboard_recovery_pending = false;
+    keyboard_next_recovery_ms = 0;
 }
 
 static uint32_t last_poll_ms    = 0;
@@ -273,6 +284,35 @@ static bool set_keyboard_mode(uint8_t command)
     return Wire.endTransmission() == 0;
 }
 
+static bool keyboard_probe_ready()
+{
+    if (!sigurdos::i2c::probe_target(KB_I2C_ADDR)) return false;
+    if (!set_keyboard_mode(CMD_MODE_KEY)) return false;
+
+    const uint8_t received = Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
+    if (received != 1 || Wire.available() == 0) return false;
+    const int ready_value = Wire.read();
+    return ready_value >= 0 && ready_value != 0xFF;
+}
+
+static bool keyboard_send_configuration()
+{
+    const uint8_t brightness = sigurdos::prefs_get().kbd_backlight;
+    Wire.beginTransmission(KB_I2C_ADDR);
+    Wire.write(CMD_BRIGHTNESS);
+    Wire.write(brightness);
+    if (Wire.endTransmission() != 0) return false;
+
+    Wire.beginTransmission(KB_I2C_ADDR);
+    Wire.write(CMD_DEFAULT_BRIGHTNESS);
+    Wire.write(brightness < 30 ? 30 : brightness);
+    if (Wire.endTransmission() != 0) return false;
+
+    if (!set_keyboard_mode(CMD_MODE_KEY)) return false;
+    key_mode_ready = true;
+    return true;
+}
+
 static const RawKeyDef* active_raw_key(const uint8_t matrix[KB_RAW_COLS])
 {
     for (uint8_t row = 0; row < KB_RAW_ROWS; row++) {
@@ -372,11 +412,17 @@ static void hold_keymode_byte(int key_value)
     resolve_pending_key(nullptr);
 }
 
-static bool poll_key_mode()
+enum class KeyboardPollResult : uint8_t {
+    NoKey,
+    Key,
+    Error,
+};
+
+static KeyboardPollResult poll_key_mode()
 {
     if (!key_mode_ready) {
         key_mode_ready = set_keyboard_mode(CMD_MODE_KEY);
-        if (!key_mode_ready) return false;
+        if (!key_mode_ready) return KeyboardPollResult::Error;
     }
 
     const uint8_t received = Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
@@ -384,9 +430,12 @@ static bool poll_key_mode()
 #if defined(SIGURDOS_DEBUG)
         Serial.printf("[kbd] key-mode read: %u/1 bytes\n", received);
 #endif
-        return false;
+        return KeyboardPollResult::Error;
     }
     const int key_value = Wire.read();
+    if (key_value < 0 || key_value == 0xFF) {
+        return KeyboardPollResult::Error;
+    }
     if (key_value > 0 && key_value != 0xFF) {
         diag_last_key_mode_byte = (uint8_t)key_value;
     }
@@ -399,7 +448,53 @@ static bool poll_key_mode()
 #endif
 
     hold_keymode_byte(key_value);
-    return key_value > 0 && key_value != 0xFF;
+    return key_value > 0 ? KeyboardPollResult::Key : KeyboardPollResult::NoKey;
+}
+
+static void keyboard_attempt_recovery(uint32_t now)
+{
+    if (!keyboard_recovery_pending ||
+        keyboard_recovery_attempts >= KEYBOARD_MAX_RECOVERY_ATTEMPTS) {
+        keyboard_recovery_pending = false;
+        initialized = false;
+        return;
+    }
+
+    keyboard_recovery_attempts++;
+    if (sigurdos::i2c::reset() && keyboard_probe_ready() &&
+        keyboard_send_configuration()) {
+        keyboard_i2c_errors = 0;
+        keyboard_recovery_attempts = 0;
+        keyboard_recovery_pending = false;
+        initialized = true;
+        last_poll_ms = now;
+        return;
+    }
+
+    initialized = false;
+    key_mode_ready = false;
+    if (keyboard_recovery_attempts < KEYBOARD_MAX_RECOVERY_ATTEMPTS) {
+        keyboard_next_recovery_ms = now + KEYBOARD_RECOVERY_RETRY_MS;
+    } else {
+        keyboard_recovery_pending = false;
+    }
+}
+
+static void keyboard_record_i2c_failure(uint32_t now)
+{
+    key_mode_ready = false;
+    if (keyboard_i2c_errors < KEYBOARD_MAX_CONSECUTIVE_ERRORS) {
+        keyboard_i2c_errors++;
+    }
+    if (keyboard_i2c_errors < KEYBOARD_MAX_CONSECUTIVE_ERRORS ||
+        keyboard_recovery_pending) {
+        return;
+    }
+
+    keyboard_recovery_attempts = 0;
+    keyboard_recovery_pending = true;
+    keyboard_next_recovery_ms = now;
+    keyboard_attempt_recovery(now);
 }
 
 
@@ -411,11 +506,8 @@ bool sigurdos_keyboard_init()
 {
     if (initialized) return true;
     if (init_attempted) return false;
+    if (!sigurdos::i2c::begin()) return false;
     init_attempted = true;
-
-    // TDeckBoard::begin() normally applies this once. Reassert it here so the
-    // driver contract remains safe in isolation and after Launcher handoff.
-    sigurdos::i2c::configure_runtime();
 
     // Warm-handoff probe: after Launcher's ESP.restart(), the C3 keyboard
     // MCU may be slow to respond or in an unexpected mode. The 8-attempt
@@ -428,16 +520,7 @@ bool sigurdos_keyboard_init()
     for (int retry = 0; retry < WARM_KBD_RETRIES; retry++) {
         if (retry > 0) delay(WARM_KBD_RETRY_DELAY_MS);
 
-        if (!sigurdos::i2c::probe_target(KB_I2C_ADDR)) continue;
-
-        // Push C3 into key mode (the default after C3 cold boot) to
-        // establish a known state regardless of what Launcher left behind.
-        Wire.beginTransmission(KB_I2C_ADDR);
-        Wire.write(CMD_MODE_KEY);
-        Wire.endTransmission();  // ignore NACK — C3 may not be ready yet
-
-        Wire.requestFrom(KB_I2C_ADDR, (uint8_t)1);
-        if (Wire.available() > 0 && Wire.read() >= 0) {
+        if (keyboard_probe_ready()) {
             probe_ok = true;
             break;
         }
@@ -447,25 +530,7 @@ bool sigurdos_keyboard_init()
         return false;
     }
 
-    // Set initial backlight from stored preferences
-    uint8_t brightness = sigurdos::prefs_get().kbd_backlight;
-    Wire.beginTransmission(KB_I2C_ADDR);
-    Wire.write(CMD_BRIGHTNESS);
-    Wire.write(brightness);
-    if (Wire.endTransmission() != 0) {
-        initialized = false;
-        return false;
-    }
-    Wire.beginTransmission(KB_I2C_ADDR);
-    Wire.write(CMD_DEFAULT_BRIGHTNESS);
-    Wire.write(brightness < 30 ? 30 : brightness);
-    if (Wire.endTransmission() != 0) {
-        initialized = false;
-        return false;
-    }
-
-    // Permanent key-mode-only contract (CMD 0x04). Never enter raw mode.
-    if (!set_keyboard_mode(CMD_MODE_KEY)) {
+    if (!keyboard_send_configuration()) {
         initialized = false;
         return false;
     }
@@ -480,14 +545,24 @@ bool sigurdos_keyboard_init()
 
 void sigurdos_keyboard_scan()
 {
-    if (!initialized) return;
-
     uint32_t now = millis();
+    if (!initialized) {
+        if (keyboard_recovery_pending &&
+            (int32_t)(now - keyboard_next_recovery_ms) >= 0) {
+            keyboard_attempt_recovery(now);
+        }
+        return;
+    }
     if (now - last_poll_ms < KB_POLL_INTERVAL_MS) return;
     last_poll_ms = now;
 
     // Key mode only — one-byte ASCII reads. Never switch to CMD 0x03.
-    (void)poll_key_mode();
+    const KeyboardPollResult result = poll_key_mode();
+    if (result == KeyboardPollResult::Error) {
+        keyboard_record_i2c_failure(now);
+    } else {
+        keyboard_i2c_errors = 0;
+    }
 }
 
 int sigurdos_keyboard_get_key()
@@ -538,7 +613,7 @@ void sigurdos_keyboard_set_brightness(uint8_t duty)
     Wire.write(CMD_BRIGHTNESS);
     Wire.write(duty);
     if (Wire.endTransmission() != 0) {
-        // Non-critical: backlight brightness update failed, device still usable
+        keyboard_record_i2c_failure(millis());
     }
 }
 
@@ -549,7 +624,7 @@ void sigurdos_keyboard_set_default_brightness(uint8_t duty)
     Wire.write(CMD_DEFAULT_BRIGHTNESS);
     Wire.write(duty);
     if (Wire.endTransmission() != 0) {
-        // Non-critical: default brightness update failed, device still usable
+        keyboard_record_i2c_failure(millis());
     }
 }
 

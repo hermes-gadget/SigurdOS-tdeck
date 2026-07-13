@@ -44,6 +44,7 @@ protected:
     void SetUp() override {
         arduino_mock::reset();
         Wire = TwoWire();
+        sigurdos::i2c::reset_for_test();
         sigurdos_keyboard_reset_init_for_test();
     }
 
@@ -143,6 +144,50 @@ TEST_F(KeyboardTest, InitRetryWindowCoversSlowColdBoot) {
 
     EXPECT_TRUE(sigurdos_keyboard_init());
     EXPECT_GE(arduino_mock::current_millis, 600u);
+}
+
+TEST_F(KeyboardTest, RuntimeReadFailuresRecoverAndRestoreKeyMode) {
+    init_with_ack();
+
+    for (int i = 0; i < 3; ++i) {
+        arduino_mock::current_millis += 6;
+        sigurdos_keyboard_scan();
+    }
+    SigurdOSKeyboardDiag diag{};
+    EXPECT_FALSE(sigurdos_keyboard_get_diag(&diag));
+
+    Wire.mock_queue_rx_byte(0x00);
+    arduino_mock::current_millis += 250;
+    sigurdos_keyboard_scan();
+
+    ASSERT_TRUE(sigurdos_keyboard_get_diag(&diag));
+    EXPECT_EQ(Wire.mock_last_tx_data(0), 0x04u);
+    EXPECT_GE(Wire.mock_bus_end_count(), 2u);
+
+    scan_keymode_byte('r');
+    EXPECT_EQ(sigurdos_keyboard_get_key(), 'r');
+    EXPECT_TRUE(sigurdos_keyboard_consume_event());
+}
+
+TEST_F(KeyboardTest, RuntimeRecoveryStopsAfterBoundedFailures) {
+    init_with_ack();
+
+    for (int i = 0; i < 3; ++i) {
+        arduino_mock::current_millis += 6;
+        sigurdos_keyboard_scan();
+    }
+    for (int i = 0; i < 2; ++i) {
+        arduino_mock::current_millis += 250;
+        sigurdos_keyboard_scan();
+    }
+    const int begin_count_after_exhaustion = Wire.mock_begin_count();
+
+    arduino_mock::current_millis += 5000;
+    sigurdos_keyboard_scan();
+
+    EXPECT_EQ(Wire.mock_begin_count(), begin_count_after_exhaustion);
+    SigurdOSKeyboardDiag diag{};
+    EXPECT_FALSE(sigurdos_keyboard_get_diag(&diag));
 }
 
 // ════════════════════════════════════════════════════════

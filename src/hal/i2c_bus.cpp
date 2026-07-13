@@ -75,27 +75,45 @@ void configure_runtime()
   Wire.setTimeOut(TRANSACTION_TIMEOUT_MS);
 }
 
-void begin()
+bool begin()
 {
   if (bus_started) {
     configure_runtime();
-    return;
+    return true;
   }
 
   const RecoveryResult recovery = recover_before_begin();
-  Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL);
+  if (recovery == RecoveryResult::Stuck) {
+    SIG_LOGW("i2c: SDA remained low after recovery clocks");
+    return false;
+  }
+  if (!Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL)) {
+    SIG_LOGW("i2c: Wire.begin failed");
+    return false;
+  }
   configure_runtime();
   bus_started = true;
 
 #if defined(SIGURDOS_DEBUG)
   if (recovery == RecoveryResult::Recovered) {
     SIG_LOGD("i2c recovered shared bus before startup");
-  } else if (recovery == RecoveryResult::Stuck) {
-    SIG_LOGD("i2c WARNING: SDA remained low after recovery clocks");
   }
 #else
   (void)recovery;
 #endif
+  return true;
+}
+
+bool reset()
+{
+  if (bus_started) {
+    if (!Wire.end()) {
+      SIG_LOGW("i2c: Wire.end failed before recovery");
+      return false;
+    }
+    bus_started = false;
+  }
+  return begin();
 }
 
 void reset_for_test()

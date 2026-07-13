@@ -30,8 +30,13 @@ bool probe_target(uint8_t addr);
 RecoveryResult recover_before_begin();
 
 // Owns shared-bus startup and applies the runtime clock/timeout contract.
-void begin();
+// Failed recovery or controller startup leaves the bus retryable.
+bool begin();
 void configure_runtime();
+
+// Stop Wire before GPIO recovery, then restart it with the same contract.
+// This is the only runtime path allowed to bit-bang the shared bus pins.
+bool reset();
 
 // Reset process-wide startup state for native test isolation.
 void reset_for_test();

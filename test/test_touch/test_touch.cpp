@@ -154,6 +154,7 @@ protected:
     void SetUp() override {
         arduino_mock::reset();
         Wire = TwoWire();
+        sigurdos::i2c::reset_for_test();
         sigurdos_touch_reset_init_for_test();
         regs.clear();
     }
@@ -463,6 +464,39 @@ TEST_F(TouchTest, FailedRuntimeRecoveryRetriesAndRestoresTouch) {
     ASSERT_TRUE(sigurdos_touch_get_diag(&diag));
     EXPECT_EQ(diag.reinit_count, 1u);
     EXPECT_EQ(diag.consecutive_i2c_errors, 0);
+}
+
+TEST_F(TouchTest, StatusReadFailuresRecoverEvenWhenInterruptIsHigh) {
+    ASSERT_TRUE(sigurdos_touch_init());
+    digitalWrite(PIN_TOUCH_INT, HIGH);
+
+    Wire.mock_set_error(1);
+    for (int i = 0; i < 5; ++i) {
+        arduino_mock::current_millis += 100;
+        sigurdos_touch_loop();
+    }
+
+    EXPECT_FALSE(sigurdos_touch_ready());
+    EXPECT_GE(Wire.mock_bus_end_count(), 1u);
+}
+
+TEST_F(TouchTest, StatusAcknowledgeFailuresEnterRecovery) {
+    ASSERT_TRUE(sigurdos_touch_init());
+    digitalWrite(PIN_TOUCH_INT, LOW);
+
+    for (int i = 0; i < 5; ++i) {
+        Wire.mock_queue_end_result(0);  // status register select succeeds
+        Wire.mock_queue_end_result(1);  // status clear NACKs
+        Wire.mock_queue_rx_byte(0x80);  // ready with zero points
+        arduino_mock::current_millis += 100;
+        sigurdos_touch_loop();
+    }
+
+    SigurdOSTouchDiag diag{};
+    ASSERT_TRUE(sigurdos_touch_get_diag(&diag));
+    EXPECT_EQ(diag.reinit_count, 1u);
+    EXPECT_EQ(diag.consecutive_i2c_errors, 0);
+    EXPECT_GE(Wire.mock_bus_end_count(), 1u);
 }
 
 TEST_F(TouchTest, RuntimeRecoveryStopsAfterBoundedFailures) {
