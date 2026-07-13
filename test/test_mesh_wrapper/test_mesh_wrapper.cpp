@@ -31,6 +31,7 @@
 
 // Include our mesh wrapper header (uses mocks for MeshCore)
 #include "mesh/mesh_wrapper.h"
+#include "mesh/radio_config_policy.h"
 
 namespace {
 
@@ -115,6 +116,57 @@ TEST_F(MeshWrapperTest, ApplyRadioParamsAcceptsRxGainFlag) {
     using fn = bool (*)(float, float, int, int, int, bool);
     (void)static_cast<fn>(sigurdos::mesh::applyRadioParams);
     SUCCEED();
+}
+
+TEST(RadioConfigPolicy, AcceptsSx1262FrequencyLimitsAndDiscreteBandwidths) {
+    using sigurdos::mesh::RadioConfig;
+    using sigurdos::mesh::sx1262RadioConfigSupported;
+
+    EXPECT_TRUE(sx1262RadioConfigSupported(
+        RadioConfig{150.0f, 7.8f, 5, 5, -9, false}));
+    EXPECT_TRUE(sx1262RadioConfigSupported(
+        RadioConfig{960.0f, 500.0f, 12, 8, 22, true}));
+    EXPECT_TRUE(sx1262RadioConfigSupported(
+        RadioConfig{869.618f, 62.5f, 8, 5, 22, false}));
+}
+
+TEST(RadioConfigPolicy, RejectsOutOfRangeFrequencyAndUnsupportedBandwidth) {
+    using sigurdos::mesh::RadioConfig;
+    using sigurdos::mesh::sx1262RadioConfigSupported;
+
+    EXPECT_FALSE(sx1262RadioConfigSupported(
+        RadioConfig{149.999f, 62.5f, 8, 5, 22, false}));
+    EXPECT_FALSE(sx1262RadioConfigSupported(
+        RadioConfig{960.001f, 62.5f, 8, 5, 22, false}));
+    EXPECT_FALSE(sx1262RadioConfigSupported(
+        RadioConfig{869.618f, 100.0f, 8, 5, 22, false}));
+    EXPECT_FALSE(sigurdos::mesh::sx1262BandwidthSupportedHz(62501));
+}
+
+TEST(RadioConfigPolicy, FailedPartialApplyRestoresFullPreviousConfig) {
+    using sigurdos::mesh::RadioConfig;
+    const RadioConfig previous{869.618f, 62.5f, 8, 5, 22, false};
+    const RadioConfig requested{915.0f, 250.0f, 10, 6, 17, true};
+    RadioConfig calls[2]{};
+    int call_count = 0;
+    auto apply = [&](const RadioConfig& config) {
+        calls[call_count++] = config;
+        return call_count == 2;
+    };
+
+    bool rollback_succeeded = false;
+    EXPECT_FALSE(sigurdos::mesh::applyRadioConfigTransaction(
+        requested, previous, apply, &rollback_succeeded));
+    ASSERT_EQ(call_count, 2);
+    EXPECT_FLOAT_EQ(calls[0].frequency_mhz, requested.frequency_mhz);
+    EXPECT_FLOAT_EQ(calls[0].bandwidth_khz, requested.bandwidth_khz);
+    EXPECT_FLOAT_EQ(calls[1].frequency_mhz, previous.frequency_mhz);
+    EXPECT_FLOAT_EQ(calls[1].bandwidth_khz, previous.bandwidth_khz);
+    EXPECT_EQ(calls[1].spreading_factor, previous.spreading_factor);
+    EXPECT_EQ(calls[1].coding_rate, previous.coding_rate);
+    EXPECT_EQ(calls[1].tx_power_dbm, previous.tx_power_dbm);
+    EXPECT_EQ(calls[1].rx_boosted_gain, previous.rx_boosted_gain);
+    EXPECT_TRUE(rollback_succeeded);
 }
 
 // ── Initial unread count is zero ────────────────────────

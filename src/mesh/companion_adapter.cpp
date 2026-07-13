@@ -8,6 +8,7 @@
 // (ARCH-001, #820).
 
 #include "companion_adapter.h"
+#include "radio_config_policy.h"
 #include "utils/utf8_util.h"
 #include "companion_message_policy.h"
 #include "mesh_wrapper.h"
@@ -459,8 +460,8 @@ public:
                         uint8_t sf,
                         uint8_t cr,
                         uint8_t client_repeat) override {
-        if (freq_khz < 150000 || freq_khz > 2500000) return false;
-        if (bw_hz < 7800 || bw_hz > 500000) return false;
+        if (freq_khz < 150000 || freq_khz > 960000) return false;
+        if (!sigurdos::mesh::sx1262BandwidthSupportedHz(bw_hz)) return false;
         if (sf < 5 || sf > 12) return false;
         if (cr < 5 || cr > 8) return false;
         if (client_repeat > 1) return false;
