@@ -1,5 +1,36 @@
 .hermes/
 .pio/
+
+# Local environment and secret material
+.env
+.env.*
+!.env.example
+!.env.*.example
+secrets.json
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Generated build, analysis, and test output
+build/
+dist/
+out/
+compile_commands.json
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+!test/fixtures/**/*.log
+
+# Local editor and operating-system state
+.vscode/
+.idea/
+.DS_Store
+
 handoff.md
 OVERVIEW.md
 webflasher/
