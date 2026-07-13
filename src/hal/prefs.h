@@ -118,7 +118,7 @@ bool prefs_exists();
 
 // Expose loaded prefs globally (read-only after boot)
 const NodePrefs& prefs_get();
-void             prefs_set(const NodePrefs& p);
+bool             prefs_set(const NodePrefs& p);
 
 // ── Saved repeater passwords (persist across firmware updates in NVS) ──
 bool saveRepeaterPassword(const char* name, const char* password);

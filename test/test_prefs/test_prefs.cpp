@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 
 #include "hal/prefs.h"
+#include "hal/prefs_write_policy.h"
 
 namespace {
 
@@ -31,7 +32,7 @@ protected:
     void SetUp() override {
         sigurdos::NodePrefs defaults;
         defaults.set_defaults();
-        sigurdos::prefs_set(defaults);
+        ASSERT_TRUE(sigurdos::prefs_set(defaults));
     }
 };
 
@@ -47,12 +48,12 @@ TEST_F(PrefsTest, RxBoostedGainRoundTripsThroughPrefsSetAndGet) {
     prefs.set_defaults();
     prefs.rx_boosted_gain = true;
 
-    sigurdos::prefs_set(prefs);
+    ASSERT_TRUE(sigurdos::prefs_set(prefs));
 
     EXPECT_TRUE(sigurdos::prefs_get().rx_boosted_gain);
 
     prefs.rx_boosted_gain = false;
-    sigurdos::prefs_set(prefs);
+    ASSERT_TRUE(sigurdos::prefs_set(prefs));
 
     EXPECT_FALSE(sigurdos::prefs_get().rx_boosted_gain);
 }
@@ -83,7 +84,7 @@ TEST_F(PrefsTest, PathHashModeRoundTripsThroughPrefsSetAndGet) {
     prefs.set_defaults();
     prefs.path_hash_mode = 2;  // 3-byte path hash
 
-    sigurdos::prefs_set(prefs);
+    ASSERT_TRUE(sigurdos::prefs_set(prefs));
 
     EXPECT_EQ(2, sigurdos::prefs_get().path_hash_mode);
 }
@@ -120,9 +121,90 @@ TEST_F(PrefsTest, GpsIntervalIsNormalizedWhenUpdatedAtRuntime) {
     prefs.set_defaults();
     prefs.gps_interval = 0;
 
-    sigurdos::prefs_set(prefs);
+    ASSERT_TRUE(sigurdos::prefs_set(prefs));
 
     EXPECT_EQ(5, sigurdos::prefs_get().gps_interval);
+}
+
+struct FailingNvsWriter {
+    int fail_at = -1;
+    int write_calls = 0;
+    int commit_calls = 0;
+    int32_t error = -42;
+    bool fail_commit = false;
+
+    int32_t write() {
+        const int call = write_calls++;
+        return call == fail_at ? error : 0;
+    }
+
+    static int32_t setI8(void* raw, const char*, int8_t) {
+        return static_cast<FailingNvsWriter*>(raw)->write();
+    }
+    static int32_t setU8(void* raw, const char*, uint8_t) {
+        return static_cast<FailingNvsWriter*>(raw)->write();
+    }
+    static int32_t setU16(void* raw, const char*, uint16_t) {
+        return static_cast<FailingNvsWriter*>(raw)->write();
+    }
+    static int32_t setI32(void* raw, const char*, int32_t) {
+        return static_cast<FailingNvsWriter*>(raw)->write();
+    }
+    static int32_t setU32(void* raw, const char*, uint32_t) {
+        return static_cast<FailingNvsWriter*>(raw)->write();
+    }
+    static int32_t setBlob(void* raw, const char*, const void*, size_t) {
+        return static_cast<FailingNvsWriter*>(raw)->write();
+    }
+    static int32_t setString(void* raw, const char*, const char*) {
+        return static_cast<FailingNvsWriter*>(raw)->write();
+    }
+    static int32_t commit(void* raw) {
+        auto* self = static_cast<FailingNvsWriter*>(raw);
+        self->commit_calls++;
+        return self->fail_commit ? self->error : 0;
+    }
+
+    sigurdos::detail::PrefsNvsWriter ops() {
+        return {this, setI8, setU8, setU16, setI32, setU32, setBlob, setString, commit};
+    }
+};
+
+TEST(PrefsWritePolicyTest, EveryNvsSetFailureIsReturnedWithoutCommit) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+
+    FailingNvsWriter successful;
+    sigurdos::detail::PrefsWriteFailure failure;
+    ASSERT_TRUE(sigurdos::detail::prefsWriteAll(prefs, successful.ops(), &failure));
+    ASSERT_EQ(45, successful.write_calls);
+    ASSERT_EQ(1, successful.commit_calls);
+
+    for (int fail_at = 0; fail_at < successful.write_calls; ++fail_at) {
+        FailingNvsWriter failing;
+        failing.fail_at = fail_at;
+        failure = {};
+
+        EXPECT_FALSE(sigurdos::detail::prefsWriteAll(prefs, failing.ops(), &failure))
+            << "write index " << fail_at;
+        EXPECT_EQ(failing.error, failure.error) << "write index " << fail_at;
+        EXPECT_NE(nullptr, failure.key) << "write index " << fail_at;
+        EXPECT_EQ(0, failing.commit_calls) << "write index " << fail_at;
+    }
+}
+
+TEST(PrefsWritePolicyTest, CommitFailureIsReturned) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    FailingNvsWriter failing;
+    failing.fail_commit = true;
+    sigurdos::detail::PrefsWriteFailure failure;
+
+    EXPECT_FALSE(sigurdos::detail::prefsWriteAll(prefs, failing.ops(), &failure));
+    EXPECT_EQ(45, failing.write_calls);
+    EXPECT_EQ(1, failing.commit_calls);
+    EXPECT_STREQ("commit", failure.key);
+    EXPECT_EQ(failing.error, failure.error);
 }
 
 } // namespace

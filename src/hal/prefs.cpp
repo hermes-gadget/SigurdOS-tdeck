@@ -3,12 +3,55 @@
 
 #include "prefs.h"
 #include "gps_demand.h"
+#include "prefs_write_policy.h"
+#include "diagnostics/log.h"
 #include <Preferences.h>
+#include <nvs.h>
 
 namespace sigurdos {
 
 static constexpr const char* NVS_NS = "sigurdos";
 static NodePrefs g_prefs;
+
+namespace {
+
+struct NvsWriterContext {
+    nvs_handle_t handle;
+};
+
+int32_t setI8(void* raw, const char* key, int8_t value) {
+    return nvs_set_i8(static_cast<NvsWriterContext*>(raw)->handle, key, value);
+}
+
+int32_t setU8(void* raw, const char* key, uint8_t value) {
+    return nvs_set_u8(static_cast<NvsWriterContext*>(raw)->handle, key, value);
+}
+
+int32_t setU16(void* raw, const char* key, uint16_t value) {
+    return nvs_set_u16(static_cast<NvsWriterContext*>(raw)->handle, key, value);
+}
+
+int32_t setI32(void* raw, const char* key, int32_t value) {
+    return nvs_set_i32(static_cast<NvsWriterContext*>(raw)->handle, key, value);
+}
+
+int32_t setU32(void* raw, const char* key, uint32_t value) {
+    return nvs_set_u32(static_cast<NvsWriterContext*>(raw)->handle, key, value);
+}
+
+int32_t setBlob(void* raw, const char* key, const void* value, size_t size) {
+    return nvs_set_blob(static_cast<NvsWriterContext*>(raw)->handle, key, value, size);
+}
+
+int32_t setString(void* raw, const char* key, const char* value) {
+    return nvs_set_str(static_cast<NvsWriterContext*>(raw)->handle, key, value);
+}
+
+int32_t commit(void* raw) {
+    return nvs_commit(static_cast<NvsWriterContext*>(raw)->handle);
+}
+
+} // namespace
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 static constexpr bool DEFAULT_BLE_ENABLED = true;
@@ -112,57 +155,25 @@ bool prefs_load(NodePrefs& p) {
 }
 
 bool prefs_save(const NodePrefs& p) {
-    Preferences nvs;
-    if (!nvs.begin(NVS_NS, false)) return false;
+    nvs_handle_t handle = 0;
+    esp_err_t error = nvs_open(NVS_NS, NVS_READWRITE, &handle);
+    if (error != ESP_OK) {
+        SIG_LOGE("[prefs] nvs_open failed: %s", esp_err_to_name(error));
+        return false;
+    }
 
-    nvs.putString("name", p.node_name);
-    nvs.putFloat("freq", p.freq);
-    nvs.putFloat("bw", p.bw);
-    nvs.putUChar("sf", p.sf);
-    nvs.putUChar("cr", p.cr);
-    nvs.putChar("txpwr", p.tx_power_dbm < -9 ? (int8_t)(-9) : (p.tx_power_dbm > 22 ? (int8_t)22 : p.tx_power_dbm));
-    nvs.putBool("cfg", p.configured);
-    nvs.putUChar("kbd_bl", p.kbd_backlight);
-    nvs.putUChar("kbd_layout", p.kbd_layout);
-    nvs.putUChar("disp_bl", p.display_brightness);
-    nvs.putUShort("auto_off", p.auto_off_timeout);
-    nvs.putUShort("chat_cap", p.chat_msg_cap);
-    nvs.putUChar("flood_mh", p.flood_max_hops);
-    nvs.putBool("sh_loc", p.share_location);
-    nvs.putBool("adv_loc", p.advert_location_valid);
-    nvs.putInt("adv_lat", p.advert_lat);
-    nvs.putInt("adv_lon", p.advert_lon);
-    nvs.putFloat("rx_del", p.rx_delay_base);
-    nvs.putFloat("tx_del", p.tx_delay_factor);
-    nvs.putFloat("dir_tx", p.direct_tx_delay_factor);
-    nvs.putBool("rx_boost", p.rx_boosted_gain);
-    nvs.putUChar("duty_cyc", p.duty_cycle);
-    nvs.putUShort("adv_dur", p.advert_interval_h);
-    nvs.putUChar("adv_type", p.advert_type);
-    nvs.putUChar("theme", p.theme_id);
-    nvs.putUChar("phash_mode", p.path_hash_mode);
-    nvs.putBool("multi_ack", p.multi_acks);
-    nvs.putBool("buzz_q", p.buzzer_quiet);
-    nvs.putBool("gps_en", p.gps_enabled);
-    nvs.putUShort("gps_int", p.gps_interval);
-    nvs.putUChar("autoadd_cfg", p.autoadd_config);
-    nvs.putUChar("autoadd_mh", p.autoadd_max_hops);
-    nvs.putUChar("clirep", p.client_repeat);
-    nvs.putBool("ble_en", p.ble_enabled);
-    nvs.putULong("dev_pin", p.device_pin);
-    nvs.putULong("ble_pin", p.ble_pin);
-    nvs.putUChar("tele_mod", p.telemetry_modes);
-    nvs.putUChar("man_add", p.manual_add_contacts);
-    nvs.putString("scope_key", p.default_scope_key_hex);
-    nvs.putString("wifi_ssid", p.wifi_ssid);
-    nvs.putString("wifi_pw", p.wifi_password);
-    nvs.putString("act_reg", p.active_region);
-    nvs.putString("ota_br", p.ota_branch);
-    nvs.putBool("ota_pre", p.ota_allow_prerelease);
-    nvs.putString("rf_prof", p.radio_profile);
-
-    nvs.end();
-    return true;
+    NvsWriterContext context{handle};
+    const detail::PrefsNvsWriter writer{
+        &context, setI8, setU8, setU16, setI32, setU32, setBlob, setString, commit
+    };
+    detail::PrefsWriteFailure failure;
+    const bool saved = detail::prefsWriteAll(p, writer, &failure);
+    nvs_close(handle);
+    if (!saved) {
+        SIG_LOGE("[prefs] NVS write failed at %s: %s", failure.key,
+                 esp_err_to_name((esp_err_t)failure.error));
+    }
+    return saved;
 }
 
 bool prefs_exists() {
@@ -183,10 +194,12 @@ const NodePrefs& prefs_get() {
     return g_prefs;
 }
 
-void prefs_set(const NodePrefs& p) {
-    g_prefs = p;
-    g_prefs.gps_interval = sigurdos_gps_normalize_interval(g_prefs.gps_interval);
-    prefs_save(g_prefs);
+bool prefs_set(const NodePrefs& p) {
+    NodePrefs candidate = p;
+    candidate.gps_interval = sigurdos_gps_normalize_interval(candidate.gps_interval);
+    if (!prefs_save(candidate)) return false;
+    g_prefs = candidate;
+    return true;
 }
 
 // ── Repeater password storage ─────────────────────────────────────────

@@ -29,9 +29,10 @@ const NodePrefs& prefs_get() {
     return g_prefs;
 }
 
-void prefs_set(const NodePrefs& p) {
+bool prefs_set(const NodePrefs& p) {
     g_prefs = p;
     if (g_prefs.gps_interval < 5) g_prefs.gps_interval = 5;
+    return true;
 }
 
 } // namespace sigurdos
