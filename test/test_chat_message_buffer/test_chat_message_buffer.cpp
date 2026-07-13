@@ -139,6 +139,8 @@ TEST_F(ChatMessageBufferTest, NewMessagesStartWithoutConfirmationLoss)
     ASSERT_NE(msg, nullptr);
     EXPECT_FALSE(msg->acked);
     EXPECT_FALSE(msg->confirmation_lost);
+}
+
 TEST_F(ChatMessageBufferTest, RetainsPersistentStoreId)
 {
     ChatMessageBuffer buf;
@@ -146,3 +148,6 @@ TEST_F(ChatMessageBufferTest, RetainsPersistentStoreId)
                                      FULL_CAP, FULL_CAP, FALLBACK_CAP, 77);
     ASSERT_NE(msg, nullptr);
     EXPECT_EQ(msg->store_id, 77u);
+}
+
+}  // namespace
