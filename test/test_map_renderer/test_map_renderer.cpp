@@ -117,4 +117,27 @@ TEST_F(MapRendererMathTest, InvalidZoomReturnsNeutralCoordinate) {
     EXPECT_DOUBLE_EQ(sigurdos_map_tile_y_to_lat(0.0, -1), 0.0);
 }
 
+TEST_F(MapRendererMathTest, PublicConversionApisRequireBothOutputPointers) {
+    double latitude = 0.0;
+    double longitude = 0.0;
+
+    EXPECT_TRUE(sigurdos_map_output_pair_valid(&latitude, &longitude));
+    EXPECT_FALSE(sigurdos_map_output_pair_valid(nullptr, &longitude));
+    EXPECT_FALSE(sigurdos_map_output_pair_valid(&latitude, nullptr));
+    EXPECT_FALSE(sigurdos_map_output_pair_valid(nullptr, nullptr));
+}
+
+TEST_F(MapRendererMathTest, ContactApisRejectInvalidPointerCountCombinations) {
+    int contact_storage = 0;
+
+    EXPECT_TRUE(sigurdos_map_required_pointer_valid(&contact_storage));
+    EXPECT_FALSE(sigurdos_map_required_pointer_valid(nullptr));
+    EXPECT_TRUE(sigurdos_map_contact_args_valid(nullptr, 0));
+    EXPECT_TRUE(sigurdos_map_contact_args_valid(&contact_storage, 0));
+    EXPECT_TRUE(sigurdos_map_contact_args_valid(&contact_storage, 1));
+    EXPECT_FALSE(sigurdos_map_contact_args_valid(nullptr, 1));
+    EXPECT_FALSE(sigurdos_map_contact_args_valid(nullptr, -1));
+    EXPECT_FALSE(sigurdos_map_contact_args_valid(&contact_storage, -1));
+}
+
 } // namespace

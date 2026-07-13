@@ -1133,6 +1133,10 @@ int sigurdos_map_missing_cache_count() {
 }
 
 void sigurdos_map_pixel_to_latlon(int px, int py, double* out_lat, double* out_lon) {
+    if (!sigurdos_map_output_pair_valid(out_lat, out_lon)) {
+        MAP_DEBUG_PRINTLN("[map] pixel_to_latlon: null output");
+        return;
+    }
     double center_tx = lon_to_tile_x(center_lon, zoom_level);
     double center_ty = lat_to_tile_y(center_lat, zoom_level);
 
@@ -1148,6 +1152,10 @@ void sigurdos_map_pixel_to_latlon(int px, int py, double* out_lat, double* out_l
 }
 
 void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_py) {
+    if (!sigurdos_map_output_pair_valid(out_px, out_py)) {
+        MAP_DEBUG_PRINTLN("[map] latlon_to_pixel: null output");
+        return;
+    }
     double center_tx = lon_to_tile_x(center_lon, zoom_level);
     double center_ty = lat_to_tile_y(center_lat, zoom_level);
     double tile_x = lon_to_tile_x(lon, zoom_level);
@@ -1172,6 +1180,10 @@ static ContactDot g_contact_dots[MAX_CONTACT_DOTS];
 static bool g_contact_pool_init = false;
 
 void sigurdos_map_contact_init(lv_obj_t* parent) {
+    if (!sigurdos_map_required_pointer_valid(parent)) {
+        MAP_DEBUG_PRINTLN("[map] contact_init: null parent");
+        return;
+    }
     for (int i = 0; i < MAX_CONTACT_DOTS; i++) {
         lv_obj_t* dot = lv_obj_create(parent);
         lv_obj_set_size(dot, CONTACT_DOT_SIZE, CONTACT_DOT_SIZE);
@@ -1198,6 +1210,10 @@ void sigurdos_map_contact_init(lv_obj_t* parent) {
 
 void sigurdos_map_contact_render(const void* contacts_ptr, int count) {
     if (!g_contact_pool_init) return;
+    if (!sigurdos_map_contact_args_valid(contacts_ptr, count)) {
+        MAP_DEBUG_PRINTLN("[map] contact_render: invalid contacts/count");
+        return;
+    }
     const sigurdos::mesh::ContactInfo* contacts = (const sigurdos::mesh::ContactInfo*)contacts_ptr;
     int slot = 0;
 

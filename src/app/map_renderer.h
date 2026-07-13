@@ -129,6 +129,19 @@ inline double sigurdos_map_tile_y_to_lat(double tile_y, int zoom) {
            180.0 / SIGURDOS_MAP_PI;
 }
 
+inline bool sigurdos_map_required_pointer_valid(const void* pointer) {
+    return pointer != nullptr;
+}
+
+inline bool sigurdos_map_output_pair_valid(const void* first,
+                                            const void* second) {
+    return first != nullptr && second != nullptr;
+}
+
+inline bool sigurdos_map_contact_args_valid(const void* contacts, int count) {
+    return count >= 0 && (count == 0 || contacts != nullptr);
+}
+
 // Initialize the map renderer with LVGL parent object
 // Call after LVGL is initialized and SD card is mounted
 void sigurdos_map_init();
@@ -169,16 +182,17 @@ int sigurdos_map_last_negative_hits();
 int sigurdos_map_last_deferred_tiles();
 int sigurdos_map_missing_cache_count();
 
-// Convert screen pixel to lat/lon
+// Convert screen pixel to lat/lon. Both output pointers are required.
 void sigurdos_map_pixel_to_latlon(int px, int py, double* out_lat, double* out_lon);
 
-// Convert lat/lon to screen pixel (inverse of above)
+// Convert lat/lon to screen pixel (inverse of above). Both outputs are required.
 void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_py);
 
 // Contact marker overlay (pool of pre-allocated dots)
-// Call after map_init, before first render. parent = the map overlay object.
+// Call after map_init, before first render. parent = the non-null map overlay object.
 void sigurdos_map_contact_init(lv_obj_t* parent);
-// Reposition markers for contacts that have location data
+// Reposition markers for contacts that have location data. contacts may be
+// null only when count is zero.
 void sigurdos_map_contact_render(const void* contacts, int count);
 // Free the marker pool
 void sigurdos_map_contact_deinit();
