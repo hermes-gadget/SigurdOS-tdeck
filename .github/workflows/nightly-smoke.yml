@@ -24,16 +24,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Cache PlatformIO packages
-        uses: actions/cache@v4
+      - name: Restore PlatformIO packages
+        uses: ./.github/actions/cache-platformio
         with:
-          path: |
-            ~/.platformio/.cache
-            ~/.platformio/packages
-            ~/.platformio/platforms
-          key: ${{ runner.os }}-platformio-${{ hashFiles('platformio.ini') }}
-          restore-keys: |
-            ${{ runner.os }}-platformio-
+          dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/platformio-packages.lock') }}
 
       - name: Install PlatformIO
         run: python -m pip install --upgrade platformio intelhex
