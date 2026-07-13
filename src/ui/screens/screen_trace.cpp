@@ -163,9 +163,11 @@ void trace_screen_show()
                             } else {
                                 int pos = snprintf(res, sizeof(res),
                                     "Trace: %d hop%s", len, len == 1 ? "" : "s");
-                                for (int h = 0; h < len && pos < (int)sizeof(res) - 10; h++)
+                                for (int h = 0; h < len && pos < (int)sizeof(res) - 16; h++) {
+                                    const float snr_db = static_cast<int8_t>(snrs[h]) / 4.0f;
                                     pos += snprintf(res + pos, sizeof(res) - pos,
-                                        "  [%ddBm]", snrs[h]);
+                                        "  [%.2f dB]", snr_db);
+                                }
                             }
                             lv_label_set_text(trace_result_label, res);
                             sigurdos::mesh::clearTraceResult();
