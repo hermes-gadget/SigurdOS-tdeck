@@ -114,6 +114,12 @@ void node_status_screen_show()
         add_row("Dup/Err", buf);
 
         sigurdos::mesh::clearResponses();
+    } else if (sigurdos::mesh::statusRequestTimedOut()) {
+        lv_obj_t* waiting = lv_label_create(list);
+        lv_label_set_text(waiting, "Status request timed out");
+        lv_obj_set_style_text_color(waiting, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_text_font(waiting, emoji_wrapped_montserrat_12, 0);
+        lv_obj_align(waiting, LV_ALIGN_CENTER, 0, 0);
     } else {
         lv_obj_t* waiting = lv_label_create(list);
         lv_label_set_text(waiting, "Requesting status...\nWaiting for response...");

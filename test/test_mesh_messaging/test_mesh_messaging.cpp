@@ -30,6 +30,7 @@
 
 #include "mesh/durable_fanout.h"
 #include "mesh/pending_ack_policy.h"
+#include "mesh/pending_request_policy.h"
 #include "mesh/companion_message_policy.h"
 
 namespace {
@@ -1159,6 +1160,56 @@ TEST_F(ReqResponseTest, NonMatchingTagDoesNotClearWrongPending) {
     }
 
     EXPECT_TRUE(pending.in_use) << "Non-matching tag should not clear pending request";
+}
+
+TEST(PendingRequestPolicy, LostResponseExpiresAndSlotCanBeReservedAgain) {
+    struct Slot {
+        bool in_use = false;
+        bool timed_out = false;
+    } slots[1];
+
+    ASSERT_EQ(sigurdos::mesh::reservePendingOperationSlot(slots, 1), 0);
+    EXPECT_TRUE(slots[0].in_use);
+    EXPECT_EQ(sigurdos::mesh::reservePendingOperationSlot(slots, 1), -1);
+
+    const uint32_t sent_at = 1000;
+    const uint32_t deadline = sent_at +
+        sigurdos::mesh::pendingRequestLifetimeMs(0);
+    EXPECT_FALSE(sigurdos::mesh::pendingRequestDeadlineReached(
+        deadline - 1, deadline));
+    ASSERT_TRUE(sigurdos::mesh::pendingRequestDeadlineReached(
+        deadline, deadline));
+
+    slots[0].in_use = false;
+    slots[0].timed_out = true;
+    EXPECT_EQ(sigurdos::mesh::reservePendingOperationSlot(slots, 1), 0);
+    EXPECT_TRUE(slots[0].in_use);
+}
+
+TEST(PendingRequestPolicy, DeadlineComparisonSurvivesMillisWrap) {
+    const uint32_t sent_at = 0xFFFFFF00u;
+    const uint32_t deadline = sent_at +
+        sigurdos::mesh::pendingRequestLifetimeMs(0);
+
+    EXPECT_LT(deadline, sent_at);
+    EXPECT_FALSE(sigurdos::mesh::pendingRequestDeadlineReached(
+        deadline - 1, deadline));
+    EXPECT_TRUE(sigurdos::mesh::pendingRequestDeadlineReached(
+        deadline, deadline));
+    EXPECT_TRUE(sigurdos::mesh::pendingRequestDeadlineReached(
+        deadline + 1, deadline));
+}
+
+TEST(PendingRequestPolicy, ReservationPreservesTimeoutForCallerWhenPossible) {
+    struct Slot {
+        bool in_use;
+        bool timed_out;
+    } slots[2] = {{false, true}, {false, false}};
+
+    EXPECT_EQ(sigurdos::mesh::reservePendingOperationSlot(slots, 2), 1);
+    EXPECT_FALSE(slots[0].in_use);
+    EXPECT_TRUE(slots[0].timed_out);
+    EXPECT_TRUE(slots[1].in_use);
 }
 
 // ═══════════════════════════════════════════════════════════════

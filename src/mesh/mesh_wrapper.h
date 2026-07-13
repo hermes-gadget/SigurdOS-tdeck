@@ -320,6 +320,7 @@ struct NodeStatus {
 
 bool requestStatus(const char* dest_name);
 bool hasStatusResponse();
+bool statusRequestTimedOut();
 bool getStatusResult(NodeStatus* out);
 
 // ── Telemetry queries (Phase 4.3) ─────────────
@@ -339,12 +340,14 @@ struct TelemetryResult {
 
 bool requestTelemetry(const char* dest_name);
 bool hasTelemetryResponse();
+bool telemetryRequestTimedOut();
 bool getTelemetryResult(TelemetryResult* out);
 
 // ── Path discovery (Phase 4.4) ────────────────
 // Sends a flood request to discover the route to a contact.
 // Returns a discovery tag (>0) on success, or 0 on failure.
 uint32_t discoverPath(const char* dest_name);
+bool pathDiscoveryTimedOut(const char* dest_name);
 // Check if a path has been learned for a contact (path_len > 0 || path_len == 0xFF unknown)
 bool hasPathTo(const char* dest_name);
 uint8_t getContactPathLen(const char* dest_name);

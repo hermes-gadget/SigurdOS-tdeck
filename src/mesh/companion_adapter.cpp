@@ -881,12 +881,13 @@ public:
         if (!mesh_ptr() || !pub_key) return r;
         ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;
-        uint32_t tag = mesh_ptr()->sendPathDiscovery(c->name);
+        uint32_t est_timeout = 0;
+        uint32_t tag = mesh_ptr()->sendPathDiscovery(c->name, &est_timeout);
         if (tag == 0) return r;
         r.ok = true;
         r.sent_flood = true;
         r.expected_ack = tag;
-        r.est_timeout = 0;
+        r.est_timeout = est_timeout;
         return r;
     }
     void selfTelemetry(uint8_t* out, size_t* out_len) const override {

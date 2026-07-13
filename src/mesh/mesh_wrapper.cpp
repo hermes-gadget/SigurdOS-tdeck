@@ -707,6 +707,7 @@ bool requestStatus(const char* dest_name) {
 
 bool hasStatusResponse() {
     if (!g_mesh || _last_status_tag == 0) return false;
+    if (g_mesh->requestTimedOut(_last_status_tag)) return false;
     int n = g_mesh->getResponseCount();
     for (int i = 0; i < n; i++) {
         auto* re = g_mesh->getResponse(i);
@@ -717,6 +718,11 @@ bool hasStatusResponse() {
         }
     }
     return false;
+}
+
+bool statusRequestTimedOut() {
+    return g_mesh && _last_status_tag != 0 &&
+           g_mesh->requestTimedOut(_last_status_tag);
 }
 
 bool getStatusResult(NodeStatus* out) {
@@ -744,6 +750,7 @@ bool requestTelemetry(const char* dest_name) {
 
 bool hasTelemetryResponse() {
     if (!g_mesh || _last_telemetry_tag == 0) return false;
+    if (g_mesh->requestTimedOut(_last_telemetry_tag)) return false;
     int n = g_mesh->getResponseCount();
     for (int i = 0; i < n; i++) {
         auto* re = g_mesh->getResponse(i);
@@ -824,6 +831,11 @@ bool hasTelemetryResponse() {
     return false;
 }
 
+bool telemetryRequestTimedOut() {
+    return g_mesh && _last_telemetry_tag != 0 &&
+           g_mesh->requestTimedOut(_last_telemetry_tag);
+}
+
 bool getTelemetryResult(TelemetryResult* out) {
     if (!out || !_has_cached_telemetry) return false;
     memcpy(out, &_cached_telemetry, sizeof(*out));
@@ -834,6 +846,10 @@ bool getTelemetryResult(TelemetryResult* out) {
 uint32_t discoverPath(const char* dest_name) {
     if (!g_mesh || !dest_name || !dest_name[0]) return 0;
     return g_mesh->sendPathDiscovery(dest_name);
+}
+
+bool pathDiscoveryTimedOut(const char* dest_name) {
+    return g_mesh && dest_name && g_mesh->discoveryTimedOut(dest_name);
 }
 
 bool hasPathTo(const char* dest_name) {

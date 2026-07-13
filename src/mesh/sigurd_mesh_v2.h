@@ -15,6 +15,7 @@
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
 #include "pending_ack_policy.h"
+#include "pending_request_policy.h"
 #include "login_session.h"
 #include "path_codec.h"
 #include "hal/prefs.h"
@@ -217,13 +218,15 @@ public:
 
     static constexpr int MAX_PENDING_REQUESTS = 8;
     struct PendingRequest {
-        uint32_t tag;
-        char     dest_name[32];
-        uint8_t  req_type;       // request type (0 = unknown/data)
-        char     channel_name[32]; // for REQ_TYPE_GET_ROOM_MSGS: which channel to fetch
-        uint32_t sent_at_ms;
+        uint32_t tag = 0;
+        char     dest_name[32] = {0};
+        uint8_t  req_type = 0;       // request type (0 = unknown/data)
+        char     channel_name[32] = {0}; // for REQ_TYPE_GET_ROOM_MSGS
+        uint32_t sent_at_ms = 0;
+        uint32_t expires_at_ms = 0;
         bool     companion_binary = false;
         bool     in_use = false;
+        bool     timed_out = false;
     };
     PendingRequest _pending_reqs[MAX_PENDING_REQUESTS];
 
@@ -259,6 +262,8 @@ public:
 
     void cancelCompanionBinaryRequests();
     void cancelCompanionBinaryRequest(uint32_t tag);
+
+    bool requestTimedOut(uint32_t tag) const;
 
 
     // Polling API for received responses
@@ -389,29 +394,29 @@ public:
     // ── Path discovery (Phase 4.4) ──────────────
     static constexpr int MAX_DISCOVERY_PENDING = 4;
     struct DiscoveryPending {
-        char     dest_name[32];
-        uint32_t tag;
+        char     dest_name[32] = {0};
+        uint32_t tag = 0;
         bool     in_use = false;
         bool     completed = false;
-        uint32_t started_at_ms;
+        bool     timed_out = false;
+        uint32_t started_at_ms = 0;
+        uint32_t expires_at_ms = 0;
     };
     DiscoveryPending _discovery_pending[MAX_DISCOVERY_PENDING];
 
     // Send a path discovery request — forces flood routing to learn the return path.
     // Returns the request tag (>0) on success, 0 on failure.
-    uint32_t sendPathDiscovery(const char* name);
+    uint32_t sendPathDiscovery(const char* name,
+                               uint32_t* estimated_timeout_ms = nullptr);
 
 
     // Check if a pending discovery has completed
-    bool isDiscoveryComplete(const char* name) {
-        for (int i = 0; i < MAX_DISCOVERY_PENDING; i++) {
-            if (_discovery_pending[i].in_use &&
-                strcmp(_discovery_pending[i].dest_name, name) == 0) {
-                return _discovery_pending[i].completed;
-            }
-        }
-        return false;
-    }
+    bool isDiscoveryComplete(const char* name);
+    bool discoveryTimedOut(const char* name) const;
+
+    // Reclaim lost request/discovery slots. Public for deterministic tests and
+    // diagnostics; production calls it from loop() and before every reserve.
+    void expirePendingOperations(uint32_t now_ms);
 
     // Get path length for a contact (OUT_PATH_UNKNOWN = 0xFF if unknown)
     uint8_t getPathLen(const char* name) {
