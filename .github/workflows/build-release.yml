@@ -128,7 +128,8 @@ jobs:
           cp webflasher_release/sigurdos-tdeck-boot_app0.bin     artifacts/sigurdos-tdeck-boot_app0.bin
           cp webflasher_release/sigurdos-tdeck-firmware.bin      artifacts/sigurdos-tdeck-firmware.bin
           cp webflasher_release/sigurdos-tdeck-full.bin          artifacts/sigurdos-tdeck-full.bin
-          cp webflasher_release/sigurdos-tdeck-launcher.bin      artifacts/sigurdos-tdeck-launcher-webflasher.bin
+          # Keep the exact filename referenced by manifest.json.
+          cp webflasher_release/sigurdos-tdeck-launcher.bin      artifacts/sigurdos-tdeck-launcher.bin
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
@@ -205,4 +206,4 @@ jobs:
             firmware/sigurdos-tdeck-boot_app0.bin
             firmware/sigurdos-tdeck-firmware.bin
             firmware/sigurdos-tdeck-full.bin
-            firmware/sigurdos-tdeck-launcher-webflasher.bin
+            firmware/sigurdos-tdeck-launcher.bin
