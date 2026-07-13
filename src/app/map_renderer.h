@@ -42,6 +42,27 @@ static constexpr std::size_t SIGURDOS_MAP_PNG_IHDR_SIZE = 33;
 static constexpr std::size_t SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES =
     static_cast<std::size_t>(SIGURDOS_MAP_TILE_SIZE) *
     (SIGURDOS_MAP_TILE_SIZE * 4 + 1);
+static constexpr int SIGURDOS_MAP_DISCOVERY_ITEMS_PER_STEP = 8;
+
+class SigurdosMapDiscoveryBudget {
+public:
+    explicit SigurdosMapDiscoveryBudget(int limit)
+        : remaining_(limit > 0 ? limit : 0) {}
+
+    bool consume() {
+        if (remaining_ <= 0) return false;
+        --remaining_;
+        ++used_;
+        return true;
+    }
+
+    int used() const { return used_; }
+    int remaining() const { return remaining_; }
+
+private:
+    int remaining_ = 0;
+    int used_ = 0;
+};
 
 inline std::uint32_t sigurdos_map_png_read_u32(const std::uint8_t* value) {
     return (static_cast<std::uint32_t>(value[0]) << 24) |
@@ -249,8 +270,15 @@ inline bool sigurdos_map_release_owned_buffer(T*& buffer, FreeFn free_fn) {
 // Call after LVGL is initialized and SD card is mounted
 void sigurdos_map_init();
 
-// Discover available tile zoom levels (deferred from boot)
+// Start discovering available tile zoom levels (deferred from boot). This
+// resets discovery state but performs no directory traversal.
 void sigurdos_map_discover_tiles();
+
+// Advance tile discovery by at most max_items directory/cache operations.
+// Returns true while more work remains.
+bool sigurdos_map_discovery_step(
+    int max_items = SIGURDOS_MAP_DISCOVERY_ITEMS_PER_STEP);
+bool sigurdos_map_discovery_in_progress();
 
 // Set the map viewport center (lat/lon) and zoom level
 void sigurdos_map_set_view(double lat, double lon, int zoom);

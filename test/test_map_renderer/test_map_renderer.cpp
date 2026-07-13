@@ -280,4 +280,19 @@ TEST_F(MapRendererMathTest, OwnedDiscoveryBufferIsFreedExactlyOnce) {
     EXPECT_EQ(frees, 1);
 }
 
+TEST_F(MapRendererMathTest, IncrementalDiscoveryBudgetCapsWorkPerCallback) {
+    SigurdosMapDiscoveryBudget budget(3);
+
+    EXPECT_TRUE(budget.consume());
+    EXPECT_TRUE(budget.consume());
+    EXPECT_TRUE(budget.consume());
+    EXPECT_FALSE(budget.consume());
+    EXPECT_EQ(budget.used(), 3);
+    EXPECT_EQ(budget.remaining(), 0);
+
+    SigurdosMapDiscoveryBudget empty_budget(0);
+    EXPECT_FALSE(empty_budget.consume());
+    EXPECT_EQ(empty_budget.used(), 0);
+}
+
 } // namespace

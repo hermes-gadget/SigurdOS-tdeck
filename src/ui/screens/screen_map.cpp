@@ -75,6 +75,7 @@ bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
 // Helper: render map tiles then overlay contact markers
 static sigurdos::mesh::ContactInfo* map_contacts = nullptr;
 static lv_timer_t* g_map_warmup_timer = nullptr;
+static lv_timer_t* g_map_discovery_timer = nullptr;
 static int g_map_warmup_passes = 0;
 static ScreenLifetime g_map_lifetime;
 
@@ -101,6 +102,7 @@ void map_screen_show()
     lv_obj_t* scr = make_screen_full("Map");
     g_map_lifetime.bind(scr);
     g_map_lifetime.trackTimer(&g_map_warmup_timer);
+    g_map_lifetime.trackTimer(&g_map_discovery_timer);
     g_map_lifetime.onDelete([] {
         sigurdos_gps_set_map_high_rate(false);
         delete[] map_contacts;
@@ -119,14 +121,9 @@ void map_screen_show()
     sigurdos_map_init();
     sigurdos_map_reparent(scr);
 
-    // Discover tiles on first map visit (deferred from boot to avoid blocking)
-    sigurdos_map_discover_tiles();
-
     // Pre-allocate contact marker dots on top of map BEFORE rendering
     sigurdos_map_contact_init(map);
     sigurdos_map_contact_set_tap_cb(contact_detail_screen_show);
-
-    render_map_with_contacts();
 
     static int drag_start_x = 0, drag_start_y = 0;
     static uint32_t map_last_render_ms = 0;
@@ -188,6 +185,19 @@ void map_screen_show()
 
     (void)zoom_y_base;
     show_screen(scr);
+
+    // Display the screen before starting SD traversal. Discovery keeps its
+    // directory cursors between callbacks and processes a bounded batch each
+    // time so LVGL can service input and drawing between batches.
+    sigurdos_map_discover_tiles();
+    render_map_with_contacts();
+    g_map_discovery_timer = lv_timer_create([](lv_timer_t* t) {
+        if (sigurdos_map_discovery_step()) return;
+        render_map_with_contacts();
+        lv_timer_del(t);
+        if (g_map_discovery_timer == t) g_map_discovery_timer = nullptr;
+    }, 20, nullptr);
+
     // Two loads per render keep input responsive. Repeat a few bounded warmup
     // passes so every visible tile can fill without user interaction.
     g_map_warmup_passes = 3;
