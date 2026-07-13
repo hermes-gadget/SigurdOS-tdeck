@@ -88,7 +88,7 @@ Room servers tab.
 **Map:** `Screen::Contacts`
 
 ### 4. CONTACTS
-List of discovered mesh nodes (up to 350, `-D MAX_CONTACTS=350`) with LRU eviction. Shows contact names, RSSI, location/path metadata, ACL permission role, QR sharing, telemetry action, and promote/demote controls in Contact Detail.
+List of discovered mesh nodes (up to 350, `-D MAX_CONTACTS=350`) with LRU eviction and bounded 12-row UI pages. Shows contact names, RSSI, location/path metadata, ACL permission role, QR sharing, telemetry action, and promote/demote controls in Contact Detail.
 **Sources:** [`src/ui/screens/screen_contacts.cpp`](../src/ui/screens/screen_contacts.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h), [`src/mesh/sigurd_mesh_v2.h`](../src/mesh/sigurd_mesh_v2.h), [`src/app/qr_show.cpp`](../src/app/qr_show.cpp)
 
 ### 5. REPEATERS
@@ -96,7 +96,7 @@ Lists infrastructure repeater nodes heard on the mesh, with login/command workfl
 **Sources:** [`src/ui/screens/screen_repeaters.cpp`](../src/ui/screens/screen_repeaters.cpp)
 
 ### 6. PACKETS
-Heard packets log — a running list of all received radio packets with timestamp, source, RSSI, SNR, and packet type (ADVERT, DM, GRP, TRACE, etc.).
+Heard packets log — a 50-entry circular history with timestamp, source, RSSI, SNR, and packet type (ADVERT, DM, GRP, TRACE, etc.). The screen rebinds a fixed seven-row pool and pages older/newer entries, including after the backing ring becomes full.
 **Sources:** [`src/ui/screens/screen_packets.cpp`](../src/ui/screens/screen_packets.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h)
 
 ### 7. MAP
@@ -216,8 +216,9 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 
 ### Packet Log
 - **Circular packet buffer** — logs every received radio frame with timestamp, source, RSSI, SNR, and payload type string
+- **Bounded rendering** — a monotonic generation counter refreshes a recycled seven-row UI pool even after the 50-entry ring reaches capacity
 - **Type classification** — ADVERT_RX, DM_RX, GRP_RX, ANON_RX, ACK, TRACE, PKT_RX
-- **Query API** — `getPacketLogCount()`, `getPacketLogEntry()` for UI consumption
+- **Query API** — `getPacketLogCount()`, `getPacketLogGeneration()`, and `getPacketLogEntry()` for UI consumption
 **Sources:** [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h)
 
 ### RTC & System Time

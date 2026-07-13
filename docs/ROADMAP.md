@@ -215,7 +215,7 @@ Goal: make the device feel responsive and conserve battery during real field use
 Priority tasks:
 
 - Decompose large UI files, especially `src/ui/screens.cpp` and `src/ui/chat_screen.cpp`, into focused screen modules with shared helpers.
-- Virtualize long lists for messages, contacts, packet logs, telemetry history, and map markers.
+- Virtualize remaining telemetry history and map-marker lists as those datasets grow.
 - Reduce release RAM pressure below 80% before adding large BLE or map features.
 - Profile LVGL buffer use, PSRAM fallback behavior, map tile decode allocations, and worst-case chat rendering.
 - Add online tile fetch and negative tile cache for map parity, while preserving offline SD-first behavior.

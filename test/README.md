@@ -63,6 +63,7 @@ test/
 |-- test_keyboard/                  Keyboard scan, event, brightness, injection logic
 |-- test_launcher_env/              Launcher detection, partition probing, false-positive guards
 |-- test_layout/                    Screen layout overlap regression checks
+|-- test_list_virtualization/       Bounded newest-first list window and page math
 |-- test_lodepng_alloc/             LodePNG PSRAM allocator with DRAM fallback
 |-- test_log/                       Logging macro levels and compile-time gating
 |-- test_map/                       Map projection, tile math, tile cache behavior

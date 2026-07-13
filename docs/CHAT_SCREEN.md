@@ -131,7 +131,12 @@ Opened by tapping a channel row or calling `chat_screen_open_dm()`.
 
 #### Message List
 
-A vertically scrollable LVGL object (`msg_list`) containing message bubbles.
+A vertically scrollable LVGL object (`msg_list`) containing a bounded window
+of at most 24 message bubbles. The backing per-channel history remains up to
+the configured 200-message cap; “Load older messages” and “Return toward
+newest” controls page through it by rebinding a fixed 24-bubble LVGL pool
+instead of constructing objects for every stored message. Search reuses the
+same pool for the 24-match page containing the active result.
 
 **Bubble structure** (Discord-style):
 - Each bubble is a flex container with the bubble body inside
@@ -148,7 +153,8 @@ A vertically scrollable LVGL object (`msg_list`) containing message bubbles.
   - Text: `TEXT_PRIMARY` (`#f2f3f5`)
   - Timestamp: `TEXT_MUTED` (`#6b7078`)
 - Text wraps with `LV_LABEL_LONG_WRAP` at 78% of message list width
-- After rendering, auto-scrolls to the last bubble
+- The newest window auto-scrolls to the last bubble; incoming messages preserve
+  the current scroll position when the operator is reading above the bottom
 
 #### Input Bar
 

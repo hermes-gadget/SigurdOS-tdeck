@@ -101,6 +101,7 @@ static PacketLogEntry mock_pkt_log[8];
 static int mock_pkt_count = 0;
 
 int getPacketLogCount() { return mock_pkt_count; }
+uint32_t getPacketLogGeneration() { return (uint32_t)mock_pkt_count; }
 bool getPacketLogEntry(int index, PacketLogEntry* out) {
     if (index < 0 || index >= mock_pkt_count || !out) return false;
     *out = mock_pkt_log[index];
