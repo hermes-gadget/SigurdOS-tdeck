@@ -31,6 +31,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
+#include <string>
 
 namespace {
 
@@ -439,7 +440,7 @@ TEST_F(GPSIntegrationTest, FallsBackToAlternateBaudWhenNoValidNmeaArrives) {
 }
 
 TEST_F(GPSIntegrationTest, ChecksumValidNmeaLocksDetectedBaud) {
-    feed("$GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,*7E\n");
+    feed_body("GPGGA,123519,,,,,0,08,0.9,545.4,M,46.9,M,,");
 
     delay(3001);
     sigurdos_gps_loop();
@@ -460,24 +461,26 @@ TEST_F(GPSIntegrationTest, ChecksumFailuresAreCountedForHardwareDebug) {
     EXPECT_EQ(sigurdos_gps_checksum_failures(), 1U);
 }
 
-TEST_F(GPSIntegrationTest, GGAWithEmptyCoordinateFieldsDoesNotShiftLaterFields) {
-    feed("$GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,*7E\n");
+TEST_F(GPSIntegrationTest, GGAWithFixAndEmptyCoordinatesRejectsWholeUpdate) {
+    feed_body("GPGGA,010203,4807.038,N,01131.000,E,1,04,0.9,12.5,M,46.9,M,,");
+    feed_body("GPGGA,123519,,,,,1,08,0.9,545.4,M,46.9,M,,");
 
-    EXPECT_EQ(sigurdos_gps_hour(), 12);
-    EXPECT_EQ(sigurdos_gps_minute(), 35);
-    EXPECT_EQ(sigurdos_gps_second(), 19);
-    EXPECT_FLOAT_EQ(sigurdos_gps_latitude(), 0.0f);
-    EXPECT_FLOAT_EQ(sigurdos_gps_longitude(), 0.0f);
+    EXPECT_EQ(sigurdos_gps_hour(), 1);
+    EXPECT_EQ(sigurdos_gps_minute(), 2);
+    EXPECT_EQ(sigurdos_gps_second(), 3);
+    EXPECT_NEAR(sigurdos_gps_latitude(), 48.1173f, 0.01f);
+    EXPECT_NEAR(sigurdos_gps_longitude(), 11.5167f, 0.01f);
     EXPECT_EQ(sigurdos_gps_fix_quality(), 1);
-    EXPECT_EQ(sigurdos_gps_satellites(), 8);
-    EXPECT_NEAR(sigurdos_gps_altitude_m(), 545.4f, 0.1f);
+    EXPECT_EQ(sigurdos_gps_satellites(), 4);
+    EXPECT_NEAR(sigurdos_gps_altitude_m(), 12.5f, 0.1f);
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 1U);
 }
 
 TEST_F(GPSIntegrationTest, GGAWithoutCoordinateDirectionsDoesNotReportFix) {
     feed_body("GPGGA,123520,4807.038,,01131.000,,1,08,0.9,545.4,M,46.9,M,,");
 
     EXPECT_FALSE(sigurdos_gps_has_fix());
-    EXPECT_EQ(sigurdos_gps_fix_quality(), 1);
+    EXPECT_EQ(sigurdos_gps_fix_quality(), 0);
     EXPECT_FLOAT_EQ(sigurdos_gps_latitude(), 0.0f);
     EXPECT_FLOAT_EQ(sigurdos_gps_longitude(), 0.0f);
 }
@@ -486,7 +489,7 @@ TEST_F(GPSIntegrationTest, GGAWithMalformedCoordinateDirectionsDoesNotReportFix)
     feed_body("GPGGA,123519,4807.038,X,01131.000,Q,1,08,0.9,545.4,M,46.9,M,,");
 
     EXPECT_FALSE(sigurdos_gps_has_fix());
-    EXPECT_EQ(sigurdos_gps_fix_quality(), 1);
+    EXPECT_EQ(sigurdos_gps_fix_quality(), 0);
     EXPECT_FLOAT_EQ(sigurdos_gps_latitude(), 0.0f);
     EXPECT_FLOAT_EQ(sigurdos_gps_longitude(), 0.0f);
 }
@@ -495,9 +498,92 @@ TEST_F(GPSIntegrationTest, GGAWithMalformedCoordinateNumbersDoesNotReportFix) {
     feed_body("GPGGA,123519,4807.x,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
 
     EXPECT_FALSE(sigurdos_gps_has_fix());
-    EXPECT_EQ(sigurdos_gps_fix_quality(), 1);
+    EXPECT_EQ(sigurdos_gps_fix_quality(), 0);
     EXPECT_FLOAT_EQ(sigurdos_gps_latitude(), 0.0f);
-    EXPECT_NEAR(sigurdos_gps_longitude(), 11.5167f, 0.01f);
+    EXPECT_FLOAT_EQ(sigurdos_gps_longitude(), 0.0f);
+}
+
+TEST_F(GPSIntegrationTest, CoordinateBoundariesAreAccepted) {
+    feed_body("GPGGA,235959.9,9000.000,N,18000.000,E,1,08,0.9,0.0,M,0.0,M,,");
+
+    EXPECT_TRUE(sigurdos_gps_has_fix());
+    EXPECT_FLOAT_EQ(sigurdos_gps_latitude(), 90.0f);
+    EXPECT_FLOAT_EQ(sigurdos_gps_longitude(), 180.0f);
+    EXPECT_EQ(sigurdos_gps_hour(), 23);
+    EXPECT_EQ(sigurdos_gps_minute(), 59);
+    EXPECT_EQ(sigurdos_gps_second(), 59);
+
+    feed_body("GPGGA,000000,9000.000,S,18000.000,W,1,08,0.9,0.0,M,0.0,M,,");
+    EXPECT_FLOAT_EQ(sigurdos_gps_latitude(), -90.0f);
+    EXPECT_FLOAT_EQ(sigurdos_gps_longitude(), -180.0f);
+}
+
+TEST_F(GPSIntegrationTest, CoordinatesBeyondDegreesOrMinuteBoundariesAreRejected) {
+    feed_body("GPGGA,120000,9000.001,N,01131.000,E,1,08,0.9,0.0,M,0.0,M,,");
+    feed_body("GPGGA,120000,4807.038,N,18000.001,E,1,08,0.9,0.0,M,0.0,M,,");
+    feed_body("GPGGA,120000,4860.000,N,01131.000,E,1,08,0.9,0.0,M,0.0,M,,");
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 0U);
+    EXPECT_EQ(sigurdos_gps_gga_sentences(), 0U);
+}
+
+TEST_F(GPSIntegrationTest, NonFiniteAndNonNmeaCoordinateSyntaxAreRejected) {
+    feed_body("GPGGA,120000,nan,N,01131.000,E,1,08,0.9,0.0,M,0.0,M,,");
+    feed_body("GPGGA,120000,4807.038,N,inf,E,1,08,0.9,0.0,M,0.0,M,,");
+    feed_body("GPGGA,120000,+4807.038,N,01131.000,E,1,08,0.9,0.0,M,0.0,M,,");
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 0U);
+}
+
+TEST_F(GPSIntegrationTest, InvalidTimeBoundariesRejectWholeGgaUpdate) {
+    feed_body("GPGGA,240000,4807.038,N,01131.000,E,1,08,0.9,0.0,M,0.0,M,,");
+    feed_body("GPGGA,126000,4807.038,N,01131.000,E,1,08,0.9,0.0,M,0.0,M,,");
+    feed_body("GPGGA,125960,4807.038,N,01131.000,E,1,08,0.9,0.0,M,0.0,M,,");
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 0U);
+    EXPECT_EQ(sigurdos_gps_hour(), 0);
+    EXPECT_EQ(sigurdos_gps_minute(), 0);
+    EXPECT_EQ(sigurdos_gps_second(), 0);
+}
+
+TEST_F(GPSIntegrationTest, GregorianDateBoundariesAreEnforced) {
+    feed_body("GPRMC,235959,A,4807.038,N,01131.000,E,0.0,359.9,290224,,,A");
+    EXPECT_EQ(sigurdos_gps_rmc_sentences(), 1U);
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 1U);
+
+    sigurdos_gps_init();
+    feed_body("GPRMC,120000,A,4807.038,N,01131.000,E,0.0,0.0,290223,,,A");
+    feed_body("GPRMC,120000,A,4807.038,N,01131.000,E,0.0,0.0,310424,,,A");
+    feed_body("GPRMC,120000,A,4807.038,N,01131.000,E,0.0,0.0,011324,,,A");
+
+    EXPECT_EQ(sigurdos_gps_rmc_sentences(), 0U);
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 0U);
+}
+
+TEST_F(GPSIntegrationTest, ChecksumMustTerminateSentenceExactly) {
+    feed("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47garbage\n");
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_checksum_failures(), 1U);
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 0U);
+}
+
+TEST_F(GPSIntegrationTest, OverlengthSentenceIsDiscardedUntilNewline) {
+    std::string sentence = "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47";
+    sentence.append(160, 'X');
+    sentence.push_back('\n');
+    feed(sentence.c_str());
+
+    EXPECT_EQ(sigurdos_gps_sentences_received(), 1U);
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 0U);
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+
+    feed_body("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+    EXPECT_TRUE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 1U);
 }
 
 TEST_F(GPSIntegrationTest, RMCWithEmptySpeedKeepsHeadingInFieldEight) {

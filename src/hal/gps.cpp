@@ -25,6 +25,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
+#include <cmath>
 
 #if !defined(ESP32_PLATFORM) && !defined(_WIN32)
 #include <sys/time.h>
@@ -68,6 +69,7 @@ static struct GPSData {
 
 static char nmea_buf[128];
 static int  nmea_pos = 0;
+static bool nmea_discarding = false;
 static uint8_t gps_baud_index = 0;
 static bool gps_map_high_rate = false;
 static SigurdOSGpsSyncStatus gps_sync_status = SigurdOSGpsSyncStatus::Idle;
@@ -95,6 +97,7 @@ static void gps_begin_uart(uint8_t index, bool count_switch)
     Serial1.begin(gps.active_baud, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
     gps.last_baud_switch_ms = millis();
     nmea_pos = 0;
+    nmea_discarding = false;
     if (count_switch) gps.baud_switches++;
 }
 
@@ -117,19 +120,129 @@ static void gps_maybe_cycle_baud()
 }
 
 // ── Helpers ───────────────────────────────────────────────
-static bool nmea_to_decimal(const char* coord, char dir, const char* valid_dirs, float* out) {
-    if (!coord || coord[0] == '\0' || !valid_dirs || !out) return false;
-    if (dir == '\0') return false;
-    if (!strchr(valid_dirs, dir)) return false;
+static bool nmea_digits(const char* value, size_t count) {
+    if (!value) return false;
+    for (size_t i = 0; i < count; ++i) {
+        if (!isdigit((unsigned char)value[i])) return false;
+    }
+    return true;
+}
+
+static bool nmea_unsigned(const char* value, unsigned max_value, unsigned* out) {
+    if (!value || value[0] == '\0' || !out) return false;
+    const size_t len = strlen(value);
+    if (!nmea_digits(value, len)) return false;
 
     char* end = nullptr;
-    float val = strtof(coord, &end);
-    if (end == coord) return false;
-    if (*end != '\0') return false;
+    const unsigned long parsed = strtoul(value, &end, 10);
+    if (!end || *end != '\0' || parsed > max_value) return false;
+    *out = (unsigned)parsed;
+    return true;
+}
 
-    int degrees = (int)(val / 100.0f);
-    float minutes = val - (degrees * 100.0f);
-    float decimal = degrees + minutes / 60.0f;
+static bool nmea_float(const char* value, bool allow_negative, float* out) {
+    if (!value || value[0] == '\0' || !out) return false;
+
+    const char* p = value;
+    if (*p == '-') {
+        if (!allow_negative) return false;
+        ++p;
+    }
+    const char* integer_start = p;
+    while (isdigit((unsigned char)*p)) ++p;
+    if (p == integer_start) return false;
+    if (*p == '.') {
+        ++p;
+        const char* fraction_start = p;
+        while (isdigit((unsigned char)*p)) ++p;
+        if (p == fraction_start) return false;
+    }
+    if (*p != '\0') return false;
+
+    char* end = nullptr;
+    const float parsed = strtof(value, &end);
+    if (!end || *end != '\0' || !std::isfinite(parsed)) return false;
+    *out = parsed;
+    return true;
+}
+
+static bool nmea_time(const char* value, uint8_t* hour, uint8_t* minute, uint8_t* second) {
+    if (!value || !hour || !minute || !second || strlen(value) < 6) return false;
+    if (!nmea_digits(value, 6)) return false;
+
+    const char* suffix = value + 6;
+    if (*suffix != '\0') {
+        if (*suffix++ != '.' || *suffix == '\0') return false;
+        const size_t fraction_len = strlen(suffix);
+        if (!nmea_digits(suffix, fraction_len)) return false;
+    }
+
+    const unsigned parsed_hour = (unsigned)(value[0] - '0') * 10u + (unsigned)(value[1] - '0');
+    const unsigned parsed_minute = (unsigned)(value[2] - '0') * 10u + (unsigned)(value[3] - '0');
+    const unsigned parsed_second = (unsigned)(value[4] - '0') * 10u + (unsigned)(value[5] - '0');
+    if (parsed_hour > 23 || parsed_minute > 59 || parsed_second > 59) return false;
+
+    *hour = (uint8_t)parsed_hour;
+    *minute = (uint8_t)parsed_minute;
+    *second = (uint8_t)parsed_second;
+    return true;
+}
+
+static bool gps_leap_year(uint16_t year) {
+    return (year % 4u == 0u) && ((year % 100u != 0u) || (year % 400u == 0u));
+}
+
+static bool nmea_date(const char* value, uint16_t* year, uint8_t* month, uint8_t* day) {
+    if (!value || !year || !month || !day || strlen(value) != 6 || !nmea_digits(value, 6)) {
+        return false;
+    }
+
+    const unsigned parsed_day = (unsigned)(value[0] - '0') * 10u + (unsigned)(value[1] - '0');
+    const unsigned parsed_month = (unsigned)(value[2] - '0') * 10u + (unsigned)(value[3] - '0');
+    const uint16_t parsed_year = (uint16_t)(2000u +
+        (unsigned)(value[4] - '0') * 10u + (unsigned)(value[5] - '0'));
+    if (parsed_month < 1 || parsed_month > 12) return false;
+
+    static constexpr uint8_t days_per_month[] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+    };
+    uint8_t max_day = days_per_month[parsed_month - 1];
+    if (parsed_month == 2 && gps_leap_year(parsed_year)) max_day = 29;
+    if (parsed_day < 1 || parsed_day > max_day) return false;
+
+    *year = parsed_year;
+    *month = (uint8_t)parsed_month;
+    *day = (uint8_t)parsed_day;
+    return true;
+}
+
+static bool nmea_to_decimal(const char* coord, char dir, bool latitude, float* out) {
+    if (!coord || coord[0] == '\0' || !out) return false;
+    if (latitude ? (dir != 'N' && dir != 'S') : (dir != 'E' && dir != 'W')) return false;
+
+    const size_t degree_digits = latitude ? 2u : 3u;
+    const size_t whole_digits = degree_digits + 2u;
+    const char* dot = strchr(coord, '.');
+    const size_t integer_len = dot ? (size_t)(dot - coord) : strlen(coord);
+    if (integer_len != whole_digits || !nmea_digits(coord, integer_len)) return false;
+    if (dot && (dot[1] == '\0' || !nmea_digits(dot + 1, strlen(dot + 1)))) return false;
+
+    char* end = nullptr;
+    const double val = strtod(coord, &end);
+    if (!end || *end != '\0' || !std::isfinite(val)) return false;
+
+    unsigned degrees = 0;
+    for (size_t i = 0; i < degree_digits; ++i) {
+        degrees = degrees * 10u + (unsigned)(coord[i] - '0');
+    }
+    const double minutes = val - (double)(degrees * 100u);
+    const unsigned max_degrees = latitude ? 90u : 180u;
+    if (minutes < 0.0f || minutes >= 60.0f || degrees > max_degrees ||
+        (degrees == max_degrees && minutes != 0.0f)) {
+        return false;
+    }
+
+    float decimal = (float)((double)degrees + minutes / 60.0);
     if (dir == 'S' || dir == 'W') decimal = -decimal;
     *out = decimal;
     return true;
@@ -144,7 +257,10 @@ static bool nmea_field(const char* sentence, int index, char* out, size_t out_si
         if (*p == ',' || *p == '*' || *p == '\0') {
             if (field == index) {
                 size_t len = (size_t)(p - start);
-                if (len >= out_size) len = out_size - 1;
+                if (len >= out_size) {
+                    out[0] = '\0';
+                    return false;
+                }
                 memcpy(out, start, len);
                 out[len] = '\0';
                 return true;
@@ -159,85 +275,127 @@ static bool nmea_field(const char* sentence, int index, char* out, size_t out_si
     return false;
 }
 
-static void parse_gga(const char* sentence) {
+static bool parse_gga(const char* sentence) {
     // $GPGGA,time,lat,N,lon,E,q,sat,hdop,alt,M,...
     char field[20];
 
-    // Time (field 1)
-    if (nmea_field(sentence, 1, field, sizeof(field)) && strlen(field) >= 6) {
-        char h[3] = {field[0], field[1], 0};
-        char m[3] = {field[2], field[3], 0};
-        char s[3] = {field[4], field[5], 0};
-        gps.hour   = atoi(h);
-        gps.minute = atoi(m);
-        gps.second = atoi(s);
-    }
+    uint8_t parsed_hour = 0;
+    uint8_t parsed_minute = 0;
+    uint8_t parsed_second = 0;
+    if (!nmea_field(sentence, 1, field, sizeof(field)) ||
+        !nmea_time(field, &parsed_hour, &parsed_minute, &parsed_second)) return false;
 
     // Latitude + N/S (fields 2-3)
-    char lat_str[20];
-    char ns[4];
-    bool lat_ok = false;
+    char lat_str[20] = {};
+    char ns[4] = {};
     float parsed_lat = 0.0f;
-    if (nmea_field(sentence, 2, lat_str, sizeof(lat_str)) &&
-        nmea_field(sentence, 3, ns, sizeof(ns))) {
-        lat_ok = nmea_to_decimal(lat_str, ns[0], "NS", &parsed_lat);
-    }
-    gps.latitude = lat_ok ? parsed_lat : 0.0f;
 
     // Longitude + E/W (fields 4-5)
-    char lon_str[20];
-    char ew[4];
-    bool lon_ok = false;
+    char lon_str[20] = {};
+    char ew[4] = {};
     float parsed_lon = 0.0f;
-    if (nmea_field(sentence, 4, lon_str, sizeof(lon_str)) &&
-        nmea_field(sentence, 5, ew, sizeof(ew))) {
-        lon_ok = nmea_to_decimal(lon_str, ew[0], "EW", &parsed_lon);
-    }
-    gps.longitude = lon_ok ? parsed_lon : 0.0f;
+    if (!nmea_field(sentence, 2, lat_str, sizeof(lat_str)) ||
+        !nmea_field(sentence, 3, ns, sizeof(ns)) ||
+        !nmea_field(sentence, 4, lon_str, sizeof(lon_str)) ||
+        !nmea_field(sentence, 5, ew, sizeof(ew))) return false;
+
+    const bool coordinates_empty = lat_str[0] == '\0' && ns[0] == '\0' &&
+                                   lon_str[0] == '\0' && ew[0] == '\0';
+    const bool coordinates_present = lat_str[0] != '\0' && ns[0] != '\0' && ns[1] == '\0' &&
+                                     lon_str[0] != '\0' && ew[0] != '\0' && ew[1] == '\0';
+    if (!coordinates_empty && (!coordinates_present ||
+        !nmea_to_decimal(lat_str, ns[0], true, &parsed_lat) ||
+        !nmea_to_decimal(lon_str, ew[0], false, &parsed_lon))) return false;
 
     // Fix quality (field 6)
-    if (nmea_field(sentence, 6, field, sizeof(field))) gps.fix_quality = atoi(field);
+    unsigned parsed_fix_quality = 0;
+    if (!nmea_field(sentence, 6, field, sizeof(field)) ||
+        !nmea_unsigned(field, 8, &parsed_fix_quality)) return false;
+    if (parsed_fix_quality > 0 && coordinates_empty) return false;
 
     // Satellites (field 7)
-    if (nmea_field(sentence, 7, field, sizeof(field))) gps.satellites = atoi(field);
+    unsigned parsed_satellites = 0;
+    if (!nmea_field(sentence, 7, field, sizeof(field)) ||
+        !nmea_unsigned(field, 99, &parsed_satellites)) return false;
 
     // Altitude (field 9)
-    if (nmea_field(sentence, 9, field, sizeof(field))) gps.altitude_m = strtof(field, nullptr);
+    float parsed_altitude = 0.0f;
+    if (!nmea_field(sentence, 9, field, sizeof(field))) return false;
+    if (field[0] != '\0' && !nmea_float(field, true, &parsed_altitude)) return false;
 
-    gps.has_fix = (gps.fix_quality > 0 && lat_ok && lon_ok);
+    gps.hour = parsed_hour;
+    gps.minute = parsed_minute;
+    gps.second = parsed_second;
+    gps.latitude = parsed_lat;
+    gps.longitude = parsed_lon;
+    gps.fix_quality = (uint8_t)parsed_fix_quality;
+    gps.satellites = (uint8_t)parsed_satellites;
+    gps.altitude_m = parsed_altitude;
+    gps.has_fix = parsed_fix_quality > 0;
+    return true;
 }
 
-static void parse_rmc(const char* sentence) {
+static bool parse_rmc(const char* sentence) {
     // $GPRMC,time,status,lat,NS,lon,EW,speed,heading,date,...
     char field[20];
 
+    uint8_t parsed_hour = 0;
+    uint8_t parsed_minute = 0;
+    uint8_t parsed_second = 0;
+    if (!nmea_field(sentence, 1, field, sizeof(field)) ||
+        !nmea_time(field, &parsed_hour, &parsed_minute, &parsed_second)) return false;
+
     // Field 2: status — 'A' = active (valid), 'V' = void (invalid)
-    if (nmea_field(sentence, 2, field, sizeof(field))) {
-        gps.rmc_status = field[0];
-        if (field[0] != 'A') {
-            // Status is void ('V') or unknown — skip updating speed, heading, date
-            return;
-        }
-    } else {
-        // No status field — skip
-        return;
-    }
+    if (!nmea_field(sentence, 2, field, sizeof(field)) || field[1] != '\0' ||
+        (field[0] != 'A' && field[0] != 'V')) return false;
+    const char parsed_status = field[0];
+
+    char lat_str[20] = {};
+    char ns[4] = {};
+    char lon_str[20] = {};
+    char ew[4] = {};
+    if (!nmea_field(sentence, 3, lat_str, sizeof(lat_str)) ||
+        !nmea_field(sentence, 4, ns, sizeof(ns)) ||
+        !nmea_field(sentence, 5, lon_str, sizeof(lon_str)) ||
+        !nmea_field(sentence, 6, ew, sizeof(ew))) return false;
+    const bool coordinates_empty = lat_str[0] == '\0' && ns[0] == '\0' &&
+                                   lon_str[0] == '\0' && ew[0] == '\0';
+    float ignored_coordinate = 0.0f;
+    if (!coordinates_empty && (ns[1] != '\0' || ew[1] != '\0' ||
+        !nmea_to_decimal(lat_str, ns[0], true, &ignored_coordinate) ||
+        !nmea_to_decimal(lon_str, ew[0], false, &ignored_coordinate))) return false;
+    if (parsed_status == 'A' && coordinates_empty) return false;
 
     // Field 7: speed (knots)
-    if (nmea_field(sentence, 7, field, sizeof(field))) gps.speed_kn = strtof(field, nullptr);
+    float parsed_speed = 0.0f;
+    if (!nmea_field(sentence, 7, field, sizeof(field))) return false;
+    if (field[0] != '\0' && !nmea_float(field, false, &parsed_speed)) return false;
 
     // Field 8: heading (degrees)
-    if (nmea_field(sentence, 8, field, sizeof(field))) gps.heading = strtof(field, nullptr);
+    float parsed_heading = 0.0f;
+    if (!nmea_field(sentence, 8, field, sizeof(field))) return false;
+    if (field[0] != '\0' &&
+        (!nmea_float(field, false, &parsed_heading) || parsed_heading >= 360.0f)) return false;
 
     // Field 9: date (DDMMYY)
-    if (nmea_field(sentence, 9, field, sizeof(field)) && strlen(field) >= 6) {
-        char d[3] = {field[0], field[1], 0};
-        char m[3] = {field[2], field[3], 0};
-        char y[3] = {field[4], field[5], 0};
-        gps.day   = atoi(d);
-        gps.month = atoi(m);
-        gps.year  = 2000 + atoi(y);
-    }
+    uint16_t parsed_year = 0;
+    uint8_t parsed_month = 0;
+    uint8_t parsed_day = 0;
+    if (!nmea_field(sentence, 9, field, sizeof(field)) ||
+        !nmea_date(field, &parsed_year, &parsed_month, &parsed_day)) return false;
+
+    gps.rmc_status = parsed_status;
+    if (parsed_status == 'V') return true;
+
+    gps.hour = parsed_hour;
+    gps.minute = parsed_minute;
+    gps.second = parsed_second;
+    gps.speed_kn = parsed_speed;
+    gps.heading = parsed_heading;
+    gps.day = parsed_day;
+    gps.month = parsed_month;
+    gps.year = parsed_year;
+    return true;
 }
 
 // Acquisition diagnostics used by the validation harness.
@@ -295,8 +453,8 @@ static bool nmea_checksum_valid(const char* sentence) {
     const char* star = strchr(sentence, '*');
     if (!star) return false; // no '*' → malformed
 
-    // Must have at least 2 hex chars after '*'
-    if (strlen(star) < 3) return false;
+    // The two checksum digits must terminate the sentence exactly.
+    if (strlen(star) != 3) return false;
     char hex[3] = {star[1], star[2], 0};
     if (!isxdigit((unsigned char)hex[0]) || !isxdigit((unsigned char)hex[1]))
         return false; // malformed checksum
@@ -319,22 +477,25 @@ static void process_nmea(const char* sentence) {
         return;
     }
 
-    gps.valid_sentences++;
+    bool accepted = false;
     // Support both $GP (GPS-only) and $GN (multi-constellation) prefixes
     // L76K GNSS module on T-Deck outputs $GN by default
     if (strncmp(sentence, "$GPGGA,", 7) == 0 || strncmp(sentence, "$GNGGA,", 7) == 0) {
-        gps.gga_sentences++;
-        parse_gga(sentence);
+        accepted = parse_gga(sentence);
+        if (accepted) gps.gga_sentences++;
     } else if (strncmp(sentence, "$GPRMC,", 7) == 0 || strncmp(sentence, "$GNRMC,", 7) == 0) {
-        gps.rmc_sentences++;
-        parse_rmc(sentence);
+        accepted = parse_rmc(sentence);
+        if (accepted) gps.rmc_sentences++;
     } else if (strncmp(sentence, "$GPGSV,", 7) == 0 || strncmp(sentence, "$GNGSV,", 7) == 0) {
         gps.gsv_sentences++;
         parse_gsv(sentence);
+        accepted = true;
     } else if (strncmp(sentence, "$GPGSA,", 7) == 0 || strncmp(sentence, "$GNGSA,", 7) == 0) {
         gps.gsa_sentences++;
         parse_gsa(sentence);
+        accepted = true;
     }
+    if (accepted) gps.valid_sentences++;
 }
 
 // ════════════════════════════════════════════════════════
@@ -344,6 +505,7 @@ static void process_nmea(const char* sentence) {
 void sigurdos_gps_init() {
     memset(&gps, 0, sizeof(gps));
     nmea_pos = 0;
+    nmea_discarding = false;
     gps_baud_index = 0;
     gps_probe_start_ms = 0;
     gps_sync_status = SigurdOSGpsSyncStatus::Idle;
@@ -364,6 +526,12 @@ void sigurdos_gps_loop() {
         gps.chars_processed++;
 
         if (c == '\n') {
+            if (nmea_discarding) {
+                nmea_discarding = false;
+                nmea_pos = 0;
+                gps.sentences_received++;
+                continue;
+            }
             // End of NMEA sentence
             if (nmea_pos > 0) {
                 nmea_buf[nmea_pos] = '\0';
@@ -401,7 +569,7 @@ void sigurdos_gps_loop() {
                     }
                 }
             }
-        } else if (c == '\r') {
+        } else if (nmea_discarding || c == '\r') {
             // Ignore carriage return
         } else if (c == '$' && nmea_pos > 0) {
             // New sentence starting before previous ended — flush
@@ -409,6 +577,10 @@ void sigurdos_gps_loop() {
             nmea_buf[nmea_pos++] = c;
         } else if (nmea_pos < (int)(sizeof(nmea_buf) - 1)) {
             nmea_buf[nmea_pos++] = c;
+        } else {
+            // Never parse a truncated prefix as a complete NMEA sentence.
+            nmea_pos = 0;
+            nmea_discarding = true;
         }
     }
 
