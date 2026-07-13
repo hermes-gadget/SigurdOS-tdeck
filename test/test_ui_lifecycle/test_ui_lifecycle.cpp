@@ -2,11 +2,14 @@
 // Copyright (C) 2025 Ben
 
 #include <gtest/gtest.h>
+#include "hal/display_deadline.h"
 #include "ui/display_settings_helpers.h"
 #include "ui/lv_timer_owner.h"
 
 using sigurdos::ui::LvTimerOwner;
 using sigurdos::ui::normalize_auto_off_timeout;
+
+using sigurdos::hal::DisplayAutoOffDeadline;
 
 TEST(UiTimerOwner, CancelsAttachedTimerExactlyOnce)
 {
@@ -60,4 +63,36 @@ TEST(AutoOffTimeout, NormalizesUnsupportedValuesToThirtySeconds)
     EXPECT_EQ(normalize_auto_off_timeout(1), 30);
     EXPECT_EQ(normalize_auto_off_timeout(45), 30);
     EXPECT_EQ(normalize_auto_off_timeout(65535), 30);
+}
+
+TEST(AutoOffDeadline, FiresAtTheDeadlineNotBefore)
+{
+    DisplayAutoOffDeadline deadline;
+    deadline.arm(1000, 30000);
+
+    EXPECT_FALSE(deadline.reached(30999));
+    EXPECT_TRUE(deadline.reached(31000));
+    EXPECT_TRUE(deadline.reached(31001));
+}
+
+TEST(AutoOffDeadline, RemainsCorrectAcrossMillisWrap)
+{
+    DisplayAutoOffDeadline deadline;
+    deadline.arm(0xFFFFFFF0U, 32);
+
+    EXPECT_FALSE(deadline.reached(0xFFFFFFF5U));
+    EXPECT_FALSE(deadline.reached(0x0000000FU));
+    EXPECT_TRUE(deadline.reached(0x00000010U));
+    EXPECT_TRUE(deadline.reached(0x00000011U));
+}
+
+TEST(AutoOffDeadline, ZeroTimeoutStaysDisabledAcrossWrap)
+{
+    DisplayAutoOffDeadline deadline;
+    deadline.arm(0xFFFFFFF0U, 0);
+
+    EXPECT_FALSE(deadline.enabled);
+    EXPECT_FALSE(deadline.reached(0xFFFFFFF0U));
+    EXPECT_FALSE(deadline.reached(0x00000000U));
+    EXPECT_FALSE(deadline.reached(0x7FFFFFFFU));
 }

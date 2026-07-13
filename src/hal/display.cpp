@@ -19,6 +19,7 @@
 
 #include "display.h"
 #include "display_buffer_policy.h"
+#include "display_deadline.h"
 #include "touch.h"
 #include "keyboard.h"
 #include "keyboard_layouts.h"
@@ -118,7 +119,7 @@ uint32_t sigurdos_debug_flush_count() { return dbg_flush_count; }
 
 // ── Auto-off timer ──────────────────────────────────
 // Based on MeshCore's AUTO_OFF_MILLIS pattern (MIT license)
-static uint32_t            auto_off_at = 0;
+static sigurdos::hal::DisplayAutoOffDeadline auto_off_deadline;
 static bool                display_on  = true;
 static bool                wake_refresh_pending = false;
 static constexpr uint8_t TRACKBALL_FALLBACK_QUEUE_SIZE = 8;
@@ -483,11 +484,12 @@ static bool dispatch_keyboard_layout_key(int key, lv_indev_data_t* data)
 
 static void reset_auto_off() {
     uint16_t sec = sigurdos::prefs_get().auto_off_timeout;
-    auto_off_at = (sec > 0) ? (millis() + (uint32_t)sec * 1000) : UINT32_MAX;
+    auto_off_deadline.arm(millis(), (uint32_t)sec * 1000);
 }
 
 static void reset_auto_off_default() {
-    auto_off_at = millis() + (uint32_t)BOOT_AUTO_OFF_TIMEOUT_SEC * 1000;
+    auto_off_deadline.arm(
+        millis(), (uint32_t)BOOT_AUTO_OFF_TIMEOUT_SEC * 1000);
 }
 
 static void restore_display_after_sleep()
@@ -980,7 +982,7 @@ void sigurdos_display_loop()
     // Auto-off: turn off backlight after inactivity
     // Disabled in display debug builds — the screen must stay on for observation
 #if !SIGURDOS_DEBUG_DISPLAY
-    if (display_on && millis() > auto_off_at) {
+    if (display_on && auto_off_deadline.reached(millis())) {
         tft.setBrightness(0);
         sigurdos_keyboard_set_brightness(0);
         display_on = false;
