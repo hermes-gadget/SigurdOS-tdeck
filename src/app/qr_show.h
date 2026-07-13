@@ -13,6 +13,7 @@ static constexpr int SIGURDOS_QR_LAYOUT_MARGIN_PX = 20;
 static constexpr int SIGURDOS_QR_MAX_SCALE = 6;
 static constexpr int SIGURDOS_QR_CANVAS_MAX_PX = 180;
 static constexpr int SIGURDOS_QR_VERSION = 10;
+static constexpr int SIGURDOS_QR_QUIET_ZONE_MODULES = 4;
 
 inline constexpr int sigurdos_qr_module_count(int version) {
     return (version <= 0) ? 0 : (4 * version) + 17;
@@ -47,8 +48,10 @@ inline QrCanvasLayout sigurdos_qr_canvas_layout(
 
     const int avail_w = content_w - margin;
     const int avail_h = content_h - margin;
+    const long long rendered_modules = static_cast<long long>(qr_size) +
+        2LL * SIGURDOS_QR_QUIET_ZONE_MODULES;
     for (int scale = 1; scale <= max_scale; ++scale) {
-        const long long canvas_size64 = static_cast<long long>(qr_size) * scale;
+        const long long canvas_size64 = rendered_modules * scale;
         if (canvas_size64 > max_canvas_px) {
             continue;
         }
@@ -62,6 +65,26 @@ inline QrCanvasLayout sigurdos_qr_canvas_layout(
     }
 
     return layout;
+}
+
+template <typename ModuleGetter, typename PixelSetter>
+inline void sigurdos_qr_render_dark_modules(int qr_size, int scale,
+                                             ModuleGetter module_is_dark,
+                                             PixelSetter set_dark_pixel) {
+    if (qr_size <= 0 || scale <= 0) return;
+
+    const int origin = SIGURDOS_QR_QUIET_ZONE_MODULES * scale;
+    for (int y = 0; y < qr_size; ++y) {
+        for (int x = 0; x < qr_size; ++x) {
+            if (!module_is_dark(x, y)) continue;
+            for (int dy = 0; dy < scale; ++dy) {
+                for (int dx = 0; dx < scale; ++dx) {
+                    set_dark_pixel(origin + x * scale + dx,
+                                   origin + y * scale + dy);
+                }
+            }
+        }
+    }
 }
 
 /// Show a full-screen QR code displaying the given data string.

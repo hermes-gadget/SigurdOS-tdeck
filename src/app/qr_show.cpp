@@ -162,23 +162,18 @@ void qr_show(const char* title, const char* data)
 
     lv_obj_t* canvas = lv_canvas_create(scr);
     lv_canvas_set_buffer(canvas, cbuf, canvas_size, canvas_size, LV_COLOR_FORMAT_RGB565);
-    lv_canvas_fill_bg(canvas, lv_color_hex(BG_PRIMARY), LV_OPA_COVER);
+    lv_canvas_fill_bg(canvas, lv_color_hex(TEXT_PRIMARY), LV_OPA_COVER);
 
-    // Draw QR code modules onto canvas
-    lv_color_t fg = lv_color_hex(TEXT_PRIMARY);
-    for (int y = 0; y < qr.size; y++) {
-        for (int x = 0; x < qr.size; x++) {
-            if (qrcode_getModule(&qr, x, y)) {
-                for (int dy = 0; dy < scale; dy++) {
-                    for (int dx = 0; dx < scale; dx++) {
-                        lv_canvas_set_px(canvas, x * scale + dx, y * scale + dy, fg, LV_OPA_COVER);
-                    }
-                }
-            }
-        }
-    }
+    // Draw dark modules inside the standard four-module light quiet zone.
+    const lv_color_t dark = lv_color_hex(BG_PRIMARY);
+    sigurdos_qr_render_dark_modules(
+        qr.size, scale,
+        [&qr](int x, int y) { return qrcode_getModule(&qr, x, y); },
+        [canvas, dark](int x, int y) {
+            lv_canvas_set_px(canvas, x, y, dark, LV_OPA_COVER);
+        });
 
-    // The QR canvas draws as a white square on dark bg; add a 2px border
+    // The QR canvas draws as a light square on dark bg; add a 2px border
     // around it for visual separation from the background.
     lv_obj_set_style_border_width(canvas, PIXEL_BORDER, 0);
     lv_obj_set_style_border_color(canvas, lv_color_hex(DIVIDER), 0);

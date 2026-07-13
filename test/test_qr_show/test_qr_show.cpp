@@ -18,17 +18,22 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+#include <vector>
+
 #include "app/qr_show.h"
 
 namespace {
 
 using sigurdos::app::SIGURDOS_QR_CANVAS_MAX_PX;
 using sigurdos::app::SIGURDOS_QR_MODULE_BUFFER_BYTES;
+using sigurdos::app::SIGURDOS_QR_QUIET_ZONE_MODULES;
 using sigurdos::app::SIGURDOS_QR_VERSION;
 using sigurdos::app::QrCanvasLayout;
 using sigurdos::app::sigurdos_qr_module_buffer_bytes;
 using sigurdos::app::sigurdos_qr_module_count;
 using sigurdos::app::sigurdos_qr_canvas_layout;
+using sigurdos::app::sigurdos_qr_render_dark_modules;
 
 class QrShowLayoutTest : public ::testing::Test {};
 
@@ -50,7 +55,7 @@ TEST_F(QrShowLayoutTest, VersionOneQrUsesLargestScaleThatFitsContent) {
 
     EXPECT_TRUE(layout.fits);
     EXPECT_EQ(layout.scale, 6);
-    EXPECT_EQ(layout.canvas_size, 126);
+    EXPECT_EQ(layout.canvas_size, 174);
     EXPECT_LE(layout.canvas_size, SIGURDOS_QR_CANVAS_MAX_PX);
 }
 
@@ -58,13 +63,13 @@ TEST_F(QrShowLayoutTest, VersionTenQrFitsWithinTDeckContentHeight) {
     QrCanvasLayout layout = sigurdos_qr_canvas_layout(57, 320, 199);
 
     EXPECT_TRUE(layout.fits);
-    EXPECT_EQ(layout.scale, 3);
-    EXPECT_EQ(layout.canvas_size, 171);
+    EXPECT_EQ(layout.scale, 2);
+    EXPECT_EQ(layout.canvas_size, 130);
     EXPECT_LE(layout.canvas_size, SIGURDOS_QR_CANVAS_MAX_PX);
 }
 
-TEST_F(QrShowLayoutTest, MaxQrVersionStillFitsFixedCanvasAtScaleOne) {
-    QrCanvasLayout layout = sigurdos_qr_canvas_layout(177, 320, 199);
+TEST_F(QrShowLayoutTest, LargestSupportedQrStillFitsFixedCanvasAtScaleOne) {
+    QrCanvasLayout layout = sigurdos_qr_canvas_layout(169, 320, 199);
 
     EXPECT_TRUE(layout.fits);
     EXPECT_EQ(layout.scale, 1);
@@ -93,7 +98,52 @@ TEST_F(QrShowLayoutTest, CustomCanvasLimitConstrainsScale) {
 
     EXPECT_TRUE(layout.fits);
     EXPECT_EQ(layout.scale, 2);
-    EXPECT_EQ(layout.canvas_size, 100);
+    EXPECT_EQ(layout.canvas_size, 116);
+}
+
+TEST_F(QrShowLayoutTest, FinderPatternRendersDarkWithFourModuleQuietZone) {
+    static const char* finder[7] = {
+        "#######",
+        "#.....#",
+        "#.###.#",
+        "#.###.#",
+        "#.###.#",
+        "#.....#",
+        "#######",
+    };
+    const int canvas_size = 7 + 2 * SIGURDOS_QR_QUIET_ZONE_MODULES;
+    std::vector<char> raster(canvas_size * canvas_size, '.');
+
+    sigurdos_qr_render_dark_modules(
+        7, 1,
+        [](int x, int y) { return finder[y][x] == '#'; },
+        [&raster, canvas_size](int x, int y) {
+            raster[y * canvas_size + x] = '#';
+        });
+
+    std::string actual;
+    for (int y = 0; y < canvas_size; ++y) {
+        actual.append(&raster[y * canvas_size], canvas_size);
+        actual.push_back('\n');
+    }
+    const std::string expected =
+        "...............\n"
+        "...............\n"
+        "...............\n"
+        "...............\n"
+        "....#######....\n"
+        "....#.....#....\n"
+        "....#.###.#....\n"
+        "....#.###.#....\n"
+        "....#.###.#....\n"
+        "....#.....#....\n"
+        "....#######....\n"
+        "...............\n"
+        "...............\n"
+        "...............\n"
+        "...............\n";
+
+    EXPECT_EQ(actual, expected);
 }
 
 } // namespace
