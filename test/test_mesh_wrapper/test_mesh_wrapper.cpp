@@ -104,6 +104,13 @@ TEST_F(MeshWrapperTest, GetUnreadCountReturnsInt) {
     SUCCEED();
 }
 
+TEST_F(MeshWrapperTest, PacketLogGenerationReturnsMonotonicCounterType) {
+    using fn = uint32_t (*)();
+    (void)static_cast<fn>(sigurdos::mesh::getPacketLogGeneration);
+    (void)sigurdos::mesh::getPacketLogGeneration();
+    SUCCEED();
+}
+
 TEST_F(MeshWrapperTest, ApplyRadioParamsAcceptsRxGainFlag) {
     using fn = bool (*)(float, float, int, int, int, bool);
     (void)static_cast<fn>(sigurdos::mesh::applyRadioParams);

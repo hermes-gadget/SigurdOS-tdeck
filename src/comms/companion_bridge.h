@@ -127,13 +127,13 @@ enum CompanionPush : uint8_t {
     PUSH_CODE_LOGIN_SUCCESS = 0x85,
     PUSH_CODE_LOGIN_FAIL = 0x86,
     PUSH_CODE_STATUS_RESPONSE = 0x87,
-    PUSH_CODE_BINARY_RESPONSE = 0x88,
+    PUSH_CODE_LOG_RX_DATA = 0x88,
     PUSH_CODE_TRACE_DATA = 0x89,
     PUSH_CODE_NEW_ADVERT = 0x8A,
     PUSH_CODE_TELEMETRY_RESPONSE = 0x8B,
-    PUSH_CODE_PATH_DISCOVERY_RESPONSE = 0x8C,
-    PUSH_CODE_CONTROL_DATA = 0x8D,
-    PUSH_CODE_LOG_RX_DATA = 0x8E,
+    PUSH_CODE_BINARY_RESPONSE = 0x8C,
+    PUSH_CODE_PATH_DISCOVERY_RESPONSE = 0x8D,
+    PUSH_CODE_CONTROL_DATA = 0x8E,
     PUSH_CODE_CONTACT_DELETED = 0x8F,
     PUSH_CODE_CONTACTS_FULL = 0x90,
 };
@@ -278,6 +278,10 @@ public:
                                  uint16_t data_type,
                                  const uint8_t* payload,
                                  size_t payload_len) = 0;
+    virtual bool sendRawData(const uint8_t* path,
+                             uint8_t path_len,
+                             const uint8_t* payload,
+                             size_t payload_len) = 0;
     virtual bool sendAdvert(bool flood) = 0;
     virtual bool setAdvertName(const char* name) = 0;
     virtual bool setAdvertLatLon(int32_t lat, int32_t lon) = 0;
@@ -334,6 +338,10 @@ public:
     virtual CompanionSendResult sendLogin(const uint8_t* pub_key, const char* password) = 0;
     virtual CompanionSendResult sendStatusReq(const uint8_t* pub_key) = 0;
     virtual CompanionSendResult sendTelemetryReq(const uint8_t* pub_key) = 0;
+    virtual CompanionSendResult sendBinaryReq(const uint8_t* pub_key,
+                                              const uint8_t* data,
+                                              uint8_t data_len) = 0;
+    virtual void cancelBinaryReqs() = 0;
     virtual CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
                                               const uint8_t* path, uint8_t path_len) = 0;
     // sendPathDiscovery initiates flood path discovery for a contact by pubkey.
@@ -389,12 +397,16 @@ public:
                             const uint8_t* blob, size_t blob_len);
     bool pushTelemetryResponse(const uint8_t* pubkey_prefix,
                                const uint8_t* blob, size_t blob_len);
+    bool pushBinaryResponse(uint32_t tag, const uint8_t* blob, size_t blob_len);
+    bool pushRawData(int8_t snr_quarters, int8_t rssi,
+                     const uint8_t* payload, size_t payload_len);
     bool pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
                        const uint8_t* path_hashes, const uint8_t* path_snrs,
                        uint8_t path_len, int8_t final_snr_quarters);
 
 private:
     static constexpr int OFFLINE_QUEUE_SIZE = 16;
+    static constexpr int MAX_PENDING_BINARY_REQUESTS = 4;
     struct Frame {
         uint32_t store_id;
         bool persistent;    // channel-data frames have no message-store record
@@ -419,6 +431,9 @@ private:
     void removeFirstOfflineFrame();
     bool buildMessageFrame(const sigurdos::mesh::StoredMessage& msg,
                            uint8_t* out, size_t* out_len);
+    int findPendingBinary(uint32_t tag) const;
+    int findFreePendingBinary() const;
+    void clearPendingBinary();
 
     BaseSerialInterface* _serial = nullptr;
     CompanionBridgeHost* _host = nullptr;
@@ -429,6 +444,7 @@ private:
     int _contact_iter = -1;
     int _offline_len = 0;
     Frame _offline[OFFLINE_QUEUE_SIZE];
+    uint32_t _pending_binary[MAX_PENDING_BINARY_REQUESTS]{};
     uint8_t _cmd_frame[MAX_FRAME_SIZE + 1];
     uint8_t _out_frame[MAX_FRAME_SIZE + 1];
 

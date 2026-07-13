@@ -5,7 +5,10 @@
 
 namespace sigurdos::ui {
 
-static constexpr int CONTACT_LIST_PAGE_SIZE = 32;
+// Keep LVGL row/object count bounded independently of the 350-contact store.
+// Twelve rows is two screenfuls, preserving useful local scrolling without
+// constructing the previous 160+ row/label objects per page.
+static constexpr int CONTACT_LIST_PAGE_SIZE = 12;
 
 inline int contact_page_count(int total, int page_size = CONTACT_LIST_PAGE_SIZE) {
     if (total <= 0 || page_size <= 0) return 0;

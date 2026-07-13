@@ -25,6 +25,8 @@
 #include "screens_common.h"
 #include "theme.h"
 #include "responsive.h"
+#include "list_window.h"
+#include "notifications.h"
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
 #include "../mesh/mesh_wrapper.h"
@@ -33,6 +35,7 @@
 #include "../mesh/message_store.h"
 #include "../hal/prefs.h"
 #include "chat_history_store.h"
+#include "chat_store_migration.h"
 #include "../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstring>
@@ -112,6 +115,7 @@ static constexpr int BUBBLE_PAD = 6;
 static constexpr uint16_t CHAT_MSGS_MAX         = CHAT_SCREEN_MESSAGE_CAP_MAX;
 static constexpr uint16_t CHAT_MSGS_DEFAULT_CAP = CHAT_SCREEN_MESSAGE_CAP_DEFAULT;
 static constexpr uint16_t CHAT_MSGS_MIN_CAP     = CHAT_SCREEN_MESSAGE_CAP_MIN;
+static constexpr int CHAT_RENDER_WINDOW = CHAT_LIST_RENDER_CAPACITY;
 static constexpr int MAX_MSG_BYTES = 149; // max text bytes for mesh payload (MAX_PAYLOAD - 1)
 static constexpr int MAX_NAME_LEN  = 31;  // max chars for channel/contact names (buffer - null)
 static constexpr int MSG_LIST_Y    = TOP_H + DIVIDER_H;
@@ -135,13 +139,19 @@ static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
 static int   active_channel = 0;
+static int   chat_render_channel = -1;
+static int   chat_render_offset = 0; // entries newer than the visible window
+static bool  chat_render_scroll_bottom = true;
+static lv_obj_t* chat_older_btn = nullptr;
+static lv_obj_t* chat_newer_btn = nullptr;
+static lv_obj_t* chat_no_results = nullptr;
+static lv_obj_t* chat_bubble_pool[CHAT_RENDER_WINDOW] = {};
 static ChatHistoryCheckpoint chat_checkpoint;
 
 static void mark_chat_history_dirty()
 {
     chat_checkpoint.markDirty(millis());
 }
-
 // ── Channel filter mode ────────────────────────────────────
 // 0 = show all, 1 = channels only, 2 = DMs only
 static int   chat_filter_mode = 0;
@@ -764,7 +774,6 @@ static bool append_loaded_channel_message(int idx, const char* sender, const cha
     }
 
     append_channel_message(idx, sender, text, timestamp, is_self);
-    mark_chat_history_dirty();
     if (acked && has_channel_buffer(idx) && ch_buffers[idx].count() > 0) {
         ch_buffers[idx].markLastAcked();
     } else if (confirmation_lost && has_channel_buffer(idx) &&
@@ -787,12 +796,12 @@ static int ensure_loaded_conversation(const char* conversation)
     return idx;
 }
 
-static void chat_load_companion_messages()
+static void chat_load_stored_messages()
 {
     // Scratch buffer for the persisted-message snapshot. Allocate from PSRAM
-    // (with internal-DRAM fallback) rather than a static array — at ~15 KB it
-    // would otherwise overflow the tight internal dram0_0_seg .bss region.
-    constexpr int kRecentCap = 64;
+    // (with internal-DRAM fallback) rather than a static ~130 KB array, which
+    // would overflow the tight internal dram0_0_seg .bss region.
+    constexpr int kRecentCap = (int)sigurdos::mesh::MESSAGE_STORE_MAX_RECORDS;
     const size_t bytes = sizeof(sigurdos::mesh::StoredMessage) * kRecentCap;
     sigurdos::mesh::StoredMessage* recent =
         (sigurdos::mesh::StoredMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -876,6 +885,7 @@ static lv_obj_t* make_chat_list_screen()
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
+    create_companion_status_icon(top);
 
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(s);
@@ -929,6 +939,8 @@ static void show_channel_list()
 {
     // Null messaging-view pointers — they're invalid once we leave
     scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
+    chat_older_btn = chat_newer_btn = chat_no_results = nullptr;
+    for (lv_obj_t*& bubble : chat_bubble_pool) bubble = nullptr;
     ch_list = ch_back_btn = ch_add_btn = nullptr;
     ch_focus = 0;
 
@@ -1193,7 +1205,7 @@ static void create_top_bar()
     }, LV_EVENT_CLICKED, nullptr);
 
     // Horizontal scrollable channel ribbon — exact width for no warp (matches home grid uniform sizing)
-    int ribbon_w = CONTENT_W - 28 - 44 - 28; // back button + margins + time + search btn
+    int ribbon_w = CONTENT_W - 28 - 44 - 28 - 20; // back + time + search + Bluetooth
     channel_ribbon = lv_obj_create(top_bar);
     lv_obj_set_size(channel_ribbon, ribbon_w, TOP_H - 4);
     lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 28, 0);
@@ -1228,6 +1240,7 @@ static void create_top_bar()
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
+    create_companion_status_icon(top_bar, -56);
 
     // Search button (left of time label)
     lv_obj_t* search_btn = lv_btn_create(top_bar);
@@ -1350,6 +1363,52 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     return container;
 }
 
+static void bind_bubble(lv_obj_t* container, const char* sender,
+                        const char* text, uint32_t timestamp,
+                        bool is_self, bool acked, bool confirmation_lost)
+{
+    if (!container) return;
+    lv_obj_t* bubble = lv_obj_get_child(container, 0);
+    lv_obj_t* header = bubble ? lv_obj_get_child(bubble, 0) : nullptr;
+    lv_obj_t* name = header ? lv_obj_get_child(header, 0) : nullptr;
+    lv_obj_t* ts = header ? lv_obj_get_child(header, 1) : nullptr;
+    lv_obj_t* msg_text = bubble ? lv_obj_get_child(bubble, 1) : nullptr;
+    if (!bubble || !name || !ts || !msg_text) return;
+
+    lv_obj_set_flex_align(container,
+        is_self ? LV_FLEX_ALIGN_END : LV_FLEX_ALIGN_START,
+        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_bg_color(bubble,
+        lv_color_hex(is_self ? ACCENT : MSG_INCOMING), 0);
+    lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(bubble, 0, 0);
+
+    lv_label_set_text(name, sender ? sender : "");
+    lv_obj_set_style_text_color(name,
+        is_self ? lv_color_hex(0xffffff) : lv_color_hex(ACCENT), 0);
+
+    char time_buf[10];
+    if (is_self && acked) {
+        const uint32_t t = timestamp % 86400;
+        snprintf(time_buf, sizeof(time_buf), "%02d:%02d \xe2\x9c\x85",
+                 (t / 3600) % 24, (t / 60) % 60);
+    } else if (is_self && confirmation_lost) {
+        const uint32_t t = timestamp % 86400;
+        snprintf(time_buf, sizeof(time_buf), "%02d:%02d NO ACK",
+                 (t / 3600) % 24, (t / 60) % 60);
+    } else {
+        format_time(time_buf, sizeof(time_buf), timestamp);
+    }
+    lv_label_set_text(ts, time_buf);
+    lv_obj_set_style_text_color(ts,
+        is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY), 0);
+
+    lv_label_set_text(msg_text, text ? text : "");
+    lv_obj_set_style_text_color(msg_text,
+        is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_clear_flag(container, LV_OBJ_FLAG_HIDDEN);
+}
+
 // ════════════════════════════════════════════════════
 // Message list (vertical scroll)
 // ════════════════════════════════════════════════════
@@ -1374,6 +1433,42 @@ static void create_message_list()
         LV_OBJ_FLAG_SCROLL_CHAIN |
         LV_OBJ_FLAG_SCROLL_ON_FOCUS |
         LV_OBJ_FLAG_SCROLL_WITH_ARROW));
+
+    chat_older_btn = lv_btn_create(msg_list);
+    lv_obj_set_size(chat_older_btn, LV_PCT(100), 24);
+    apply_pixel_btn_outline(chat_older_btn);
+    lv_obj_t* older_label = lv_label_create(chat_older_btn);
+    lv_label_set_text(older_label, "Load older messages");
+    lv_obj_center(older_label);
+    lv_obj_add_event_cb(chat_older_btn, [](lv_event_t*) {
+        chat_render_offset += CHAT_RENDER_WINDOW;
+        render_active_messages();
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(chat_older_btn, LV_OBJ_FLAG_HIDDEN);
+
+    for (int i = 0; i < CHAT_RENDER_WINDOW; ++i) {
+        chat_bubble_pool[i] = create_bubble(msg_list, "", "", 0, false, false, false);
+        lv_obj_add_flag(chat_bubble_pool[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    chat_newer_btn = lv_btn_create(msg_list);
+    lv_obj_set_size(chat_newer_btn, LV_PCT(100), 24);
+    apply_pixel_btn_outline(chat_newer_btn);
+    lv_obj_t* newer_label = lv_label_create(chat_newer_btn);
+    lv_label_set_text(newer_label, "Return toward newest");
+    lv_obj_center(newer_label);
+    lv_obj_add_event_cb(chat_newer_btn, [](lv_event_t*) {
+        chat_render_offset -= CHAT_RENDER_WINDOW;
+        if (chat_render_offset < 0) chat_render_offset = 0;
+        render_active_messages();
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(chat_newer_btn, LV_OBJ_FLAG_HIDDEN);
+
+    chat_no_results = lv_label_create(msg_list);
+    lv_label_set_text(chat_no_results, "No matching messages");
+    lv_obj_set_style_text_color(chat_no_results, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(chat_no_results, emoji_wrapped_montserrat_12, 0);
+    lv_obj_add_flag(chat_no_results, LV_OBJ_FLAG_HIDDEN);
     // No scroll snap — messages stay at bottom naturally.
     // Overscroll is prevented by the flag removals above,
     // and the trackball handler also clamps scroll deltas.
@@ -1397,24 +1492,42 @@ static void refresh_delivery_state(ChannelMessage& msg)
 static void render_active_messages()
 {
     if (!msg_list || active_channel < 0 || active_channel >= MAX_CHANNELS) return;
+    const int32_t previous_scroll_y = lv_obj_get_scroll_y(msg_list);
 
     const uint16_t cap = chat_msg_cap();
     trim_channel_history(active_channel, cap);
     if (!has_channel_buffer(active_channel)) return;
 
-    lv_obj_clean(msg_list);
+    if (chat_render_channel != active_channel) {
+        chat_render_channel = active_channel;
+        chat_render_offset = 0;
+    }
+
+    if (!chat_older_btn || !chat_newer_btn || !chat_no_results) return;
+    lv_obj_add_flag(chat_older_btn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(chat_newer_btn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(chat_no_results, LV_OBJ_FLAG_HIDDEN);
+    for (lv_obj_t* bubble : chat_bubble_pool) {
+        if (bubble) lv_obj_add_flag(bubble, LV_OBJ_FLAG_HIDDEN);
+    }
 
     // ── Search mode: render only matching messages ──
     if (search_active && search_query[0]) {
         if (search_match_count > 0) {
-            for (int i = 0; i < search_match_count; i++) {
+            const int current = search_current_match < 0 ? 0 : search_current_match;
+            const int page = (search_match_count - 1 - current) / CHAT_RENDER_WINDOW;
+            const ListWindow window = list_window_from_newest(
+                search_match_count, CHAT_RENDER_WINDOW, page);
+            int slot = 0;
+            for (int i = window.start; i < window.end; i++, slot++) {
                 int idx = search_matches[i];
                 if (idx < 0 || idx >= ch_buffers[active_channel].count()) continue;
                 ChannelMessage& msg = ch_buffers[active_channel].at(idx);
                 refresh_delivery_state(msg);
-                lv_obj_t* bubble = create_bubble(msg_list, msg.sender, msg.text,
-                                                  msg.timestamp, msg.is_self, msg.acked,
-                                                  msg.confirmation_lost);
+                lv_obj_t* bubble = chat_bubble_pool[slot];
+                bind_bubble(bubble, msg.sender, msg.text,
+                            msg.timestamp, msg.is_self, msg.acked,
+                            msg.confirmation_lost);
                 // Highlight the current search match
                 if (i == search_current_match && bubble) {
                     lv_obj_t* first_child = lv_obj_get_child(bubble, 0);
@@ -1427,33 +1540,60 @@ static void render_active_messages()
             }
         } else {
             // No matches — show "No results" message
-            lv_obj_t* no_results = lv_label_create(msg_list);
-            lv_label_set_text(no_results, "No matching messages");
-            lv_obj_set_style_text_color(no_results, lv_color_hex(TEXT_SECONDARY), 0);
-            lv_obj_set_style_text_font(no_results, emoji_wrapped_montserrat_12, 0);
-            lv_obj_center(no_results);
+            lv_obj_clear_flag(chat_no_results, LV_OBJ_FLAG_HIDDEN);
         }
         // Scroll to current match
         if (search_current_match >= 0 && search_current_match < search_match_count) {
-            lv_obj_t* child = lv_obj_get_child(msg_list, search_current_match);
+            const int page = (search_match_count - 1 - search_current_match) /
+                CHAT_RENDER_WINDOW;
+            const ListWindow window = list_window_from_newest(
+                search_match_count, CHAT_RENDER_WINDOW, page);
+            lv_obj_t* child = chat_bubble_pool[search_current_match - window.start];
             if (child) lv_obj_scroll_to_view(child, LV_ANIM_OFF);
         }
         return;
     }
 
-    // ── Normal mode: render all messages ──
-    for (uint16_t i = 0; i < ch_buffers[active_channel].count(); i++) {
+    // ── Normal mode: bind one bounded history window ──
+    const int total = ch_buffers[active_channel].count();
+    chat_render_offset = list_clamp_newest_offset(chat_render_offset, total);
+    const ListWindow window = list_window_from_newest_offset(
+        total, CHAT_RENDER_WINDOW, chat_render_offset);
+
+    if (window.start > 0) {
+        lv_obj_clear_flag(chat_older_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    int slot = 0;
+    for (int i = window.start; i < window.end; i++, slot++) {
         ChannelMessage& msg = ch_buffers[active_channel].at(i);
         refresh_delivery_state(msg);
 
-        create_bubble(msg_list, msg.sender, msg.text, msg.timestamp, msg.is_self,
-                      msg.acked, msg.confirmation_lost);
+        // Check ACK status for self-sent DM messages
+        if (msg.is_self && !msg.acked) {
+            if (strncmp(dyn_channels[active_channel], "DM: ", 4) == 0) {
+                const char* dest = dyn_channels[active_channel] + 4;
+                if (sigurdos::mesh::isMessageAcked(dest, msg.timestamp)) {
+                    msg.acked = true;
+                }
+            }
+        }
+
+        bind_bubble(chat_bubble_pool[slot], msg.sender, msg.text,
+                    msg.timestamp, msg.is_self, msg.acked,
+                    msg.confirmation_lost);
     }
 
-    uint32_t count = lv_obj_get_child_cnt(msg_list);
-    if (count > 0) {
-        lv_obj_t* last = lv_obj_get_child(msg_list, count - 1);
+    if (window.end < total) {
+        lv_obj_clear_flag(chat_newer_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (slot > 0 && chat_render_scroll_bottom) {
+        lv_obj_t* last = window.end < total
+            ? chat_newer_btn : chat_bubble_pool[slot - 1];
         if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
+    } else if (!chat_render_scroll_bottom) {
+        lv_obj_scroll_to_y(msg_list, previous_scroll_y, LV_ANIM_OFF);
     }
 }
 
@@ -1600,8 +1740,8 @@ static void do_send()
         snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
     }
     append_channel_message(sent_channel, sigurdos::mesh::getOwnName(), display_text, ts, true);
-    mark_chat_history_dirty();
     mark_channel_used(sent_channel);
+    chat_render_offset = 0;
     render_active_messages();
     lv_textarea_set_text(input_field, "");
 
@@ -1765,6 +1905,8 @@ static void create_bottom_bar()
 static void open_channel_messaging(int idx)
 {
     active_channel = idx;
+    chat_render_channel = idx;
+    chat_render_offset = 0;
 
     scr = lv_obj_create(nullptr);
     apply_dark_bg(scr);
@@ -1779,6 +1921,8 @@ static void open_channel_messaging(int idx)
     // already set it to a new list before this delete callback fires.
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
+        chat_older_btn = chat_newer_btn = chat_no_results = nullptr;
+        for (lv_obj_t*& bubble : chat_bubble_pool) bubble = nullptr;
         search_bar = nullptr;
         search_input = nullptr;
         search_active = false;
@@ -2377,6 +2521,8 @@ void chat_screen_show()
 {
     screens_clear_back_btn();
     screens_clear_wifi_icon();
+    screens_clear_companion_icon();
+    notifications_clear_unread_mentions();
     // Skip channel list when DM is being opened directly —
     // open_channel_messaging() will create the messaging screen instead.
     if (g_skip_channel_list) {
@@ -2452,8 +2598,6 @@ void chat_screen_add_msg_at(const char* channel, const char* sender, const char*
     if (idx >= MAX_CHANNELS) return;
 
     append_channel_message(idx, sender, text, message_time, is_self);
-    mark_chat_history_dirty();
-
     bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
     if (!is_self && !visible) ch_meta[idx].unread++;
     if (!visible) return;
@@ -2461,17 +2605,10 @@ void chat_screen_add_msg_at(const char* channel, const char* sender, const char*
     // Check if user is at the bottom BEFORE adding the new bubble
     bool at_bottom = (lv_obj_get_scroll_bottom(msg_list) <= 4);
 
-    create_bubble(msg_list, sender, text, message_time, is_self, false, false);
-
-    const uint16_t cap = chat_msg_cap();
-    if (lv_obj_get_child_cnt(msg_list) > cap)
-        lv_obj_del_async(lv_obj_get_child(msg_list, 0));
-
-    // Only auto-scroll if user was already at the bottom
-    if (at_bottom) {
-        lv_obj_t* last = lv_obj_get_child(msg_list, lv_obj_get_child_cnt(msg_list) - 1);
-        if (last) lv_obj_scroll_to_view(last, LV_ANIM_OFF);
-    }
+    if (!at_bottom) chat_render_offset++;
+    chat_render_scroll_bottom = at_bottom;
+    render_active_messages();
+    chat_render_scroll_bottom = true;
 }
 
 // ════════════════════════════════════════════════════
@@ -2511,8 +2648,6 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
                         0 : search_current_match + 1;
                 }
                 render_active_messages();
-                lv_obj_t* child = lv_obj_get_child(msg_list, search_current_match);
-                if (child) lv_obj_scroll_to_view(child, LV_ANIM_OFF);
                 return true;
             }
             case SigurdOSTrackballEvent::Left:
@@ -2528,12 +2663,31 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
         case SigurdOSTrackballEvent::Up: {
             // Let LVGL clamp at top (no elastic = hard stop at 0)
             lv_coord_t sy = lv_obj_get_scroll_y(msg_list);
+            const int total = has_channel_buffer(active_channel)
+                ? ch_buffers[active_channel].count() : 0;
+            const ListWindow window = list_window_from_newest_offset(
+                total, CHAT_RENDER_WINDOW, chat_render_offset);
+            if (sy <= 0 && window.start > 0) {
+                chat_render_offset += CHAT_RENDER_WINDOW;
+                render_active_messages();
+                return true;
+            }
             lv_coord_t new_y = sy > 44 ? sy - 44 : 0;
             lv_obj_scroll_to_y(msg_list, new_y, LV_ANIM_OFF);
             return true;
         }
         case SigurdOSTrackballEvent::Down: {
             // Let LVGL clamp at bottom (no elastic = hard stop at max)
+            const int total = has_channel_buffer(active_channel)
+                ? ch_buffers[active_channel].count() : 0;
+            const ListWindow window = list_window_from_newest_offset(
+                total, CHAT_RENDER_WINDOW, chat_render_offset);
+            if (lv_obj_get_scroll_bottom(msg_list) <= 0 && window.end < total) {
+                chat_render_offset -= CHAT_RENDER_WINDOW;
+                if (chat_render_offset < 0) chat_render_offset = 0;
+                render_active_messages();
+                return true;
+            }
             lv_coord_t sy = lv_obj_get_scroll_y(msg_list);
             lv_obj_scroll_to_y(msg_list, sy + 44, LV_ANIM_OFF);
             return true;
@@ -2667,91 +2821,14 @@ const char* chat_screen_get_active_channel_name()
 // Message persistence
 // ════════════════════════════════════════════════════
 
-struct ChatHistorySaveCtx {
-    int channel_indices[CHAT_HISTORY_MAX_CHANNELS];
-    uint16_t message_cap;
-};
-
-static bool read_history_channel(int stored_index, char* name_out,
-                                 size_t name_len, uint8_t* message_count_out,
-                                 void* raw)
+static bool migrate_legacy_history_message(const char* channel,
+                                           const LegacyChatMessage& legacy,
+                                           void*)
 {
-    ChatHistorySaveCtx* ctx = static_cast<ChatHistorySaveCtx*>(raw);
-    if (!ctx || !name_out || name_len == 0 || !message_count_out ||
-        stored_index < 0 || stored_index >= (int)CHAT_HISTORY_MAX_CHANNELS) {
-        return false;
-    }
-    const int channel = ctx->channel_indices[stored_index];
-    if (channel < 0 || channel >= dyn_count || !has_channel_buffer(channel)) {
-        return false;
-    }
-    std::strncpy(name_out, dyn_channels[channel], name_len - 1);
-    name_out[name_len - 1] = '\0';
-    const uint16_t count = ch_buffers[channel].count() > ctx->message_cap
-        ? ctx->message_cap : ch_buffers[channel].count();
-    *message_count_out = (uint8_t)count;
-    return true;
-}
-
-static bool read_history_message(int stored_index, int message_index,
-                                 PersistedChatMessage* out, void* raw)
-{
-    ChatHistorySaveCtx* ctx = static_cast<ChatHistorySaveCtx*>(raw);
-    if (!ctx || !out || stored_index < 0 ||
-        stored_index >= (int)CHAT_HISTORY_MAX_CHANNELS) return false;
-    const int channel = ctx->channel_indices[stored_index];
-    if (channel < 0 || channel >= dyn_count || !has_channel_buffer(channel) ||
-        message_index < 0 || message_index >= ch_buffers[channel].count()) return false;
-
-    const ChannelMessage& source = ch_buffers[channel].at(message_index);
-    std::strncpy(out->sender, source.sender, sizeof(out->sender) - 1);
-    std::strncpy(out->text, source.text, sizeof(out->text) - 1);
-    out->timestamp = source.timestamp;
-    out->is_self = source.is_self;
-    return true;
-}
-
-static bool write_history_message(const char* channel,
-                                  const PersistedChatMessage& message,
-                                  void*)
-{
-    int idx = find_channel_idx(channel);
-    // DM pseudo-channels are not returned by exportChannels(), so restore them
-    // on demand when their first persisted message is read.
-    if (idx < 0 && std::strncmp(channel, "DM: ", 4) == 0 &&
-        dyn_count < MAX_CHANNELS) {
-        idx = dyn_count;
-        std::strncpy(dyn_channels[idx], channel, sizeof(dyn_channels[idx]) - 1);
-        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
-        ++dyn_count;
-    }
-    if (idx < 0 || idx >= MAX_CHANNELS) return true;
-    append_channel_message(idx, message.sender, message.text,
-                           message.timestamp, message.is_self);
-    return true;
-}
-
-void chat_save_messages()
-{
-    ChatHistorySaveCtx ctx{{}, chat_msg_cap()};
-    int stored_count = 0;
-    for (int channel = 0; channel < dyn_count &&
-         stored_count < (int)CHAT_HISTORY_MAX_CHANNELS; ++channel) {
-        if (ch_buffers[channel].count() > 0 && has_channel_buffer(channel)) {
-            ctx.channel_indices[stored_count++] = channel;
-        }
-    }
-    if (chatHistorySave(stored_count, read_history_channel,
-                        read_history_message, &ctx)) {
-        chat_checkpoint.saved();
-    }
-}
-
-void chat_save_messages_if_due(uint32_t now)
-{
-    if (chat_checkpoint.isDue(now)) {
-        chat_save_messages();
-    }
+    if (!channel || !channel[0]) return false;
+    const sigurdos::mesh::StoredMessage msg =
+        legacyChatMessageToStored(channel, legacy);
+    return sigurdos::mesh::messageStoreAppend(msg);
 }
 
 void chat_load_messages()
@@ -2768,8 +2845,10 @@ void chat_load_messages()
         }
     }
 
-    chatHistoryLoad(write_history_message, nullptr);
-    chat_load_companion_messages();
+    // /msgs was the pre-companion UI snapshot. Stream it into the unified log
+    // once; the migration source is deleted only after every append succeeds.
+    legacyChatHistoryMigrate(migrate_legacy_history_message);
+    chat_load_stored_messages();
 }
 
 uint16_t chat_screen_get_message_cap()

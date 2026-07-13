@@ -10,6 +10,7 @@
 #include "channel_validation.h"
 #include "public_channel.h"
 #include "message_store.h"
+#include "companion_message_policy.h"
 #include "durable_fanout.h"
 #include "contact_store.h"
 #include "persistence_store.h"
@@ -122,6 +123,9 @@ static bool presentIncomingMessage(void* raw)
 {
     IncomingMessageFanoutCtx* ctx = static_cast<IncomingMessageFanoutCtx*>(raw);
     if (!ctx) return false;
+    if (!sigurdos::mesh::companion_message_should_present_in_chat(ctx->txt_type)) {
+        return true;
+    }
     if (msg_count >= MAX_QUEUED) {
         msg_drop_count++;
 #if SIGURDOS_DEBUG_MESH
@@ -434,6 +438,7 @@ static constexpr int MAX_PACKET_LOG = 50;
 static PacketLogEntry pkt_log[MAX_PACKET_LOG];
 static int pkt_log_head = 0;
 static int pkt_log_count = 0;
+static uint32_t pkt_log_generation = 0;
 
 void pushPacketLog(const char* source, int rssi, float snr, const char* type) {
     if (!source || !type) return;
@@ -447,6 +452,7 @@ void pushPacketLog(const char* source, int rssi, float snr, const char* type) {
     e.type[sizeof(e.type) - 1] = '\0';
     pkt_log_head = (pkt_log_head + 1) % MAX_PACKET_LOG;
     if (pkt_log_count < MAX_PACKET_LOG) pkt_log_count++;
+    pkt_log_generation++;
 }
 
 // ── ACK tracking bridge ──────────────────────
@@ -1248,6 +1254,9 @@ static void fillContactInfo(ContactInfo& dest, const ::ContactInfo& src) {
     dest.rssi = g_mesh->getContactRSSI(src.id.pub_key);
     dest.snr  = g_mesh->getContactSNR(src.id.pub_key);
     dest.last_seen = src.last_advert_timestamp;
+    dest.favourite = (src.flags & 0x01) != 0;
+    dest.has_path = src.out_path_len != OUT_PATH_UNKNOWN;
+    dest.path_len = src.out_path_len;
 }
 
 int exportContactsFull(ContactInfo* out, int max) {
@@ -1763,6 +1772,7 @@ void factoryReset()
 }
 
 int getPacketLogCount() { return pkt_log_count; }
+uint32_t getPacketLogGeneration() { return pkt_log_generation; }
 
 bool getPacketLogEntry(int index, PacketLogEntry* out) {
     if (index < 0 || index >= pkt_log_count || !out) return false;
@@ -1832,7 +1842,9 @@ void setDutyCycle(uint8_t percent) {
         if (!g_mesh || !name) return false;
         int idx = findContactIndex(name);
         if (idx < 0) return false;
-        return g_mesh->resetPathTo(idx);
+        if (!g_mesh->resetPathTo(idx)) return false;
+        saveContacts();
+        return true;
     }
 
     bool setContactPerm(const char* name, uint8_t perm) {
@@ -2303,6 +2315,34 @@ bool importContactByUri(const char* uri) {
     }
 
     return false;
+}
+
+bool addContactManual(const char* name, const char* pubkey_hex, uint8_t type) {
+    if (!g_mesh || !name || !name[0] || strlen(name) > 31 || !pubkey_hex ||
+        strlen(pubkey_hex) != PUB_KEY_SIZE * 2) return false;
+    if (type != ADV_TYPE_CHAT && type != ADV_TYPE_REPEATER && type != ADV_TYPE_ROOM) {
+        return false;
+    }
+    uint8_t pub_key[PUB_KEY_SIZE];
+    if (SigurdMeshV2::hexToBytes(pubkey_hex, pub_key, sizeof(pub_key)) != PUB_KEY_SIZE) {
+        return false;
+    }
+    bool nonzero = false;
+    for (uint8_t byte : pub_key) nonzero = nonzero || byte != 0;
+    if (!nonzero) return false;
+    for (int i = 0; i < g_mesh->getContactCount(); ++i) {
+        auto* existing = g_mesh->getContact(i);
+        if (existing && (strcmp(existing->name, name) == 0 ||
+            memcmp(existing->id.pub_key, pub_key, PUB_KEY_SIZE) == 0)) return false;
+    }
+    ::ContactInfo contact{};
+    strncpy(contact.name, name, sizeof(contact.name) - 1);
+    memcpy(contact.id.pub_key, pub_key, PUB_KEY_SIZE);
+    contact.type = type;
+    contact.out_path_len = OUT_PATH_UNKNOWN;
+    if (!g_mesh->addContact(contact)) return false;
+    saveContacts();
+    return true;
 }
 
 bool addChannelByUri(const char* uri) {

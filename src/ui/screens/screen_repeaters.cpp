@@ -545,6 +545,8 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
                 case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
                 case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
+                case LOGIN_STATUS_TIMEOUT: login_text = "Login timed out";  login_color = ACCENT_RED; break;
+                case LOGIN_STATUS_DROPPED: login_text = "Connection dropped"; login_color = ACCENT_RED; break;
             }
             lv_obj_t* lr = lv_obj_create(list);
             lv_obj_set_size(lr, LV_PCT(100), 24);

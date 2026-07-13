@@ -41,6 +41,16 @@ uint8_t sigurdos_gps_hour();
 uint8_t sigurdos_gps_minute();
 uint8_t sigurdos_gps_second();
 bool    sigurdos_gps_time_synced();
+uint32_t sigurdos_gps_epoch();
+
+enum class SigurdOSGpsSyncStatus : uint8_t { Idle, Waiting, Success, TimedOut };
+
+void sigurdos_gps_set_map_high_rate(bool enabled);
+void sigurdos_gps_start_time_sync(uint32_t timeout_ms = 60000);
+void sigurdos_gps_cancel_time_sync();
+SigurdOSGpsSyncStatus sigurdos_gps_time_sync_status();
+uint32_t sigurdos_gps_time_sync_remaining_ms();
+void sigurdos_gps_service(bool background_enabled, uint16_t background_interval_s);
 
 // UART/parser diagnostics for hardware validation and telemetry.
 uint32_t sigurdos_gps_active_baud();

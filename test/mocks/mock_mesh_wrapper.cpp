@@ -71,6 +71,7 @@ int exportContactsFull(ContactInfo* out, int max) { (void)out; return 0; }
 bool getContactByName(const char* name, ContactInfo* out) {
     (void)name; (void)out; return false;
 }
+bool addContactManual(const char*, const char*, uint8_t) { return false; }
 int getChannelCount() { return 0; }
 int exportChannels(char names[][37], int max) { return 0; }
 bool addChannel(const char* name, const char* psk) { return false; }
@@ -101,6 +102,7 @@ static PacketLogEntry mock_pkt_log[8];
 static int mock_pkt_count = 0;
 
 int getPacketLogCount() { return mock_pkt_count; }
+uint32_t getPacketLogGeneration() { return (uint32_t)mock_pkt_count; }
 bool getPacketLogEntry(int index, PacketLogEntry* out) {
     if (index < 0 || index >= mock_pkt_count || !out) return false;
     *out = mock_pkt_log[index];

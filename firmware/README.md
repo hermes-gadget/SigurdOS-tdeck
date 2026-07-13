@@ -11,7 +11,7 @@ Pre-built firmware for the LilyGo T-Deck (ESP32-S3, 16 MB flash).
 | File | Use |
 |------|-----|
 | `sigurdos-tdeck-merged.bin` | **Full flash at 0x0** — recommended for standalone first install (bootloader + partitions + boot_app0 + firmware) |
-| `SigurdOS-tdeck-launcher.bin` | Same bytes as merged — feed to [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) for install as a Launcher app. Published as a [release asset](https://github.com/hermes-gadget/SigurdOS-tdeck/releases/latest); local builds emit it as `webflasher/sigurdos-tdeck-launcher.bin` |
+| `SigurdOS-tdeck-launcher.bin` | Same bytes as merged — feed to [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) for install as a Launcher app. Published with each [tagged release](https://github.com/hermes-gadget/SigurdOS-tdeck/releases); local builds emit it as `webflasher/sigurdos-tdeck-launcher.bin` |
 | `sigurdos-tdeck.bin` | App update only — flash at 0x10000 (preserves bootloader/partitions) |
 
 ## Which file should I flash?
@@ -108,7 +108,7 @@ SigurdOS can be installed as an app under [bmorcelli/Launcher](https://github.co
 ### Prerequisites
 
 - A T-Deck already running Launcher (v2.7.2 or newer)
-- The file `SigurdOS-tdeck-launcher.bin` from the [latest release](https://github.com/hermes-gadget/SigurdOS-tdeck/releases/latest)
+- The file `SigurdOS-tdeck-launcher.bin` from a specific [tagged release](https://github.com/hermes-gadget/SigurdOS-tdeck/releases). Use the tag shown on that release; prereleases are not resolved by GitHub's stable-release alias.
 
 ### Installation
 
@@ -116,8 +116,8 @@ Feed `SigurdOS-tdeck-launcher.bin` to Launcher via:
 
 - **SD card** — copy the file to FAT32 SD, insert, use Launcher's SD install
 - **WebUI** — upload through Launcher's browser interface
-- **Direct URL** (OTA) — enter the release asset URL in Launcher's online installer:
-  `https://github.com/hermes-gadget/SigurdOS-tdeck/releases/latest/download/SigurdOS-tdeck-launcher.bin`
+- **Direct URL** (OTA) — enter the versioned release asset URL in Launcher's online installer, replacing `<tag>` with the exact release tag:
+  `https://github.com/hermes-gadget/SigurdOS-tdeck/releases/download/<tag>/SigurdOS-tdeck-launcher.bin`
 
 Launcher detects the embedded partition table, creates a SPIFFS partition for persistence, and boots SigurdOS.
 

@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Ben
 
 #include "prefs.h"
+#include "gps_demand.h"
 #include <Preferences.h>
 
 namespace sigurdos {
@@ -64,7 +65,8 @@ bool prefs_load(NodePrefs& p) {
     p.multi_acks = nvs.getBool("multi_ack", false);
     p.buzzer_quiet = nvs.getBool("buzz_q", false);
     p.gps_enabled = nvs.getBool("gps_en", false);
-    p.gps_interval = nvs.getUShort("gps_int", 0);
+    p.gps_interval = nvs.getUShort("gps_int", 5);
+    if (p.gps_interval < 5) p.gps_interval = 5; // migrate legacy every-loop/1s values
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
     p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
     p.client_repeat = nvs.getUChar("clirep", 0);
@@ -183,7 +185,8 @@ const NodePrefs& prefs_get() {
 
 void prefs_set(const NodePrefs& p) {
     g_prefs = p;
-    prefs_save(p);
+    g_prefs.gps_interval = sigurdos_gps_normalize_interval(g_prefs.gps_interval);
+    prefs_save(g_prefs);
 }
 
 // ── Repeater password storage ─────────────────────────────────────────

@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include "mesh/mesh_wrapper.h"
+#include "mesh/login_session.h"
 #include "mesh/public_channel.h"
 
 namespace {
@@ -62,6 +63,30 @@ TEST(MeshContractTest, LoginStatusValuesStayStableForUiStateMachine) {
     EXPECT_EQ(LOGIN_STATUS_PENDING, 1);
     EXPECT_EQ(LOGIN_STATUS_OK, 2);
     EXPECT_EQ(LOGIN_STATUS_FAILED, 3);
+    EXPECT_EQ(LOGIN_STATUS_TIMEOUT, 4);
+    EXPECT_EQ(LOGIN_STATUS_DROPPED, 5);
+}
+
+TEST(MeshContractTest, LoginTimeoutUsesBoundsAndGrace) {
+    using namespace sigurdos::mesh::login_session;
+    EXPECT_EQ(normalizeTimeout(0), MIN_TIMEOUT_MS);
+    EXPECT_EQ(normalizeTimeout(9000), 11000u);
+    EXPECT_EQ(normalizeTimeout(MAX_TIMEOUT_MS), MAX_TIMEOUT_MS);
+}
+
+TEST(MeshContractTest, LoginDeadlineIsWrapSafe) {
+    using namespace sigurdos::mesh::login_session;
+    EXPECT_FALSE(elapsed(0xFFFFFFF0u, 32, 0x0000000Fu));
+    EXPECT_TRUE(elapsed(0xFFFFFFF0u, 32, 0x00000010u));
+}
+
+TEST(MeshContractTest, LoginSessionTransitionsExposeTimeoutAndDrop) {
+    using namespace sigurdos::mesh::login_session;
+    EXPECT_EQ(evaluate(PENDING, 100, 1000, false, false, 1099), PENDING);
+    EXPECT_EQ(evaluate(PENDING, 100, 1000, false, false, 1100), TIMED_OUT);
+    EXPECT_EQ(evaluate(OK, 0, 0, true, true, 0), OK);
+    EXPECT_EQ(evaluate(OK, 0, 0, true, false, 0), DROPPED);
+    EXPECT_EQ(evaluate(OK, 0, 0, false, false, 0), OK);
 }
 
 TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {

@@ -42,6 +42,35 @@ static lv_obj_t* s_back_btn = nullptr;
 
 // WiFi status icon in bottom bar
 static lv_obj_t* g_wifi_icon = nullptr;
+static lv_obj_t* g_companion_icon = nullptr;
+
+void create_companion_status_icon(lv_obj_t* top_bar, int right_offset)
+{
+    if (!top_bar) return;
+    g_companion_icon = lv_label_create(top_bar);
+    lv_label_set_text(g_companion_icon, LV_SYMBOL_BLUETOOTH);
+    lv_obj_set_style_text_font(g_companion_icon, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(g_companion_icon, LV_ALIGN_RIGHT_MID, right_offset, 0);
+    update_companion_status();
+}
+
+void update_companion_status()
+{
+    if (!g_companion_icon) return;
+    if (!lv_obj_is_valid(g_companion_icon)) {
+        g_companion_icon = nullptr;
+        return;
+    }
+    const bool available = sigurdos::mesh::companionBleAvailable();
+    const bool connected = sigurdos::mesh::companionBleConnected();
+    if (!available) {
+        lv_obj_add_flag(g_companion_icon, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(g_companion_icon, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_text_color(g_companion_icon,
+        lv_color_hex(connected ? ACCENT_GREEN : TEXT_SECONDARY), 0);
+}
 
 // ════════════════════════════════════════════════════════
 // make_screen_full — builds consistent top+bottom bars
@@ -108,6 +137,7 @@ lv_obj_t* make_screen_full(const char* title)
         lv_obj_t* sig = create_signal_dots(top, rssi);
         lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -54, 0);
     }
+    create_companion_status_icon(top);
 
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(scr);
@@ -215,6 +245,11 @@ void screens_clear_back_btn()
 void screens_clear_wifi_icon()
 {
     g_wifi_icon = nullptr;
+}
+
+void screens_clear_companion_icon()
+{
+    g_companion_icon = nullptr;
 }
 
 // ════════════════════════════════════════════════════════

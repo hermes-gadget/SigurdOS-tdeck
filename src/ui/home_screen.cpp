@@ -21,6 +21,7 @@
 #include "screens.h"
 #include "screens_common.h"
 #include "screen_lifetime.h"
+#include "notifications.h"
 #include "chat_screen.h"
 #include "navigation.h"
 #include "theme.h"
@@ -241,6 +242,7 @@ static void create_top_bar()
         lv_obj_t* sig = create_signal_dots(top_bar, sigurdos::mesh::getLastRSSI());
         lv_obj_align(sig, LV_ALIGN_RIGHT_MID, -54, 0);
     }
+    create_companion_status_icon(top_bar);
 
     // Divider
     lv_obj_t* div = lv_obj_create(scr);
@@ -388,6 +390,7 @@ static void build_home_screen(lv_scr_load_anim_t anim, uint32_t duration)
     badge_obj     = nullptr;
     screens_clear_back_btn();
     screens_clear_wifi_icon();
+    screens_clear_companion_icon();
     time_label    = nullptr;
     batt_label    = nullptr;
     for (int i = 0; i < ICON_COUNT; i++) icon_tiles[i] = nullptr;
@@ -523,6 +526,8 @@ void home_screen_update_badges()
     if (!badge_obj) return;
     int n = sigurdos::mesh::getUnreadMessageCount();
     if (n > 0) {
+        lv_obj_set_style_bg_color(badge_obj,
+            lv_color_hex(notifications_has_unread_mention() ? ACCENT_ORANGE : ACCENT_RED), 0);
         lv_obj_clear_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);
         lv_obj_t* lbl = lv_obj_get_child(badge_obj, 0);
         if (lbl) {

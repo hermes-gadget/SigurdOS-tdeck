@@ -19,6 +19,7 @@
 #include "../screens.h"
 #include "../screens_common.h"
 #include "../screen_lifetime.h"
+#include "../list_window.h"
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -32,12 +33,6 @@ namespace sigurdos::ui {
 using namespace theme;
 using namespace responsive;
 
-// ── Packets screen live-update state ──────────────────────
-static lv_obj_t*  g_packets_list       = nullptr;
-static lv_timer_t* g_packets_timer     = nullptr;
-static int        g_packets_last_count = -1;
-static ScreenLifetime g_packets_lifetime;
-
 // ════════════════════════════════════════════════════════
 // Packets — raw packet log (last N transmissions)
 // ════════════════════════════════════════════════════════
@@ -50,105 +45,150 @@ static constexpr int PKT_COL_SOURCE = PKT_COL_TIME   + 52;
 static constexpr int PKT_COL_RSSI   = PKT_COL_SOURCE + 106;
 static constexpr int PKT_COL_SNR    = PKT_COL_RSSI   + 48;
 static constexpr int PKT_COL_TYPE   = PKT_COL_SNR    + 44;
+static constexpr int PKT_VISIBLE_ROWS = PACKET_LIST_RENDER_CAPACITY;
+
+struct PacketRow {
+    lv_obj_t* row = nullptr;
+    lv_obj_t* time = nullptr;
+    lv_obj_t* source = nullptr;
+    lv_obj_t* rssi = nullptr;
+    lv_obj_t* snr = nullptr;
+    lv_obj_t* type = nullptr;
+};
+
+// ── Packets screen live-update state ──────────────────────
+static lv_obj_t* g_packets_list = nullptr;
+static lv_obj_t* g_packets_empty = nullptr;
+static lv_obj_t* g_packets_page_label = nullptr;
+static lv_obj_t* g_packets_newer_btn = nullptr;
+static lv_obj_t* g_packets_older_btn = nullptr;
+static PacketRow g_packet_rows[PKT_VISIBLE_ROWS];
+static lv_timer_t* g_packets_timer = nullptr;
+static uint32_t g_packets_last_generation = UINT32_MAX;
+static int g_packets_page = 0;
+static ScreenLifetime g_packets_lifetime;
+
+static uint32_t packet_type_color(const char* type)
+{
+    if (!type) return TEXT_SECONDARY;
+    if (strcmp(type, "ADVERT") == 0 || strcmp(type, "ADVERT_RX") == 0) return ACCENT;
+    if (strcmp(type, "DM_RX") == 0 || strcmp(type, "DM") == 0) return ACCENT_GREEN;
+    if (strcmp(type, "GRP_RX") == 0 || strcmp(type, "CHANNEL") == 0) return ACCENT_ORANGE;
+    return TEXT_SECONDARY;
+}
+
+static void packets_bind_row(PacketRow& row, int logical_index,
+                             const sigurdos::mesh::PacketLogEntry& entry)
+{
+    lv_obj_clear_flag(row.row, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(row.row,
+        lv_color_hex(logical_index % 2 == 0 ? BG_TERTIARY : BG_PRIMARY), 0);
+
+    char text[20];
+    if (entry.timestamp > 0) {
+        const uint32_t sec = entry.timestamp % 86400;
+        snprintf(text, sizeof(text), "%02d:%02d", (sec / 3600) % 24, (sec / 60) % 60);
+    } else {
+        snprintf(text, sizeof(text), "--:--");
+    }
+    lv_label_set_text(row.time, text);
+    lv_label_set_text(row.source, entry.source);
+
+    snprintf(text, sizeof(text), "%d", entry.rssi);
+    lv_label_set_text(row.rssi, text);
+    lv_obj_set_style_text_color(row.rssi,
+        entry.rssi > -85  ? lv_color_hex(ACCENT_GREEN) :
+        entry.rssi > -100 ? lv_color_hex(ACCENT_ORANGE) :
+                            lv_color_hex(ACCENT_RED), 0);
+
+    snprintf(text, sizeof(text), "%.1f", entry.snr);
+    lv_label_set_text(row.snr, text);
+    lv_label_set_text(row.type, entry.type);
+    lv_obj_set_style_text_color(row.type,
+        lv_color_hex(packet_type_color(entry.type)), 0);
+}
+
+static PacketRow packets_create_row(lv_obj_t* parent)
+{
+    PacketRow result;
+    result.row = lv_obj_create(parent);
+    lv_obj_set_size(result.row, LV_PCT(100), PKT_ROW_H);
+    lv_obj_set_style_bg_opa(result.row, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(result.row, 0, 0);
+    lv_obj_set_style_pad_all(result.row, 0, 0);
+    lv_obj_set_scrollbar_mode(result.row, LV_SCROLLBAR_MODE_OFF);
+
+    result.time = lv_label_create(result.row);
+    lv_obj_set_style_text_color(result.time, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(result.time, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(result.time, LV_ALIGN_LEFT_MID, PKT_COL_TIME, 0);
+
+    result.source = lv_label_create(result.row);
+    lv_obj_set_style_text_color(result.source, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(result.source, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_width(result.source, 100);
+    lv_label_set_long_mode(result.source, LV_LABEL_LONG_DOT);
+    lv_obj_align(result.source, LV_ALIGN_LEFT_MID, PKT_COL_SOURCE, 0);
+
+    result.rssi = lv_label_create(result.row);
+    lv_obj_set_style_text_font(result.rssi, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(result.rssi, LV_ALIGN_LEFT_MID, PKT_COL_RSSI, 0);
+
+    result.snr = lv_label_create(result.row);
+    lv_obj_set_style_text_color(result.snr, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(result.snr, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(result.snr, LV_ALIGN_LEFT_MID, PKT_COL_SNR, 0);
+
+    result.type = lv_label_create(result.row);
+    lv_obj_set_style_text_font(result.type, emoji_wrapped_montserrat_10, 0);
+    lv_label_set_long_mode(result.type, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(result.type, DISPLAY_W - PKT_COL_TYPE - PKT_COL_MARGIN);
+    lv_obj_align(result.type, LV_ALIGN_LEFT_MID, PKT_COL_TYPE, 0);
+    return result;
+}
 
 static void packets_rebuild_list()
 {
     if (!g_packets_list) return;
 
-    int n = sigurdos::mesh::getPacketLogCount();
-    if (n == g_packets_last_count) return;
-    g_packets_last_count = n;
-
-    lv_obj_clean(g_packets_list);
+    const uint32_t generation = sigurdos::mesh::getPacketLogGeneration();
+    if (generation == g_packets_last_generation) return;
+    g_packets_last_generation = generation;
+    const int n = sigurdos::mesh::getPacketLogCount();
 
     if (n == 0) {
-        lv_obj_t* empty = lv_label_create(g_packets_list);
-        lv_label_set_text(empty, "No packets yet.\nWaiting for mesh traffic...");
-        lv_obj_set_style_text_color(empty, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(empty, emoji_wrapped_montserrat_12, 0);
-        lv_obj_align(empty, LV_ALIGN_TOP_LEFT, 8, 8);
+        lv_obj_clear_flag(g_packets_empty, LV_OBJ_FLAG_HIDDEN);
+        for (auto& row : g_packet_rows) lv_obj_add_flag(row.row, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(g_packets_page_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_state(g_packets_newer_btn, LV_STATE_DISABLED);
+        lv_obj_add_state(g_packets_older_btn, LV_STATE_DISABLED);
         return;
     }
+    lv_obj_add_flag(g_packets_empty, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(g_packets_page_label, LV_OBJ_FLAG_HIDDEN);
 
-    for (int i = n - 1; i >= 0; i--) {
+    g_packets_page = list_clamp_page(g_packets_page, n, PKT_VISIBLE_ROWS);
+    const ListWindow window = list_window_from_newest(n, PKT_VISIBLE_ROWS, g_packets_page);
+    int slot = 0;
+    for (int i = window.end - 1; i >= window.start; --i) {
         sigurdos::mesh::PacketLogEntry e;
         if (!sigurdos::mesh::getPacketLogEntry(i, &e)) continue;
-
-        lv_obj_t* row = lv_obj_create(g_packets_list);
-        lv_obj_set_size(row, LV_PCT(100), PKT_ROW_H);
-        lv_obj_set_style_bg_color(row,
-            lv_color_hex(i % 2 == 0 ? BG_TERTIARY : BG_PRIMARY), 0);
-        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
-        lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
-
-        // Time
-        char tbuf[8];
-        if (e.timestamp > 0) {
-            uint32_t sec = e.timestamp % 86400;
-            snprintf(tbuf, sizeof(tbuf), "%02d:%02d", (sec/3600)%24, (sec/60)%60);
-        } else {
-            snprintf(tbuf, sizeof(tbuf), "--:--");
-        }
-        lv_obj_t* time_l = lv_label_create(row);
-        lv_label_set_text(time_l, tbuf);
-        lv_obj_set_style_text_color(time_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(time_l, emoji_wrapped_montserrat_10, 0);
-        lv_obj_align(time_l, LV_ALIGN_LEFT_MID, PKT_COL_TIME, 0);
-
-        // Source
-        char src_buf[20];
-        strncpy(src_buf, e.source, sizeof(src_buf) - 1);
-        src_buf[sizeof(src_buf) - 1] = '\0';
-        lv_obj_t* src_l = lv_label_create(row);
-        lv_label_set_text(src_l, src_buf);
-        lv_obj_set_style_text_color(src_l, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_set_style_text_font(src_l, emoji_wrapped_montserrat_10, 0);
-        lv_obj_set_width(src_l, 100);
-        lv_label_set_long_mode(src_l, LV_LABEL_LONG_DOT);
-        lv_obj_align(src_l, LV_ALIGN_LEFT_MID, PKT_COL_SOURCE, 0);
-
-        // RSSI
-        char rssi_buf[10];
-        snprintf(rssi_buf, sizeof(rssi_buf), "%d", e.rssi);
-        lv_obj_t* rssi_l = lv_label_create(row);
-        lv_label_set_text(rssi_l, rssi_buf);
-        lv_obj_set_style_text_color(rssi_l,
-            e.rssi > -85  ? lv_color_hex(ACCENT_GREEN)  :
-            e.rssi > -100 ? lv_color_hex(ACCENT_ORANGE) :
-                            lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_text_font(rssi_l, emoji_wrapped_montserrat_10, 0);
-        lv_obj_align(rssi_l, LV_ALIGN_LEFT_MID, PKT_COL_RSSI, 0);
-
-        // SNR
-        char snr_buf[10];
-        snprintf(snr_buf, sizeof(snr_buf), "%.1f", e.snr);
-        lv_obj_t* snr_l = lv_label_create(row);
-        lv_label_set_text(snr_l, snr_buf);
-        lv_obj_set_style_text_color(snr_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(snr_l, emoji_wrapped_montserrat_10, 0);
-        lv_obj_align(snr_l, LV_ALIGN_LEFT_MID, PKT_COL_SNR, 0);
-
-        // Type
-        uint32_t type_color;
-        if      (strcmp(e.type, "ADVERT")    == 0) type_color = ACCENT;
-        else if (strcmp(e.type, "ADVERT_RX") == 0) type_color = ACCENT;
-        else if (strcmp(e.type, "DM_RX")     == 0) type_color = ACCENT_GREEN;
-        else if (strcmp(e.type, "DM")        == 0) type_color = ACCENT_GREEN;
-        else if (strcmp(e.type, "GRP_RX")    == 0) type_color = ACCENT_ORANGE;
-        else if (strcmp(e.type, "CHANNEL")   == 0) type_color = ACCENT_ORANGE;
-        else if (strcmp(e.type, "ANON_RX")   == 0) type_color = TEXT_SECONDARY;
-        else if (strcmp(e.type, "ANON")      == 0) type_color = TEXT_SECONDARY;
-        else                                        type_color = TEXT_SECONDARY;
-        lv_obj_t* type_l = lv_label_create(row);
-        lv_label_set_text(type_l, e.type);
-        lv_obj_set_style_text_color(type_l, lv_color_hex(type_color), 0);
-        lv_obj_set_style_text_font(type_l, emoji_wrapped_montserrat_10, 0);
-        lv_label_set_long_mode(type_l, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(type_l, DISPLAY_W - PKT_COL_TYPE - PKT_COL_MARGIN);
-        lv_obj_align(type_l, LV_ALIGN_LEFT_MID, PKT_COL_TYPE, 0);
+        packets_bind_row(g_packet_rows[slot++], i, e);
     }
+    while (slot < PKT_VISIBLE_ROWS) {
+        lv_obj_add_flag(g_packet_rows[slot++].row, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    char page_text[32];
+    snprintf(page_text, sizeof(page_text), "%d-%d/%d",
+             n - window.end + 1, n - window.start, n);
+    lv_label_set_text(g_packets_page_label, page_text);
+    if (g_packets_page == 0) lv_obj_add_state(g_packets_newer_btn, LV_STATE_DISABLED);
+    else lv_obj_clear_state(g_packets_newer_btn, LV_STATE_DISABLED);
+    if (g_packets_page >= list_page_count(n, PKT_VISIBLE_ROWS) - 1)
+        lv_obj_add_state(g_packets_older_btn, LV_STATE_DISABLED);
+    else
+        lv_obj_clear_state(g_packets_older_btn, LV_STATE_DISABLED);
 }
 
 static void packets_timer_cb(lv_timer_t*) { packets_rebuild_list(); }
@@ -195,17 +235,72 @@ void heard_screen_show()
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_style_pad_all(list, 0, 0);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    lv_obj_set_scroll_dir(list, LV_DIR_NONE);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
 
     g_packets_list = list;
-    g_packets_last_count = -1;
+    g_packets_empty = lv_label_create(list);
+    lv_label_set_text(g_packets_empty, "No packets yet. Waiting for mesh traffic...");
+    lv_obj_set_width(g_packets_empty, LV_PCT(100));
+    lv_obj_set_style_text_align(g_packets_empty, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(g_packets_empty, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(g_packets_empty, emoji_wrapped_montserrat_10, 0);
+
+    for (auto& row : g_packet_rows) row = packets_create_row(list);
+
+    lv_obj_t* pager = lv_obj_create(list);
+    lv_obj_set_size(pager, LV_PCT(100), 24);
+    lv_obj_set_style_bg_color(pager, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(pager, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(pager, 0, 0);
+    lv_obj_set_style_pad_all(pager, 0, 0);
+
+    g_packets_newer_btn = lv_btn_create(pager);
+    lv_obj_set_size(g_packets_newer_btn, 52, 20);
+    lv_obj_align(g_packets_newer_btn, LV_ALIGN_LEFT_MID, 2, 0);
+    apply_pixel_btn_outline(g_packets_newer_btn);
+    lv_obj_t* newer_label = lv_label_create(g_packets_newer_btn);
+    lv_label_set_text(newer_label, "Newer");
+    lv_obj_center(newer_label);
+    lv_obj_add_event_cb(g_packets_newer_btn, [](lv_event_t*) {
+        if (g_packets_page > 0) g_packets_page--;
+        g_packets_last_generation = UINT32_MAX;
+        packets_rebuild_list();
+    }, LV_EVENT_CLICKED, nullptr);
+
+    g_packets_page_label = lv_label_create(pager);
+    lv_obj_set_style_text_color(g_packets_page_label, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(g_packets_page_label, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(g_packets_page_label, LV_ALIGN_CENTER, 0, 0);
+
+    g_packets_older_btn = lv_btn_create(pager);
+    lv_obj_set_size(g_packets_older_btn, 52, 20);
+    lv_obj_align(g_packets_older_btn, LV_ALIGN_RIGHT_MID, -2, 0);
+    apply_pixel_btn_outline(g_packets_older_btn);
+    lv_obj_t* older_label = lv_label_create(g_packets_older_btn);
+    lv_label_set_text(older_label, "Older");
+    lv_obj_center(older_label);
+    lv_obj_add_event_cb(g_packets_older_btn, [](lv_event_t*) {
+        g_packets_page++;
+        g_packets_last_generation = UINT32_MAX;
+        packets_rebuild_list();
+    }, LV_EVENT_CLICKED, nullptr);
+
+    g_packets_page = 0;
+    g_packets_last_generation = UINT32_MAX;
     packets_rebuild_list();
 
     g_packets_lifetime.bind(scr);
     g_packets_lifetime.track(&g_packets_list);
     g_packets_lifetime.trackTimer(&g_packets_timer);
-    g_packets_lifetime.onDelete([] { g_packets_last_count = -1; });
+    g_packets_lifetime.onDelete([] {
+        g_packets_last_generation = UINT32_MAX;
+        g_packets_empty = nullptr;
+        g_packets_page_label = nullptr;
+        g_packets_newer_btn = nullptr;
+        g_packets_older_btn = nullptr;
+        for (auto& row : g_packet_rows) row = {};
+    });
     g_packets_timer = lv_timer_create(packets_timer_cb, 1000, nullptr);
 
     show_screen(scr);

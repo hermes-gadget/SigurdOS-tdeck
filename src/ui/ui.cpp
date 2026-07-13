@@ -22,6 +22,7 @@
 #include "chat_screen.h"
 #include "screens.h"
 #include "navigation.h"
+#include "notifications.h"
 #include "theme.h"
 #include "responsive.h"
 using namespace sigurdos::responsive;
@@ -44,6 +45,7 @@ static bool persisted_state_loaded = false;
 
 void init()
 {
+    notifications_init();
     // Register emoji font as fallback for all Montserrat fonts
     emoji_font_register_fallback();
 
@@ -142,12 +144,8 @@ void loop()
         }
     }
 
-    // Identity and channel mutations save at their event sites. Chat bursts
-    // batch into one atomic checkpoint instead of rewriting all state every
-    // five minutes while the device is idle. Mesh-driven contact mutations
-    // (advert discovery, path updates) have no event site, so they flush
-    // through their own debounced checkpoint.
-    chat_save_messages_if_due(millis());
+    // Messages append directly to the unified store. Mesh-driven contact
+    // mutations have no UI event site, so they use a debounced checkpoint.
     sigurdos::mesh::saveContactsIfDue(millis());
 
     // Poll for new mesh messages and feed to chat
@@ -157,18 +155,18 @@ void loop()
             last_msg_poll = millis();
             static sigurdos::mesh::MeshMessage msgs[4];  // static to avoid ~1300B stack in loop()
             int n = sigurdos::mesh::pollMessages(msgs, 4);
-            bool got_new = (n > 0);
             for (int i = 0; i < n; i++) {
+                notifications_message(msgs[i].channel, msgs[i].sender,
+                                      msgs[i].text, msgs[i].is_self);
                 chat_screen_add_msg_at(msgs[i].channel, msgs[i].sender,
                                        msgs[i].text, msgs[i].timestamp,
                                        msgs[i].is_self);
             }
-            if (got_new && !sigurdos::prefs_get().buzzer_quiet) {
-                sigurdos::hal::buzzer_beep_short();
-            }
+            if (n > 0) home_screen_update_badges();
             // Refresh ACK status on the current chat screen
             chat_screen_refresh_acks();
         }
+        notifications_loop();
     }
 }
 

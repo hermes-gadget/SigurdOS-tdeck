@@ -60,6 +60,10 @@ void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* ho
     _last_sync_time = 0;
     _contact_iter = -1;
     _offline_len = 0;
+    _sign_active = false;
+    _sign_len = 0;
+    _was_connected = false;
+    clearPendingBinary();
 }
 
 bool CompanionBridge::isEnabled() const
@@ -76,8 +80,37 @@ bool CompanionBridge::setEnabled(bool enabled)
 {
     if (!_serial) return false;
     if (enabled) _serial->enable();
-    else _serial->disable();
+    else {
+        _serial->disable();
+        _sign_active = false;
+        _sign_len = 0;
+        _was_connected = false;
+        clearPendingBinary();
+        if (_host) _host->cancelBinaryReqs();
+    }
     return _serial->isEnabled() == enabled;
+}
+
+int CompanionBridge::findPendingBinary(uint32_t tag) const
+{
+    if (tag == 0) return -1;
+    for (int i = 0; i < MAX_PENDING_BINARY_REQUESTS; ++i) {
+        if (_pending_binary[i] == tag) return i;
+    }
+    return -1;
+}
+
+int CompanionBridge::findFreePendingBinary() const
+{
+    for (int i = 0; i < MAX_PENDING_BINARY_REQUESTS; ++i) {
+        if (_pending_binary[i] == 0) return i;
+    }
+    return -1;
+}
+
+void CompanionBridge::clearPendingBinary()
+{
+    std::memset(_pending_binary, 0, sizeof(_pending_binary));
 }
 
 void CompanionBridge::loop()
@@ -91,6 +124,8 @@ void CompanionBridge::loop()
     if (_was_connected && !_serial->isConnected()) {
         _sign_active = false;
         _sign_len = 0;
+        clearPendingBinary();
+        _host->cancelBinaryReqs();
     }
     _was_connected = _serial->isConnected();
     size_t len = _serial->checkRecvFrame(_cmd_frame);
@@ -478,6 +513,43 @@ bool CompanionBridge::pushTelemetryResponse(const uint8_t* pubkey_prefix,
         if (i + blob_len > MAX_FRAME_SIZE) blob_len = MAX_FRAME_SIZE - i;
         std::memcpy(&_out_frame[i], blob, blob_len);
         i += (int)blob_len;
+    }
+    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+}
+
+bool CompanionBridge::pushBinaryResponse(uint32_t tag,
+                                         const uint8_t* blob, size_t blob_len)
+{
+    const int pending = findPendingBinary(tag);
+    if (!_serial || pending < 0 || (blob_len > 0 && !blob) ||
+        6 + blob_len > MAX_FRAME_SIZE) {
+        return false;
+    }
+    int i = 0;
+    _out_frame[i++] = PUSH_CODE_BINARY_RESPONSE;
+    _out_frame[i++] = 0;  // reserved
+    std::memcpy(&_out_frame[i], &tag, sizeof(tag));
+    i += sizeof(tag);
+    if (blob_len > 0) {
+        std::memcpy(&_out_frame[i], blob, blob_len);
+        i += (int)blob_len;
+    }
+    const bool written = _serial->writeFrame(_out_frame, i) == (size_t)i;
+    if (written) _pending_binary[pending] = 0;
+    return written;
+bool CompanionBridge::pushRawData(int8_t snr_quarters, int8_t rssi,
+                                  const uint8_t* payload, size_t payload_len)
+{
+    if (!isConnected() || (payload_len > 0 && !payload)) return false;
+    if (payload_len > MAX_FRAME_SIZE - 4) return false;
+    int i = 0;
+    _out_frame[i++] = PUSH_CODE_RAW_DATA;
+    _out_frame[i++] = (uint8_t)snr_quarters;
+    _out_frame[i++] = (uint8_t)rssi;
+    _out_frame[i++] = 0xFF;  // reserved by the stock companion protocol
+    if (payload_len > 0) {
+        std::memcpy(&_out_frame[i], payload, payload_len);
+        i += (int)payload_len;
     }
     return _serial->writeFrame(_out_frame, i) == (size_t)i;
 }
@@ -1244,6 +1316,35 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
+    if (cmd == CMD_SEND_BINARY_REQ) {
+        if (len < 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        CompanionContact contact{};
+        const uint8_t* pub_key = &_cmd_frame[1];
+        if (!_host->getContactByPubKey(pub_key, contact)) {
+            writeErrFrame(ERR_CODE_NOT_FOUND);
+            return true;
+        }
+        const int pending = findFreePendingBinary();
+        if (pending < 0) {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+            return true;
+        }
+        const uint8_t* request = &_cmd_frame[1 + SIGURDOS_COMPANION_PUB_KEY_SIZE];
+        const uint8_t request_len =
+            (uint8_t)(len - (1 + SIGURDOS_COMPANION_PUB_KEY_SIZE));
+        CompanionSendResult r = _host->sendBinaryReq(pub_key, request, request_len);
+        if (!r.ok || r.expected_ack == 0) {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+            return true;
+        }
+        _pending_binary[pending] = r.expected_ack;
+        writeSentOrErr(r);
+        return true;
+    }
+
     if (cmd == CMD_SEND_TRACE_PATH && len > 10) {
         uint8_t path_len = (uint8_t)(len - 10);
         uint8_t flags = _cmd_frame[9];
@@ -1269,13 +1370,40 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
+    if (cmd == CMD_SEND_RAW_DATA) {
+        // Stock frame: [cmd][direct path length][path bytes][payload].  This
+        // command predates multi-byte path hashes, so only the unambiguous
+        // one-byte-hop encoding (0..63) is accepted.  0xFF is the flood
+        // sentinel and raw-data flooding is deliberately unsupported.
+        if (len < 6) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        const uint8_t path_len = _cmd_frame[1];
+        if (path_len == COMPANION_OUT_PATH_UNKNOWN) {
+            writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
+            return true;
+        }
+        if (path_len > 63 || 2u + (size_t)path_len + 4u > len) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        const uint8_t* path = &_cmd_frame[2];
+        const uint8_t* payload = path + path_len;
+        const size_t payload_len = len - 2u - (size_t)path_len;
+        if (_host->sendRawData(path, path_len, payload, payload_len)) {
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+        }
+        return true;
+    }
+
     // ── Stub handlers for upstream commands not yet implemented ──
     // These are recognized command IDs but return unsupported error until
     // full implementations and security review are added. Recognition is not
     // advertised as feature parity; see docs/COMPANION_SUPPORT.md.
     if (cmd == CMD_SEND_RAW_DATA) {
-        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
-    }
     if (cmd == CMD_SEND_BINARY_REQ) {
         writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
     }

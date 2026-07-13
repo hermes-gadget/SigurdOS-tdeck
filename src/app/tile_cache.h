@@ -19,6 +19,33 @@ struct CachedTile {
 
 // Default tile cache size
 static constexpr int TILE_CACHE_SIZE = 4;
+static constexpr int MISSING_TILE_CACHE_SIZE = 24;
+static constexpr uint32_t MISSING_TILE_CACHE_TTL_MS = 30000;
+static constexpr int MAP_TILE_LOAD_BUDGET_PER_RENDER = 2;
+
+struct MissingTileCacheEntry {
+    int zoom;
+    int tx;
+    int ty;
+    uint32_t failed_at_ms;
+    bool valid;
+};
+
+struct TileLoadBudget {
+    int limit;
+    int used;
+
+    explicit TileLoadBudget(int max_attempts)
+        : limit(max_attempts > 0 ? max_attempts : 0), used(0) {}
+
+    bool consume() {
+        if (used >= limit) return false;
+        used++;
+        return true;
+    }
+
+    int remaining() const { return limit - used; }
+};
 
 // ── Lifecycle ───────────────────────────────────────────────
 
@@ -42,3 +69,14 @@ CachedTile* tile_cache_lookup(CachedTile* cache, int count,
 // Does NOT free pixels — the caller must free the returned entry's
 // pixels pointer before overwriting it.
 CachedTile* tile_cache_evict_slot(CachedTile* cache, int count);
+
+// ── Missing-tile negative cache ───────────────────────────
+
+void missing_tile_cache_init(MissingTileCacheEntry* cache, int count);
+bool missing_tile_cache_contains(MissingTileCacheEntry* cache, int count,
+                                 int zoom, int tx, int ty,
+                                 uint32_t now_ms, uint32_t ttl_ms);
+void missing_tile_cache_record(MissingTileCacheEntry* cache, int count,
+                               int zoom, int tx, int ty, uint32_t now_ms);
+int missing_tile_cache_active_count(MissingTileCacheEntry* cache, int count,
+                                    uint32_t now_ms, uint32_t ttl_ms);

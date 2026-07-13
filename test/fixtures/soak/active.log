@@ -1,0 +1,4 @@
+[stat] t=0  heap=218000/215000  psram=6900000  batt=88%  flush=0  feat=ff
+[stat] t=5  heap=214000/211000  psram=6880000  batt=88%  flush=0  feat=ff
+[stat] t=10  heap=217000/211000  psram=6895000  batt=87%  flush=0  feat=ff
+[stat] t=15  heap=216000/211000  psram=6890000  batt=87%  flush=0  feat=ff

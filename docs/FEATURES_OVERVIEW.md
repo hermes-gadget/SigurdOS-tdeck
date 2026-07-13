@@ -42,6 +42,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
   - [Structured Telemetry](#structured-telemetry)
   - [Launcher Compatibility](#launcher-compatibility)
   - [Companion BLE](#companion-ble-official-meshcore-app)
+  - [Notifications & Alerts](#notifications--alerts)
 - [Hardware Features](#hardware-features)
   - [ST7789 Display](#st7789-display)
   - [GT911 Touch](#gt911-touch)
@@ -88,7 +89,7 @@ Room servers tab.
 **Map:** `Screen::Contacts`
 
 ### 4. CONTACTS
-List of discovered mesh nodes (up to 350, `-D MAX_CONTACTS=350`) with LRU eviction. Shows contact names, RSSI, location/path metadata, ACL permission role, QR sharing, telemetry action, and promote/demote controls in Contact Detail.
+List of discovered mesh nodes (up to 350, `-D MAX_CONTACTS=350`) with LRU eviction and bounded 12-row UI pages. Shows contact names, RSSI, location/path metadata, ACL permission role, QR sharing, telemetry action, and promote/demote controls in Contact Detail.
 **Sources:** [`src/ui/screens/screen_contacts.cpp`](../src/ui/screens/screen_contacts.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h), [`src/mesh/sigurd_mesh_v2.h`](../src/mesh/sigurd_mesh_v2.h), [`src/app/qr_show.cpp`](../src/app/qr_show.cpp)
 
 ### 5. REPEATERS
@@ -96,7 +97,7 @@ Lists infrastructure repeater nodes heard on the mesh, with login/command workfl
 **Sources:** [`src/ui/screens/screen_repeaters.cpp`](../src/ui/screens/screen_repeaters.cpp)
 
 ### 6. PACKETS
-Heard packets log — a running list of all received radio packets with timestamp, source, RSSI, SNR, and packet type (ADVERT, DM, GRP, TRACE, etc.).
+Heard packets log — a 50-entry circular history with timestamp, source, RSSI, SNR, and packet type (ADVERT, DM, GRP, TRACE, etc.). The screen rebinds a fixed seven-row pool and pages older/newer entries, including after the backing ring becomes full.
 **Sources:** [`src/ui/screens/screen_packets.cpp`](../src/ui/screens/screen_packets.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h)
 
 ### 7. MAP
@@ -126,6 +127,17 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 ---
 
 ## System Features
+
+### Notifications & Alerts
+
+The bounded on-device notification queue shows timed DMs, mentions,
+companion connect/disconnect changes, and repeater login results. Mentions
+preempt ordinary alerts and strengthen the home unread badge. Low battery,
+nearly-full SD storage, and OTA failures are sticky banners that retain the
+specific failure text until tapped. The live Bluetooth symbol in each top bar
+is green while an official companion is connected. See
+[`docs/NOTIFICATIONS.md`](NOTIFICATIONS.md) and
+[`src/ui/notifications.cpp`](../src/ui/notifications.cpp).
 
 ### Display & LVGL
 - **LovyanGFX** driver for ST7789 240×320 TFT via SPI
@@ -216,8 +228,9 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 
 ### Packet Log
 - **Circular packet buffer** — logs every received radio frame with timestamp, source, RSSI, SNR, and payload type string
+- **Bounded rendering** — a monotonic generation counter refreshes a recycled seven-row UI pool even after the 50-entry ring reaches capacity
 - **Type classification** — ADVERT_RX, DM_RX, GRP_RX, ANON_RX, ACK, TRACE, PKT_RX
-- **Query API** — `getPacketLogCount()`, `getPacketLogEntry()` for UI consumption
+- **Query API** — `getPacketLogCount()`, `getPacketLogGeneration()`, and `getPacketLogEntry()` for UI consumption
 **Sources:** [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h)
 
 ### RTC & System Time
@@ -229,7 +242,7 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 ### SPIFFS Persistence
 - **State storage** — SPIFFS filesystem for persisting identity keys, contact list, channel config, and message history
 - **Graceful fallback** — if SPIFFS mount fails at boot, device continues without persistence (warning logged)
-- **Chat persistence** — `chat_save_messages()` / `chat_load_messages()` per-channel history
+- **Chat persistence** — one `message_store` log shared by chat restore and companion offline sync, with one-time `/msgs` migration
 **Sources:** [`src/main.cpp`](../src/main.cpp), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/ui/chat_screen.h`](../src/ui/chat_screen.h)
 
 ### Contact Persistence
@@ -391,6 +404,7 @@ A dedicated app-level feature bridging the display, SD card, and GPS systems.
 - **Rendering:** LVGL canvas grid overlaid with decoded tile pixels
 - **Cache:** PSRAM-backed LRU tile cache (4 entries @ 256×256 RGB565 ≈ 524 KB)
 - **Cache internals:** `tile_cache_init()`, `tile_cache_lookup()`, `tile_cache_evict_slot()` — 64-bit monotonic clock, safe for 584M years
+- **Sparse-tile protection:** 24-entry, 30-second negative cache plus a two-decode-per-render budget and bounded warmup renders; missing tiles show a red X
 - **Interaction:** Pan by pixel delta, zoom in/out by one level
 - **Position overlay:** Renders own GPS position as a marker on the map
 **Full documentation:** [`docs/MAP_SCREEN.md`](MAP_SCREEN.md)
