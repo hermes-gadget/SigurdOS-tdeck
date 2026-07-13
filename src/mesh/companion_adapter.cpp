@@ -334,10 +334,6 @@ public:
                                               expected_ack, est_timeout);
         }
         if (send_result == MSG_SEND_FAILED) return result;
-        if (expected_ack) {
-            mesh_ptr()->addPendingAck(contact->name, ts, expected_ack, est_timeout);
-        }
-
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), contact->name);
         const bool sent_flood = send_result == MSG_SEND_SENT_FLOOD;
@@ -350,7 +346,19 @@ public:
         result.sent_flood = send_result == MSG_SEND_SENT_FLOOD;
         result.expected_ack = expected_ack;
         result.est_timeout = est_timeout;
+        result.sent_timestamp = ts;
         return result;
+    }
+
+    void trackPendingTextAck(const uint8_t* prefix, size_t prefix_len,
+                             uint32_t timestamp, uint32_t expected_ack,
+                             uint32_t est_timeout) override {
+        if (!mesh_ptr() || !prefix || timestamp == 0 || expected_ack == 0) return;
+        ::ContactInfo* contact = mesh_ptr()->lookupContactByPubKey(
+            prefix, (int)prefix_len);
+        if (!contact) return;
+        mesh_ptr()->addPendingAck(contact->name, timestamp, expected_ack,
+                                  est_timeout);
     }
 
     CompanionSendResult sendChannelText(int channel_index, uint32_t timestamp,

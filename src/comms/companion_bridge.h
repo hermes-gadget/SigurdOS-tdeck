@@ -181,6 +181,10 @@ struct CompanionSendResult {
     bool sent_flood;
     uint32_t expected_ack;
     uint32_t est_timeout;
+    // Actual timestamp used by the mesh send path. Companion requests may
+    // supply zero, in which case the host substitutes its RTC value; ACK
+    // tracking must use that substituted value to update the stored message.
+    uint32_t sent_timestamp;
 };
 
 struct CompanionSelfInfo {
@@ -272,6 +276,11 @@ public:
                                                        uint8_t attempt,
                                                        uint32_t timestamp,
                                                        const char* text) = 0;
+    virtual void trackPendingTextAck(const uint8_t* prefix,
+                                     size_t prefix_len,
+                                     uint32_t timestamp,
+                                     uint32_t expected_ack,
+                                     uint32_t est_timeout) = 0;
     virtual CompanionSendResult sendChannelText(int channel_index,
                                                 uint32_t timestamp,
                                                 const char* text) = 0;

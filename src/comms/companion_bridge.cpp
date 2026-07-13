@@ -734,6 +734,15 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             writeErrFrame(ERR_CODE_NOT_FOUND);
             return true;
         }
+        if (result.expected_ack != 0) {
+            const uint32_t sent_timestamp = result.sent_timestamp != 0
+                ? result.sent_timestamp : timestamp;
+            _host->trackPendingTextAck(prefix,
+                                       SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE,
+                                       sent_timestamp,
+                                       result.expected_ack,
+                                       result.est_timeout);
+        }
         _out_frame[0] = RESP_CODE_SENT;
         _out_frame[1] = result.sent_flood ? 1 : 0;
         std::memcpy(&_out_frame[2], &result.expected_ack, 4);

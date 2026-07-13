@@ -56,6 +56,11 @@ public:
     bool sent_raw_data = false;
     bool sent_control_data = false;
     uint8_t last_prefix[6]{};
+    bool tracked_text_ack = false;
+    uint8_t tracked_ack_prefix[6]{};
+    uint32_t tracked_ack_timestamp = 0;
+    uint32_t tracked_expected_ack = 0;
+    uint32_t tracked_ack_timeout = 0;
     int last_channel_data_index = -1;
     uint8_t last_channel_data_path_len = 0;
     uint16_t last_channel_data_type = 0;
@@ -151,10 +156,25 @@ public:
 
     sigurdos::comms::CompanionSendResult sendTextByPubKeyPrefix(
         const uint8_t* prefix, size_t prefix_len, uint8_t, uint8_t,
-        uint32_t, const char*) override {
+        uint32_t timestamp, const char*) override {
         sent_dm = true;
         std::memcpy(last_prefix, prefix, prefix_len < 6 ? prefix_len : 6);
-        return {true, true, 0x12345678, 900};
+        return {true, true, 0x12345678, 900,
+                timestamp != 0 ? timestamp : 0x01020304u};
+    }
+    void trackPendingTextAck(const uint8_t* prefix, size_t prefix_len,
+                             uint32_t timestamp, uint32_t expected_ack,
+                             uint32_t est_timeout) override {
+        tracked_text_ack = true;
+        std::memset(tracked_ack_prefix, 0, sizeof(tracked_ack_prefix));
+        if (prefix) {
+            std::memcpy(tracked_ack_prefix, prefix,
+                        prefix_len < sizeof(tracked_ack_prefix)
+                            ? prefix_len : sizeof(tracked_ack_prefix));
+        }
+        tracked_ack_timestamp = timestamp;
+        tracked_expected_ack = expected_ack;
+        tracked_ack_timeout = est_timeout;
     }
     sigurdos::comms::CompanionSendResult sendChannelText(int, uint32_t, const char*) override {
         return {true, true, 0, 0};
@@ -849,6 +869,26 @@ TEST_F(CompanionProtocolTest, SendTextDispatchesToHostAndReturnsSent) {
     uint32_t ack = 0;
     std::memcpy(&ack, &serial.writes[0][2], 4);
     EXPECT_EQ(ack, 0x12345678u);
+    EXPECT_TRUE(host.tracked_text_ack);
+    EXPECT_EQ(host.tracked_ack_timestamp, ts);
+    EXPECT_EQ(host.tracked_expected_ack, 0x12345678u);
+    EXPECT_EQ(host.tracked_ack_timeout, 900u);
+    EXPECT_EQ(std::memcmp(host.tracked_ack_prefix, &frame[7], 6), 0);
+}
+
+TEST_F(CompanionProtocolTest, ZeroTimestampTracksActualMeshTimestamp) {
+    uint8_t frame[16]{};
+    int i = 0;
+    frame[i++] = sigurdos::comms::CMD_SEND_TXT_MSG;
+    frame[i++] = sigurdos::comms::COMPANION_TXT_PLAIN;
+    frame[i++] = 0;
+    i += 4;  // zero timestamp asks the mesh host to use its RTC
+    for (int p = 0; p < 6; p++) frame[i++] = (uint8_t)(0xA0 + p);
+    frame[i++] = 'x';
+
+    ASSERT_TRUE(bridge.handleFrame(frame, i));
+    ASSERT_TRUE(host.tracked_text_ack);
+    EXPECT_EQ(host.tracked_ack_timestamp, 0x01020304u);
 }
 
 namespace cc = sigurdos::comms;
