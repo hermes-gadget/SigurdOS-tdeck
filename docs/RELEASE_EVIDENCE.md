@@ -2,6 +2,45 @@
 
 Every release PR uses `.github/PULL_REQUEST_TEMPLATE/release.md`. The machine-readable inventory in `ci/release_evidence_requirements.json` is the source of truth; CI fails if a requirement disappears from the template.
 
+## Publication gate
+
+A tag is publishable only when `release-evidence/<tag>.json` exists at the tagged commit and passes `scripts/verify_release_evidence.py`. The bundle must name the exact full commit SHA and tag, contain a fresh passing record for every requirement, link to the reviewed evidence, identify firmware and peer versions for hardware checks, and record SHA-256 digests for the release artifact set. The tag workflow validates this bundle before building, carries it through the immutable workflow artifact, and publishes it with the prerelease.
+
+Use this shape (repeat the requirement object for every ID in the requirements inventory):
+
+```json
+{
+  "schema_version": 1,
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "tag": "beta-0.1.45",
+  "generated_at": "2026-07-13T18:00:00Z",
+  "artifacts": {
+    "firmware.bin": "<lowercase SHA-256>",
+    "firmware-merged.bin": "<lowercase SHA-256>",
+    "SigurdOS-tdeck-launcher.bin": "<lowercase SHA-256>",
+    "manifest.json": "<lowercase SHA-256>"
+  },
+  "requirements": [
+    {
+      "id": "INT-BLE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/0000",
+      "tested_at": "2026-07-13",
+      "firmware_version": "beta-0.1.45",
+      "peer_version": "official-client-version"
+    }
+  ]
+}
+```
+
+Validate a completed bundle locally with the full commit SHA:
+
+```bash
+python3 scripts/verify_release_evidence.py \
+  --evidence release-evidence/<tag>.json \
+  --commit "$(git rev-parse HEAD)" --tag "<tag>"
+```
+
 ## Companion interop and golden frames
 
 Run the official USB client matrix as documented in `scripts/official-meshcore-client-test/README.md` and the BLE scenarios in `docs/COMPANION_BLE_TEST_ENV.md`. Record firmware versions, date, pass/fail per case, and links to sanitized output. Do not record device IDs, public keys, contact names, message contents, credentials, or private keys.

@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,6 +27,81 @@ class ReleaseEvidenceTests(unittest.TestCase):
     def test_release_template_covers_machine_readable_requirements(self):
         result = self.run_script("verify_release_evidence.py")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def make_completed_evidence(self, commit, tag):
+        requirements = json.loads(
+            (ROOT / "ci/release_evidence_requirements.json").read_text()
+        )["requirements"]
+        tested_at = datetime.now(timezone.utc).date().isoformat()
+        records = []
+        for requirement in requirements:
+            record = {
+                "id": requirement["id"],
+                "outcome": "pass",
+                "evidence_url": f"https://example.invalid/evidence/{requirement['id']}",
+                "tested_at": tested_at,
+                "firmware_version": tag,
+            }
+            if requirement["hardware"]:
+                record["peer_version"] = "test-peer-1"
+            records.append(record)
+        return {
+            "schema_version": 1,
+            "commit": commit,
+            "tag": tag,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "artifacts": {
+                "firmware.bin": "a" * 64,
+                "firmware-merged.bin": "b" * 64,
+                "SigurdOS-tdeck-launcher.bin": "c" * 64,
+                "manifest.json": "d" * 64,
+            },
+            "requirements": records,
+        }
+
+    def run_evidence(self, evidence, commit="a" * 40, tag="beta-test"):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evidence.json"
+            path.write_text(json.dumps(evidence))
+            return self.run_script(
+                "verify_release_evidence.py",
+                "--evidence", path,
+                "--commit", commit,
+                "--tag", tag,
+            )
+
+    def test_completed_evidence_is_bound_to_tag_and_commit(self):
+        commit = "a" * 40
+        tag = "beta-test"
+        result = self.run_evidence(self.make_completed_evidence(commit, tag), commit, tag)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("completed release evidence OK", result.stdout)
+
+    def test_incomplete_or_failed_evidence_blocks_release(self):
+        commit = "a" * 40
+        evidence = self.make_completed_evidence(commit, "beta-test")
+        evidence["requirements"].pop()
+        result = self.run_evidence(evidence, commit)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("missing requirement evidence", result.stderr)
+
+        evidence = self.make_completed_evidence(commit, "beta-test")
+        evidence["requirements"][0]["outcome"] = "fail"
+        result = self.run_evidence(evidence, commit)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("outcome must be pass", result.stderr)
+
+    def test_mismatched_commit_and_missing_hashes_block_release(self):
+        evidence = self.make_completed_evidence("b" * 40, "beta-test")
+        result = self.run_evidence(evidence)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("tagged commit", result.stderr)
+
+        evidence = self.make_completed_evidence("a" * 40, "beta-test")
+        del evidence["artifacts"]["manifest.json"]
+        result = self.run_evidence(evidence)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("missing artifact hashes", result.stderr)
 
     def test_soak_report_is_numeric_and_privacy_safe(self):
         with tempfile.TemporaryDirectory() as directory:
