@@ -6,11 +6,13 @@
 #include "wifi_ota.h"
 #include "../diagnostics/log.h"
 #include "launcher_env.h"
+#include "ota_allocation_policy.h"
 #include "prefs.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
 #include <esp_random.h>
+#include <new>
 
 namespace sigurdos {
 namespace ota {
@@ -25,6 +27,15 @@ static String csrf_token;  // regenerated per OTA session
 // OTA PIN brute-force protection (SEC-001)
 static constexpr int MAX_PIN_FAILURES = 5;
 static int pin_fail_count = 0;
+
+static void* createOtaServer(void*, hal::OtaAllocationKind kind) {
+    if (kind != hal::OtaAllocationKind::WebServer) return nullptr;
+    return new (std::nothrow) WebServer(80);
+}
+
+static const hal::OtaAllocationOps OTA_SERVER_ALLOCATOR{
+    nullptr, createOtaServer, nullptr
+};
 
 bool start(const char* ssid, const char* password) {
     if (active) return true;
@@ -74,7 +85,15 @@ bool start(const char* ssid, const char* password) {
     }
 
     // Set up web server
-    server = new WebServer(80);
+    void* server_object = nullptr;
+    if (!hal::allocate_ota_object(OTA_SERVER_ALLOCATOR,
+                                  hal::OtaAllocationKind::WebServer,
+                                  &server_object)) {
+        SIG_LOGE("[ota] WebServer allocation failed; OTA aborted");
+        stop();
+        return false;
+    }
+    server = static_cast<WebServer*>(server_object);
 
     // Root page — OTA upload form with CSRF token
     server->on("/", HTTP_GET, []() {

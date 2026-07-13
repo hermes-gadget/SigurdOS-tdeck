@@ -18,6 +18,7 @@
 
 
 #include "display.h"
+#include "display_allocation_policy.h"
 #include "display_buffer_policy.h"
 #include "touch.h"
 #include "keyboard.h"
@@ -107,6 +108,35 @@ static uint8_t* draw_buf2 = nullptr;
 static bool input_initialized = false;
 static constexpr uint8_t BOOT_DISPLAY_BRIGHTNESS = 200;
 static constexpr uint16_t BOOT_AUTO_OFF_TIMEOUT_SEC = 30;
+
+namespace {
+
+void* create_lvgl_display(void*, int32_t width, int32_t height)
+{
+    return lv_display_create(width, height);
+}
+
+void* create_lvgl_input(void*)
+{
+    return lv_indev_create();
+}
+
+void* create_lvgl_group(void*)
+{
+    return lv_group_create();
+}
+
+void delete_lvgl_input(void*, void* input)
+{
+    lv_indev_delete(static_cast<lv_indev_t*>(input));
+}
+
+const sigurdos::hal::DisplayAllocationOps DISPLAY_ALLOCATOR{
+    nullptr, create_lvgl_display, create_lvgl_input, create_lvgl_group,
+    delete_lvgl_input
+};
+
+}  // namespace
 
 // ── Debug: expose last flush area for diagnostics ────────
 #if SIGURDOS_DEBUG_DISPLAY
@@ -774,7 +804,14 @@ bool sigurdos_display_init()
 
     lv_init();
     lv_tick_set_cb(sigurdos_display_millis);
-    lv_disp = lv_display_create(TFT_WIDTH, TFT_HEIGHT);
+    void* display = nullptr;
+    if (!sigurdos::hal::allocate_display_object(
+            DISPLAY_ALLOCATOR, TFT_WIDTH, TFT_HEIGHT, &display)) {
+        Serial.println("[disp] FATAL: LVGL display allocation failed");
+        lv_deinit();
+        return false;
+    }
+    lv_disp = static_cast<lv_display_t*>(display);
     lv_display_set_color_format(lv_disp, LV_COLOR_FORMAT_RGB565);
     lv_display_set_flush_cb(lv_disp, lvgl_flush_cb);
 
@@ -825,6 +862,9 @@ bool sigurdos_display_init()
                                        LV_DISPLAY_RENDER_MODE_PARTIAL);
             } else {
                 Serial.println("[disp] FATAL: no LVGL draw buffer available");
+                lv_display_delete(lv_disp);
+                lv_disp = nullptr;
+                lv_deinit();
                 return false;
             }
         }
@@ -845,39 +885,57 @@ void sigurdos_display_init_inputs()
 {
     if (input_initialized || !lv_disp) return;
 
-    lv_indev_t* touch = lv_indev_create();
-    lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(touch, lvgl_touch_cb);
+    const sigurdos::hal::DisplayInputObjects inputs =
+        sigurdos::hal::allocate_display_inputs(DISPLAY_ALLOCATOR);
+    lv_indev_t* touch = static_cast<lv_indev_t*>(inputs.touch);
+    lv_indev_t* kb = static_cast<lv_indev_t*>(inputs.keyboard);
+    lv_indev_t* trackball = static_cast<lv_indev_t*>(inputs.trackball);
+    lv_group_t* g = static_cast<lv_group_t*>(inputs.group);
 
-    lv_indev_t* kb = lv_indev_create();
-    lv_indev_set_type(kb, LV_INDEV_TYPE_KEYPAD);
-    lv_indev_set_read_cb(kb, lvgl_kb_cb);
-    lv_timer_set_period(lv_indev_get_read_timer(kb), 10);  // 10ms vs ~33ms default
+    if (touch) {
+        lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_read_cb(touch, lvgl_touch_cb);
+    } else {
+        Serial.println("[disp] touch input disabled: LVGL allocation failed");
+    }
 
-    lv_indev_t* trackball = lv_indev_create();
-    lv_indev_set_type(trackball, LV_INDEV_TYPE_ENCODER);
-    lv_indev_set_read_cb(trackball, lvgl_trackball_cb);
+    if (kb) {
+        lv_indev_set_type(kb, LV_INDEV_TYPE_KEYPAD);
+        lv_indev_set_read_cb(kb, lvgl_kb_cb);
+        lv_timer_set_period(lv_indev_get_read_timer(kb), 10);  // 10ms vs ~33ms default
+    } else {
+        Serial.println("[disp] keyboard input disabled: LVGL allocation failed");
+    }
 
-    // Set default group so keyboard input reaches focused widgets
-    lv_group_t* g = lv_group_create();
-    lv_indev_set_group(kb, g);
-    lv_indev_set_group(trackball, g);
-    lv_group_set_default(g);
+    if (trackball) {
+        lv_indev_set_type(trackball, LV_INDEV_TYPE_ENCODER);
+        lv_indev_set_read_cb(trackball, lvgl_trackball_cb);
+    } else {
+        Serial.println("[disp] trackball input disabled: LVGL allocation failed");
+    }
+
+    if (g) {
+        if (kb) lv_indev_set_group(kb, g);
+        if (trackball) lv_indev_set_group(trackball, g);
+        lv_group_set_default(g);
+    } else if (inputs.group_allocation_failed) {
+        Serial.println("[disp] keyboard/trackball disabled: LVGL group allocation failed");
+    }
 
     sigurdos::keyboard_layouts::init();
 
     // Initialize touch controller
-    if (!sigurdos_touch_init()) {
+    if (touch && !sigurdos_touch_init()) {
         // Touch init failed — device works with keyboard only
     }
 
     // Initialize the ESP32-C3 I2C keyboard driver
-    if (!sigurdos_keyboard_init()) {
+    if (kb && !sigurdos_keyboard_init()) {
         // Keyboard init failed — device works with touch only
     }
 
     // Initialize trackball GPIO input
-    sigurdos_trackball_init();
+    if (trackball) sigurdos_trackball_init();
 
     input_initialized = true;
     reset_auto_off();

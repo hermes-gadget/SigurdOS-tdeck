@@ -8,6 +8,7 @@
 #include "github_ota.h"
 #include "github_ota_plan.h"
 #include "launcher_env.h"
+#include "ota_allocation_policy.h"
 #include "prefs.h"
 #include "wifi_ota.h"
 #include <WiFi.h>
@@ -18,6 +19,7 @@
 #include <esp_heap_caps.h>
 #include <cstring>
 #include <cstdlib>
+#include <new>
 
 namespace sigurdos {
 namespace github_ota {
@@ -79,6 +81,39 @@ static char                   s_download_url[256] = "";
 // API response buffer (heap-allocated during FetchingRelease)
 static char*                  s_api_buf = nullptr;
 static int                    s_api_buf_len = 0;
+
+static void* createOtaConnectionObject(void*, hal::OtaAllocationKind kind) {
+    switch (kind) {
+    case hal::OtaAllocationKind::ApiSecureClient:
+    case hal::OtaAllocationKind::DownloadSecureClient:
+        return new (std::nothrow) WiFiClientSecure();
+    case hal::OtaAllocationKind::ApiHttpClient:
+    case hal::OtaAllocationKind::DownloadHttpClient:
+        return new (std::nothrow) HTTPClient();
+    default:
+        return nullptr;
+    }
+}
+
+static void destroyOtaConnectionObject(void*, hal::OtaAllocationKind kind,
+                                       void* object) {
+    switch (kind) {
+    case hal::OtaAllocationKind::ApiSecureClient:
+    case hal::OtaAllocationKind::DownloadSecureClient:
+        delete static_cast<WiFiClientSecure*>(object);
+        break;
+    case hal::OtaAllocationKind::ApiHttpClient:
+    case hal::OtaAllocationKind::DownloadHttpClient:
+        delete static_cast<HTTPClient*>(object);
+        break;
+    default:
+        break;
+    }
+}
+
+static const hal::OtaAllocationOps OTA_CONNECTION_ALLOCATOR{
+    nullptr, createOtaConnectionObject, destroyOtaConnectionObject
+};
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -208,10 +243,19 @@ void loop() {
                 s_api_buf[0] = '\0';
 
                 // Start API request
-                s_client = new WiFiClientSecure();
+                hal::OtaHttpObjects api_objects;
+                if (!hal::allocate_ota_http_objects(
+                        OTA_CONNECTION_ALLOCATOR,
+                        hal::OtaAllocationKind::ApiSecureClient,
+                        hal::OtaAllocationKind::ApiHttpClient,
+                        &api_objects)) {
+                    fail("Out of memory for API connection");
+                    return;
+                }
+                s_client = static_cast<WiFiClientSecure*>(api_objects.client);
+                s_http = static_cast<HTTPClient*>(api_objects.http);
                 s_client->setCACert(GITHUB_ROOT_CA);
 
-                s_http = new HTTPClient();
                 s_http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
                 s_http->setTimeout(HTTP_TIMEOUT_MS);
                 s_http->setUserAgent(USER_AGENT);
@@ -288,10 +332,19 @@ void loop() {
             setStatus(GitHubOTAState::Downloading, 0,
                       "Downloading firmware...");
 
-            s_client = new WiFiClientSecure();
+            hal::OtaHttpObjects download_objects;
+            if (!hal::allocate_ota_http_objects(
+                    OTA_CONNECTION_ALLOCATOR,
+                    hal::OtaAllocationKind::DownloadSecureClient,
+                    hal::OtaAllocationKind::DownloadHttpClient,
+                    &download_objects)) {
+                fail("Out of memory for download connection");
+                return;
+            }
+            s_client = static_cast<WiFiClientSecure*>(download_objects.client);
+            s_http = static_cast<HTTPClient*>(download_objects.http);
             s_client->setCACert(GITHUB_ROOT_CA);
 
-            s_http = new HTTPClient();
             s_http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
             s_http->setTimeout(HTTP_TIMEOUT_MS);
             s_http->setUserAgent(USER_AGENT);
