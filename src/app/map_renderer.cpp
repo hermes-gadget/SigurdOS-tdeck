@@ -24,6 +24,7 @@
 #include <Arduino.h>
 #include "../hal/prefs.h"
 #include <lvgl.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -65,6 +66,7 @@ static bool   initialized = false;
 
 struct TileCoverage {
     bool valid;
+    bool wraps_x;
     int min_x;
     int max_x;
     int min_y;
@@ -157,7 +159,7 @@ static void set_tile_status(const char*, ...) {}
 
 static void reset_tile_coverage() {
     for (int i = MIN_ZOOM; i <= MAX_ZOOM; i++) {
-        tile_coverage[i] = {false, 0, 0, 0, 0, 0, 0};
+        tile_coverage[i] = {false, false, 0, 0, 0, 0, 0, 0};
     }
     min_available_zoom = MIN_ZOOM;
     max_available_zoom = MAX_ZOOM;
@@ -171,7 +173,7 @@ static void apply_preset_default_view() {
     // Sentinel zoom of -1 means "no regional override — keep current center"
     if (view.zoom < 0) return;
     center_lat = clamp_d(view.lat, MIN_LAT, MAX_LAT);
-    center_lon = clamp_d(view.lon, MIN_LON, MAX_LON);
+    center_lon = sigurdos_map_wrap_lon(view.lon);
     zoom_level = clamp(view.zoom, MIN_ZOOM, MAX_ZOOM);
 }
 
@@ -187,15 +189,33 @@ static void clamp_view_to_coverage() {
 
     double half_w_tiles = (TFT_WIDTH / 2.0) / TILE_SIZE;
     double half_h_tiles = (TFT_HEIGHT / 2.0) / TILE_SIZE;
-    double min_tx = c.min_x + half_w_tiles;
-    double max_tx = c.max_x + 1.0 - half_w_tiles;
+    const int n = sigurdos_map_tiles_per_axis(zoom_level);
+    const double coverage_width =
+        sigurdos_map_wrap_tile_x((double)c.max_x - c.min_x, zoom_level) + 1.0;
+    double min_tx = half_w_tiles;
+    double max_tx = coverage_width - half_w_tiles;
     double min_ty = c.min_y + half_h_tiles;
     double max_ty = c.max_y + 1.0 - half_h_tiles;
 
     if (min_tx > max_tx) {
-        tx = (c.min_x + c.max_x + 1.0) / 2.0;
+        tx = c.min_x + coverage_width / 2.0;
     } else {
-        tx = clamp_d(tx, min_tx, max_tx);
+        const double relative_tx =
+            sigurdos_map_wrap_tile_x(tx - c.min_x, zoom_level);
+        const double candidates[] = {
+            relative_tx - n, relative_tx, relative_tx + n
+        };
+        double best_tx = clamp_d(candidates[0], min_tx, max_tx);
+        double best_distance = fabs(candidates[0] - best_tx);
+        for (int i = 1; i < 3; ++i) {
+            const double candidate = clamp_d(candidates[i], min_tx, max_tx);
+            const double distance = fabs(candidates[i] - candidate);
+            if (distance < best_distance) {
+                best_tx = candidate;
+                best_distance = distance;
+            }
+        }
+        tx = c.min_x + best_tx;
     }
 
     if (min_ty > max_ty) {
@@ -207,7 +227,7 @@ static void clamp_view_to_coverage() {
     center_lon = tile_x_to_lon(tx, zoom_level);
     center_lat = tile_y_to_lat(ty, zoom_level);
     center_lat = clamp_d(center_lat, MIN_LAT, MAX_LAT);
-    center_lon = clamp_d(center_lon, MIN_LON, MAX_LON);
+    center_lon = sigurdos_map_wrap_lon(center_lon);
 }
 
 // ── Tile cache (LRU, 4 tiles = ~524KB PSRAM) ─────────────
@@ -477,7 +497,8 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
     int xcache_count = 0;
     bool cache_overflow = false;
 
-    TileCoverage c = {false, 0, 0, 0, 0, 0, 0};
+    TileCoverage c = {false, false, 0, 0, 0, 0, 0, 0};
+    const int tiles_per_axis = sigurdos_map_tiles_per_axis(z);
     int scanned = 0;
     struct dirent* xe;
     while ((xe = readdir(xd)) != nullptr) {
@@ -485,6 +506,7 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
         if (!is_decimal_name(xe->d_name)) continue;
 
         int x = atoi(xe->d_name);
+        if (x < 0 || x >= tiles_per_axis) continue;
         int mn_y = -1;
         int mx_y = -1;
         int sample_y = -1;
@@ -535,9 +557,43 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
 
     if (!c.valid) return false;
 
-    // Second pass: find sample closest to coverage center — use cached data,
-    // no SD card re-scans needed.
-    double mid_x = (c.min_x + c.max_x) / 2.0;
+    // Represent X coverage as the smallest circular interval. A range with
+    // min_x > max_x crosses the antimeridian (for example n-1 through 0).
+    // If the bounded cache overflowed, retain the conservative linear bounds
+    // because not every column is available to identify the largest gap.
+    if (!cache_overflow) {
+        std::sort(xcache, xcache + xcache_count,
+                  [](const XColCache& a, const XColCache& b) {
+                      return a.x < b.x;
+                  });
+        int unique_count = 0;
+        for (int i = 0; i < xcache_count; ++i) {
+            if (unique_count > 0 && xcache[i].x == xcache[unique_count - 1].x) {
+                continue;
+            }
+            xcache[unique_count++] = xcache[i];
+        }
+        xcache_count = unique_count;
+
+        int largest_gap = -1;
+        for (int i = 0; i < xcache_count; ++i) {
+            const int next_x = (i + 1 < xcache_count)
+                ? xcache[i + 1].x : xcache[0].x + tiles_per_axis;
+            const int gap = next_x - xcache[i].x - 1;
+            if (gap > largest_gap) {
+                largest_gap = gap;
+                c.min_x = next_x % tiles_per_axis;
+                c.max_x = xcache[i].x;
+            }
+        }
+        c.wraps_x = c.min_x > c.max_x;
+    }
+
+    // Second pass: find sample closest to the circular coverage center — use
+    // cached data, with no SD card re-scans needed.
+    const double x_span =
+        sigurdos_map_wrap_tile_x((double)c.max_x - c.min_x, z);
+    const double mid_x = sigurdos_map_wrap_tile_x(c.min_x + x_span / 2.0, z);
     double mid_y = (c.min_y + c.max_y) / 2.0;
     double best_dist = 0.0;
     bool have_sample = false;
@@ -545,7 +601,8 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
     for (int i = 0; i < xcache_count; i++) {
         if (!xcache[i].valid) continue;
 
-        double dist_x = (double)xcache[i].x - mid_x;
+        double dist_x = sigurdos_map_shortest_tile_x_delta(
+            mid_x, (double)xcache[i].x, z);
         double dist_y = (double)xcache[i].sample_y - mid_y;
         double dist = dist_x * dist_x + dist_y * dist_y;
         if (!have_sample || dist < best_dist) {
@@ -799,7 +856,7 @@ void sigurdos_map_deinit() {
 
 void sigurdos_map_set_view(double lat, double lon, int zoom) {
     center_lat = clamp_d(lat, MIN_LAT, MAX_LAT);
-    center_lon = clamp_d(lon, MIN_LON, MAX_LON);
+    center_lon = sigurdos_map_wrap_lon(lon);
     zoom_level = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
     clamp_view_to_coverage();
 }
@@ -818,7 +875,7 @@ void sigurdos_map_pan(int dx, int dy) {
     center_lon = tile_x_to_lon(tx, zoom_level);
     center_lat = tile_y_to_lat(ty, zoom_level);
     center_lat = clamp_d(center_lat, MIN_LAT, MAX_LAT);
-    center_lon = clamp_d(center_lon, MIN_LON, MAX_LON);
+    center_lon = sigurdos_map_wrap_lon(center_lon);
     clamp_view_to_coverage();
 }
 
@@ -959,6 +1016,10 @@ void sigurdos_map_render() {
     // ── Draw tile grid ────────────────────────────────
     double center_tx = lon_to_tile_x(center_lon, zoom_level);
     double center_ty = lat_to_tile_y(center_lat, zoom_level);
+    const int center_tile_x = (int)floor(center_tx);
+    const int center_tile_y = (int)floor(center_ty);
+    const double center_frac_x = center_tx - center_tile_x;
+    const double center_frac_y = center_ty - center_tile_y;
 
     double px_per_tile = TILE_SIZE;
     int tiles_across = 1 + TFT_WIDTH / TILE_SIZE + 1;
@@ -976,25 +1037,26 @@ void sigurdos_map_render() {
 
     for (int ty = -1; ty <= tiles_down; ty++) {
         for (int tx = -1; tx <= tiles_across; tx++) {
-            int tile_x = (int)(center_tx + tx);
-            int tile_y = (int)(center_ty + ty);
+            int tile_x = sigurdos_map_wrap_tile_x(center_tile_x + tx, zoom_level);
+            int tile_y = center_tile_y + ty;
 
-            // Clamp tile coordinates to valid range
+            // Y stops at the Mercator limits; X repeats around the world.
             int n = 1 << zoom_level;
-            if (tile_x < 0 || tile_x >= n || tile_y < 0 || tile_y >= n) continue;
+            if (tile_y < 0 || tile_y >= n) continue;
 
             if (have_tile_coverage && tile_coverage[zoom_level].valid) {
                 const TileCoverage& c = tile_coverage[zoom_level];
-                if (tile_x < c.min_x || tile_x > c.max_x ||
+                if (!sigurdos_map_tile_x_in_coverage(
+                        tile_x, c.min_x, c.max_x, c.wraps_x) ||
                     tile_y < c.min_y || tile_y > c.max_y) {
                     continue;
                 }
             }
 
             int screen_x = (int)(center_px + (tx * px_per_tile) -
-                                 (center_tx - (int)center_tx) * px_per_tile);
+                                 center_frac_x * px_per_tile);
             int screen_y = (int)(center_py + (ty * px_per_tile) -
-                                 (center_ty - (int)center_ty) * px_per_tile);
+                                 center_frac_y * px_per_tile);
 
             // Skip if completely off-screen
             if (!sigurdos_map_tile_intersects_viewport(
@@ -1114,8 +1176,9 @@ void sigurdos_map_render() {
 
 bool sigurdos_map_tiles_available() {
     if (!sigurdos_sdcard_mounted()) return false;
-    int tx = (int)lon_to_tile_x(center_lon, zoom_level);
-    int ty = (int)lat_to_tile_y(center_lat, zoom_level);
+    int tx = sigurdos_map_tile_x_index(lon_to_tile_x(center_lon, zoom_level),
+                                       zoom_level);
+    int ty = (int)floor(lat_to_tile_y(center_lat, zoom_level));
     char path[64];
     snprintf(path, sizeof(path), SIGURDOS_SD_MOUNTPOINT "/tiles/%d/%d/%d.png", zoom_level, tx, ty);
     FILE* f = fopen(path, "r");
@@ -1155,7 +1218,9 @@ void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_
     double px_per_tile = TILE_SIZE;
     int center_px = TFT_WIDTH / 2;
     int center_py = TFT_HEIGHT / 2;
-    *out_px = center_px + (int)((tile_x - center_tx) * px_per_tile);
+    const double delta_x = sigurdos_map_shortest_tile_x_delta(
+        center_tx, tile_x, zoom_level);
+    *out_px = center_px + (int)(delta_x * px_per_tile);
     *out_py = center_py + (int)((tile_y - center_ty) * px_per_tile);
 }
 

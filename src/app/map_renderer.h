@@ -88,6 +88,53 @@ inline double sigurdos_map_clamp_lon(double lon) {
     return sigurdos_map_clamp_double(lon, SIGURDOS_MAP_MIN_LON, SIGURDOS_MAP_MAX_LON);
 }
 
+inline double sigurdos_map_wrap_lon(double lon) {
+    if (!std::isfinite(lon)) return 0.0;
+    double wrapped = std::fmod(lon - SIGURDOS_MAP_MIN_LON, 360.0);
+    if (wrapped < 0.0) wrapped += 360.0;
+    return wrapped + SIGURDOS_MAP_MIN_LON;
+}
+
+inline int sigurdos_map_wrap_tile_x(int tile_x, int zoom) {
+    const int n = sigurdos_map_tiles_per_axis(zoom);
+    if (n <= 0) return 0;
+    const int remainder = tile_x % n;
+    return remainder < 0 ? remainder + n : remainder;
+}
+
+inline double sigurdos_map_wrap_tile_x(double tile_x, int zoom) {
+    const int n = sigurdos_map_tiles_per_axis(zoom);
+    if (n <= 0 || !std::isfinite(tile_x)) return 0.0;
+    double wrapped = std::fmod(tile_x, static_cast<double>(n));
+    if (wrapped < 0.0) wrapped += n;
+    return wrapped;
+}
+
+inline int sigurdos_map_tile_x_index(double tile_x, int zoom) {
+    const double wrapped = sigurdos_map_wrap_tile_x(tile_x, zoom);
+    return static_cast<int>(std::floor(wrapped));
+}
+
+inline double sigurdos_map_shortest_tile_x_delta(double from_tile_x,
+                                                  double to_tile_x,
+                                                  int zoom) {
+    const int n = sigurdos_map_tiles_per_axis(zoom);
+    if (n <= 0 || !std::isfinite(from_tile_x) || !std::isfinite(to_tile_x)) {
+        return 0.0;
+    }
+    double delta = std::fmod(to_tile_x - from_tile_x, static_cast<double>(n));
+    const double half_world = n / 2.0;
+    if (delta < -half_world) delta += n;
+    if (delta >= half_world) delta -= n;
+    return delta;
+}
+
+inline bool sigurdos_map_tile_x_in_coverage(int tile_x, int min_x, int max_x,
+                                             bool wraps_x) {
+    return wraps_x ? (tile_x >= min_x || tile_x <= max_x)
+                   : (tile_x >= min_x && tile_x <= max_x);
+}
+
 inline bool sigurdos_map_tile_valid(int zoom, int x, int y) {
     const int n = sigurdos_map_tiles_per_axis(zoom);
     return n > 0 && x >= 0 && x < n && y >= 0 && y < n;
@@ -103,7 +150,7 @@ inline bool sigurdos_map_tile_intersects_viewport(int screen_x, int screen_y,
 inline double sigurdos_map_lon_to_tile_x(double lon, int zoom) {
     const int n = sigurdos_map_tiles_per_axis(zoom);
     if (n <= 0) return 0.0;
-    return (lon + 180.0) / 360.0 * (double)n;
+    return (sigurdos_map_wrap_lon(lon) + 180.0) / 360.0 * (double)n;
 }
 
 inline double sigurdos_map_lat_to_tile_y(double lat, int zoom) {
@@ -119,7 +166,7 @@ inline double sigurdos_map_lat_to_tile_y(double lat, int zoom) {
 inline double sigurdos_map_tile_x_to_lon(double tile_x, int zoom) {
     const int n = sigurdos_map_tiles_per_axis(zoom);
     if (n <= 0) return 0.0;
-    return tile_x / (double)n * 360.0 - 180.0;
+    return sigurdos_map_wrap_tile_x(tile_x, zoom) / (double)n * 360.0 - 180.0;
 }
 
 inline double sigurdos_map_tile_y_to_lat(double tile_y, int zoom) {

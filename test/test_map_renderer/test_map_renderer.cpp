@@ -72,7 +72,41 @@ TEST_F(MapRendererMathTest, LongitudeConvertsToExpectedTileX) {
     EXPECT_NEAR(sigurdos_map_lon_to_tile_x(0.0, 0), 0.5, 1e-9);
     EXPECT_NEAR(sigurdos_map_lon_to_tile_x(0.0, 1), 1.0, 1e-9);
     EXPECT_NEAR(sigurdos_map_lon_to_tile_x(-180.0, 4), 0.0, 1e-9);
-    EXPECT_NEAR(sigurdos_map_lon_to_tile_x(180.0, 4), 16.0, 1e-9);
+    EXPECT_NEAR(sigurdos_map_lon_to_tile_x(180.0, 4), 0.0, 1e-9);
+    EXPECT_LT(sigurdos_map_lon_to_tile_x(179.999999, 4), 16.0);
+    EXPECT_GT(sigurdos_map_lon_to_tile_x(-180.000001, 4), 15.999999);
+}
+
+TEST_F(MapRendererMathTest, LongitudeNormalizesToHalfOpenWorldInterval) {
+    EXPECT_DOUBLE_EQ(sigurdos_map_wrap_lon(-180.0), -180.0);
+    EXPECT_DOUBLE_EQ(sigurdos_map_wrap_lon(180.0), -180.0);
+    EXPECT_DOUBLE_EQ(sigurdos_map_wrap_lon(540.0), -180.0);
+    EXPECT_DOUBLE_EQ(sigurdos_map_wrap_lon(-540.0), -180.0);
+    EXPECT_DOUBLE_EQ(sigurdos_map_wrap_lon(181.0), -179.0);
+    EXPECT_DOUBLE_EQ(sigurdos_map_wrap_lon(-181.0), 179.0);
+}
+
+TEST_F(MapRendererMathTest, TileXWrapUsesModuloAndFloorAtWorldEdges) {
+    EXPECT_EQ(sigurdos_map_wrap_tile_x(-1, 4), 15);
+    EXPECT_EQ(sigurdos_map_wrap_tile_x(16, 4), 0);
+    EXPECT_EQ(sigurdos_map_wrap_tile_x(33, 4), 1);
+    EXPECT_EQ(sigurdos_map_tile_x_index(-0.25, 4), 15);
+    EXPECT_EQ(sigurdos_map_tile_x_index(15.75, 4), 15);
+    EXPECT_EQ(sigurdos_map_tile_x_index(16.25, 4), 0);
+}
+
+TEST_F(MapRendererMathTest, WrappedMarkerDeltaTakesShortestRoute) {
+    EXPECT_NEAR(sigurdos_map_shortest_tile_x_delta(15.9, 0.1, 4), 0.2, 1e-9);
+    EXPECT_NEAR(sigurdos_map_shortest_tile_x_delta(0.1, 15.9, 4), -0.2, 1e-9);
+    EXPECT_NEAR(sigurdos_map_shortest_tile_x_delta(3.0, 5.0, 4), 2.0, 1e-9);
+}
+
+TEST_F(MapRendererMathTest, CoverageCanCrossAntimeridian) {
+    EXPECT_TRUE(sigurdos_map_tile_x_in_coverage(15, 14, 1, true));
+    EXPECT_TRUE(sigurdos_map_tile_x_in_coverage(0, 14, 1, true));
+    EXPECT_TRUE(sigurdos_map_tile_x_in_coverage(1, 14, 1, true));
+    EXPECT_FALSE(sigurdos_map_tile_x_in_coverage(2, 14, 1, true));
+    EXPECT_FALSE(sigurdos_map_tile_x_in_coverage(13, 14, 1, true));
 }
 
 TEST_F(MapRendererMathTest, LatitudeConvertsToExpectedTileY) {
@@ -85,6 +119,8 @@ TEST_F(MapRendererMathTest, TileCoordinatesConvertBackToLatLon) {
     EXPECT_NEAR(sigurdos_map_tile_x_to_lon(0.5, 0), 0.0, 1e-9);
     EXPECT_NEAR(sigurdos_map_tile_y_to_lat(0.5, 0), 0.0, 1e-9);
     EXPECT_NEAR(sigurdos_map_tile_x_to_lon(1.0, 1), 0.0, 1e-9);
+    EXPECT_NEAR(sigurdos_map_tile_x_to_lon(16.0, 4), -180.0, 1e-9);
+    EXPECT_NEAR(sigurdos_map_tile_x_to_lon(-1.0, 4), 157.5, 1e-9);
     EXPECT_NEAR(sigurdos_map_tile_y_to_lat(1.0, 1), 0.0, 1e-9);
 }
 
