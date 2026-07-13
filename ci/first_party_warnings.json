@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "environment": "SigurdOS_TDeck",
+  "budgets": {
+    "src/hal/keyboard.cpp|-Wunused-function": 1,
+    "src/ui/screens/screen_settings_display.cpp|-Wunused-variable": 1
+  }
+}

@@ -84,4 +84,46 @@ TEST(RadioProfilesTest, CustomMarksManualSettings) {
     EXPECT_STREQ("custom", prefs.radio_profile);
 }
 
+TEST(RadioProfilesTest, RepeatFrequencyUsesExactActiveProfileFrequency) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    const auto* uk = sigurdos::radio_profile_find("uk_869_525");
+    ASSERT_NE(nullptr, uk);
+    sigurdos::radio_profile_apply(*uk, prefs);
+
+    uint32_t frequency_khz = 0;
+    ASSERT_TRUE(sigurdos::radio_profile_repeat_frequency_khz(
+        prefs, &frequency_khz));
+    EXPECT_EQ(869525u, frequency_khz);
+}
+
+TEST(RadioProfilesTest, RepeatFrequencyRejectsUnconfiguredAndCustomRadio) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    uint32_t frequency_khz = 123;
+
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_khz(
+        prefs, &frequency_khz));
+
+    const auto* profile = sigurdos::radio_profile_default();
+    ASSERT_NE(nullptr, profile);
+    sigurdos::radio_profile_apply(*profile, prefs);
+    sigurdos::radio_profile_set_custom(prefs);
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_khz(
+        prefs, &frequency_khz));
+}
+
+TEST(RadioProfilesTest, RepeatFrequencyRejectsProfileTupleDrift) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    const auto* profile = sigurdos::radio_profile_find("eu_868");
+    ASSERT_NE(nullptr, profile);
+    sigurdos::radio_profile_apply(*profile, prefs);
+    prefs.freq = 868.100f;
+
+    uint32_t frequency_khz = 0;
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_khz(
+        prefs, &frequency_khz));
+}
+
 } // namespace

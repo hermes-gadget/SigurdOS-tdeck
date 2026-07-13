@@ -8,8 +8,10 @@ The Chat screen is SigurdOS's primary messaging interface — a Discord-inspired
 
 | File | Purpose |
 |------|---------|
-| `src/ui/chat_screen.h` | Public API — `chat_screen_show()`, `chat_screen_open_dm()`, `chat_screen_add_msg()`, `chat_screen_handle_trackball()`, message cap get/set, SPIFFS persistence functions |
-| `src/ui/chat_screen.cpp` | Full implementation — channel list, messaging view, message bubbles, input bar, emoji picker, send logic, trackball handler, SPIFFS persistence |
+| `src/ui/chat_screen.h` | Public API — `chat_screen_show()`, `chat_screen_open_dm()`, `chat_screen_add_msg()`, `chat_screen_handle_trackball()`, message cap get/set, unified-store restore |
+| `src/ui/chat_screen.cpp` | Full implementation — channel list, messaging view, message bubbles, input bar, emoji picker, send logic, trackball handler, unified-store restore |
+| `src/mesh/message_store.*` | Single durable message log shared by the UI and companion offline sync |
+| `src/ui/chat_history_store.*` | Read-only one-time migration codec for the retired `/msgs` snapshot |
 | `src/ui/navigation.cpp` | Screen routing — `navigate_to(Screen::Chat)` dispatches to `chat_screen_show()` |
 
 ---
@@ -272,43 +274,32 @@ Controlled via `NodePrefs.chat_msg_cap` (persisted in NVS):
 
 ## Persistence (SPIFFS)
 
-Messages are persisted to the SPIFFS filesystem at `/msgs` for survival across reboots.
+`src/mesh/message_store.*` is the single durable source of truth for both the
+LVGL chat UI and companion offline sync. The bounded log remains at the
+historical `/companion_msgs` path to preserve upgrades. Incoming RF messages,
+local sends, and app-initiated sends append immediately; the UI no longer
+periodically rewrites a second snapshot.
 
-### Save (`chat_save_messages()`)
+Each record carries the conversation, sender and public-key prefix, text,
+timestamp, RSSI/SNR, path length, companion text type, ACK state, and companion
+delivery state. The log holds at most 512 records. Crossing that limit retains
+the newest 448 records in one atomic streaming compaction, leaving headroom so
+normal appends do not cause a full rewrite every time.
 
-Called from:
-- `ui::loop()` every 5 minutes (every 10th 30-second tick → `save_counter >= 10`)
-- `onboarding_screen.cpp` before `ESP.restart()` during onboarding completion
-- `src/ui/screens/screen_settings_system.cpp` before `ESP.restart()` in Settings → System
+### Boot restore and legacy migration (`chat_load_messages()`)
 
-**Binary format**:
-```
-[magic:4] [version:1] [channel_count:1]
-  For each channel with messages:
-    [channel_name:32] [msg_count:1]
-      For each message:
-        [sender:32] [text:160] [timestamp:4] [is_self:1]
-```
+Called from `ui::init()` after mesh storage has initialized:
 
-- Magic: `0x536d534c` ("SLmS" in ASCII)
-- Version: `1`
-- Max file size: calculated from `MSG_MAX_CHANNELS * (32 + 1 + MSG_MAX_PER_CHANNEL * MSG_RECORD_BYTES)` where `MSG_RECORD_BYTES = 32 + 160 + 4 + 1 = 197`
-- Only channels with `ch_msg_count > 0` are saved
-- Message count is capped at the configured `chat_msg_cap()` at save time
+1. Refresh the current channel list (with Public/fallback setup).
+2. If the retired `/msgs` v1 snapshot exists, validate and stream its records
+   into `message_store`; deduplication makes an interrupted migration retry-safe.
+3. Delete `/msgs` only after every record append succeeds. Invalid files remain
+   available for diagnosis instead of being silently discarded.
+4. Load the unified log's chronological RAM window, creating saved DM/channel
+   conversations on demand and restoring ACK state.
 
-### Load (`chat_load_messages()`)
-
-Called from `ui::init()` at boot, after splash screen is created.
-
-**Load flow**:
-1. If `dyn_count == 0`, refresh channels from mesh (with auto-join and fallback)
-2. Open SPIFFS `/msgs` file (if it exists)
-3. Validate: magic, version, file size bounds
-4. For each saved channel:
-   - Read channel name and find its index via `find_channel_idx()`
-   - Read messages and append via `append_channel_message()`
-   - Unrecognized channels (not in current mesh list) are skipped
-5. Closing the file on any read error to prevent partial data corruption
+The companion offline queue is a non-destructive view of unsent incoming rows.
+Draining it marks rows delivered but does not remove chat history.
 
 ---
 
@@ -459,7 +450,7 @@ to `mesh::getCurrentTime()`.
 
 Timestamp-aware ingress used by `ui::loop()`. The authoritative
 `MeshMessage.timestamp` is stored in channel history, channel metadata, the
-rendered bubble, and the next `/msgs` save. A zero protocol timestamp uses the
+rendered bubble, and the unified log. A zero protocol timestamp uses the
 same local-clock fallback as the compatibility entry point.
 
 ### `chat_screen_handle_trackball(SigurdOSTrackballEvent event) -> bool`
@@ -480,13 +471,10 @@ Returns the configured per-channel message history cap from NVS.
 
 Sets the message cap (clamped to [8, 200]), persists to NVS, and immediately trims all channel histories.
 
-### `chat_save_messages()`
-
-Persists all per-channel message history to SPIFFS (`/msgs`). Binary format with magic, version, and per-channel message records.
-
 ### `chat_load_messages()`
 
-Loads persisted message history from SPIFFS at boot. Validates file header and merges saved messages into existing mesh channels.
+Migrates a valid legacy `/msgs` snapshot once, then restores the UI RAM window
+from the unified message log.
 
 ---
 
@@ -494,11 +482,8 @@ Loads persisted message history from SPIFFS at boot. Validates file header and m
 
 See `docs/KNOWN_ISSUES.md` for the current tracker.
 
-Still open:
-
-- **Onboarding ESP.restart()**: `chat_save_messages()` is called immediately before `ESP.restart()` at the end of onboarding (`src/ui/onboarding_screen.cpp`) with no flash-settle delay — SPIFFS write caching may cause data loss
-
 Previously listed here, since fixed:
 
+- **Dual message stores**: `/msgs` is now migration-only; all new writes and boot restores use `message_store`
 - **Navigation history stack**: now a linear 8-entry stack (`src/ui/navigation.cpp`) that drops the oldest entry when full — no circular wrap
 - **LVGL tick starvation**: the mesh loop now services `lv_timer_handler()` periodically during long radio operations (`src/mesh/mesh_wrapper.cpp`)

@@ -114,19 +114,60 @@ TEST_F(MessageStoreTest, LoadRecentFiltersAndPreservesOrder) {
 }
 
 TEST_F(MessageStoreTest, StoreRotatesToNewestRecords) {
-    for (uint32_t i = 1; i <= 70; i++) {
+    const uint32_t appended = sigurdos::mesh::MESSAGE_STORE_MAX_RECORDS + 1;
+    for (uint32_t i = 1; i <= appended; i++) {
         char text[24];
         std::snprintf(text, sizeof(text), "msg%lu", (unsigned long)i);
         EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(
             makeMsg("DM: Alice", "Alice", text, i, false, false)));
     }
 
-    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 64);
-    sigurdos::mesh::StoredMessage out[64]{};
-    int n = sigurdos::mesh::messageStoreLoadAll(out, 64);
-    ASSERT_EQ(n, 64);
-    EXPECT_EQ(out[0].timestamp, 7u);
-    EXPECT_EQ(out[63].timestamp, 70u);
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(),
+              (int)sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS);
+    std::vector<sigurdos::mesh::StoredMessage> out(
+        sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS);
+    int n = sigurdos::mesh::messageStoreLoadAll(out.data(), (int)out.size());
+    ASSERT_EQ(n, (int)sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS);
+    EXPECT_EQ(out.front().timestamp,
+              appended - sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS + 1);
+    EXPECT_EQ(out.back().timestamp, appended);
+    EXPECT_EQ(readFile(path).size(),
+              sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
+                  sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS *
+                      sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
+
+    const uint32_t first_id = out.front().store_id;
+    const uint32_t first_timestamp = out.front().timestamp;
+    ASSERT_TRUE(sigurdos::mesh::messageStoreMarkAcked(
+        "DM: Alice", first_timestamp));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(first_id));
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(out.data(), (int)out.size()),
+              (int)sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS);
+    EXPECT_TRUE(out.front().acked);
+    EXPECT_TRUE(out.front().companion_sent);
+}
+
+TEST_F(MessageStoreTest, DedupIdentityIncludesTextTypeAndSenderPrefix) {
+    auto plain = makeMsg("DM: Alice", "Alice", "same", 42, false, false);
+    auto cli = plain;
+    cli.txt_type = 1;
+    auto other_sender_key = plain;
+    other_sender_key.sender_prefix[0] ^= 0x01;
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(plain));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(cli));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(other_sender_key));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 3);
+}
+
+TEST_F(MessageStoreTest, LegacyZeroPrefixFallsBackToSenderNameForDedup) {
+    auto current = makeMsg("DM: Alice", "Alice", "same", 42, false, false);
+    auto legacy = current;
+    std::memset(legacy.sender_prefix, 0, sizeof(legacy.sender_prefix));
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(current));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(legacy));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
 }
 
 TEST_F(MessageStoreTest, MarkAckedUpdatesStoredMessage) {
@@ -313,7 +354,8 @@ TEST_F(MessageStoreTest, WholeStoreWriteFailurePreservesLiveStore) {
 
 TEST_F(MessageStoreTest, FirstAndRotatedIdsAreNonZeroAndNeverReused) {
     std::set<uint32_t> ids;
-    for (uint32_t i = 1; i <= 130; ++i) {
+    const uint32_t appended = sigurdos::mesh::MESSAGE_STORE_MAX_RECORDS + 1;
+    for (uint32_t i = 1; i <= appended; ++i) {
         char text[24];
         std::snprintf(text, sizeof(text), "msg%lu", (unsigned long)i);
         uint32_t id = 0;
@@ -322,11 +364,15 @@ TEST_F(MessageStoreTest, FirstAndRotatedIdsAreNonZeroAndNeverReused) {
         EXPECT_NE(id, 0U);
         EXPECT_TRUE(ids.insert(id).second) << "duplicate ID at append " << i;
     }
-    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 64);
-    sigurdos::mesh::StoredMessage out[64]{};
-    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(out, 64), 64);
-    EXPECT_EQ(out[0].store_id, 67U);
-    EXPECT_EQ(out[63].store_id, 130U);
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(),
+              (int)sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS);
+    std::vector<sigurdos::mesh::StoredMessage> out(
+        sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS);
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(out.data(), (int)out.size()),
+              (int)sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS);
+    EXPECT_EQ(out.front().store_id,
+              appended - sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS + 1);
+    EXPECT_EQ(out.back().store_id, appended);
     EXPECT_FALSE(sigurdos::mesh::messageStoreMarkCompanionSent(0));
 }
 

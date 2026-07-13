@@ -43,7 +43,7 @@ test/
 |-- test_channel_store/             Transactional two-bank channel persistence
 |-- test_channel_validation/        Channel name validation and sanitising
 |-- test_chat_config/               Chat message cap clamping and config bounds
-|-- test_chat_history_store/        Atomic chat history codec and recovery
+|-- test_chat_history_store/        Legacy `/msgs` migration, recovery, and unified-store dedup
 |-- test_chat_message_buffer/       Per-channel buffer alloc fallback, eviction, remap handoff
 |-- test_chat_truncation/           UTF-8 safe chat truncation
 |-- test_companion_protocol/        Companion protocol frame shapes and sync behavior

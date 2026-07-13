@@ -32,6 +32,38 @@ namespace sigurdos::ui {
 using namespace theme;
 using namespace responsive;
 
+static constexpr uint16_t GPS_INT_VALUES[] = {5, 10, 30, 60};
+static constexpr const char* GPS_INT_LABELS[] = {"5s", "10s", "30s", "60s"};
+static lv_timer_t* g_gps_sync_timer = nullptr;
+static lv_obj_t* g_gps_sync_row = nullptr;
+
+static void gps_sync_timer_cb(lv_timer_t* timer)
+{
+    if (!g_gps_sync_row || !lv_obj_is_valid(g_gps_sync_row)) {
+        sigurdos_gps_cancel_time_sync();
+        lv_timer_del(timer);
+        g_gps_sync_timer = nullptr;
+        return;
+    }
+    char text[64];
+    const SigurdOSGpsSyncStatus status = sigurdos_gps_time_sync_status();
+    if (status == SigurdOSGpsSyncStatus::Waiting) {
+        const unsigned seconds =
+            (unsigned)((sigurdos_gps_time_sync_remaining_ms() + 999) / 1000);
+        snprintf(text, sizeof(text), "  Sync time: waiting for fix (%us)", seconds);
+        update_row_label(g_gps_sync_row, text);
+        return;
+    }
+    if (status == SigurdOSGpsSyncStatus::Success && sigurdos_gps_epoch() != 0 &&
+        sigurdos::mesh::setSystemTime(sigurdos_gps_epoch())) {
+        update_row_label(g_gps_sync_row, "  Sync time: complete");
+    } else {
+        update_row_label(g_gps_sync_row, "  Sync time: timed out");
+    }
+    lv_timer_del(timer);
+    g_gps_sync_timer = nullptr;
+}
+
 struct GpsDiagDialogCtx {
     lv_obj_t* label;
     lv_obj_t* row;
@@ -216,9 +248,7 @@ void settings_gps_show()
 
     // GPS interval cycle
     {
-        static constexpr uint16_t GPS_INT_VALUES[] = {0, 1, 5, 10, 30, 60};
-        static constexpr const char* GPS_INT_LABELS[] = {"Every loop", "1s", "5s", "10s", "30s", "60s"};
-        static constexpr int NUM_GPS_INT = 6;
+        static constexpr int NUM_GPS_INT = 4;
         int cur_gps = 0;
         for (int i = 0; i < NUM_GPS_INT; i++) {
             if (p.gps_interval == GPS_INT_VALUES[i]) { cur_gps = i; break; }
@@ -232,15 +262,15 @@ void settings_gps_show()
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             sigurdos::NodePrefs np = sigurdos::prefs_get();
             int idx = 0;
-            for (int i = 0; i < 6; i++) {
-                if (np.gps_interval == (uint16_t[]){0,1,5,10,30,60}[i]) { idx = i; break; }
+            for (int i = 0; i < 4; i++) {
+                if (np.gps_interval == GPS_INT_VALUES[i]) { idx = i; break; }
             }
-            idx = (idx + 1) % 6;
-            np.gps_interval = (uint16_t[]){0,1,5,10,30,60}[idx];
+            idx = (idx + 1) % 4;
+            np.gps_interval = GPS_INT_VALUES[idx];
             sigurdos::prefs_set(np);
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  GPS interval: %s",
-                     (const char*[]){"Every loop","1s","5s","10s","30s","60s"}[idx]);
+                     GPS_INT_LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
             if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
                 lv_label_set_text(lbl, row_buf);
@@ -248,6 +278,23 @@ void settings_gps_show()
         }, LV_EVENT_CLICKED, nullptr);
         row++;
     }
+
+    // Explicit one-shot time acquisition. This temporarily polls GPS at high
+    // rate even when background GPS is off, then stops on success/timeout.
+    g_gps_sync_row = lv_list_add_btn(list, LV_SYMBOL_REFRESH, "  Sync time from GPS");
+    lv_obj_set_style_bg_color(g_gps_sync_row, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(g_gps_sync_row, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(g_gps_sync_row, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(g_gps_sync_row, [](lv_event_t*) {
+        if (g_gps_sync_timer) {
+            lv_timer_del(g_gps_sync_timer);
+            g_gps_sync_timer = nullptr;
+        }
+        sigurdos_gps_start_time_sync(60000);
+        update_row_label(g_gps_sync_row, "  Sync time: waiting for fix (60s)");
+        g_gps_sync_timer = lv_timer_create(gps_sync_timer_cb, 500, nullptr);
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
 
     // Share location toggle
     snprintf(buf, sizeof(buf), "  Share location: %s", p.share_location ? "ON" : "OFF");
@@ -269,6 +316,14 @@ void settings_gps_show()
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 
+    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+        if (g_gps_sync_timer) {
+            lv_timer_del(g_gps_sync_timer);
+            g_gps_sync_timer = nullptr;
+        }
+        sigurdos_gps_cancel_time_sync();
+        g_gps_sync_row = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
     show_screen(scr);
 }
 
