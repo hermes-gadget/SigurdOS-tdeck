@@ -18,6 +18,7 @@
 
 
 #include "navigation.h"
+#include "navigation_state.h"
 #include "home_screen.h"
 #include "chat_screen.h"
 #include "screens.h"
@@ -29,39 +30,7 @@
 
 namespace sigurdos::ui {
 
-static Screen current = Screen::Home;
-
-// ── Back history stack (circular, max 16 entries) ─────────
-static constexpr int MAX_HISTORY = 16;
-static Screen history[MAX_HISTORY];
-static int   history_top = -1;  // index of top (empty stack before any nav)
-
-static void push_history(Screen s) {
-    if (history_top < MAX_HISTORY - 1) {
-        // Normal case: room on the stack
-        history_top++;
-        history[history_top] = s;
-    } else {
-        // Stack full: drop the oldest entry by shifting everything left
-        for (int i = 0; i < MAX_HISTORY - 1; i++) {
-            history[i] = history[i + 1];
-        }
-        history[MAX_HISTORY - 1] = s;
-    }
-}
-
-static Screen pop_history() {
-    if (history_top < 0) return Screen::Home;
-    Screen s = history[history_top];
-    history_top--;
-    return s;
-}
-
-static bool history_empty() {
-    return history_top < 0;
-}
-
-static int back_swipe_commit = 0; // counter for two-swipe commit
+static NavigationState navigation_state;
 
 static void dispatch_screen(Screen screen) {
     switch (screen) {
@@ -96,17 +65,11 @@ static void dispatch_screen(Screen screen) {
 
 void navigate_to(Screen screen)
 {
-    if (screen == current) return;
-
-    back_swipe_commit = 0; // reset back-swipe state on new navigation
-    highlight_back_button(false);
-
-    // Push current screen onto history before navigating away
 #if SIGURDOS_TELEMETRY
-    Screen previous = current;
+    const Screen previous = navigation_state.current();
 #endif
-    push_history(current);
-    current = screen;
+    if (!navigation_state.navigateTo(screen)) return;
+    highlight_back_button(false);
 
     dispatch_screen(screen);
 
@@ -120,17 +83,12 @@ void navigate_to(Screen screen)
 
 void go_back()
 {
-    if (history_empty()) return; // nowhere to go back to
-
-    back_swipe_commit = 0; // reset back-swipe state on back navigation
-    highlight_back_button(false);
-
-    Screen target = pop_history();
-    // Navigate directly without pushing current (we're going back, not forward)
 #if SIGURDOS_TELEMETRY
-    Screen previous = current;
+    const Screen previous = navigation_state.current();
 #endif
-    current = target;
+    if (!navigation_state.goBack()) return;
+    highlight_back_button(false);
+    const Screen target = navigation_state.current();
 
     dispatch_screen(target);
 
@@ -144,17 +102,17 @@ void go_back()
 
 bool can_go_back()
 {
-    return !history_empty();
+    return navigation_state.canGoBack();
 }
 
 Screen current_screen()
 {
-    return current;
+    return navigation_state.current();
 }
 
 void refresh_current_screen()
 {
-    dispatch_screen(current);
+    dispatch_screen(navigation_state.current());
 }
 
 // ════════════════════════════════════════════════════
@@ -162,23 +120,29 @@ void refresh_current_screen()
 // ════════════════════════════════════════════════════
 bool handle_back_swipe(SigurdOSTrackballEvent event)
 {
-    // Any non-Left event resets the counter and clears visual feedback
-    if (event != SigurdOSTrackballEvent::Left) {
-        back_swipe_commit = 0;
+#if SIGURDOS_TELEMETRY
+    const Screen previous = navigation_state.current();
+#endif
+    const BackSwipeResult result = navigation_state.handleBackSwipe(
+        event == SigurdOSTrackballEvent::Left);
+    if (result == BackSwipeResult::Ignored) {
         highlight_back_button(false);
         return false;
     }
-
-    back_swipe_commit++;
-    if (back_swipe_commit >= 2) {
-        back_swipe_commit = 0;
+    if (result == BackSwipeResult::Navigated) {
         highlight_back_button(false);
-        go_back();
-        return true;
+        dispatch_screen(navigation_state.current());
+#if SIGURDOS_TELEMETRY
+        sigurdos::telemetry::report_screen_transition(
+            static_cast<uint8_t>(previous),
+            static_cast<uint8_t>(navigation_state.current()),
+            lv_tick_get());
+#endif
+    } else if (result == BackSwipeResult::Completed) {
+        highlight_back_button(false);
+    } else {
+        highlight_back_button(true);
     }
-
-    // First left swipe: show visual feedback on the back button
-    highlight_back_button(true);
     return true;
 }
 

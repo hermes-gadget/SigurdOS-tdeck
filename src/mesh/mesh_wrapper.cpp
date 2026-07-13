@@ -15,6 +15,7 @@
 #include "durable_fanout.h"
 #include "contact_store.h"
 #include "persistence_store.h"
+#include "utils/fixed_queue.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
@@ -87,9 +88,8 @@ static bool sigurdos_mesh_radio_tx_allowed()
 // Message queue
 // ════════════════════════════════════════════════════
 
-static constexpr int MAX_QUEUED = 64;
-static MeshMessage   msg_buf[MAX_QUEUED];
-static int           msg_head = 0, msg_tail = 0, msg_count = 0;
+static constexpr size_t MAX_QUEUED = 64;
+static sigurdos::utils::FixedQueue<MeshMessage, MAX_QUEUED> msg_queue;
 
 // Drop counter — incremented when the queue is full and a message is lost.
 // Check this to detect silent packet loss (the worst kind of regression).
@@ -129,7 +129,7 @@ static bool presentIncomingMessage(void* raw)
     if (!sigurdos::mesh::companion_message_should_present_in_chat(ctx->txt_type)) {
         return true;
     }
-    if (msg_count >= MAX_QUEUED) {
+    if (msg_queue.full()) {
         msg_drop_count++;
 #if SIGURDOS_DEBUG_MESH
         SIGURDOS_RUNTIME_FEAT(mesh) {
@@ -139,7 +139,7 @@ static bool presentIncomingMessage(void* raw)
 #endif
         return false;
     }
-    MeshMessage& m = msg_buf[msg_head];
+    MeshMessage m{};
     strncpy(m.sender, ctx->sender, sizeof(m.sender) - 1);
     m.sender[sizeof(m.sender) - 1] = '\0';
     strncpy(m.channel, ctx->channel ? ctx->channel : "", sizeof(m.channel) - 1);
@@ -151,8 +151,7 @@ static bool presentIncomingMessage(void* raw)
     m.store_id = ctx->store_id;
     m.is_self = false;
     if (strcmp(ctx->sender, own_name) != 0) unread_count++;
-    msg_head = (msg_head + 1) % MAX_QUEUED;
-    msg_count++;
+    if (!msg_queue.push(m)) return false;
     const char* ptype = (ctx->channel && ctx->channel[0]) ? "CHANNEL" : "DM";
     sigurdos::mesh::pushPacketLog(ctx->sender, ctx->rssi, ctx->snr, ptype);
 #if SIGURDOS_DEBUG_MESH
@@ -189,7 +188,7 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
 // companion_adapter.cpp — they exist solely to feed the companion bridge.
 
 static void queue_push(const char* sender, const char* channel, const char* text) {
-    if (msg_count >= MAX_QUEUED) {
+    if (msg_queue.full()) {
         msg_drop_count++;
 #if SIGURDOS_DEBUG_MESH
         SIGURDOS_RUNTIME_FEAT(mesh) {
@@ -199,7 +198,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
 #endif
         return;
     }
-    MeshMessage& m = msg_buf[msg_head];
+    MeshMessage m{};
     if (!sender) sender = "";
     strncpy(m.sender, sender, sizeof(m.sender) - 1);
     m.sender[sizeof(m.sender) - 1] = '\0';
@@ -212,8 +211,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
     m.is_self = false;
     // Increment unread count for incoming messages (reset when chat is opened)
     if (strcmp(sender, own_name) != 0) unread_count++;
-    msg_head = (msg_head + 1) % MAX_QUEUED;
-    msg_count++;
+    if (!msg_queue.push(m)) return;
     // Log as packet entry (accessible via Packets screen)
     if (sender && sender[0] && g_mesh) {
         int rssi = (int)radio_driver->getLastRSSI();
@@ -224,11 +222,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
 }
 
 static bool queue_pop(MeshMessage* out) {
-    if (msg_count == 0) return false;
-    *out = msg_buf[msg_tail];
-    msg_tail = (msg_tail + 1) % MAX_QUEUED;
-    msg_count--;
-    return true;
+    return msg_queue.pop(out);
 }
 
 // Forward declarations
@@ -328,11 +322,11 @@ void sigurdos::mesh::meshQueuePushOutgoing(const char* conversation, const char*
                                            uint32_t store_id)
 {
     if (!conversation || !sender || !text) return;
-    if (msg_count >= MAX_QUEUED) {
+    if (msg_queue.full()) {
         msg_drop_count++;
         return;
     }
-    MeshMessage& m = msg_buf[msg_head];
+    MeshMessage m{};
     strncpy(m.sender, sender, sizeof(m.sender) - 1);
     m.sender[sizeof(m.sender) - 1] = '\0';
     strncpy(m.channel, conversation, sizeof(m.channel) - 1);
@@ -342,8 +336,7 @@ void sigurdos::mesh::meshQueuePushOutgoing(const char* conversation, const char*
     m.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
     m.store_id = store_id;
     m.is_self = true;
-    msg_head = (msg_head + 1) % MAX_QUEUED;
-    msg_count++;
+    if (!msg_queue.push(m)) msg_drop_count++;
 }
 
 // ════════════════════════════════════════════════════
@@ -1237,7 +1230,7 @@ int pollMessages(MeshMessage* out, int max) {
     return n;
 }
 
-int pendingMessageCount() { return msg_count; }
+int pendingMessageCount() { return static_cast<int>(msg_queue.size()); }
 uint32_t getQueueDropCount() { return msg_drop_count; }
 
 int getUnreadMessageCount() { return unread_count; }

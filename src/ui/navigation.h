@@ -19,39 +19,9 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "../hal/trackball.h"
+#include "screen_id.h"
 
 namespace sigurdos::ui {
-
-// Screen identifiers for navigation
-enum class Screen {
-    Home,
-    Chat,
-    Contacts,
-    Channels,
-    Network,
-    Heard,
-    Map,
-    Advertise,
-    Settings,
-    Trace,
-    Terminal,
-    Signal,
-    RadioSetup,
-    Repeaters,
-    Onboarding,
-    ContactDetail,
-    SettingsRadio,
-    SettingsGPS,
-    SettingsDisplay,
-    SettingsSystem,
-    NodeStats,
-    Telemetry,
-    NodeStatus,
-    WiFiNetworks,
-    Bluetooth,
-    Regions,
-    COUNT
-};
 
 // Navigate to a screen
 void navigate_to(Screen screen);

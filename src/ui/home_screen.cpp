@@ -24,6 +24,7 @@
 #include "notifications.h"
 #include "chat_screen.h"
 #include "navigation.h"
+#include "home_routes.h"
 #include "theme.h"
 #include "responsive.h"
 #include "../hal/tdeck_pins.h"
@@ -57,29 +58,22 @@ using namespace responsive;
 static constexpr int GRID_PAD   = 3;
 // GRID_COLS, GRID_ROWS, TOP_BAR_H, BOT_BAR_H, DIVIDER_H — now from responsive.h
 
-struct IconDef {
-    const char* label;
-    const char* symbol;
-    bool        badge;
-    Screen      target;
+static const char* const ICON_SYMBOLS[HOME_ROUTE_COUNT] = {
+    LV_SYMBOL_ENVELOPE,
+    LV_SYMBOL_FILE,
+    LV_SYMBOL_DIRECTORY,
+    LV_SYMBOL_CALL,
+    LV_SYMBOL_WIFI,
+    LV_SYMBOL_BELL,
+    LV_SYMBOL_GPS,
+    LV_SYMBOL_KEYBOARD,
+    LV_SYMBOL_LIST,
+    LV_SYMBOL_SETTINGS,
+    LV_SYMBOL_HOME,
+    LV_SYMBOL_BARS,
 };
 
-static const IconDef icons[] = {
-    {"CHATS",     LV_SYMBOL_ENVELOPE,   true,  Screen::Chat},
-    {"DMs",       LV_SYMBOL_FILE,       false, Screen::Chat},
-    {"ROOMS",     LV_SYMBOL_DIRECTORY,  false, Screen::Contacts},
-    {"CONTACTS",  LV_SYMBOL_CALL,       false, Screen::Contacts},
-    {"REPEATERS", LV_SYMBOL_WIFI,       false, Screen::Repeaters},
-    {"ADVERTISE", LV_SYMBOL_BELL,       false, Screen::Advertise},
-    {"MAP",       LV_SYMBOL_GPS,        false, Screen::Map},
-    {"TERMINAL",  LV_SYMBOL_KEYBOARD,   false, Screen::Terminal},
-    {"PACKETS",   LV_SYMBOL_LIST,       false, Screen::Heard},
-    {"SETTINGS",  LV_SYMBOL_SETTINGS,   false, Screen::Settings},
-    {"SETUP",     LV_SYMBOL_HOME,       false, Screen::Onboarding},
-    {"SIGNAL",    LV_SYMBOL_BARS,       false, Screen::Signal},
-};
-
-static constexpr int ICON_COUNT = sizeof(icons) / sizeof(icons[0]);
+static constexpr int ICON_COUNT = static_cast<int>(HOME_ROUTE_COUNT);
 static lv_obj_t* icon_tiles[ICON_COUNT] = {};
 static ScreenLifetime g_home_lifetime;
 static int tile_x[ICON_COUNT] = {};
@@ -179,25 +173,25 @@ static void apply_selection(int old_idx = -1)
 #endif
 }
 
+static void activate_home_route(int idx)
+{
+    const HomeRoute* route = idx >= 0 ? homeRouteAt(static_cast<std::size_t>(idx)) : nullptr;
+    if (!route) return;
+
+    chat_screen_set_filter(0);
+    contacts_screen_set_filter(-1);
+    switch (route->filter) {
+    case HomeRouteFilter::Channels:       chat_screen_set_filter(1); break;
+    case HomeRouteFilter::DirectMessages: chat_screen_set_filter(2); break;
+    case HomeRouteFilter::Rooms:          contacts_screen_set_filter(ADV_TYPE_ROOM); break;
+    case HomeRouteFilter::Default:        break;
+    }
+    navigate_to(route->target);
+}
+
 static void on_icon_click(lv_event_t* e)
 {
-    int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    if (idx >= 0 && idx < ICON_COUNT) {
-        // Reset filters to defaults
-        chat_screen_set_filter(0);
-        contacts_screen_set_filter(-1);
-
-        // Apply filter based on which icon was clicked
-        if (strcmp(icons[idx].label, "DMs") == 0) {
-            chat_screen_set_filter(2);       // DMs only
-        } else if (strcmp(icons[idx].label, "CHATS") == 0) {
-            chat_screen_set_filter(1);       // channels only
-        } else if (strcmp(icons[idx].label, "ROOMS") == 0) {
-            contacts_screen_set_filter(ADV_TYPE_ROOM);  // room servers only
-        }
-        // CONTACTS: default filter (CHAT + ROOM) — start DM from here
-        navigate_to(icons[idx].target);
-    }
+    activate_home_route((int)(intptr_t)lv_event_get_user_data(e));
 }
 
 // ── Top bar ─────────────────────────────────────────────
@@ -286,7 +280,8 @@ static void create_bottom_bar()
 }
 
 // ── Icon tile ────────────────────────────────────────────
-static lv_obj_t* create_icon_tile(lv_obj_t* parent, const IconDef& icon, int idx)
+static lv_obj_t* create_icon_tile(lv_obj_t* parent, const HomeRoute& route,
+                                  const char* symbol, int idx)
 {
     lv_obj_t* tile = lv_obj_create(parent);
     lv_obj_set_size(tile, tile_w[idx], tile_h[idx]);
@@ -306,18 +301,18 @@ static lv_obj_t* create_icon_tile(lv_obj_t* parent, const IconDef& icon, int idx
     lv_obj_add_event_cb(tile, on_icon_click, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
 
     lv_obj_t* icon_label = lv_label_create(tile);
-    lv_label_set_text(icon_label, icon.symbol);
+    lv_label_set_text(icon_label, symbol);
     lv_obj_set_style_text_font(icon_label, emoji_wrapped_montserrat_14, 0);
     lv_obj_set_style_text_color(icon_label, lv_color_hex(ACCENT), 0);
     lv_obj_align(icon_label, LV_ALIGN_CENTER, 0, -8);
 
     lv_obj_t* label = lv_label_create(tile);
-    lv_label_set_text(label, icon.label);
+    lv_label_set_text(label, route.label);
     lv_obj_set_style_text_color(label, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 12);
 
-    if (icon.badge) {
+    if (route.badge) {
         // Badge: container with count label, hidden by default, shown when
         // sigurdos::mesh::pendingMessageCount() > 0 via home_screen_update_badges()
         badge_obj = lv_obj_create(tile);
@@ -375,7 +370,7 @@ static void create_icon_grid()
     disable_scroll(grid);
 
     for (int i = 0; i < ICON_COUNT; i++) {
-        icon_tiles[i] = create_icon_tile(grid, icons[i], i);
+        icon_tiles[i] = create_icon_tile(grid, *homeRouteAt(i), ICON_SYMBOLS[i], i);
     }
 
     selected_icon = 0;
@@ -487,7 +482,7 @@ void home_screen_handle_trackball(SigurdOSTrackballEvent event)
     }
     case SigurdOSTrackballEvent::Click:
         if (selected_icon >= 0 && selected_icon < ICON_COUNT) {
-            navigate_to(icons[selected_icon].target);
+            activate_home_route(selected_icon);
         }
         break;
     case SigurdOSTrackballEvent::None:

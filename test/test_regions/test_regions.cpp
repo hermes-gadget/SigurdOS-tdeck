@@ -33,8 +33,31 @@
 
 #include "mesh/regions.h"
 #include "mesh/mesh_wrapper.h"
+#include "mesh/region_policy.h"
 
 namespace {
+
+TEST(RegionPolicyTest, UnknownRegionsAllowFloodButDenyFlagBlocksKnownRegion) {
+    constexpr uint8_t deny = 0x04;
+    EXPECT_TRUE(sigurdos::mesh::regionFloodAllowed(false, deny, deny));
+    EXPECT_TRUE(sigurdos::mesh::regionFloodAllowed(true, 0, deny));
+    EXPECT_FALSE(sigurdos::mesh::regionFloodAllowed(true, deny, deny));
+}
+
+TEST(RegionPolicyTest, NullEmptyAndProtocolNullClearScope) {
+    EXPECT_TRUE(sigurdos::mesh::regionScopeIsClear(nullptr));
+    EXPECT_TRUE(sigurdos::mesh::regionScopeIsClear(""));
+    EXPECT_TRUE(sigurdos::mesh::regionScopeIsClear("<null>"));
+    EXPECT_FALSE(sigurdos::mesh::regionScopeIsClear("#london"));
+}
+
+TEST(RegionPolicyTest, ActiveScopeCopyAlwaysNullTerminates) {
+    char scope[5] = {};
+    sigurdos::mesh::copyActiveRegion(scope, sizeof(scope), "#london");
+    EXPECT_STREQ(scope, "#lon");
+    sigurdos::mesh::copyActiveRegion(scope, sizeof(scope), "");
+    EXPECT_STREQ(scope, "");
+}
 
 // Helper: remove every occurrence of a region by name (handles duplicates)
 static void removeAllRegionEntriesNamed(const char* name) {
@@ -241,127 +264,127 @@ TEST(RegionsTest, ExportRegionsDoesNotCrash) {
 
 // ── API function signatures (compile-time checks) ───────
 
-TEST(RegionsTest, AddRegionSignature) {
+TEST(RegionsApiCompileContract, AddRegionSignature) {
     using fn_t = ::RegionEntry* (*)(const char*, const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::addRegion);
     SUCCEED();
 }
 
-TEST(RegionsTest, RemoveRegionSignature) {
+TEST(RegionsApiCompileContract, RemoveRegionSignature) {
     using fn_t = bool (*)(const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::removeRegion);
     SUCCEED();
 }
 
-TEST(RegionsTest, FindRegionSignature) {
+TEST(RegionsApiCompileContract, FindRegionSignature) {
     using fn_t = ::RegionEntry* (*)(const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::findRegion);
     SUCCEED();
 }
 
-TEST(RegionsTest, FindRegionPrefixSignature) {
+TEST(RegionsApiCompileContract, FindRegionPrefixSignature) {
     using fn_t = ::RegionEntry* (*)(const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::findRegionPrefix);
     SUCCEED();
 }
 
-TEST(RegionsTest, ListRegionsSignature) {
+TEST(RegionsApiCompileContract, ListRegionsSignature) {
     using fn_t = int (*)(sigurdos::mesh::RegionInfo*, int);
     (void)static_cast<fn_t>(sigurdos::mesh::listRegions);
     SUCCEED();
 }
 
-TEST(RegionsTest, GetRegionCountSignature) {
+TEST(RegionsApiCompileContract, GetRegionCountSignature) {
     using fn_t = int (*)();
     (void)static_cast<fn_t>(sigurdos::mesh::getRegionCount);
     SUCCEED();
 }
 
-TEST(RegionsTest, GetActiveRegionSignature) {
+TEST(RegionsApiCompileContract, GetActiveRegionSignature) {
     using fn_t = const char* (*)();
     (void)static_cast<fn_t>(sigurdos::mesh::getActiveRegion);
     SUCCEED();
 }
 
-TEST(RegionsTest, SetActiveRegionNameSignature) {
+TEST(RegionsApiCompileContract, SetActiveRegionNameSignature) {
     using fn_t = bool (*)(const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::setActiveRegionName);
     SUCCEED();
 }
 
-TEST(RegionsTest, SyncRegionsFromChannelsSignature) {
+TEST(RegionsApiCompileContract, SyncRegionsFromChannelsSignature) {
     using fn_t = void (*)();
     (void)static_cast<fn_t>(sigurdos::mesh::syncRegionsFromChannels);
     SUCCEED();
 }
 
-TEST(RegionsTest, RegionsLoadSignature) {
+TEST(RegionsApiCompileContract, RegionsLoadSignature) {
     using fn_t = bool (*)();
     (void)static_cast<fn_t>(sigurdos::mesh::regionsLoad);
     SUCCEED();
 }
 
-TEST(RegionsTest, RegionsSaveSignature) {
+TEST(RegionsApiCompileContract, RegionsSaveSignature) {
     using fn_t = bool (*)();
     (void)static_cast<fn_t>(sigurdos::mesh::regionsSave);
     SUCCEED();
 }
 
-TEST(RegionsTest, RegionAllowsFloodSignature) {
+TEST(RegionsApiCompileContract, RegionAllowsFloodSignature) {
     using fn_t = bool (*)(const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::regionAllowsFlood);
     SUCCEED();
 }
 
-TEST(RegionsTest, SetRegionFloodAllowedSignature) {
+TEST(RegionsApiCompileContract, SetRegionFloodAllowedSignature) {
     using fn_t = bool (*)(const char*, bool);
     (void)static_cast<fn_t>(sigurdos::mesh::setRegionFloodAllowed);
     SUCCEED();
 }
 
-TEST(RegionsTest, GetHomeRegionNameSignature) {
+TEST(RegionsApiCompileContract, GetHomeRegionNameSignature) {
     using fn_t = const char* (*)();
     (void)static_cast<fn_t>(sigurdos::mesh::getHomeRegionName);
     SUCCEED();
 }
 
-TEST(RegionsTest, SetHomeRegionSignature) {
+TEST(RegionsApiCompileContract, SetHomeRegionSignature) {
     using fn_t = bool (*)(const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::setHomeRegion);
     SUCCEED();
 }
 
-TEST(RegionsTest, GetDefaultScopeNameSignature) {
+TEST(RegionsApiCompileContract, GetDefaultScopeNameSignature) {
     using fn_t = const char* (*)();
     (void)static_cast<fn_t>(sigurdos::mesh::getDefaultScopeName);
     SUCCEED();
 }
 
-TEST(RegionsTest, SetDefaultScopeSignature) {
+TEST(RegionsApiCompileContract, SetDefaultScopeSignature) {
     using fn_t = bool (*)(const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::setDefaultScope);
     SUCCEED();
 }
 
-TEST(RegionsTest, RegionDeniesFloodSignature) {
+TEST(RegionsApiCompileContract, RegionDeniesFloodSignature) {
     using fn_t = ::RegionEntry* (*)(::mesh::Packet*);
     (void)static_cast<fn_t>(sigurdos::mesh::regionDeniesFlood);
     SUCCEED();
 }
 
-TEST(RegionsTest, GetRegionMapSignature) {
+TEST(RegionsApiCompileContract, GetRegionMapSignature) {
     using fn_t = RegionMap* (*)();
     (void)static_cast<fn_t>(sigurdos::mesh::getRegionMap);
     SUCCEED();
 }
 
-TEST(RegionsTest, ListRegionNamesSignature) {
+TEST(RegionsApiCompileContract, ListRegionNamesSignature) {
     using fn_t = int (*)(char*, int, uint8_t, bool);
     (void)static_cast<fn_t>(sigurdos::mesh::listRegionNames);
     SUCCEED();
 }
 
-TEST(RegionsTest, ExportRegionsSignature) {
+TEST(RegionsApiCompileContract, ExportRegionsSignature) {
     using fn_t = size_t (*)(char*, size_t);
     (void)static_cast<fn_t>(sigurdos::mesh::exportRegions);
     SUCCEED();
