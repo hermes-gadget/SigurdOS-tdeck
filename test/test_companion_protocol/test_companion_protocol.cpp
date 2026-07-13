@@ -436,6 +436,8 @@ TEST(CompanionProtocolConstants, AsyncPushCodesMatchPinnedStockProtocol)
     EXPECT_EQ(cc::PUSH_CODE_BINARY_RESPONSE, 0x8C);
     EXPECT_EQ(cc::PUSH_CODE_PATH_DISCOVERY_RESPONSE, 0x8D);
     EXPECT_EQ(cc::PUSH_CODE_CONTROL_DATA, 0x8E);
+}
+
 TEST_F(CompanionProtocolTest, ResponseAndPushCodesMatchPinnedMeshCore) {
     namespace cc = sigurdos::comms;
     struct CodeCheck {
@@ -1338,6 +1340,8 @@ TEST_F(CompanionProtocolTest, BinaryPendingTableIsBounded)
     ASSERT_TRUE(bridge.handleFrame(replacement.data(), replacement.size()));
     EXPECT_EQ(host.binary_send_calls, 5);
     EXPECT_EQ(serial.writes.back()[0], sigurdos::comms::RESP_CODE_SENT);
+}
+
 TEST_F(CompanionProtocolTest, AllowedRepeatFrequencySerializesRangePairs) {
     host.allowed_repeat_range_count = 2;
     host.allowed_repeat_ranges[0] = 868000;
