@@ -129,13 +129,16 @@ namespace mesh {
     }
 
     int SigurdMeshV2::exportSelfContact(const char* name, uint8_t* out, size_t out_cap) {
-        if (!out || out_cap < 1) return 0;
+        if (!out || out_cap == 0) return 0;
         ::mesh::Packet* pkt = createSelfAdvert(name ? name : "");
         if (!pkt) return 0;
         pkt->header |= ROUTE_TYPE_FLOOD;
-        uint8_t n = pkt->writeTo(out);
+        uint8_t encoded[SIGURDOS_ADVERT_BLOB_MAX_LEN];
+        const uint8_t n = pkt->writeTo(encoded);
         releasePacket(pkt);
-        return (n > 0 && n <= out_cap) ? (int)n : 0;
+        if (!advertBlobFitsOutput(n, out_cap)) return 0;
+        memcpy(out, encoded, n);
+        return (int)n;
     }
 
     void SigurdMeshV2::onTraceRecv(::mesh::Packet* pkt, uint32_t tag, uint32_t auth_code, uint8_t flags, const uint8_t* path_snrs, const uint8_t* path_hashes, uint8_t path_len) {
@@ -1200,6 +1203,7 @@ namespace mesh {
     }
 
     int SigurdMeshV2::decode_b64(const char* in, size_t in_len, uint8_t* out, size_t out_cap) {
+        if (!in || !out || out_cap == 0) return 0;
         static const char T[] =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         int o = 0;
@@ -1220,7 +1224,7 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::addChannelBool(const char* name, const char* psk_base64) {
-        if (!name || !name[0]) return false;
+        if (!name || !name[0] || !psk_base64) return false;
         int idx = getChannelCount();
         if (idx >= MAX_GROUP_CHANNELS) return false;
         for (int i = 0; i < idx; i++) {

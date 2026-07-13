@@ -243,7 +243,12 @@ bool revertRadioParams();
 bool sendRequest(const char* dest_name, uint8_t req_type);
 bool sendRequestWithData(const char* dest_name, const uint8_t* data, uint8_t len);
 int  getResponseCount();
-bool getResponse(int idx, uint32_t* out_tag, uint8_t* out_data, uint8_t* out_len, char* out_contact_name);
+// Required lengths are reported even when a requested destination is too
+// small. No payload/name bytes are copied unless every requested buffer fits.
+bool getResponse(int idx, uint32_t* out_tag,
+                 uint8_t* out_data, size_t out_data_cap, uint8_t* out_len,
+                 char* out_contact_name, size_t out_contact_name_cap,
+                 size_t* out_contact_name_len);
 void clearResponses();
 
 // ── Duty cycle ────────────────────────────────

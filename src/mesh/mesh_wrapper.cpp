@@ -15,6 +15,7 @@
 #include "durable_fanout.h"
 #include "contact_store.h"
 #include "persistence_store.h"
+#include "response_copy.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
@@ -564,18 +565,17 @@ int getResponseCount() {
     return g_mesh ? g_mesh->getResponseCount() : 0;
 }
 
-bool getResponse(int idx, uint32_t* out_tag, uint8_t* out_data, uint8_t* out_len, char* out_contact_name) {
+bool getResponse(int idx, uint32_t* out_tag,
+                 uint8_t* out_data, size_t out_data_cap, uint8_t* out_len,
+                 char* out_contact_name, size_t out_contact_name_cap,
+                 size_t* out_contact_name_len) {
     if (!g_mesh) return false;
     auto* re = g_mesh->getResponse(idx);
     if (!re) return false;
-    if (out_tag) *out_tag = re->tag;
-    if (out_data && re->len > 0) memcpy(out_data, re->data, re->len);
-    if (out_len) *out_len = re->len;
-    if (out_contact_name) {
-        strncpy(out_contact_name, re->contact_name, 31);
-        out_contact_name[31] = '\0';
-    }
-    return true;
+    return detail::copyResponseBuffers(
+        re->tag, re->data, re->len, re->contact_name, sizeof(re->contact_name),
+        out_tag, out_data, out_data_cap, out_len,
+        out_contact_name, out_contact_name_cap, out_contact_name_len);
 }
 
 void clearResponses() {
@@ -1350,7 +1350,7 @@ int exportChannels(char names[][37], int max) {
 
 bool addChannel(const char* name, const char* psk) {
     // Validate channel name
-    if (!channel_name_valid(name)) return false;
+    if (!psk || !channel_name_valid(name)) return false;
     // BaseChatMesh::addChannel returns ChannelDetails* — use the bool wrapper.
     bool ok = g_mesh ? g_mesh->addChannelBool(name, psk) : false;
     if (ok) syncRegionsFromChannels();

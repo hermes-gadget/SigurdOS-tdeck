@@ -17,12 +17,14 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <cstddef>
+#include <type_traits>
 
 #include <gtest/gtest.h>
 
 #include "mesh/mesh_wrapper.h"
 #include "mesh/login_session.h"
 #include "mesh/public_channel.h"
+#include "mesh/response_copy.h"
 
 namespace {
 
@@ -120,6 +122,46 @@ TEST(MeshContractTest, GroupDataTypesMatchDocumentedWireValues) {
     EXPECT_EQ(static_cast<uint16_t>(GroupDataType::GDT_BATTERY), 0x0005);
     EXPECT_EQ(static_cast<uint16_t>(GroupDataType::GDT_STATUS), 0x0006);
     EXPECT_EQ(static_cast<uint16_t>(GroupDataType::GDT_CUSTOM), 0x00FF);
+}
+
+TEST(MeshContractTest, ResponseGetterRequiresExplicitDestinationCapacities) {
+    using Getter = bool (*)(int, uint32_t*, uint8_t*, size_t, uint8_t*,
+                            char*, size_t, size_t*);
+    static_assert(std::is_same<Getter,
+                  decltype(&sigurdos::mesh::getResponse)>::value,
+                  "response getter must expose both destination capacities");
+    SUCCEED();
+}
+
+TEST(MeshContractTest, ResponseCopyReportsRequirementsWithoutPartialWrites) {
+    const uint8_t source[] = {1, 2, 3, 4};
+    uint8_t data[3] = {0xAA, 0xAA, 0xAA};
+    char name[4] = {'x', 'x', 'x', '\0'};
+    uint8_t data_required = 0;
+    size_t name_required = 0;
+
+    EXPECT_FALSE(sigurdos::mesh::detail::copyResponseBuffers(
+        77, source, sizeof(source), "alice", 6, nullptr,
+        data, sizeof(data), &data_required,
+        name, sizeof(name), &name_required));
+    EXPECT_EQ(data_required, sizeof(source));
+    EXPECT_EQ(name_required, 6u);
+    EXPECT_EQ(data[0], 0xAA);
+    EXPECT_STREQ(name, "xxx");
+}
+
+TEST(MeshContractTest, ResponseCopyWritesOnlyWhenAllBuffersFit) {
+    const uint8_t source[] = {1, 2, 3, 4};
+    uint8_t data[sizeof(source)]{};
+    char name[6]{};
+    uint32_t tag = 0;
+
+    EXPECT_TRUE(sigurdos::mesh::detail::copyResponseBuffers(
+        77, source, sizeof(source), "alice", 6, &tag,
+        data, sizeof(data), nullptr, name, sizeof(name), nullptr));
+    EXPECT_EQ(tag, 77u);
+    EXPECT_EQ(std::memcmp(data, source, sizeof(source)), 0);
+    EXPECT_STREQ(name, "alice");
 }
 
 } // namespace
