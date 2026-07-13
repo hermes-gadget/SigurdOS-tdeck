@@ -40,19 +40,15 @@
 #define LV_FONT_MONTSERRAT_12     1
 #define LV_FONT_MONTSERRAT_14     1
 #define LV_FONT_MONTSERRAT_16     1
-#define LV_FONT_MONTSERRAT_18     1
-#define LV_FONT_MONTSERRAT_20     1
 #define LV_FONT_MONTSERRAT_24     1
-#define LV_FONT_MONTSERRAT_28     1
 
-// Input
-#define LV_USE_KEYBOARD           1
-#define LV_USE_POINTER            1
+// The physical keyboard, trackball, and touch controller are LVGL input
+// devices. They do not require the optional on-screen keyboard widget.
+#define LV_USE_KEYBOARD           0
 
 // Layout
 #define LV_USE_FLEX               1
 #define LV_USE_GRID               1
-#define LV_USE_ANIMATION          1
 #define LV_USE_SNAPSHOT           1
 
 // International keyboard layouts. Bidi ordering and Arabic contextual

@@ -195,10 +195,10 @@ is green while an official companion is connected. See
 
 ### Emoji Font Support
 - **Noto Emoji subset** — compiled as LVGL font (16px, 4bpp grayscale AA)
-- **Montserrat wrappers** — 8 size variants (10–28px) with emoji fallback registered
+- **Montserrat wrappers** — 5 used sizes (10, 12, 14, 16, and 24px) with emoji fallback registered
 - **Fallback registration** — `emoji_font_register_fallback()` callable once at init
 - **Indexed access** — `emoji_font_get_count()` / `emoji_font_get_by_index()` for enumeration
-**Sources:** [`src/fonts/emoji_font.h`](../src/fonts/emoji_font.h), [`src/fonts/emoji_font_setup.cpp`](../src/fonts/emoji_font_setup.cpp), [`src/fonts/emoji_data.cpp`](../src/fonts/emoji_data.cpp), [`src/fonts/emoji_data.h`](../src/fonts/emoji_data.h), [`src/fonts/emoji_font.c`](../src/fonts/emoji_font.c), [`src/fonts/emoji_images/emoji_picker_images.h`](../src/fonts/emoji_images/emoji_picker_images.h), [`src/fonts/emoji_images/emoji_picker_index.h`](../src/fonts/emoji_images/emoji_picker_index.h)
+**Sources:** [`src/fonts/emoji_font.h`](../src/fonts/emoji_font.h), [`src/fonts/emoji_font_setup.cpp`](../src/fonts/emoji_font_setup.cpp), [`src/fonts/emoji_data.cpp`](../src/fonts/emoji_data.cpp), [`src/fonts/emoji_data.h`](../src/fonts/emoji_data.h), [`src/fonts/emoji_font.c`](../src/fonts/emoji_font.c)
 
 ### UTF-8 Utilities
 - **`utf8_truncate()`** — byte-level truncation that avoids splitting multi-byte codepoints

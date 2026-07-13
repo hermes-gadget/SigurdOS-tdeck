@@ -11,7 +11,7 @@ struct EmojiEntry {
     const char* utf8;        // UTF-8 emoji string
 };
 
-static constexpr int EMOJI_DATA_COUNT = 343;
+static constexpr int EMOJI_DATA_COUNT = 346;
 
 extern const EmojiEntry emoji_data[];
 

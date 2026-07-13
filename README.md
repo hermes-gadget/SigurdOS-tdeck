@@ -144,7 +144,8 @@ SigurdOS-tdeck/
 │   │   ├── emoji_font.c/h       ← Emoji font glyph definitions
 │   │   ├── emoji_font_setup.cpp ← LVGL emoji font integration
 │   │   ├── emoji_data.cpp/h     ← Emoji unicode character tables
-│   │   └── emoji_images/        ← Emoji picker image assets
+│   │   ├── keyboard_layout_font.c/h ← International layout glyphs
+│   │   └── latin_ext_font.c/h   ← Latin Extended fallback glyphs
 │   └── ui/
 │       ├── theme.cpp/h     ← Discord-inspired dark palette
 │       ├── responsive.h    ← Adaptive layout helpers (bars, grids, dialogs)

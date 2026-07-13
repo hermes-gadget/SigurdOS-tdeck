@@ -335,7 +335,7 @@ SHORT_NAMES = {
     '\U0001F910': 'zip_mouth',
     '\U0001F911': 'money_mouth',
     '\U0001F912': 'thermometer_face',
-    '\U0001F913': 'nerd',
+    '\U0001F913': 'nerd_face',
     '\U0001F914': 'thinking',
     '\U0001F915': 'head_bandage',
     '\U0001F916': 'robot',
@@ -362,8 +362,8 @@ SHORT_NAMES = {
     '\U0001F92B': 'shushing_face',
     '\U0001F92C': 'face_with_symbols_on_mouth',
     '\U0001F92D': 'face_with_hand_over_mouth',
-    '\U0001F92E': 'face_with_monocle',
-    '\U0001F92F': 'nerd_face',
+    '\U0001F92E': 'face_vomiting',
+    '\U0001F92F': 'exploding_head',
     '\U0001F930': 'pregnant_woman',
     '\U0001F931': 'breast_feeding',
     '\U0001F932': 'palms_up_together',
@@ -519,7 +519,7 @@ SHORT_NAMES = {
     '\U0001F9CD': 'standing_person',
     '\U0001F9CE': 'kneeling_person',
     '\U0001F9CF': 'deaf_person',
-    '\U0001F9D0': 'face_with_monocle_2',
+    '\U0001F9D0': 'face_with_monocle',
     '\U0001F9D1': 'adult',
     '\U0001F9D2': 'child',
     '\U0001F9D3': 'older_adult',
@@ -1130,8 +1130,8 @@ def generate_lookup(emoji_list: list[str]) -> list[tuple[str, str]]:
 def generate_header(pairs: list[tuple[str, str]], output_path: str):
     """Generate emoji_data.h"""
     lines = [
-        '#ifndef EMJI_DATA_H',
-        '#define EMJI_DATA_H',
+        '#ifndef EMOJI_DATA_H',
+        '#define EMOJI_DATA_H',
         '',
         '#include <cstdint>',
         '',
@@ -1151,7 +1151,7 @@ def generate_header(pairs: list[tuple[str, str]], output_path: str):
         '// Results written to out[] up to max_results. Returns number of matches found.',
         f'int emoji_search(const char* prefix, EmojiEntry* out, int max_results);',
         '',
-        '#endif  // EMJI_DATA_H',
+        '#endif  // EMOJI_DATA_H',
     ]
 
     with open(output_path, 'w') as f:
@@ -1179,7 +1179,7 @@ def generate_source(pairs: list[tuple[str, str]], output_path: str):
         '',
         'int emoji_search(const char* prefix, EmojiEntry* out, int max_results)',
         '{',
-        '    if (!prefix || !prefix[0]) return 0;',
+        '    if (!prefix || !prefix[0] || !out || max_results <= 0) return 0;',
         '    int len = (int)strlen(prefix);',
         '    int count = 0;',
         '',

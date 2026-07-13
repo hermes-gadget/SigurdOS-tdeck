@@ -9,6 +9,7 @@
 
 #include "fonts/emoji_font.h"
 #include "fonts/keyboard_layout_font.h"
+#include "fonts/latin_ext_font.h"
 
 // Minimal lv_font_t stub — the .fallback pointer is the only member
 // the mock needs. Other fields are zero-initialized for C compatibility.
@@ -16,10 +17,7 @@ const lv_font_t lv_font_montserrat_10   = {nullptr};
 const lv_font_t lv_font_montserrat_12   = {nullptr};
 const lv_font_t lv_font_montserrat_14   = {nullptr};
 const lv_font_t lv_font_montserrat_16   = {nullptr};
-const lv_font_t lv_font_montserrat_18   = {nullptr};
-const lv_font_t lv_font_montserrat_20   = {nullptr};
 const lv_font_t lv_font_montserrat_24   = {nullptr};
-const lv_font_t lv_font_montserrat_28   = {nullptr};
 
 // The emoji font — empty struct, not backed by actual glyph data.
 // Only used for pointer equality checks in fallback registration.

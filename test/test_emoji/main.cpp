@@ -84,7 +84,7 @@ TEST(EmojiFontTest, AllIndicesValid) {
 
 TEST(EmojiFontTest, CountMatches) {
     int count = emoji_font_get_count();
-    EXPECT_EQ(count, 362) << "Expected 362 emoji in the list";
+    EXPECT_EQ(count, 365) << "Expected 365 emoji in the list";
 }
 
 TEST(EmojiFontTest, EmojiCategoryCoverage) {
@@ -146,6 +146,24 @@ TEST(EmojiDataTest, HasThumbsUpLookup) {
     EXPECT_GE(n, 1) << "Should find :+1:";
     EXPECT_STREQ(out[0].short_name, "+1") << "First match should be :+1:";
     EXPECT_STREQ(out[0].utf8, "\xF0\x9F\x91\x8D") << ":+1: should map to 👍";
+}
+
+TEST(EmojiDataTest, CorrectNamedFaceCodepoints) {
+    EmojiEntry out[2];
+
+    ASSERT_EQ(emoji_search("exploding_head", out, 2), 1);
+    EXPECT_STREQ(out[0].utf8, "\xF0\x9F\xA4\xAF");  // U+1F92F
+
+    ASSERT_EQ(emoji_search("face_vomiting", out, 2), 1);
+    EXPECT_STREQ(out[0].utf8, "\xF0\x9F\xA4\xAE");  // U+1F92E
+
+    ASSERT_EQ(emoji_search("face_with_monocle", out, 2), 1);
+    EXPECT_STREQ(out[0].short_name, "face_with_monocle");
+    EXPECT_STREQ(out[0].utf8, "\xF0\x9F\xA7\x90");  // U+1F9D0
+
+    ASSERT_EQ(emoji_search("nerd_face", out, 2), 1);
+    EXPECT_STREQ(out[0].short_name, "nerd_face");
+    EXPECT_STREQ(out[0].utf8, "\xF0\x9F\xA4\x93");  // U+1F913
 }
 
 TEST(EmojiDataTest, PrefixSearchReturnsSorted) {

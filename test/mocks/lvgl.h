@@ -307,10 +307,7 @@ extern const lv_font_t lv_font_montserrat_10;
 extern const lv_font_t lv_font_montserrat_12;
 extern const lv_font_t lv_font_montserrat_14;
 extern const lv_font_t lv_font_montserrat_16;
-extern const lv_font_t lv_font_montserrat_18;
-extern const lv_font_t lv_font_montserrat_20;
 extern const lv_font_t lv_font_montserrat_24;
-extern const lv_font_t lv_font_montserrat_28;
 extern const lv_font_t emoji_font;
 #ifdef __cplusplus
 }

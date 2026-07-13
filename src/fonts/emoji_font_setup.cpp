@@ -37,10 +37,7 @@ static lv_font_t wrapped_10;
 static lv_font_t wrapped_12;
 static lv_font_t wrapped_14;
 static lv_font_t wrapped_16;
-static lv_font_t wrapped_18;
-static lv_font_t wrapped_20;
 static lv_font_t wrapped_24;
-static lv_font_t wrapped_28;
 
 // Writable wrapper for latin_ext_font. Same deal: the generated font data is
 // const (flash), but the .fallback chain pointer must be mutable at runtime.
@@ -52,10 +49,7 @@ const lv_font_t* emoji_wrapped_montserrat_10 = &wrapped_10;
 const lv_font_t* emoji_wrapped_montserrat_12 = &wrapped_12;
 const lv_font_t* emoji_wrapped_montserrat_14 = &wrapped_14;
 const lv_font_t* emoji_wrapped_montserrat_16 = &wrapped_16;
-const lv_font_t* emoji_wrapped_montserrat_18 = &wrapped_18;
-const lv_font_t* emoji_wrapped_montserrat_20 = &wrapped_20;
 const lv_font_t* emoji_wrapped_montserrat_24 = &wrapped_24;
-const lv_font_t* emoji_wrapped_montserrat_28 = &wrapped_28;
 
 extern "C" void emoji_font_register_fallback()
 {
@@ -79,21 +73,12 @@ extern "C" void emoji_font_register_fallback()
     memcpy(&wrapped_16, &lv_font_montserrat_16, sizeof(lv_font_t));
     wrapped_16.fallback = &wrapped_latin_ext;
 
-    memcpy(&wrapped_18, &lv_font_montserrat_18, sizeof(lv_font_t));
-    wrapped_18.fallback = &wrapped_latin_ext;
-
-    memcpy(&wrapped_20, &lv_font_montserrat_20, sizeof(lv_font_t));
-    wrapped_20.fallback = &wrapped_latin_ext;
-
     memcpy(&wrapped_24, &lv_font_montserrat_24, sizeof(lv_font_t));
     wrapped_24.fallback = &wrapped_latin_ext;
-
-    memcpy(&wrapped_28, &lv_font_montserrat_28, sizeof(lv_font_t));
-    wrapped_28.fallback = &wrapped_latin_ext;
 }
 
 // ════════════════════════════════════════════════════════
-// Emoji list -- 362 common emoji from Noto Emoji (16px, 4bpp)
+// Emoji list -- 365 common emoji from Noto Emoji (16px, 4bpp)
 // Matches the glyph set in emoji_font.c
 // Auto-generated from emoji_font.c cmap data
 // ════════════════════════════════════════════════════════
@@ -139,16 +124,17 @@ static const char* emoji_list[] = {
     "\xF0\x9F\x99\x8C", "\xF0\x9F\x99\x8F", "\xF0\x9F\x9A\x80", "\xF0\x9F\x9A\x81", "\xF0\x9F\x9A\x8C", "\xF0\x9F\x9A\x8E", "\xF0\x9F\x9A\x90", "\xF0\x9F\x9A\x91",
     "\xF0\x9F\x9A\x92", "\xF0\x9F\x9A\x93", "\xF0\x9F\x9A\x95", "\xF0\x9F\x9A\x97", "\xF0\x9F\x9A\x98", "\xF0\x9F\x9A\x99", "\xF0\x9F\x9A\xA2", "\xF0\x9F\x9A\xA8",
     "\xF0\x9F\x9A\xA9", "\xF0\x9F\x9A\xAB", "\xF0\x9F\x9A\xB2", "\xF0\x9F\x9A\xB4", "\xF0\x9F\x9B\xA0", "\xF0\x9F\x9B\xA5", "\xF0\x9F\x9B\xB4", "\xF0\x9F\x9B\xB5",
-    "\xF0\x9F\x9B\xB8", "\xF0\x9F\xA4\x8C", "\xF0\x9F\xA4\x8D", "\xF0\x9F\xA4\x8E", "\xF0\x9F\xA4\x8F", "\xF0\x9F\xA4\x94", "\xF0\x9F\xA4\x98", "\xF0\x9F\xA4\x99",
-    "\xF0\x9F\xA4\x9D", "\xF0\x9F\xA4\x9E", "\xF0\x9F\xA4\xA0", "\xF0\x9F\xA4\xA1", "\xF0\x9F\xA4\xA7", "\xF0\x9F\xA4\xA9", "\xF0\x9F\xA4\xAA", "\xF0\x9F\xA4\xAB",
+    "\xF0\x9F\x9B\xB8", "\xF0\x9F\xA4\x8C", "\xF0\x9F\xA4\x8D", "\xF0\x9F\xA4\x8E", "\xF0\x9F\xA4\x8F", "\xF0\x9F\xA4\x93", "\xF0\x9F\xA4\x94", "\xF0\x9F\xA4\x98",
+    "\xF0\x9F\xA4\x99", "\xF0\x9F\xA4\x9D", "\xF0\x9F\xA4\x9E", "\xF0\x9F\xA4\xA0", "\xF0\x9F\xA4\xA1", "\xF0\x9F\xA4\xA3", "\xF0\x9F\xA4\xA7", "\xF0\x9F\xA4\xA9",
+    "\xF0\x9F\xA4\xAA", "\xF0\x9F\xA4\xAB",
     "\xF0\x9F\xA4\xAC", "\xF0\x9F\xA4\xAD", "\xF0\x9F\xA4\xAE", "\xF0\x9F\xA4\xAF", "\xF0\x9F\xA4\xB3", "\xF0\x9F\xA4\xB4", "\xF0\x9F\xA4\xB5", "\xF0\x9F\xA4\xB6",
     "\xF0\x9F\xA4\xB7", "\xF0\x9F\xA4\xB8", "\xF0\x9F\xA4\xB9", "\xF0\x9F\xA5\x81", "\xF0\x9F\xA5\xB0", "\xF0\x9F\xA5\xB5", "\xF0\x9F\xA5\xB6", "\xF0\x9F\xA5\xB8",
     "\xF0\x9F\xA5\xBA", "\xF0\x9F\xA6\x81", "\xF0\x9F\xA6\x84", "\xF0\x9F\xA6\x8A", "\xF0\x9F\xA6\x8C", "\xF0\x9F\xA6\x9B", "\xF0\x9F\xA6\x9D", "\xF0\x9F\xA6\x9E",
-    "\xF0\x9F\xA6\xAC", "\xF0\x9F\xA7\xA1",
+    "\xF0\x9F\xA6\xAC", "\xF0\x9F\xA7\x90", "\xF0\x9F\xA7\xA1",
 };
 
 static constexpr int EMOJI_LIST_COUNT = sizeof(emoji_list) / sizeof(emoji_list[0]);
-static_assert(EMOJI_LIST_COUNT == 362, "emoji_list size mismatch");
+static_assert(EMOJI_LIST_COUNT == 365, "emoji_list size mismatch");
 
 extern "C" int emoji_font_get_count()
 {

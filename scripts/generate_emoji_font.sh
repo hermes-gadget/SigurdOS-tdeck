@@ -25,6 +25,7 @@ BPP=4
 RANGES="-r 0x1F600-0x1F644"   # 😀😁😂🤣😃😄😅😆😉😊😋😌😍😎😏
 
 # Additional faces
+RANGES+=" -r 0x1F913"         # 🤓 nerd face
 RANGES+=" -r 0x1F914"         # 🤔
 RANGES+=" -r 0x1F923"         # 🤣 rolling on the floor laughing
 RANGES+=" -r 0x1F927"         # 🤗
@@ -42,6 +43,7 @@ RANGES+=" -r 0x1F92C"         # 🤬
 RANGES+=" -r 0x1F92D"         # 🤭
 RANGES+=" -r 0x1F92E"         # 🤮
 RANGES+=" -r 0x1F92F"         # 🤯
+RANGES+=" -r 0x1F9D0"         # 🧐 face with monocle
 RANGES+=" -r 0x1F47B"         # 👻
 RANGES+=" -r 0x1F480"         # 💀
 RANGES+=" -r 0x1F47D"         # 👽
@@ -370,10 +372,7 @@ extern const lv_font_t* emoji_wrapped_montserrat_10;
 extern const lv_font_t* emoji_wrapped_montserrat_12;
 extern const lv_font_t* emoji_wrapped_montserrat_14;
 extern const lv_font_t* emoji_wrapped_montserrat_16;
-extern const lv_font_t* emoji_wrapped_montserrat_18;
-extern const lv_font_t* emoji_wrapped_montserrat_20;
 extern const lv_font_t* emoji_wrapped_montserrat_24;
-extern const lv_font_t* emoji_wrapped_montserrat_28;
 
 // Register emoji font as fallback for all Montserrat sizes used in the UI.
 // Call once during UI initialization.

@@ -11,7 +11,23 @@
 namespace {
 
 TEST(EmojiFontIntegrity, CountMatchesGeneratedList) {
-    EXPECT_EQ(emoji_font_get_count(), 362);
+    EXPECT_EQ(emoji_font_get_count(), 365);
+}
+
+TEST(EmojiFontIntegrity, CorrectedAndPreviouslyOmittedGlyphsAreIndexed) {
+    const std::set<std::string> required = {
+        "\xF0\x9F\xA4\x93",  // U+1F913 nerd face
+        "\xF0\x9F\xA4\xA3",  // U+1F923 rolling on the floor laughing
+        "\xF0\x9F\xA7\x90",  // U+1F9D0 face with monocle
+    };
+    std::set<std::string> indexed;
+    for (int i = 0; i < emoji_font_get_count(); i++) {
+        indexed.insert(emoji_font_get_by_index(i));
+    }
+
+    for (const auto& glyph : required) {
+        EXPECT_EQ(indexed.count(glyph), 1u);
+    }
 }
 
 TEST(EmojiFontIntegrity, EveryIndexedEntryIsPresent) {

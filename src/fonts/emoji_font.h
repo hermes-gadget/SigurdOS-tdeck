@@ -12,28 +12,13 @@ extern "C" {
 // Size: 16px, Bpp: 4 (grayscale anti-aliasing)
 extern const lv_font_t emoji_font;
 
-// Latin-extended font (Montserrat Regular) providing Latin-1 Supplement +
-// Latin Extended-A glyphs (äöüéèàç, etc.) for Western/Central European
-// accented characters. Used as an intermediate fallback in the chain:
-// Montserrat → latin_ext_font → keyboard_layout_font → emoji_font.
-// Generated — see scripts/generate_latin_ext_font.sh
-// Size: 16px, Bpp: 4
-extern const lv_font_t latin_ext_font;
-
-// DejaVu Sans subset for Greek, Cyrillic, Arabic, and Arabic presentation
-// forms used by the physical keyboard layout mapper.
-extern const lv_font_t keyboard_layout_font;
-
 // Writable wrappers around Montserrat fonts with emoji fallback set.
 // Use these instead of lv_font_montserrat_XX where emoji support is needed.
 extern const lv_font_t* emoji_wrapped_montserrat_10;
 extern const lv_font_t* emoji_wrapped_montserrat_12;
 extern const lv_font_t* emoji_wrapped_montserrat_14;
 extern const lv_font_t* emoji_wrapped_montserrat_16;
-extern const lv_font_t* emoji_wrapped_montserrat_18;
-extern const lv_font_t* emoji_wrapped_montserrat_20;
 extern const lv_font_t* emoji_wrapped_montserrat_24;
-extern const lv_font_t* emoji_wrapped_montserrat_28;
 
 // Register emoji font as fallback for all Montserrat sizes used in the UI.
 // Call once during UI initialization.
