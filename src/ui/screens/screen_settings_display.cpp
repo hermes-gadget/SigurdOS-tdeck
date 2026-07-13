@@ -547,8 +547,7 @@ void settings_display_show()
         lv_obj_set_style_bg_color(btn_theme, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
         lv_obj_set_style_bg_opa(btn_theme, LV_OPA_COVER, 0);
         lv_obj_set_style_text_color(btn_theme, lv_color_hex(TEXT_PRIMARY), 0);
-        lv_obj_add_event_cb(btn_theme, [](lv_event_t* e) {
-            lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
+        lv_obj_add_event_cb(btn_theme, [](lv_event_t*) {
             sigurdos::NodePrefs np = sigurdos::prefs_get();
             np.theme_id = (np.theme_id + 1) % NUM_THEMES;
             theme_apply(np.theme_id);

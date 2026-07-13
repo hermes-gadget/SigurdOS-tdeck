@@ -303,33 +303,6 @@ static uint32_t one_shot_symbol(uint8_t key_code, bool shifted)
     return key_code;
 }
 
-static void update_modifier_sample(const uint8_t matrix[KB_RAW_COLS])
-{
-    const bool sym_down = raw_key_down(matrix, 0, 2);
-    const bool alt_down = raw_key_down(matrix, 0, 4);
-    const bool mic_down = raw_key_down(matrix, 0, 6);
-    const bool shift_down = raw_key_down(matrix, 1, 6) || raw_key_down(matrix, 2, 3);
-
-    if (sym_down && !sym_sample_down) sym_combo_used = false;
-    if (alt_down && !alt_sample_down) alt_combo_used = false;
-    if (mic_down && !mic_sample_down) mic_combo_used = false;
-
-    // Alt+B is consumed entirely by the C3 as a backlight toggle, so no ASCII
-    // byte arrives for resolve_pending_key() to mark the chord as used.
-    if (alt_down && raw_key_down(matrix, 3, 4)) alt_combo_used = true;
-
-    if (!sym_down && sym_sample_down && !sym_combo_used) sym_one_shot = true;
-    if (!alt_down && alt_sample_down && !alt_combo_used) alt_one_shot = true;
-    if (!mic_down && mic_sample_down && !mic_combo_used) mic_one_shot = true;
-
-    sym_sample_down = sym_down;
-    alt_sample_down = alt_down;
-    mic_sample_down = mic_down;
-    shift_sample_down = shift_down;
-    shift_held = shift_down;
-    alt_held = alt_down || alt_one_shot || mic_down || mic_one_shot;
-}
-
 static void resolve_pending_key(const uint8_t* matrix)
 {
     if (!pending_key_valid) return;

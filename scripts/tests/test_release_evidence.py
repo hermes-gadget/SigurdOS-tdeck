@@ -55,12 +55,10 @@ class ReleaseEvidenceTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 1)
 
-    def test_warning_budget_accepts_baseline_and_rejects_delta(self):
+    def test_warning_budget_accepts_clean_log_and_rejects_delta(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "build.log"
             log.write_text(
-                "src/ui/screens/screen_settings_display.cpp:551:23: "
-                "warning: unused [-Wunused-variable]\n"
                 "lib/vendor.cpp:1: warning: ignored [-Wunused-variable]\n"
             )
             result = self.run_script("check_first_party_warnings.py", "--log", log)
