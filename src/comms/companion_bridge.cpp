@@ -53,10 +53,12 @@ static bool pathByteLen(uint8_t path_len, size_t* out_len)
 
 } // namespace
 
-void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* host)
+void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* host,
+                            CompanionFrameDeliveryTracker* delivery_tracker)
 {
     _serial = serial;
     _host = host;
+    _delivery_tracker = delivery_tracker;
     _app_target_ver = 3;
     _last_sync_time = 0;
     _contact_iter = -1;
@@ -64,6 +66,8 @@ void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* ho
     _sign_active = false;
     _sign_len = 0;
     _was_connected = false;
+    _delivery_token_counter = 0;
+    clearPendingOfflineDelivery();
     clearPendingBinary();
 }
 
@@ -86,6 +90,7 @@ bool CompanionBridge::setEnabled(bool enabled)
         _sign_active = false;
         _sign_len = 0;
         _was_connected = false;
+        clearPendingOfflineDelivery();
         clearPendingBinary();
         if (_host) _host->cancelBinaryReqs();
     }
@@ -127,6 +132,44 @@ void CompanionBridge::clearPendingBinary()
     std::memset(_pending_binary, 0, sizeof(_pending_binary));
 }
 
+void CompanionBridge::clearPendingOfflineDelivery()
+{
+    _offline_delivery_pending = false;
+    _offline_delivery_persistent = false;
+    _offline_delivery_token = 0;
+    _offline_delivery_store_id = 0;
+}
+
+uint32_t CompanionBridge::nextDeliveryToken()
+{
+    ++_delivery_token_counter;
+    if (_delivery_token_counter == 0) ++_delivery_token_counter;
+    return _delivery_token_counter;
+}
+
+void CompanionBridge::processFrameDeliveries()
+{
+    if (!_delivery_tracker) return;
+
+    CompanionFrameDelivery delivery{};
+    while (_delivery_tracker->pollFrameDelivery(delivery)) {
+        if (!_offline_delivery_pending ||
+            delivery.token != _offline_delivery_token) {
+            continue;
+        }
+
+        const bool persistent = _offline_delivery_persistent;
+        const uint32_t store_id = _offline_delivery_store_id;
+        clearPendingOfflineDelivery();
+        if (!delivery.succeeded) continue;
+
+        if (!persistent ||
+            sigurdos::mesh::messageStoreMarkCompanionSent(store_id)) {
+            removeFirstOfflineFrame();
+        }
+    }
+}
+
 void CompanionBridge::loop()
 {
     if (!_serial || !_host || !_serial->isEnabled()) return;
@@ -145,6 +188,7 @@ void CompanionBridge::loop()
     }
     _was_connected = _serial->isConnected();
     size_t len = _serial->checkRecvFrame(_cmd_frame);
+    processFrameDeliveries();
     if (len > 0) {
         handleFrame(_cmd_frame, len);
     }
@@ -365,8 +409,9 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
     bool added = addToOfflineQueue(msg.store_id, msg.store_id != 0, frame, len);
     if (added) {
         // The record is NOT marked companion_sent here — that happens only when
-        // CMD_SYNC_NEXT_MESSAGE successfully writes the frame to the app. This
-        // prevents data loss if the app disconnects before draining the queue.
+        // CMD_SYNC_NEXT_MESSAGE confirms the frame was handed to the app. BLE
+        // waits for notification status; synchronous transports confirm on a
+        // complete write. This prevents data loss if the app disconnects first.
         if (isConnected()) {
             uint8_t tickle = PUSH_CODE_MSG_WAITING;
             _serial->writeFrame(&tickle, 1);
@@ -696,17 +741,35 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 
     if (cmd == CMD_SYNC_NEXT_MESSAGE) {
         _last_sync_time = _host->currentTime();
+        if (_offline_delivery_pending) {
+            writeErrFrame(ERR_CODE_BAD_STATE);
+            return true;
+        }
         uint32_t store_id = 0;
         bool persistent = false;
         int out_len = peekOfflineQueue(_out_frame, &store_id, &persistent);
         if (out_len > 0) {
-            // Dequeue only after the transport accepts the complete frame.
-            size_t written = _serial->writeFrame(_out_frame, out_len);
+            uint32_t delivery_token = 0;
+            size_t written = 0;
+            if (_delivery_tracker) {
+                delivery_token = nextDeliveryToken();
+                written = _delivery_tracker->writeFrameTracked(
+                    _out_frame, out_len, delivery_token);
+            } else {
+                written = _serial->writeFrame(_out_frame, out_len);
+            }
             if (written == (size_t)out_len) {
-                if (persistent) {
-                    sigurdos::mesh::messageStoreMarkCompanionSent(store_id);
+                if (_delivery_tracker) {
+                    _offline_delivery_pending = true;
+                    _offline_delivery_persistent = persistent;
+                    _offline_delivery_token = delivery_token;
+                    _offline_delivery_store_id = store_id;
+                } else {
+                    if (persistent) {
+                        sigurdos::mesh::messageStoreMarkCompanionSent(store_id);
+                    }
+                    removeFirstOfflineFrame();
                 }
-                removeFirstOfflineFrame();
             }
         } else {
             writeNoMoreMessages();

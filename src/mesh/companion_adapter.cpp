@@ -1123,9 +1123,9 @@ static void bleValidationEmit(bool force)
     ble_validation_last_log_ms = now;
 
     const sigurdos::comms::BleSerialObserverStats s = g_ble_serial.stats();
-    char line[320];
+    char line[352];
     snprintf(line, sizeof(line),
-             "@ble_hw|ms=%lu|begun=%u|en=%u|conn=%u|adv=%u|authok=%lu|authfail=%lu|connect=%lu|disconnect=%lu|mtu=%u|rxw=%lu|rxd=%lu|rx=%lu|tx=%lu|txd=%lu|lrx=%u|ltx=%u",
+             "@ble_hw|ms=%lu|begun=%u|en=%u|conn=%u|adv=%u|authok=%lu|authfail=%lu|connect=%lu|disconnect=%lu|mtu=%u|rxw=%lu|rxd=%lu|rx=%lu|tx=%lu|txd=%lu|notifyok=%lu|notifyfail=%lu|lrx=%u|ltx=%u",
              (unsigned long)now,
              s.begun ? 1u : 0u,
              s.enabled ? 1u : 0u,
@@ -1141,6 +1141,8 @@ static void bleValidationEmit(bool force)
              (unsigned long)s.rx_frame_count,
              (unsigned long)s.tx_frame_count,
              (unsigned long)s.tx_drop_count,
+             (unsigned long)s.notify_success_count,
+             (unsigned long)s.notify_failure_count,
              (unsigned int)s.last_rx_code,
              (unsigned int)s.last_tx_code);
     // Route through SIG_LOG* so production sources stay clear of the raw
@@ -1177,7 +1179,7 @@ void sigurdos::mesh::companionAdapterInit()
     ble_name[sizeof(ble_name) - 1] = '\0';
     g_ble_serial.begin("MeshCore-", ble_name, g_companion_host.blePin());
     if (CompanionBridge* b = companionBridge()) {
-        b->begin(&g_ble_serial, &g_companion_host);
+        b->begin(&g_ble_serial, &g_companion_host, &g_ble_serial);
         if (sigurdos::prefs_get().ble_enabled) {
             bool enabled = b->setEnabled(true);
 #if defined(SIGURDOS_DEBUG) || \

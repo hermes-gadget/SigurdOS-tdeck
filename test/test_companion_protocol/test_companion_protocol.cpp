@@ -9,7 +9,7 @@
 
 namespace {
 
-class MockSerial final : public BaseSerialInterface {
+class MockSerial : public BaseSerialInterface {
 public:
     bool enabled = false;
     bool connected = true;
@@ -34,6 +34,42 @@ public:
         (void)dest;
         return 0;
     }
+};
+
+class MockDeliverySerial final
+    : public MockSerial,
+      public sigurdos::comms::CompanionFrameDeliveryTracker {
+public:
+    struct PendingDelivery {
+        uint32_t token;
+        std::vector<uint8_t> frame;
+    };
+
+    size_t writeFrameTracked(const uint8_t src[], size_t len,
+                             uint32_t token) override {
+        const size_t written = MockSerial::writeFrame(src, len);
+        if (written == len) {
+            pending.push_back({token, std::vector<uint8_t>(src, src + len)});
+        }
+        return written;
+    }
+
+    bool pollFrameDelivery(sigurdos::comms::CompanionFrameDelivery& delivery) override {
+        if (completed.empty()) return false;
+        delivery = completed.front();
+        completed.erase(completed.begin());
+        return true;
+    }
+
+    bool completeNext(bool succeeded) {
+        if (pending.empty()) return false;
+        completed.push_back({pending.front().token, succeeded});
+        pending.erase(pending.begin());
+        return true;
+    }
+
+    std::vector<PendingDelivery> pending;
+    std::vector<sigurdos::comms::CompanionFrameDelivery> completed;
 };
 
 class FakeHost final : public sigurdos::comms::CompanionBridgeHost {
@@ -741,6 +777,105 @@ TEST_F(CompanionProtocolTest, FailedWriteKeepsOfflineFrameForRetry) {
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
     ASSERT_EQ(serial.writes.size(), 3U);
     EXPECT_EQ(serial.writes[2][0], sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
+}
+
+TEST_F(CompanionProtocolTest, TrackedWriteWaitsForNotificationSuccess) {
+    MockDeliverySerial delivery_serial;
+    sigurdos::comms::CompanionBridge tracked_bridge;
+    delivery_serial.enabled = true;
+    tracked_bridge.begin(&delivery_serial, &host, &delivery_serial);
+
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "confirm me", sizeof(msg.text) - 1);
+    msg.timestamp = 79;
+    for (int i = 0; i < 6; ++i) msg.sender_prefix[i] = (uint8_t)(0xA0 + i);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+
+    uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    ASSERT_TRUE(tracked_bridge.handleFrame(start, sizeof(start)));
+    delivery_serial.writes.clear();
+
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(tracked_bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(delivery_serial.pending.size(), 1u);
+    EXPECT_EQ(delivery_serial.pending[0].frame[0],
+              sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+
+    sigurdos::mesh::StoredMessage stored{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
+    EXPECT_FALSE(stored.companion_sent);
+
+    // Record the connected state, then model SUCCESS_NOTIFY immediately
+    // followed by a peer disconnect before the application task runs again.
+    // The already-confirmed delivery must not be discarded by disconnect
+    // housekeeping.
+    tracked_bridge.loop();
+    ASSERT_TRUE(delivery_serial.completeNext(true));
+    delivery_serial.connected = false;
+    tracked_bridge.loop();
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
+    EXPECT_TRUE(stored.companion_sent);
+
+    delivery_serial.connected = true;
+    ASSERT_TRUE(tracked_bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_GE(delivery_serial.writes.size(), 2u);
+    EXPECT_EQ(delivery_serial.writes.back()[0],
+              sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
+}
+
+TEST_F(CompanionProtocolTest, NotificationFailureKeepsOfflineFrameForRetry) {
+    MockDeliverySerial delivery_serial;
+    sigurdos::comms::CompanionBridge tracked_bridge;
+    delivery_serial.enabled = true;
+    tracked_bridge.begin(&delivery_serial, &host, &delivery_serial);
+
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "notify retry", sizeof(msg.text) - 1);
+    msg.timestamp = 80;
+    for (int i = 0; i < 6; ++i) msg.sender_prefix[i] = (uint8_t)(0xA0 + i);
+    ASSERT_TRUE(tracked_bridge.enqueueMessage(msg));
+    delivery_serial.writes.clear();
+
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(tracked_bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(delivery_serial.pending.size(), 1u);
+    const uint32_t first_token = delivery_serial.pending[0].token;
+
+    ASSERT_TRUE(delivery_serial.completeNext(false));
+    tracked_bridge.loop();
+    ASSERT_TRUE(tracked_bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(delivery_serial.pending.size(), 1u);
+    EXPECT_NE(delivery_serial.pending[0].token, first_token);
+    EXPECT_EQ(delivery_serial.pending[0].frame[0],
+              sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+}
+
+TEST_F(CompanionProtocolTest, SecondSyncIsRejectedWhileDeliveryIsPending) {
+    MockDeliverySerial delivery_serial;
+    sigurdos::comms::CompanionBridge tracked_bridge;
+    delivery_serial.enabled = true;
+    tracked_bridge.begin(&delivery_serial, &host, &delivery_serial);
+
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "one at a time", sizeof(msg.text) - 1);
+    msg.timestamp = 81;
+    for (int i = 0; i < 6; ++i) msg.sender_prefix[i] = (uint8_t)(0xA0 + i);
+    ASSERT_TRUE(tracked_bridge.enqueueMessage(msg));
+    delivery_serial.writes.clear();
+
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(tracked_bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_TRUE(tracked_bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(delivery_serial.pending.size(), 1u);
+    ASSERT_EQ(delivery_serial.writes.size(), 2u);
+    EXPECT_EQ(delivery_serial.writes[1][0], sigurdos::comms::RESP_CODE_ERR);
+    EXPECT_EQ(delivery_serial.writes[1][1], sigurdos::comms::ERR_CODE_BAD_STATE);
 }
 
 TEST_F(CompanionProtocolTest, DisconnectDuringDrainKeepsFrameForReconnect) {

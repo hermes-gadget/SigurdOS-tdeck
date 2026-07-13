@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "companion_frame_delivery.h"
 #include "mesh/message_store.h"
 #include <helpers/BaseSerialInterface.h>
 
@@ -377,7 +378,8 @@ public:
 
 class CompanionBridge {
 public:
-    void begin(BaseSerialInterface* serial, CompanionBridgeHost* host);
+    void begin(BaseSerialInterface* serial, CompanionBridgeHost* host,
+               CompanionFrameDeliveryTracker* delivery_tracker = nullptr);
     void loop();
     bool handleFrame(const uint8_t* frame, size_t len);
 
@@ -438,8 +440,9 @@ private:
     bool addToOfflineQueue(uint32_t store_id, bool persistent,
                            const uint8_t* frame, size_t len);
     void seedOfflineQueueFromStore();
-    // Peek does not dequeue. removeFirstOfflineFrame() is called only after the
-    // transport accepts the complete frame.
+    // Peek does not dequeue. removeFirstOfflineFrame() is called only after a
+    // tracked transport confirms delivery, or a synchronous transport accepts
+    // the complete frame.
     int  peekOfflineQueue(uint8_t* frame, uint32_t* store_id, bool* persistent);
     void removeFirstOfflineFrame();
     bool buildMessageFrame(const sigurdos::mesh::StoredMessage& msg,
@@ -448,6 +451,9 @@ private:
     int findFreePendingBinary() const;
     void expirePendingBinary();
     void clearPendingBinary();
+    void processFrameDeliveries();
+    void clearPendingOfflineDelivery();
+    uint32_t nextDeliveryToken();
 
     struct PendingBinaryRequest {
         uint32_t tag = 0;
@@ -458,6 +464,7 @@ private:
 
     BaseSerialInterface* _serial = nullptr;
     CompanionBridgeHost* _host = nullptr;
+    CompanionFrameDeliveryTracker* _delivery_tracker = nullptr;
     uint8_t _app_target_ver = 3;
     uint32_t _last_sync_time = 0;
     uint32_t _iter_filter_since = 0;
@@ -475,6 +482,11 @@ private:
     size_t  _sign_len = 0;
     bool    _sign_active = false;
     bool    _was_connected = false;  // detect BLE disconnect to clear signing state (#712)
+    bool    _offline_delivery_pending = false;
+    bool    _offline_delivery_persistent = false;
+    uint32_t _offline_delivery_token = 0;
+    uint32_t _offline_delivery_store_id = 0;
+    uint32_t _delivery_token_counter = 0;
 
 };
 

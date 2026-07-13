@@ -8,6 +8,20 @@
 namespace sigurdos {
 namespace comms {
 
+namespace {
+
+static constexpr const char* MESHCORE_BLE_SERVICE_UUID =
+    "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+static constexpr const char* MESHCORE_BLE_TX_UUID =
+    "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
+
+} // namespace
+
+ObservedSerialBLEInterface::ObservedSerialBLEInterface()
+    : _tx_status_callbacks(*this)
+{
+}
+
 void ObservedSerialBLEInterface::refreshConnectionState()
 {
     _stats.enabled = isEnabled();
@@ -19,6 +33,8 @@ void ObservedSerialBLEInterface::begin(const char* prefix, char* name, uint32_t 
 {
     SerialBLEInterface::begin(prefix, name, pin_code);
     _rx_queue.clear();
+    _tx_tokens.clear();
+    _delivery_events.clear();
     _stats = BleSerialObserverStats{};
     _stats.begun = true;
     _stats.begin_count = 1;
@@ -29,6 +45,7 @@ void ObservedSerialBLEInterface::enable()
 {
     SerialBLEInterface::enable();  // also clears the (now unused) base buffers
     _rx_queue.clear();
+    failPendingDeliveries();
     _stats.enable_count++;
     refreshConnectionState();
 }
@@ -37,6 +54,7 @@ void ObservedSerialBLEInterface::disable()
 {
     SerialBLEInterface::disable();
     _rx_queue.clear();
+    failPendingDeliveries();
     _stats.disable_count++;
     refreshConnectionState();
 }
@@ -48,8 +66,30 @@ bool ObservedSerialBLEInterface::isConnected() const
 
 size_t ObservedSerialBLEInterface::writeFrame(const uint8_t src[], size_t len)
 {
+    return enqueueFrame(src, len, 0);
+}
+
+size_t ObservedSerialBLEInterface::writeFrameTracked(const uint8_t src[], size_t len,
+                                                     uint32_t token)
+{
+    if (token == 0) return 0;
+    return enqueueFrame(src, len, token);
+}
+
+size_t ObservedSerialBLEInterface::enqueueFrame(const uint8_t src[], size_t len,
+                                                uint32_t token)
+{
+    if (_tx_tokens.size() >= FRAME_QUEUE_SIZE) {
+        if (len > 0) _stats.tx_drop_count++;
+        return 0;
+    }
     size_t written = SerialBLEInterface::writeFrame(src, len);
     if (written > 0) {
+        if (!_tx_tokens.push(reinterpret_cast<const uint8_t*>(&token),
+                             sizeof(token))) {
+            _stats.tx_drop_count++;
+            return 0;
+        }
         _stats.tx_frame_count++;
         _stats.last_tx_code = src ? src[0] : 0;
     } else if (len > 0) {
@@ -59,12 +99,24 @@ size_t ObservedSerialBLEInterface::writeFrame(const uint8_t src[], size_t len)
     return written;
 }
 
+bool ObservedSerialBLEInterface::pollFrameDelivery(CompanionFrameDelivery& delivery)
+{
+    uint8_t event[sizeof(uint32_t) + 1]{};
+    if (_delivery_events.pop(event) != sizeof(event)) return false;
+    std::memcpy(&delivery.token, event, sizeof(delivery.token));
+    delivery.succeeded = event[sizeof(uint32_t)] != 0;
+    return true;
+}
+
 size_t ObservedSerialBLEInterface::checkRecvFrame(uint8_t dest[])
 {
     // Drives the base transmit queue and connection housekeeping. The base
     // receive queue stays empty (onWrite no longer feeds it), so any frame
     // returned here comes from _rx_queue.
+    _notification_attempt_active =
+        _tx_tokens.size() > 0 && !SerialBLEInterface::isWriteBusy();
     size_t len = SerialBLEInterface::checkRecvFrame(dest);
+    _notification_attempt_active = false;
     if (len == 0) {
         len = _rx_queue.pop(dest);
     }
@@ -109,6 +161,7 @@ void ObservedSerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cm
 
 void ObservedSerialBLEInterface::onConnect(BLEServer* server)
 {
+    observeTxCharacteristic(server);
     SerialBLEInterface::onConnect(server);
     refreshConnectionState();
 }
@@ -143,7 +196,56 @@ void ObservedSerialBLEInterface::onDisconnect(BLEServer* server)
     // Pending frames belong to the dead connection; the base class drops its
     // own buffers on the disconnect transition, mirror that for _rx_queue.
     _rx_queue.clear();
+    failPendingDeliveries();
     refreshConnectionState();
+}
+
+void ObservedSerialBLEInterface::TxStatusCallbacks::onStatus(
+    BLECharacteristic* characteristic, Status status, uint32_t code)
+{
+    (void)characteristic;
+    _owner.handleNotificationStatus(status, code);
+}
+
+void ObservedSerialBLEInterface::observeTxCharacteristic(BLEServer* server)
+{
+    if (!server) return;
+    BLEService* service = server->getServiceByUUID(MESHCORE_BLE_SERVICE_UUID);
+    if (!service) return;
+    BLECharacteristic* tx = service->getCharacteristic(MESHCORE_BLE_TX_UUID);
+    if (tx) tx->setCallbacks(&_tx_status_callbacks);
+}
+
+void ObservedSerialBLEInterface::handleNotificationStatus(
+    ::BLECharacteristicCallbacks::Status status, uint32_t code)
+{
+    (void)code;
+    if (!_notification_attempt_active) return;
+    _notification_attempt_active = false;
+
+    uint32_t token = 0;
+    if (_tx_tokens.pop(reinterpret_cast<uint8_t*>(&token)) != sizeof(token)) return;
+    const bool succeeded = status == ::BLECharacteristicCallbacks::SUCCESS_NOTIFY;
+    if (succeeded) _stats.notify_success_count++;
+    else _stats.notify_failure_count++;
+    if (token == 0) return;
+
+    uint8_t event[sizeof(uint32_t) + 1]{};
+    std::memcpy(event, &token, sizeof(token));
+    event[sizeof(uint32_t)] = succeeded ? 1 : 0;
+    _delivery_events.push(event, sizeof(event));
+}
+
+void ObservedSerialBLEInterface::failPendingDeliveries()
+{
+    uint32_t token = 0;
+    while (_tx_tokens.pop(reinterpret_cast<uint8_t*>(&token)) == sizeof(token)) {
+        if (token == 0) continue;
+        uint8_t event[sizeof(uint32_t) + 1]{};
+        std::memcpy(event, &token, sizeof(token));
+        _delivery_events.push(event, sizeof(event));
+    }
+    _notification_attempt_active = false;
 }
 
 void ObservedSerialBLEInterface::onWrite(BLECharacteristic* characteristic,
