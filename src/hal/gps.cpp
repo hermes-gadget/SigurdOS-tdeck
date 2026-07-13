@@ -26,10 +26,6 @@
 #include <cstdlib>
 #include <cctype>
 
-#if !defined(ESP32_PLATFORM) && !defined(_WIN32)
-#include <sys/time.h>
-#endif
-
 // ── GPS state ────────────────────────────────────────────
 static struct GPSData {
     float    latitude;
@@ -371,9 +367,10 @@ void sigurdos_gps_loop() {
                 process_nmea(nmea_buf);
                 nmea_pos = 0;
 
-                // Auto-sync RTC from GPS on first valid fix with date
+                // Publish a pending GPS time for the clock owner. Parsing must
+                // not consume it: main.cpp marks it synced only after the mesh
+                // clock accepts the update.
                 if (!gps.time_synced && gps.has_fix && gps.year >= 2020) {
-                    gps.time_synced = true;
                     // Compute Unix epoch from GPS date/time using Howard
                     // Hinnant's date algorithm — shared with the onboarding
                     // and manual time-set paths (mesh_wrapper.cpp makeEpoch)
@@ -389,16 +386,6 @@ void sigurdos_gps_loop() {
                     uint32_t epoch = (uint32_t)days * 86400UL + gps.hour * 3600UL
                                    + gps.minute * 60UL + gps.second;
                     gps.epoch = epoch;
-                    // Set system RTC where settimeofday is available.
-                    // Native Windows builds do not expose it, and the tests only
-                    // need to validate that the GPS parser reaches synced state.
-#if !defined(_WIN32)
-                    struct timeval tv = { static_cast<time_t>(epoch), 0 };
-                    settimeofday(&tv, nullptr);
-#endif
-                    if (gps_sync_status == SigurdOSGpsSyncStatus::Waiting) {
-                        gps_sync_status = SigurdOSGpsSyncStatus::Success;
-                    }
                 }
             }
         } else if (c == '\r') {
@@ -499,4 +486,9 @@ bool sigurdos_gps_get_pending_time(SigurdOSGpsUtcTime* out) {
             gps.hour, gps.minute, gps.second};
     return true;
 }
-void sigurdos_gps_mark_time_synced() { gps.time_synced = true; }
+void sigurdos_gps_mark_time_synced() {
+    gps.time_synced = true;
+    if (gps_sync_status == SigurdOSGpsSyncStatus::Waiting) {
+        gps_sync_status = SigurdOSGpsSyncStatus::Success;
+    }
+}

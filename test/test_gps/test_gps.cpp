@@ -510,6 +510,7 @@ TEST_F(GPSIntegrationTest, RMCWithEmptySpeedKeepsHeadingInFieldEight) {
 }
 
 TEST_F(GPSIntegrationTest, ValidFixExposesUtcUntilClockAcceptsIt) {
+    sigurdos_gps_start_time_sync();
     feed_body("GPRMC,123519,A,4807.038,N,01131.000,E,0.0,0.0,290224,,,A");
     feed_body("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
 
@@ -521,11 +522,18 @@ TEST_F(GPSIntegrationTest, ValidFixExposesUtcUntilClockAcceptsIt) {
     EXPECT_EQ(utc.hour, 12);
     EXPECT_EQ(utc.minute, 35);
     EXPECT_EQ(utc.second, 19);
+    EXPECT_EQ(sigurdos_gps_epoch(), 1709210119u);
     EXPECT_FALSE(sigurdos_gps_time_synced());
+    EXPECT_EQ(sigurdos_gps_time_sync_status(), SigurdOSGpsSyncStatus::Waiting);
+
+    SigurdOSGpsUtcTime retry{};
+    EXPECT_TRUE(sigurdos_gps_get_pending_time(&retry));
+    EXPECT_EQ(retry.second, utc.second);
 
     sigurdos_gps_mark_time_synced();
 
     EXPECT_TRUE(sigurdos_gps_time_synced());
+    EXPECT_EQ(sigurdos_gps_time_sync_status(), SigurdOSGpsSyncStatus::Success);
     EXPECT_FALSE(sigurdos_gps_get_pending_time(&utc));
 }
 

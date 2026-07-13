@@ -22,7 +22,6 @@
 #include "../responsive.h"
 #include "../../hal/prefs.h"
 #include "../../hal/gps.h"
-#include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -54,8 +53,7 @@ static void gps_sync_timer_cb(lv_timer_t* timer)
         update_row_label(g_gps_sync_row, text);
         return;
     }
-    if (status == SigurdOSGpsSyncStatus::Success && sigurdos_gps_epoch() != 0 &&
-        sigurdos::mesh::setSystemTime(sigurdos_gps_epoch())) {
+    if (status == SigurdOSGpsSyncStatus::Success) {
         update_row_label(g_gps_sync_row, "  Sync time: complete");
     } else {
         update_row_label(g_gps_sync_row, "  Sync time: timed out");
