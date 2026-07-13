@@ -13,23 +13,14 @@ using sigurdos::telemetry::collectors::task_watermark_output_valid;
 
 TEST(TelemetryCollectorsTest, TaskWatermarkOutputRejectsNullBuffer)
 {
-    EXPECT_FALSE(task_watermark_output_valid(nullptr, 1));
-    EXPECT_FALSE(task_watermark_output_valid(nullptr, UINT8_MAX));
+    EXPECT_FALSE(task_watermark_output_valid(nullptr));
 }
 
-TEST(TelemetryCollectorsTest, TaskWatermarkOutputRejectsZeroCapacity)
+TEST(TelemetryCollectorsTest, TaskWatermarkOutputAcceptsNonNullBuffer)
 {
     TaskWatermark task{};
 
-    EXPECT_FALSE(task_watermark_output_valid(&task, 0));
-}
-
-TEST(TelemetryCollectorsTest, TaskWatermarkOutputAcceptsNonNullCapacity)
-{
-    TaskWatermark task{};
-
-    EXPECT_TRUE(task_watermark_output_valid(&task, 1));
-    EXPECT_TRUE(task_watermark_output_valid(&task, UINT8_MAX));
+    EXPECT_TRUE(task_watermark_output_valid(&task));
 }
 
 }  // anonymous namespace

@@ -53,6 +53,13 @@ TEST_F(TelemetryProtocolTest, EmitsSignedAndUnsignedSingleFieldRecords) {
     clear_output();
     emit_record1_u(tag::RADIO, key::RADIO_AIRTXTOTAL, 4294967295UL);
     expect_output("@radio|air_tx=4294967295\n");
+
+    clear_output();
+    emit_tag(tag::SD);
+    emit_sep();
+    emit_kv_u64(key::SD_FREE, 8589934593ULL);
+    emit_end();
+    expect_output("@sd|free=8589934593\n");
 }
 
 TEST_F(TelemetryProtocolTest, EmitsStringRecordsAndFallbackForMissingValues) {
@@ -68,6 +75,15 @@ TEST_F(TelemetryProtocolTest, EmitsStringRecordsAndFallbackForMissingValues) {
     expect_output("@pkt|src=*\n");
 }
 
+TEST_F(TelemetryProtocolTest, EscapesFramingAndControlBytesInStrings) {
+    emit_record1_s(tag::PKT, key::TEXT, "a|b=c%*\r\n");
+    expect_output("@pkt|text=a%7Cb%3Dc%25%2A%0D%0A\n");
+
+    clear_output();
+    emit_record1_s(tag::PKT, key::TEXT, "caf\xC3\xA9");
+    expect_output("@pkt|text=caf\xC3\xA9\n");
+}
+
 TEST_F(TelemetryProtocolTest, EmitsCommandResponseRecords) {
     emit_ok("hb", 1234);
     expect_output("@ok|cmd=hb|cost_us=1234\n");
@@ -77,8 +93,12 @@ TEST_F(TelemetryProtocolTest, EmitsCommandResponseRecords) {
     expect_output("@err|cmd=telemetry|desc=unknown\n");
 
     clear_output();
-    emit_end_resp("contacts", 5);
-    expect_output("@end|cmd=contacts|n=5\n");
+    emit_end_resp("contacts", 5, 4321);
+    expect_output("@end|cmd=contacts|n=5|cost_us=4321\n");
+
+    clear_output();
+    emit_err("bad|query", "unknown_query");
+    expect_output("@err|cmd=bad%7Cquery|desc=unknown_query\n");
 }
 
 TEST_F(TelemetryProtocolTest, EmitsManualMultiFieldRecord) {
@@ -86,10 +106,12 @@ TEST_F(TelemetryProtocolTest, EmitsManualMultiFieldRecord) {
     emit_sep();
     emit_kv(key::RSSI, -88);
     emit_sep();
-    emit_kv(key::SNR, 9);
+    emit_kv(key::SNR, -7);
+    emit_sep();
+    emit_kv(key::NOISE, -121);
     emit_end();
 
-    expect_output("@mesh|rssi=-88|snr=9\n");
+    expect_output("@mesh|rssi=-88|snr=-7|noise=-121\n");
 }
 
 TEST_F(TelemetryProtocolTest, EmitsBuildIdentityRecordFields) {

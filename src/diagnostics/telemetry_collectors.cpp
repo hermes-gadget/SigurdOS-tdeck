@@ -92,10 +92,10 @@ NvsSnapshot collect_nvs() {
     nvs_stats_t stats;
     esp_err_t err = nvs_get_stats(NULL, &stats);
     if (err == ESP_OK) {
-        // Each NVS entry consumes roughly 16 bytes
-        snap.used_bytes  = stats.used_entries * 16;
-        snap.total_bytes = stats.total_entries * 16;
-        snap.entry_count = stats.used_entries;
+        snap.valid         = true;
+        snap.used_entries  = stats.used_entries;
+        snap.total_entries = stats.total_entries;
+        snap.free_entries  = stats.free_entries;
     }
     return snap;
 }
@@ -105,10 +105,10 @@ float collect_temp() {
     return temperatureRead();
 }
 
-uint8_t collect_task_watermarks(TaskWatermark* out, uint8_t max) {
-    // uxTaskGetSystemState and vTaskList require trace facilities that
-    // may not be enabled. Report current task stack HWM only.
-    if (!task_watermark_output_valid(out, max)) return 0;
+bool collect_current_task_watermark(TaskWatermark* out) {
+    // uxTaskGetSystemState requires trace facilities that are not enabled in
+    // this build. Report the current telemetry task explicitly instead.
+    if (!task_watermark_output_valid(out)) return false;
     
     TaskHandle_t self = xTaskGetCurrentTaskHandle();
     strncpy(out[0].name, pcTaskGetName(self), sizeof(out[0].name) - 1);
@@ -116,7 +116,7 @@ uint8_t collect_task_watermarks(TaskWatermark* out, uint8_t max) {
     out[0].stack_hwm = uxTaskGetStackHighWaterMark(self);
     out[0].priority  = uxTaskPriorityGet(self);
     out[0].state     = (uint8_t)eTaskGetState(self);
-    return 1;
+    return true;
 }
 
 // ── Emission functions ─────────────────────────────────
@@ -202,9 +202,9 @@ void collect_and_emit_sd() {
     emit_kv_u(key::SD_MOUNT, sd.mounted ? 1 : 0);
     if (sd.mounted) {
         emit_sep();
-        emit_kv_u(key::SD_FREE, (uint32_t)sd.free_bytes);
+        emit_kv_u64(key::SD_FREE, sd.free_bytes);
         emit_sep();
-        emit_kv_u("cap", (uint32_t)sd.capacity_bytes);
+        emit_kv_u64("cap", sd.capacity_bytes);
     }
     emit_end();
 }
@@ -213,11 +213,15 @@ void collect_and_emit_nvs() {
     NvsSnapshot nvs = collect_nvs();
     emit_tag(tag::NVS);
     emit_sep();
-    emit_kv_u(key::NVS_USED, nvs.used_bytes);
-    emit_sep();
-    emit_kv_u(key::NVS_TOTAL, nvs.total_bytes);
-    emit_sep();
-    emit_kv_u("nvs_entries", nvs.entry_count);
+    emit_kv_u("valid", nvs.valid ? 1U : 0U);
+    if (nvs.valid) {
+        emit_sep();
+        emit_kv_u(key::NVS_USED, nvs.used_entries);
+        emit_sep();
+        emit_kv_u(key::NVS_TOTAL, nvs.total_entries);
+        emit_sep();
+        emit_kv_u(key::NVS_FREE, nvs.free_entries);
+    }
     emit_end();
 }
 
@@ -232,24 +236,21 @@ void collect_and_emit_temp() {
 }
 
 void collect_and_emit_tasks() {
-    static constexpr uint8_t MAX_TASKS = 16;
-    TaskWatermark tasks[MAX_TASKS];
-    uint8_t count = collect_task_watermarks(tasks, MAX_TASKS);
+    TaskWatermark task{};
+    if (!collect_current_task_watermark(&task)) return;
 
-    for (uint8_t i = 0; i < count; i++) {
-        emit_tag(tag::TASK);
-        emit_sep();
-        emit_kv_u(key::I, i);
-        emit_sep();
-        emit_kv_s(key::TASK_NAME, tasks[i].name);
-        emit_sep();
-        emit_kv_u(key::STACK, tasks[i].stack_hwm);
-        emit_sep();
-        emit_kv_u(key::TASK_PRIO, tasks[i].priority);
-        emit_sep();
-        emit_kv_u(key::TASK_STATE, tasks[i].state);
-        emit_end();
-    }
+    emit_tag(tag::TASK);
+    emit_sep();
+    emit_kv_s("scope", "current");
+    emit_sep();
+    emit_kv_s(key::TASK_NAME, task.name);
+    emit_sep();
+    emit_kv_u(key::STACK, task.stack_hwm);
+    emit_sep();
+    emit_kv_u(key::TASK_PRIO, task.priority);
+    emit_sep();
+    emit_kv_u(key::TASK_STATE, task.state);
+    emit_end();
 }
 
 void collect_and_emit_all_peripherals() {

@@ -8,6 +8,7 @@
 namespace {
 
 using sigurdos::telemetry::packet_log_field_or_empty;
+using sigurdos::telemetry::packet_log_copy_field;
 
 TEST(TelemetryPacketLogTest, NullFieldReturnsEmptyString)
 {
@@ -30,6 +31,25 @@ TEST(TelemetryPacketLogTest, EmptyFieldIsPreserved)
 
     ASSERT_NE(field, nullptr);
     EXPECT_STREQ(field, "");
+}
+
+TEST(TelemetryPacketLogTest, CopyDoesNotSplitUtf8Sequence)
+{
+    char short_out[5]{};
+    char exact_out[6]{};
+
+    EXPECT_EQ(packet_log_copy_field(short_out, sizeof(short_out), "ab\xE2\x82\xAC"), 2u);
+    EXPECT_STREQ(short_out, "ab");
+    EXPECT_EQ(packet_log_copy_field(exact_out, sizeof(exact_out), "ab\xE2\x82\xAC"), 5u);
+    EXPECT_STREQ(exact_out, "ab\xE2\x82\xAC");
+}
+
+TEST(TelemetryPacketLogTest, QueryNamesAreValidatedBeforeDispatch)
+{
+    EXPECT_TRUE(sigurdos::telemetry::is_supported_query("full"));
+    EXPECT_TRUE(sigurdos::telemetry::is_supported_query("hb-ring"));
+    EXPECT_FALSE(sigurdos::telemetry::is_supported_query("full|unexpected"));
+    EXPECT_FALSE(sigurdos::telemetry::is_supported_query(nullptr));
 }
 
 }  // anonymous namespace

@@ -83,7 +83,7 @@ protected:
     void SetUp() override
     {
         arduino_mock::reset();
-        hb_ring_init();
+        ASSERT_TRUE(hb_ring_init());
         hb_ring_clear();
         hb_ring_test_reset_emit_count();
     }
@@ -94,6 +94,11 @@ TEST_F(HbRingTest, StartsEmptyAfterInit)
     HbRingEntry out{};
     EXPECT_EQ(hb_ring_count(), 0u);
     EXPECT_FALSE(hb_ring_get(0, &out));
+}
+
+TEST_F(HbRingTest, RepeatedInitReportsExistingAllocation)
+{
+    EXPECT_TRUE(hb_ring_init());
 }
 
 TEST_F(HbRingTest, ReadsUnwrappedEntriesByLogicalIndex)
@@ -107,6 +112,21 @@ TEST_F(HbRingTest, ReadsUnwrappedEntriesByLogicalIndex)
     EXPECT_EQ(out.t_s, 10u);
     ASSERT_TRUE(hb_ring_get(2, &out));
     EXPECT_EQ(out.t_s, 12u);
+}
+
+TEST_F(HbRingTest, RetainsFullAndDiffHeartbeatFlags)
+{
+    HbRingEntry full = make_entry(1);
+    HbRingEntry diff = make_entry(2);
+    diff.flags = 1;
+    hb_ring_push(full);
+    hb_ring_push(diff);
+
+    HbRingEntry out{};
+    ASSERT_TRUE(hb_ring_get(0, &out));
+    EXPECT_EQ(out.flags, 0u);
+    ASSERT_TRUE(hb_ring_get(1, &out));
+    EXPECT_EQ(out.flags, 1u);
 }
 
 TEST_F(HbRingTest, RejectsNullOutputPointer)

@@ -11,7 +11,10 @@
 #define SIGURDOS_TELEMETRY_H
 
 #include "debug_cfg.h"
+#include "../utils/utf8_util.h"
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace sigurdos {
 namespace telemetry {
@@ -72,6 +75,29 @@ void push_packet_log(const char* sender, const char* channel,
 
 inline const char* packet_log_field_or_empty(const char* value) {
     return value ? value : "";
+}
+
+inline size_t packet_log_copy_field(char* out, size_t out_size,
+                                    const char* value) {
+    if (!out || out_size == 0) return 0;
+    const char* source = packet_log_field_or_empty(value);
+    const size_t bytes = sigurdos::utf8_truncate_bytes(source, out_size - 1);
+    memcpy(out, source, bytes);
+    out[bytes] = '\0';
+    return bytes;
+}
+
+inline bool is_supported_query(const char* arg) {
+    if (!arg || !arg[0]) return false;
+    static const char* const commands[] = {
+        "build", "state", "heap", "lvgl", "mesh", "crash", "crash clear",
+        "crash test", "drift", "screen", "wifi", "gps", "radio", "sd",
+        "nvs", "temp", "task", "hb-ring", "pktlog", "full"
+    };
+    for (const char* command : commands) {
+        if (strcmp(arg, command) == 0) return true;
+    }
+    return false;
 }
 
 }  // namespace telemetry

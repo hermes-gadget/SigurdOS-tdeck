@@ -58,7 +58,6 @@ namespace key {
     const char RX[]      = "pk_rx";
     const char ERR_CNT[] = "err";
     const char WIDGETS[] = "wt";
-    const char EVQ[]     = "evq";
     const char RENDERS[] = "rd";
     const char LOOP_US[] = "loop_us";
     const char STACK[]   = "stack";
@@ -95,8 +94,9 @@ namespace key {
     const char GPS_ALT[]          = "alt";
     const char SD_MOUNT[]         = "mnt";
     const char SD_FREE[]          = "free";
-    const char NVS_USED[]         = "nvs_used";
-    const char NVS_TOTAL[]        = "nvs_total";
+    const char NVS_USED[]         = "used_entries";
+    const char NVS_TOTAL[]        = "total_entries";
+    const char NVS_FREE[]         = "free_entries";
     const char TEMP_VAL[]         = "val";
     const char TASK_NAME[]        = "name";
     const char TASK_PRIO[]        = "prio";
@@ -147,11 +147,36 @@ void emit_kv_u(const char* key, uint32_t val) {
     Serial.print(val);
 }
 
+void emit_kv_u64(const char* key, uint64_t val) {
+    Serial.print(key);
+    Serial.print('=');
+    Serial.printf("%llu", static_cast<unsigned long long>(val));
+}
+
+static bool string_byte_needs_escape(uint8_t byte) {
+    return byte < 0x20 || byte == 0x7F || byte == '%' || byte == '|' ||
+           byte == '=' || byte == '*';
+}
+
+static void emit_escaped_string(const char* val) {
+    static const char HEX_DIGITS[] = "0123456789ABCDEF";
+    for (const uint8_t* p = reinterpret_cast<const uint8_t*>(val); *p; ++p) {
+        const uint8_t byte = *p;
+        if (string_byte_needs_escape(byte)) {
+            Serial.print('%');
+            Serial.print(HEX_DIGITS[byte >> 4]);
+            Serial.print(HEX_DIGITS[byte & 0x0F]);
+        } else {
+            Serial.write(byte);
+        }
+    }
+}
+
 void emit_kv_s(const char* key, const char* val) {
     Serial.print(key);
     Serial.print('=');
     if (val && val[0]) {
-        Serial.print(val);
+        emit_escaped_string(val);
     } else {
         Serial.print('*');
     }
@@ -225,12 +250,14 @@ void emit_err(const char* cmd, const char* desc) {
     emit_end();
 }
 
-void emit_end_resp(const char* cmd, uint32_t count) {
+void emit_end_resp(const char* cmd, uint32_t count, uint32_t cost_us) {
     emit_tag(tag::END);
     emit_sep();
     emit_kv_s(key::CMD, cmd);
     emit_sep();
     emit_kv_u(key::N, count);
+    emit_sep();
+    emit_kv_u(key::COST_US, cost_us);
     emit_end();
 }
 

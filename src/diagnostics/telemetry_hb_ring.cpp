@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Ben
 //
-// Heartbeat ring buffer — 120-entry circular buffer allocated
+// Heartbeat ring buffer — 48-entry circular buffer allocated
 // in PSRAM with DRAM fallback. Used to replay heartbeat history
 // on demand via the `query hb-ring` command.
 
@@ -34,8 +34,8 @@ static uint32_t hb_ring_oldest_index() {
 
 // ── Initialisation ─────────────────────────────────────
 
-void hb_ring_init() {
-    if (s_ring) return;  // already initialised
+bool hb_ring_init() {
+    if (s_ring) return true;  // already initialised
 
     size_t total_bytes = HB_RING_SIZE * sizeof(HbRingEntry);
 
@@ -58,6 +58,7 @@ void hb_ring_init() {
 
     s_ring_head  = 0;
     s_ring_count = 0;
+    return s_ring != nullptr;
 }
 
 // ── Push ───────────────────────────────────────────────
@@ -148,6 +149,8 @@ uint32_t hb_ring_query(uint32_t n) {
         emit_kv("rssi", e.rssi / 4);
         emit_sep();
         emit_kv_u("wt", e.wt);
+        emit_sep();
+        emit_kv_u("diff", (e.flags & 0x01U) ? 1U : 0U);
         emit_end();
         emitted++;
     }

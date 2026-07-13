@@ -4,6 +4,8 @@
 // Telemetry wire protocol constants and serial helpers.
 // Every telemetry line starts with '@' — no freeform printf.
 // Format: @<tag>|<key>=<value>|...\n
+// String values are percent-encoded. '%', '|', '=', '*', CR, LF, and other
+// ASCII control bytes are emitted as %HH; '*' by itself means missing/empty.
 
 #ifndef SIGURDOS_TELEMETRY_PROTOCOL_H
 #define SIGURDOS_TELEMETRY_PROTOCOL_H
@@ -63,7 +65,6 @@ namespace key {
     extern const char RX[];       // pk_rx
     extern const char ERR_CNT[];  // err
     extern const char WIDGETS[];  // wt
-    extern const char EVQ[];      // evq  — LVGL event queue depth
     extern const char RENDERS[];  // rd
     extern const char LOOP_US[];  // loop_us
     extern const char STACK[];    // stack HWM
@@ -100,8 +101,9 @@ namespace key {
     extern const char GPS_ALT[];          // alt     — GPS altitude (m)
     extern const char SD_MOUNT[];         // mnt     — SD mounted 0/1
     extern const char SD_FREE[];          // free    — SD free bytes
-    extern const char NVS_USED[];         // nvs_used — NVS used bytes
-    extern const char NVS_TOTAL[];        // nvs_total — NVS total bytes
+    extern const char NVS_USED[];         // used_entries — used NVS entries
+    extern const char NVS_TOTAL[];        // total_entries — total NVS entries
+    extern const char NVS_FREE[];         // free_entries — free NVS entries
     extern const char TEMP_VAL[];         // val     — temperature * 10 as int
     extern const char TASK_NAME[];        // name    — FreeRTOS task name
     extern const char TASK_PRIO[];        // prio    — task priority
@@ -136,6 +138,9 @@ void emit_kv(const char* key, int32_t val);
 // Emit a key=value pair with unsigned integer
 void emit_kv_u(const char* key, uint32_t val);
 
+// Emit a key=value pair with 64-bit unsigned integer
+void emit_kv_u64(const char* key, uint64_t val);
+
 // Emit a key=value pair with string value
 void emit_kv_s(const char* key, const char* val);
 
@@ -165,8 +170,9 @@ void emit_ok(const char* cmd, uint32_t cost_us);
 // Emit "@err|cmd=<cmd>|desc=<desc>\n"
 void emit_err(const char* cmd, const char* desc);
 
-// Emit "@end|cmd=<cmd>|n=<count>\n"
-void emit_end_resp(const char* cmd, uint32_t count);
+// Emit the single terminal success record for a query.
+// Format: "@end|cmd=<cmd>|n=<count>|cost_us=<us>\n"
+void emit_end_resp(const char* cmd, uint32_t count, uint32_t cost_us = 0);
 
 }  // namespace telemetry
 }  // namespace sigurdos

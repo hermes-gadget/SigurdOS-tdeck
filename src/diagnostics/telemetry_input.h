@@ -30,9 +30,6 @@ void report_trackball_event(uint8_t direction);
 
 // ── LVGL rendering counters ────────────────────────────
 
-// Get the current LVGL event queue depth.
-uint16_t get_lvgl_evq_depth();
-
 // Get the total LVGL render count (incremented on each flush).
 uint32_t get_lvgl_render_count();
 
@@ -53,7 +50,6 @@ namespace input {
 inline void report_key_event(uint8_t) {}
 inline void report_touch_event(uint16_t, uint16_t) {}
 inline void report_trackball_event(uint8_t) {}
-inline uint16_t get_lvgl_evq_depth() { return 0; }
 inline uint32_t get_lvgl_render_count() { return 0; }
 inline void increment_render_count() {}
 

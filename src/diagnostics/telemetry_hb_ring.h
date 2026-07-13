@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Ben
 //
-// Heartbeat ring buffer — stores the last 120 heartbeat
+// Heartbeat ring buffer — stores the last 48 heartbeat
 // snapshots in PSRAM (DRAM fallback) for agent query.
 //
 // Gated behind SIGURDOS_TELEMETRY.
@@ -30,7 +30,8 @@ struct HbRingEntry {
 // ── Ring buffer public API ────────────────────────────
 
 // Allocate the ring buffer (PSRAM preferred, DRAM fallback).
-void hb_ring_init();
+// Returns false when neither allocation succeeds.
+bool hb_ring_init();
 
 // Push a new entry into the ring buffer.
 void hb_ring_push(const HbRingEntry& entry);

@@ -19,6 +19,7 @@
 #include "telemetry_collectors.h"
 #include "telemetry_input.h"
 #include "telemetry_hb_ring.h"
+#include "telemetry_drift.h"
 
 namespace sigurdos {
 namespace telemetry {
@@ -33,20 +34,18 @@ static uint8_t  s_full_sync_every  = 12;   // every N ticks, send full @hb
 static uint32_t s_last_tick_ms     = 0;
 static uint32_t s_tick_count       = 0;
 
-// ── Previous snapshot for diff ────────────────────────
-static struct {
+// ── Heartbeat snapshots ───────────────────────────────
+struct HeartbeatSnapshot {
     uint32_t free_heap;
     uint32_t min_heap;
     uint32_t free_psram;
-    uint32_t min_psram;
     uint8_t  batt_pct;
     int16_t  rssi_x4;
-    int16_t  snr_x4;
     uint16_t widget_count;
-    uint16_t evq_depth;
-    uint16_t task_count;
     bool     valid;
-} s_prev;
+};
+
+static HeartbeatSnapshot s_prev;
 
 // ── Diff thresholds ───────────────────────────────────
 static constexpr int32_t  HEAP_DIFF_THRESHOLD   = 512;
@@ -98,41 +97,6 @@ static const char* screen_name_str(uint8_t scr) {
 }
 
 // ── Drift detection ───────────────────────────────────
-struct DriftDetector {
-    int32_t  baseline;
-    int32_t  current;
-    int32_t  min_val;
-    int32_t  max_val;
-    uint32_t window_start_ms;
-    uint32_t window_ms;
-    bool     active;
-    int32_t  threshold;  // emit @drift when delta exceeds this
-
-    void reset(int32_t val, uint32_t now_ms) {
-        baseline = current = min_val = max_val = val;
-        window_start_ms = now_ms;
-    }
-
-    void update(int32_t val, uint32_t now_ms) {
-        current = val;
-        if (val < min_val) min_val = val;
-        if (val > max_val) max_val = val;
-    }
-
-    bool should_report() const {
-        if (!active || threshold == 0) return false;
-        int32_t d = baseline - current;
-        return d > threshold;
-    }
-
-    const char* trend_str() const {
-        int32_t d = current - baseline;
-        if (d > threshold / 2)  return "rising";
-        if (d < -threshold / 2) return "falling";
-        return "stable";
-    }
-};
-
 static DriftDetector s_heap_drift;
 static DriftDetector s_psram_drift;
 static DriftDetector s_rssi_drift;
@@ -157,8 +121,29 @@ static uint16_t count_lvgl_widgets() {
     return count > 65535U ? 65535U : static_cast<uint16_t>(count);
 }
 
-static uint16_t count_tasks() {
-    return (uint16_t)uxTaskGetNumberOfTasks();
+static HeartbeatSnapshot capture_heartbeat_snapshot() {
+    HeartbeatSnapshot snapshot{};
+    snapshot.free_heap = ESP.getFreeHeap();
+    snapshot.min_heap = ESP.getMinFreeHeap();
+    snapshot.free_psram = ESP.getFreePsram();
+    snapshot.batt_pct = sigurdos_battery_pct();
+    snapshot.rssi_x4 = static_cast<int16_t>(sigurdos::mesh::getLastRSSI() * 4);
+    snapshot.widget_count = count_lvgl_widgets();
+    snapshot.valid = true;
+    return snapshot;
+}
+
+static void retain_heartbeat(const HeartbeatSnapshot& snapshot, bool diff) {
+    HbRingEntry entry{};
+    entry.t_s = millis() / 1000;
+    entry.h = snapshot.free_heap;
+    entry.hm = snapshot.min_heap;
+    entry.p = snapshot.free_psram;
+    entry.b = snapshot.batt_pct;
+    entry.rssi = snapshot.rssi_x4;
+    entry.wt = snapshot.widget_count;
+    entry.flags = diff ? 0x01U : 0U;
+    hb_ring_push(entry);
 }
 
 static void emit_build_info() {
@@ -211,24 +196,21 @@ void push_packet_log(const char* sender, const char* channel,
     const char* text_safe = packet_log_field_or_empty(text);
     uint32_t idx = s_pktlog_head;
     s_pktlog[idx].timestamp = millis() / 1000;
-    strncpy(s_pktlog[idx].sender,  sender_safe,  sizeof(s_pktlog[idx].sender) - 1);
-    s_pktlog[idx].sender[sizeof(s_pktlog[idx].sender) - 1] = '\0';
-    strncpy(s_pktlog[idx].channel, channel_safe, sizeof(s_pktlog[idx].channel) - 1);
-    s_pktlog[idx].channel[sizeof(s_pktlog[idx].channel) - 1] = '\0';
-    strncpy(s_pktlog[idx].text,    text_safe,    sizeof(s_pktlog[idx].text) - 1);
-    s_pktlog[idx].text[sizeof(s_pktlog[idx].text) - 1] = '\0';
+    packet_log_copy_field(s_pktlog[idx].sender, sizeof(s_pktlog[idx].sender), sender_safe);
+    packet_log_copy_field(s_pktlog[idx].channel, sizeof(s_pktlog[idx].channel), channel_safe);
+    packet_log_copy_field(s_pktlog[idx].text, sizeof(s_pktlog[idx].text), text_safe);
     s_pktlog[idx].rssi = rssi;
     s_pktlog_head = (s_pktlog_head + 1) % PKTLOG_SIZE;
     if (s_pktlog_count < UINT32_MAX) s_pktlog_count++;
 }
 
-static void emit_pktlog() {
+static uint32_t emit_pktlog() {
     if (!s_pktlog) {
         emit_tag(tag::PKT);
         emit_sep();
         emit_kv_u(key::N, 0);
         emit_end();
-        return;
+        return 1;
     }
     uint32_t total = s_pktlog_count;
     if (total == 0) {
@@ -236,9 +218,10 @@ static void emit_pktlog() {
         emit_sep();
         emit_kv_u(key::N, 0);
         emit_end();
-        return;
+        return 1;
     }
     uint32_t start = total > 20 ? total - 20 : 0;
+    uint32_t emitted = 0;
     for (uint32_t idx = start; idx < total; idx++) {
         uint32_t phys = idx % PKTLOG_SIZE;
         const PktLogEntry& e = s_pktlog[phys];
@@ -254,12 +237,14 @@ static void emit_pktlog() {
         emit_sep();
         emit_kv_s(key::TEXT, e.text);
         emit_end();
+        emitted++;
     }
+    return emitted;
 }
 
-static void emit_mesh_chan_stats() {
+static uint32_t emit_mesh_chan_stats() {
     int nch = sigurdos::mesh::getChannelCount();
-    if (nch <= 0) return;
+    if (nch <= 0) return 0;
     constexpr int MAX_CH = 32;
     char names[MAX_CH][37];
     int got = sigurdos::mesh::exportChannels(names, MAX_CH);
@@ -271,31 +256,33 @@ static void emit_mesh_chan_stats() {
         emit_kv_s(key::CHAN, names[i]);
         emit_end();
     }
+    return got > 0 ? static_cast<uint32_t>(got) : 0;
 }
 
 static void emit_full_heartbeat() {
     static uint32_t s_hb_peripheral_ticks = 0;
     s_hb_peripheral_ticks++;
+    const HeartbeatSnapshot snapshot = capture_heartbeat_snapshot();
 
     emit_tag(tag::HB);
     emit_sep();
     emit_kv_u(key::T, millis() / 1000);
     emit_sep();
-    emit_kv_u(key::H, ESP.getFreeHeap());
+    emit_kv_u(key::H, snapshot.free_heap);
     emit_sep();
-    emit_kv_u(key::HM, ESP.getMinFreeHeap());
+    emit_kv_u(key::HM, snapshot.min_heap);
     emit_sep();
-    emit_kv_u(key::P, ESP.getFreePsram());
+    emit_kv_u(key::P, snapshot.free_psram);
     emit_sep();
     emit_kv_u(key::PM, ESP.getMinFreePsram());
     emit_sep();
-    emit_kv_u(key::B, sigurdos_battery_pct());
+    emit_kv_u(key::B, snapshot.batt_pct);
     emit_sep();
     emit_kv_u(key::MV, sigurdos_battery_mv());
     emit_sep();
-    emit_kv_u(key::RSSI, sigurdos::mesh::getLastRSSI());
+    emit_kv(key::RSSI, snapshot.rssi_x4 / 4);
     emit_sep();
-    emit_kv_u(key::WIDGETS, count_lvgl_widgets());
+    emit_kv_u(key::WIDGETS, snapshot.widget_count);
     // Phase 1 heartbeat fields — screen, loop, display
     emit_sep();
     emit_kv_s(key::SCREEN, screen_name_str(s_active_screen));
@@ -311,11 +298,9 @@ static void emit_full_heartbeat() {
     emit_kv_u(key::DISP_WAKE, (uint32_t)s_wake_count);
     emit_sep();
     emit_kv_u(key::DISP_SLEEP, (uint32_t)s_sleep_count);
-    // Phase 2+3+4 — render count and event queue depth
+    // Phase 2+3+4 — render count
     emit_sep();
     emit_kv_u(key::RENDERS, input::get_lvgl_render_count());
-    emit_sep();
-    emit_kv_u(key::EVQ, input::get_lvgl_evq_depth());
     // Phase 2+3+4 — peripheral state (every 6th heartbeat)
     if (s_hb_peripheral_ticks % 6 == 0) {
         collectors::WifiSnapshot wifi = collectors::collect_wifi();
@@ -332,14 +317,16 @@ static void emit_full_heartbeat() {
         emit_sep();
         emit_kv(key::TEMP_VAL, (int32_t)(temp_c * 10.0f));
         collectors::NvsSnapshot nvs = collectors::collect_nvs();
-        emit_sep();
-        emit_kv_u(key::NVS_USED, nvs.used_bytes);
+        if (nvs.valid) {
+            emit_sep();
+            emit_kv_u(key::NVS_USED, nvs.used_entries);
+        }
     }
     emit_end();
 
     // Phase 2+3+4 — alerts (emitted as separate @alert records)
     {
-        uint8_t batt = sigurdos_battery_pct();
+        uint8_t batt = snapshot.batt_pct;
         if (batt < 10) {
             emit_tag(tag::ALERT);
             emit_sep();
@@ -350,7 +337,7 @@ static void emit_full_heartbeat() {
         }
     }
     {
-        uint32_t heap = ESP.getFreeHeap();
+        uint32_t heap = snapshot.free_heap;
         if (heap < 51200) {
             emit_tag(tag::ALERT);
             emit_sep();
@@ -361,144 +348,103 @@ static void emit_full_heartbeat() {
         }
     }
 
-    // Update previous snapshot
-    s_prev.free_heap    = ESP.getFreeHeap();
-    s_prev.min_heap     = ESP.getMinFreeHeap();
-    s_prev.free_psram   = ESP.getFreePsram();
-    s_prev.min_psram    = ESP.getMinFreePsram();
-    s_prev.batt_pct     = sigurdos_battery_pct();
-    s_prev.rssi_x4      = (int16_t)(sigurdos::mesh::getLastRSSI() * 4);
-    s_prev.snr_x4       = (int16_t)(sigurdos::mesh::getLastSNR() * 4);
-    s_prev.widget_count = count_lvgl_widgets();
-    s_prev.evq_depth    = 0;
-    s_prev.task_count   = count_tasks();
-    s_prev.valid        = true;
-
-    // Push to hb-ring
-    HbRingEntry ring_entry;
-    ring_entry.t_s   = millis() / 1000;
-    ring_entry.h     = s_prev.free_heap;
-    ring_entry.hm    = s_prev.min_heap;
-    ring_entry.p     = s_prev.free_psram;
-    ring_entry.b     = s_prev.batt_pct;
-    ring_entry.rssi  = s_prev.rssi_x4;
-    ring_entry.wt    = s_prev.widget_count;
-    ring_entry.flags = 0;  // full heartbeat
-    hb_ring_push(ring_entry);
+    s_prev = snapshot;
+    retain_heartbeat(snapshot, false);
 }
 
 static void emit_diff_heartbeat() {
-    uint32_t h  = ESP.getFreeHeap();
-    uint32_t hm = ESP.getMinFreeHeap();
-    uint32_t p  = ESP.getFreePsram();
-    uint8_t  b  = sigurdos_battery_pct();
-    int16_t  rx = (int16_t)(sigurdos::mesh::getLastRSSI() * 4);
-    uint16_t wt = count_lvgl_widgets();
-
+    const HeartbeatSnapshot snapshot = capture_heartbeat_snapshot();
     bool any_changed = false;
 
-    emit_tag(tag::HB_DIFF);
-    emit_sep();
-    emit_kv_u(key::T, millis() / 1000);
-
     if (s_prev.valid) {
-        int32_t dh = (int32_t)s_prev.free_heap - (int32_t)h;
+        int32_t dh = (int32_t)s_prev.free_heap - (int32_t)snapshot.free_heap;
         if (dh < -HEAP_DIFF_THRESHOLD || dh > HEAP_DIFF_THRESHOLD) {
-            emit_sep(); emit_kv_u(key::H, h); any_changed = true;
+            any_changed = true;
         }
-        if (s_prev.batt_pct != b) {
-            emit_sep(); emit_kv_u(key::B, b); any_changed = true;
+        int32_t dp = (int32_t)s_prev.free_psram - (int32_t)snapshot.free_psram;
+        if (dp < -PSRAM_DIFF_THRESHOLD || dp > PSRAM_DIFF_THRESHOLD) {
+            any_changed = true;
         }
-        if (s_prev.widget_count != wt) {
-            emit_sep(); emit_kv_u(key::WIDGETS, wt); any_changed = true;
+        int32_t db = (int32_t)s_prev.batt_pct - (int32_t)snapshot.batt_pct;
+        if (db <= -BATT_DIFF_THRESHOLD || db >= BATT_DIFF_THRESHOLD) {
+            any_changed = true;
         }
-        int32_t dr = (int32_t)s_prev.rssi_x4 - (int32_t)rx;
+        if (s_prev.widget_count != snapshot.widget_count) any_changed = true;
+        int32_t dr = (int32_t)s_prev.rssi_x4 - (int32_t)snapshot.rssi_x4;
         if (dr < -RSSI_DIFF_THRESHOLD || dr > RSSI_DIFF_THRESHOLD) {
-            emit_sep(); emit_kv_u(key::RSSI, (uint32_t)(rx / 4)); any_changed = true;
+            any_changed = true;
         }
     } else {
-        // No previous snapshot — emit all fields
-        emit_sep(); emit_kv_u(key::H, h);
-        emit_sep(); emit_kv_u(key::P, p);
-        emit_sep(); emit_kv_u(key::B, b);
-        emit_sep(); emit_kv_u(key::RSSI, (uint32_t)(rx / 4));
         any_changed = true;
     }
 
-    emit_end();
+    if (any_changed) {
+        emit_tag(tag::HB_DIFF);
+        emit_sep(); emit_kv_u(key::T, millis() / 1000);
+        emit_sep(); emit_kv_u(key::H, snapshot.free_heap);
+        emit_sep(); emit_kv_u(key::P, snapshot.free_psram);
+        emit_sep(); emit_kv_u(key::B, snapshot.batt_pct);
+        emit_sep(); emit_kv(key::RSSI, snapshot.rssi_x4 / 4);
+        emit_sep(); emit_kv_u(key::WIDGETS, snapshot.widget_count);
+        emit_end();
+    }
 
-    // Update previous
-    s_prev.free_heap    = h;
-    s_prev.min_heap     = hm;
-    s_prev.free_psram   = p;
-    s_prev.batt_pct     = b;
-    s_prev.rssi_x4      = rx;
-    s_prev.widget_count = wt;
-    s_prev.valid        = true;
-
-    (void)any_changed;  // future: if nothing changed, we could suppress entirely
+    s_prev = snapshot;
+    retain_heartbeat(snapshot, true);
 }
 
 // ── Drift update ──────────────────────────────────────
 
 static void update_drift(uint32_t now, uint32_t heap, uint32_t psram, int16_t rssi_x4) {
-    // Initialise drift windows if needed
     if (!s_heap_drift.active) {
-        s_heap_drift.active = true;
-        s_heap_drift.threshold = 4096;  // 4 KB heap leak threshold
-        s_heap_drift.window_ms = s_drift_window_ms;
-        s_heap_drift.reset((int32_t)heap, now);
+        s_heap_drift.begin((int32_t)heap, now, s_drift_window_ms, 4096);
     }
     if (!s_psram_drift.active) {
-        s_psram_drift.active = true;
-        s_psram_drift.threshold = 16384;  // 16 KB PSRAM leak threshold
-        s_psram_drift.window_ms = s_drift_window_ms;
-        s_psram_drift.reset((int32_t)psram, now);
+        s_psram_drift.begin((int32_t)psram, now, s_drift_window_ms, 16384);
     }
     if (!s_rssi_drift.active) {
-        s_rssi_drift.active = true;
-        s_rssi_drift.threshold = 48;  // 12 dBm drift threshold (×4)
-        s_rssi_drift.window_ms = s_drift_window_ms;
-        s_rssi_drift.reset((int32_t)rssi_x4, now);
+        s_rssi_drift.begin((int32_t)rssi_x4, now, s_drift_window_ms, 48);
     }
 
-    s_heap_drift.update((int32_t)heap, now);
-    s_psram_drift.update((int32_t)psram, now);
-    s_rssi_drift.update((int32_t)rssi_x4, now);
+    s_heap_drift.update((int32_t)heap);
+    s_psram_drift.update((int32_t)psram);
+    s_rssi_drift.update((int32_t)rssi_x4);
 
-    // Check for drift reports
-    if (s_heap_drift.should_report()) {
-        emit_tag(tag::DRIFT);
-        emit_sep();
-        emit_kv_s(key::METRIC, "heap");
-        emit_sep(); emit_kv_u(key::BASELINE, (uint32_t)s_heap_drift.baseline);
-        emit_sep(); emit_kv_u(key::CURRENT,  (uint32_t)s_heap_drift.current);
-        emit_sep(); emit_kv_u(key::DELTA,    (uint32_t)(s_heap_drift.baseline - s_heap_drift.current));
-        emit_sep(); emit_kv_s(key::TREND,    s_heap_drift.trend_str());
-        emit_end();
-        s_heap_drift.reset((int32_t)heap, now);
+    if (s_heap_drift.window_elapsed(now)) {
+        if (s_heap_drift.should_report(now)) {
+            emit_tag(tag::DRIFT);
+            emit_sep(); emit_kv_s(key::METRIC, "heap");
+            emit_sep(); emit_kv_u(key::BASELINE, (uint32_t)s_heap_drift.baseline);
+            emit_sep(); emit_kv_u(key::CURRENT, (uint32_t)s_heap_drift.current);
+            emit_sep(); emit_kv_u(key::DELTA, (uint32_t)s_heap_drift.delta());
+            emit_sep(); emit_kv_s(key::TREND, s_heap_drift.trend_str());
+            emit_end();
+        }
+        s_heap_drift.rotate(now);
     }
-    if (s_psram_drift.should_report()) {
-        emit_tag(tag::DRIFT);
-        emit_sep();
-        emit_kv_s(key::METRIC, "psram");
-        emit_sep(); emit_kv_u(key::BASELINE, (uint32_t)s_psram_drift.baseline);
-        emit_sep(); emit_kv_u(key::CURRENT,  (uint32_t)s_psram_drift.current);
-        emit_sep(); emit_kv_u(key::DELTA,    (uint32_t)(s_psram_drift.baseline - s_psram_drift.current));
-        emit_sep(); emit_kv_s(key::TREND,    s_psram_drift.trend_str());
-        emit_end();
-        s_psram_drift.reset((int32_t)psram, now);
+    if (s_psram_drift.window_elapsed(now)) {
+        if (s_psram_drift.should_report(now)) {
+            emit_tag(tag::DRIFT);
+            emit_sep(); emit_kv_s(key::METRIC, "psram");
+            emit_sep(); emit_kv_u(key::BASELINE, (uint32_t)s_psram_drift.baseline);
+            emit_sep(); emit_kv_u(key::CURRENT, (uint32_t)s_psram_drift.current);
+            emit_sep(); emit_kv_u(key::DELTA, (uint32_t)s_psram_drift.delta());
+            emit_sep(); emit_kv_s(key::TREND, s_psram_drift.trend_str());
+            emit_end();
+        }
+        s_psram_drift.rotate(now);
     }
-    if (s_rssi_drift.should_report()) {
-        emit_tag(tag::DRIFT);
-        emit_sep();
-        emit_kv_s(key::METRIC, "rssi");
-        emit_sep(); emit_kv_u(key::BASELINE, (uint32_t)(s_rssi_drift.baseline / 4));
-        emit_sep(); emit_kv_u(key::CURRENT,  (uint32_t)(s_rssi_drift.current / 4));
-        emit_sep(); emit_kv_u(key::DELTA,    (uint32_t)((s_rssi_drift.baseline - s_rssi_drift.current) / 4));
-        emit_sep(); emit_kv_s(key::TREND,    s_rssi_drift.trend_str());
-        emit_end();
-        s_rssi_drift.reset((int32_t)rssi_x4, now);
+    if (s_rssi_drift.window_elapsed(now)) {
+        if (s_rssi_drift.should_report(now)) {
+            emit_tag(tag::DRIFT);
+            emit_sep(); emit_kv_s(key::METRIC, "rssi");
+            emit_sep(); emit_kv(key::BASELINE, s_rssi_drift.baseline / 4);
+            emit_sep(); emit_kv(key::CURRENT, s_rssi_drift.current / 4);
+            emit_sep(); emit_kv(key::DELTA, s_rssi_drift.delta() / 4);
+            emit_sep(); emit_kv_s(key::TREND, s_rssi_drift.trend_str());
+            emit_end();
+        }
+        s_rssi_drift.rotate(now);
     }
 }
 
@@ -508,11 +454,17 @@ void init() {
     // Initialise packet log buffer in PSRAM (DRAM fallback)
     init_pktlog();
 
+    const bool hb_ring_ready = hb_ring_init();
+
     // Initialise crash subsystem (checks RTC memory for previous crash)
     crash::init();
 
     // Announce telemetry active
-    emit_record1_u(tag::OK, (char*)"init", 0);
+    if (hb_ring_ready) {
+        emit_record1_s(tag::OK, key::CMD, "init");
+    } else {
+        emit_err("init", "hb_ring_alloc_failed");
+    }
     emit_build_info();
     // Initial full heartbeat
     emit_full_heartbeat();
@@ -658,11 +610,13 @@ void cmd_query(const char* arg) {
         emit_err("query", "Missing subcommand (build|state|heap|lvgl|mesh|crash|drift|screen|wifi|gps|radio|sd|nvs|temp|task|hb-ring|pktlog|full)");
         return;
     }
+    if (!is_supported_query(arg)) {
+        emit_err(arg, "unknown_query");
+        return;
+    }
 
     uint32_t start = micros();
     uint32_t n = 0;
-
-    emit_ok(arg, 0);  // cost_us filled after
 
     // ── query full: emit ALL state in one shot ────────────
     if (strcmp(arg, "full") == 0) {
@@ -677,8 +631,8 @@ void cmd_query(const char* arg) {
         emit_sep(); emit_kv_u(key::PM, ESP.getMinFreePsram());
         emit_sep(); emit_kv_u(key::B, sigurdos_battery_pct());
         emit_sep(); emit_kv_u(key::MV, sigurdos_battery_mv());
-        emit_sep(); emit_kv_u(key::RSSI, (uint32_t)sigurdos::mesh::getLastRSSI());
-        emit_sep(); emit_kv_u(key::SNR, (uint32_t)(sigurdos::mesh::getLastSNR() * 10));
+        emit_sep(); emit_kv(key::RSSI, sigurdos::mesh::getLastRSSI());
+        emit_sep(); emit_kv(key::SNR, (int32_t)(sigurdos::mesh::getLastSNR() * 10));
         emit_sep(); emit_kv_u(key::WIDGETS, count_lvgl_widgets());
         emit_end();
         n++;
@@ -699,16 +653,16 @@ void cmd_query(const char* arg) {
 
         // @mesh
         emit_tag(tag::MESH);
-        emit_sep(); emit_kv_u(key::RSSI, (uint32_t)sigurdos::mesh::getLastRSSI());
-        emit_sep(); emit_kv_u(key::SNR, (uint32_t)(sigurdos::mesh::getLastSNR() * 10));
-        emit_sep(); emit_kv_u(key::NOISE, (uint32_t)sigurdos::mesh::getNoiseFloor());
+        emit_sep(); emit_kv(key::RSSI, sigurdos::mesh::getLastRSSI());
+        emit_sep(); emit_kv(key::SNR, (int32_t)(sigurdos::mesh::getLastSNR() * 10));
+        emit_sep(); emit_kv(key::NOISE, sigurdos::mesh::getNoiseFloor());
         emit_sep(); emit_kv_u(key::TX, sigurdos::mesh::getNumSentFlood() + sigurdos::mesh::getNumSentDirect());
         emit_sep(); emit_kv_u(key::RX, sigurdos::mesh::getNumRecvFlood() + sigurdos::mesh::getNumRecvDirect());
         emit_end();
         n++;
 
         // @mesh_chan — per-channel mesh stats
-        emit_mesh_chan_stats();
+        n += emit_mesh_chan_stats();
 
         // @screen
         emit_tag(tag::SCREEN);
@@ -736,7 +690,7 @@ void cmd_query(const char* arg) {
         emit_sep(); emit_kv_u(key::PM, ESP.getMinFreePsram());
         emit_sep(); emit_kv_u(key::B, sigurdos_battery_pct());
         emit_sep(); emit_kv_u(key::MV, sigurdos_battery_mv());
-        emit_sep(); emit_kv_u(key::RSSI, (uint32_t)sigurdos::mesh::getLastRSSI());
+        emit_sep(); emit_kv(key::RSSI, sigurdos::mesh::getLastRSSI());
         emit_sep(); emit_kv_u(key::WIDGETS, count_lvgl_widgets());
         emit_sep(); emit_kv_s(key::SCREEN, screen_name_str(s_active_screen));
         emit_sep(); emit_kv_u(key::SCREEN_MS, s_screen_birth_ms ? (millis() - s_screen_birth_ms) : 0);
@@ -748,13 +702,7 @@ void cmd_query(const char* arg) {
         emit_end();
         n++;
 
-        // @end|cmd=full|n=<count>
-        uint32_t cost = micros() - start;
-        emit_tag(tag::END);
-        emit_sep(); emit_kv_s(key::CMD, "full");
-        emit_sep(); emit_kv_u(key::N, n);
-        emit_end();
-        emit_ok(arg, cost);
+        emit_end_resp(arg, n, micros() - start);
         return;
     }
 
@@ -771,8 +719,8 @@ void cmd_query(const char* arg) {
         emit_sep(); emit_kv_u(key::PM, ESP.getMinFreePsram());
         emit_sep(); emit_kv_u(key::B, sigurdos_battery_pct());
         emit_sep(); emit_kv_u(key::MV, sigurdos_battery_mv());
-        emit_sep(); emit_kv_u(key::RSSI, (uint32_t)sigurdos::mesh::getLastRSSI());
-        emit_sep(); emit_kv_u(key::SNR, (uint32_t)(sigurdos::mesh::getLastSNR() * 10));
+        emit_sep(); emit_kv(key::RSSI, sigurdos::mesh::getLastRSSI());
+        emit_sep(); emit_kv(key::SNR, (int32_t)(sigurdos::mesh::getLastSNR() * 10));
         emit_sep(); emit_kv_u(key::WIDGETS, count_lvgl_widgets());
         emit_end();
         n = 1;
@@ -794,16 +742,16 @@ void cmd_query(const char* arg) {
 
     if (strcmp(arg, "mesh") == 0 || strcmp(arg, "state") == 0) {
         emit_tag(tag::MESH);
-        emit_sep(); emit_kv_u(key::RSSI, (uint32_t)sigurdos::mesh::getLastRSSI());
-        emit_sep(); emit_kv_u(key::SNR, (uint32_t)(sigurdos::mesh::getLastSNR() * 10));
-        emit_sep(); emit_kv_u(key::NOISE, (uint32_t)sigurdos::mesh::getNoiseFloor());
+        emit_sep(); emit_kv(key::RSSI, sigurdos::mesh::getLastRSSI());
+        emit_sep(); emit_kv(key::SNR, (int32_t)(sigurdos::mesh::getLastSNR() * 10));
+        emit_sep(); emit_kv(key::NOISE, sigurdos::mesh::getNoiseFloor());
         emit_sep(); emit_kv_u(key::TX, sigurdos::mesh::getNumSentFlood() + sigurdos::mesh::getNumSentDirect());
         emit_sep(); emit_kv_u(key::RX, sigurdos::mesh::getNumRecvFlood() + sigurdos::mesh::getNumRecvDirect());
         emit_end();
         n = (strcmp(arg, "mesh") == 0) ? 1 : 3;
         // Per-channel stats for explicit \"mesh\" query
         if (strcmp(arg, "mesh") == 0) {
-            emit_mesh_chan_stats();
+            n += emit_mesh_chan_stats();
         }
     }
 
@@ -813,7 +761,7 @@ void cmd_query(const char* arg) {
             emit_sep(); emit_kv_s(key::METRIC, "heap");
             emit_sep(); emit_kv_u(key::BASELINE, (uint32_t)s_heap_drift.baseline);
             emit_sep(); emit_kv_u(key::CURRENT,  (uint32_t)s_heap_drift.current);
-            emit_sep(); emit_kv_u(key::DELTA,    (uint32_t)(s_heap_drift.baseline - s_heap_drift.current));
+            emit_sep(); emit_kv(key::DELTA, s_heap_drift.delta());
             emit_sep(); emit_kv_s(key::TREND,    s_heap_drift.trend_str());
             emit_end();
             n++;
@@ -823,8 +771,18 @@ void cmd_query(const char* arg) {
             emit_sep(); emit_kv_s(key::METRIC, "psram");
             emit_sep(); emit_kv_u(key::BASELINE, (uint32_t)s_psram_drift.baseline);
             emit_sep(); emit_kv_u(key::CURRENT,  (uint32_t)s_psram_drift.current);
-            emit_sep(); emit_kv_u(key::DELTA,    (uint32_t)(s_psram_drift.baseline - s_psram_drift.current));
+            emit_sep(); emit_kv(key::DELTA, s_psram_drift.delta());
             emit_sep(); emit_kv_s(key::TREND,    s_psram_drift.trend_str());
+            emit_end();
+            n++;
+        }
+        if (s_rssi_drift.active) {
+            emit_tag(tag::DRIFT);
+            emit_sep(); emit_kv_s(key::METRIC, "rssi");
+            emit_sep(); emit_kv(key::BASELINE, s_rssi_drift.baseline / 4);
+            emit_sep(); emit_kv(key::CURRENT, s_rssi_drift.current / 4);
+            emit_sep(); emit_kv(key::DELTA, s_rssi_drift.delta() / 4);
+            emit_sep(); emit_kv_s(key::TREND, s_rssi_drift.trend_str());
             emit_end();
             n++;
         }
@@ -869,37 +827,27 @@ void cmd_query(const char* arg) {
         n = 1;
     }
     if (strcmp(arg, "hb-ring") == 0) {
-        hb_ring_query(20);
-        n = 0;  // hb_ring_query emits its own records
+        n = hb_ring_query(20);
     }
     if (strcmp(arg, "pktlog") == 0) {
-        emit_pktlog();
-        n = 0;  // emit_pktlog emits its own records
+        n = emit_pktlog();
     }
 
     if (strcmp(arg, "crash") == 0) {
         crash::query();
-        n = 0;  // crash::query() calls emit_end_resp itself; we skip the final emit_end_resp
+        return;
     } else if (strncmp(arg, "crash ", 6) == 0) {
         const char* sub = arg + 6;
         if (strcmp(sub, "clear") == 0) {
             crash::clear();
-            n = 0;  // clear() already emitted @ok
+            return;
         } else if (strcmp(sub, "test") == 0) {
             crash::test();
-            n = 0;  // test triggers immediate crash, no response needed
-        } else {
-            emit_err("crash", "Unknown subcommand (clear, test)");
-            n = 0;
+            return;
         }
     }
 
-    if (n > 0) {
-        uint32_t cost = micros() - start;
-        emit_end_resp(arg, n);
-        // Re-emit ok with actual cost (overwrites the placeholder)
-        emit_ok(arg, cost);
-    }
+    emit_end_resp(arg, n, micros() - start);
 }
 
 void cmd_crash(const char* arg) {

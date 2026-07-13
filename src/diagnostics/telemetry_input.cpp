@@ -17,7 +17,6 @@ namespace telemetry {
 namespace input {
 
 // ── Static counters ────────────────────────────────────
-static uint16_t    s_lvgl_evq_depth      = 0;
 static uint32_t    s_lvgl_render_count   = 0;
 static uint8_t     s_last_key_code       = 0;
 static uint32_t    s_last_key_ms         = 0;
@@ -85,10 +84,6 @@ void report_trackball_event(uint8_t direction) {
 }
 
 // ── LVGL counters ──────────────────────────────────────
-
-uint16_t get_lvgl_evq_depth() {
-    return s_lvgl_evq_depth;
-}
 
 uint32_t get_lvgl_render_count() {
     return s_lvgl_render_count;

@@ -61,9 +61,10 @@ struct LoRaSnapshot {
 };
 
 struct NvsSnapshot {
-    uint32_t used_bytes;
-    uint32_t total_bytes;
-    uint32_t entry_count;
+    bool     valid;
+    uint32_t used_entries;
+    uint32_t total_entries;
+    uint32_t free_entries;
 };
 
 struct TaskWatermark {
@@ -73,8 +74,8 @@ struct TaskWatermark {
     uint8_t  state;
 };
 
-inline bool task_watermark_output_valid(const TaskWatermark* out, uint8_t max) {
-    return out && max > 0;
+inline bool task_watermark_output_valid(const TaskWatermark* out) {
+    return out != nullptr;
 }
 
 // ── Collectors (fill a snapshot from hardware state) ──
@@ -85,7 +86,7 @@ SdCardSnapshot collect_sd();
 LoRaSnapshot   collect_radio();
 NvsSnapshot    collect_nvs();
 float          collect_temp();   // returns °C
-uint8_t        collect_task_watermarks(TaskWatermark* out, uint8_t max);
+bool           collect_current_task_watermark(TaskWatermark* out);
 
 // ── Emission functions (emit telemetry records) ────────
 
