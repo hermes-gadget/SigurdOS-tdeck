@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdint>
 #include "tile_cache.h"
+#include "ui/map_input_policy.h"
 
 namespace {
 
@@ -219,6 +220,26 @@ TEST_F(MapTest, ScreenCornerMapsToValidCoord) {
     EXPECT_LE(lat, 85.0511);
     EXPECT_GE(lon, -180.0);
     EXPECT_LE(lon, 180.0);
+}
+
+TEST(MapInputPolicyTest, UnpannedMapLeavesLeftForGlobalBack) {
+    sigurdos::ui::MapTrackballPanState state;
+    EXPECT_FALSE(state.consumeLeftPan());
+    EXPECT_FALSE(state.consumeLeftPan());
+}
+
+TEST(MapInputPolicyTest, PriorPanAllowsOneLeftPanBeforeBackFallback) {
+    sigurdos::ui::MapTrackballPanState state;
+    state.notePan();
+    EXPECT_TRUE(state.consumeLeftPan());
+    EXPECT_FALSE(state.consumeLeftPan());
+}
+
+TEST(MapInputPolicyTest, NewScreenEntryClearsPriorPanState) {
+    sigurdos::ui::MapTrackballPanState state;
+    state.notePan();
+    state.reset();
+    EXPECT_FALSE(state.consumeLeftPan());
 }
 
 // ════════════════════════════════════════════════════════

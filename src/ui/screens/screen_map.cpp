@@ -21,6 +21,7 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../screen_lifetime.h"
+#include "../map_input_policy.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/map_renderer.h"
 #include "../../hal/gps.h"
@@ -35,6 +36,7 @@ using namespace responsive;
 
 // ── Forward declarations for trackball handler ──
 static void render_map_with_contacts();
+static MapTrackballPanState g_map_trackball_pan;
 
 // ════════════════════════════════════════════════════════
 // Map — trackball pan navigation
@@ -44,18 +46,22 @@ bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
     const int PAN_PX = 12;  // pixels per trackball tick
     switch (event) {
         case SigurdOSTrackballEvent::Up:
+            g_map_trackball_pan.notePan();
             sigurdos_map_pan(0, -PAN_PX);
             render_map_with_contacts();
             return true;
         case SigurdOSTrackballEvent::Down:
+            g_map_trackball_pan.notePan();
             sigurdos_map_pan(0, PAN_PX);
             render_map_with_contacts();
             return true;
         case SigurdOSTrackballEvent::Left:
+            if (!g_map_trackball_pan.consumeLeftPan()) return false;
             sigurdos_map_pan(-PAN_PX, 0);
             render_map_with_contacts();
             return true;
         case SigurdOSTrackballEvent::Right:
+            g_map_trackball_pan.notePan();
             sigurdos_map_pan(PAN_PX, 0);
             render_map_with_contacts();
             return true;
@@ -95,6 +101,8 @@ static void render_map_with_contacts() {
 
 void map_screen_show()
 {
+    g_map_trackball_pan.reset();
+
     // Opening Map is an explicit foreground request for responsive location.
     // It does not mutate the persisted background GPS preference.
     sigurdos_gps_set_map_high_rate(true);
@@ -151,7 +159,10 @@ void map_screen_show()
             int dx = drag_start_x - pt.x;
             int dy = drag_start_y - pt.y;
             drag_start_x = pt.x; drag_start_y = pt.y;
-            if (dx != 0 || dy != 0) sigurdos_map_pan(dx, dy);
+            if (dx != 0 || dy != 0) {
+                g_map_trackball_pan.notePan();
+                sigurdos_map_pan(dx, dy);
+            }
             uint32_t now = millis();
             if (now - map_last_render_ms >= 200) {
                 render_map_with_contacts();
