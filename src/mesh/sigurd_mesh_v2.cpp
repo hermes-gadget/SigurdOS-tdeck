@@ -7,6 +7,7 @@
 #include "companion_message_policy.h"
 #include "advert_blob.h"
 #include "control_parser.h"
+#include "login_response.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -789,12 +790,12 @@ namespace mesh {
         // receive status, telemetry, and binary replies from the same contact.
         int login_idx = findLoginEntry(contact.name);
         if (login_idx >= 0 && _login_entries[login_idx].in_use &&
-            _login_entries[login_idx].status == LOGIN_PENDING && len >= 8) {
-            // New-style login response
-            if (data[4] == RESP_SERVER_LOGIN_OK) {
-                uint16_t keep_alive_secs = ((uint16_t)data[5]) * 16;
-                uint8_t  perm = data[6];
-                uint8_t  acl = (len > 7) ? data[7] : 0;
+            _login_entries[login_idx].status == LOGIN_PENDING) {
+            const login_response::Parsed response = login_response::parse(data, len);
+            if (response.format == login_response::Format::CurrentSuccess) {
+                const uint16_t keep_alive_secs = response.keep_alive_secs;
+                const uint8_t perm = response.permission;
+                const uint8_t acl = response.acl_permissions;
 
                 _login_entries[login_idx].permission = perm;
                 _login_entries[login_idx].acl_permissions = acl;
@@ -817,10 +818,10 @@ namespace mesh {
 #endif
                 return; // handled — don't push to ring buffer
             }
-            // Legacy login "OK" response
-            if (data[4] == 'O' && data[5] == 'K') {
+            if (response.format == login_response::Format::LegacySuccess) {
                 _login_entries[login_idx].status = LOGIN_OK;
                 _login_entries[login_idx].permission = 1; // legacy: admin if "OK"
+                _login_entries[login_idx].acl_permissions = 0;
                 _login_entries[login_idx].keep_alive_active = false;
                 sigurdos::mesh::mesh_v2_companion_login_push(
                     contact.id.pub_key, true, 0, /*is_admin=*/false);
@@ -829,15 +830,14 @@ namespace mesh {
 #endif
                 return;
             }
-            // Explicit login failure — pending entry with nonzero code
-            if (_login_entries[login_idx].status == LOGIN_PENDING && data[4] != 0) {
+            if (response.format == login_response::Format::CurrentFailure) {
                 _login_entries[login_idx].status = LOGIN_FAILED;
                 _login_entries[login_idx].keep_alive_active = false;
                 sigurdos::mesh::mesh_v2_companion_login_push(
                     contact.id.pub_key, false, 0, false);
 #if SIGURDOS_DEBUG_MESH
                 Serial.printf("[mesh] Login FAILED for %s (reason=%d)\n",
-                              contact.name, data[4]);
+                              contact.name, response.failure_code);
 #endif
                 // Don't return — also store in ring buffer for inspection
             }

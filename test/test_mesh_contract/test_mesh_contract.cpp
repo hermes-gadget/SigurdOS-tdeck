@@ -22,6 +22,7 @@
 
 #include "mesh/mesh_wrapper.h"
 #include "mesh/login_session.h"
+#include "mesh/login_response.h"
 #include "mesh/public_channel.h"
 
 namespace {
@@ -87,6 +88,52 @@ TEST(MeshContractTest, LoginSessionTransitionsExposeTimeoutAndDrop) {
     EXPECT_EQ(evaluate(OK, 0, 0, true, true, 0), OK);
     EXPECT_EQ(evaluate(OK, 0, 0, true, false, 0), DROPPED);
     EXPECT_EQ(evaluate(OK, 0, 0, false, false, 0), OK);
+}
+
+TEST(MeshContractTest, LegacyLoginResponseIsAcceptedAtSixBytes) {
+    const uint8_t response[6] = {1, 2, 3, 4, 'O', 'K'};
+    const auto parsed = sigurdos::mesh::login_response::parse(
+        response, sizeof(response));
+    EXPECT_EQ(parsed.format,
+              sigurdos::mesh::login_response::Format::LegacySuccess);
+}
+
+TEST(MeshContractTest, CurrentLoginBaseResponseDoesNotRequireAcl) {
+    const uint8_t response[7] = {1, 2, 3, 4, 0, 2, 3};
+    const auto parsed = sigurdos::mesh::login_response::parse(
+        response, sizeof(response));
+    EXPECT_EQ(parsed.format,
+              sigurdos::mesh::login_response::Format::CurrentSuccess);
+    EXPECT_EQ(parsed.keep_alive_secs, 32);
+    EXPECT_EQ(parsed.permission, 3);
+    EXPECT_EQ(parsed.acl_permissions, 0);
+}
+
+TEST(MeshContractTest, CurrentLoginParsesOptionalAclAndIgnoresLaterFields) {
+    const uint8_t response[13] = {
+        1, 2, 3, 4, 0, 4, 2, 0xA5, 9, 8, 7, 6, 11,
+    };
+    const auto parsed = sigurdos::mesh::login_response::parse(
+        response, sizeof(response));
+    EXPECT_EQ(parsed.format,
+              sigurdos::mesh::login_response::Format::CurrentSuccess);
+    EXPECT_EQ(parsed.keep_alive_secs, 64);
+    EXPECT_EQ(parsed.permission, 2);
+    EXPECT_EQ(parsed.acl_permissions, 0xA5);
+}
+
+TEST(MeshContractTest, LoginFailureRequiresCurrentBaseFields) {
+    const uint8_t short_response[6] = {1, 2, 3, 4, 7, 0};
+    EXPECT_EQ(sigurdos::mesh::login_response::parse(
+                  short_response, sizeof(short_response)).format,
+              sigurdos::mesh::login_response::Format::Unrecognized);
+
+    const uint8_t failure[7] = {1, 2, 3, 4, 7, 0, 0};
+    const auto parsed = sigurdos::mesh::login_response::parse(
+        failure, sizeof(failure));
+    EXPECT_EQ(parsed.format,
+              sigurdos::mesh::login_response::Format::CurrentFailure);
+    EXPECT_EQ(parsed.failure_code, 7);
 }
 
 TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {
