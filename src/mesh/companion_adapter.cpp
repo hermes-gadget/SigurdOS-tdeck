@@ -19,6 +19,7 @@
 #include "comms/observed_ble_interface.h"
 #include "hal/tdeck_pins.h"
 #include "hal/prefs.h"
+#include "hal/radio_profiles.h"
 #include "hal/gps.h"
 #include "hal/battery.h"
 #include "diagnostics/log.h"
@@ -430,25 +431,43 @@ public:
         if (cr < 5 || cr > 8) return false;
         if (client_repeat > 1) return false;
 
-        sigurdos::NodePrefs p = sigurdos::prefs_get();
-        const int8_t tx_power = (p.tx_power_dbm >= -9 && p.tx_power_dbm <= 22)
-            ? p.tx_power_dbm
+        sigurdos::NodePrefs proposed = sigurdos::prefs_get();
+        const int8_t tx_power =
+            (proposed.tx_power_dbm >= -9 && proposed.tx_power_dbm <= 22)
+            ? proposed.tx_power_dbm
             : LORA_TX_PWR;
         const float freq = (float)freq_khz / 1000.0f;
         const float bw = (float)bw_hz / 1000.0f;
-        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
-                                              tx_power, p.rx_boosted_gain)) {
+
+        proposed.configured = true;
+        proposed.freq = freq;
+        proposed.bw = bw;
+        proposed.sf = sf;
+        proposed.cr = cr;
+        proposed.tx_power_dbm = tx_power;
+        proposed.client_repeat = client_repeat;
+
+        const sigurdos::RadioProfile* matched = sigurdos::radio_profile_match(proposed);
+        if (matched) {
+            sigurdos::radio_profile_apply(*matched, proposed);
+        } else {
+            sigurdos::radio_profile_set_custom(proposed);
+        }
+
+        uint32_t repeat_freq_khz = 0;
+        if (client_repeat != 0 &&
+            (!sigurdos::radio_profile_repeat_frequency_khz(proposed,
+                                                           &repeat_freq_khz) ||
+             repeat_freq_khz != freq_khz)) {
             return false;
         }
 
-        p.configured = true;
-        p.freq = freq;
-        p.bw = bw;
-        p.sf = sf;
-        p.cr = cr;
-        p.tx_power_dbm = (int8_t)tx_power;
-        p.client_repeat = client_repeat;
-        sigurdos::prefs_set(p);
+        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
+                                              tx_power, proposed.rx_boosted_gain)) {
+            return false;
+        }
+
+        sigurdos::prefs_set(proposed);
         return true;
     }
 
@@ -665,14 +684,17 @@ public:
         s.recv_errors = d.packets_recv_errors;
     }
     size_t allowedRepeatFreqRanges(uint32_t* pairs, size_t max_pairs) const override {
-        // Return the actual supported frequency range(s) for client-repeat.
-        // For SX1262 on T-Deck: 150 MHz – 960 MHz (usable range).
-        if (pairs && max_pairs >= 1) {
-            pairs[0] = 150000;   // 150 MHz in kHz (lower)
-            pairs[1] = 960000;   // 960 MHz in kHz (upper)
-            return 1;            // 1 range pair
+        if (!pairs || max_pairs == 0) return 0;
+
+        uint32_t frequency_khz = 0;
+        if (!sigurdos::radio_profile_repeat_frequency_khz(
+                sigurdos::prefs_get(), &frequency_khz)) {
+            return 0;
         }
-        return 0;
+
+        pairs[0] = frequency_khz;
+        pairs[1] = frequency_khz;
+        return 1;
     }
 
     // ── Flood scope (companion regions) ──────────────────────

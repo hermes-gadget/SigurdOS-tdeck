@@ -60,6 +60,8 @@ public:
     bool set_tuning_params_called = false;
     uint32_t tuning_rx_delay_base_x1000 = 10000;
     uint32_t tuning_tx_delay_factor_x1000 = 1000;
+    uint32_t allowed_repeat_ranges[4]{};
+    size_t allowed_repeat_range_count = 0;
     uint32_t now = 1234;
 
     uint8_t path_hash_mode = 0;
@@ -278,7 +280,16 @@ public:
         s.recv = 100; s.sent = 50; s.sent_flood = 5; s.sent_direct = 45;
         s.recv_flood = 60; s.recv_direct = 40; s.recv_errors = 3;
     }
-    size_t allowedRepeatFreqRanges(uint32_t*, size_t) const override { return 0; }
+    size_t allowedRepeatFreqRanges(uint32_t* pairs, size_t max_pairs) const override {
+        const size_t count = allowed_repeat_range_count < max_pairs
+            ? allowed_repeat_range_count
+            : max_pairs;
+        if (pairs && count > 0) {
+            std::memcpy(pairs, allowed_repeat_ranges,
+                        count * 2 * sizeof(uint32_t));
+        }
+        return count;
+    }
     bool getDefaultFloodScope(char* name, uint8_t* key) const override {
         if (!scope_is_set) return false;
         if (name) { std::memset(name, 0, 31); std::strncpy(name, "#test", 30); }
@@ -942,7 +953,30 @@ TEST_F(CompanionProtocolTest, GetCustomVarsEmptyAndAllowedFreq) {
     serial.writes.clear();
     uint8_t rf[1] = { cc::CMD_GET_ALLOWED_REPEAT_FREQ };
     ASSERT_TRUE(bridge.handleFrame(rf, sizeof(rf)));
+    ASSERT_EQ(serial.writes[0].size(), 1u);
     EXPECT_EQ(serial.writes[0][0], cc::RESP_ALLOWED_REPEAT_FREQ);
+}
+
+TEST_F(CompanionProtocolTest, AllowedRepeatFrequencySerializesRangePairs) {
+    host.allowed_repeat_range_count = 2;
+    host.allowed_repeat_ranges[0] = 868000;
+    host.allowed_repeat_ranges[1] = 868000;
+    host.allowed_repeat_ranges[2] = 869525;
+    host.allowed_repeat_ranges[3] = 869525;
+
+    uint8_t frame[1] = { cc::CMD_GET_ALLOWED_REPEAT_FREQ };
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+
+    ASSERT_EQ(serial.writes.size(), 1u);
+    const auto& out = serial.writes[0];
+    ASSERT_EQ(out.size(), 1u + 4u * sizeof(uint32_t));
+    EXPECT_EQ(out[0], cc::RESP_ALLOWED_REPEAT_FREQ);
+    uint32_t ranges[4]{};
+    std::memcpy(ranges, &out[1], sizeof(ranges));
+    EXPECT_EQ(ranges[0], 868000u);
+    EXPECT_EQ(ranges[1], 868000u);
+    EXPECT_EQ(ranges[2], 869525u);
+    EXPECT_EQ(ranges[3], 869525u);
 }
 
 // ── Live / async pushes ───────────────────────────────────────
