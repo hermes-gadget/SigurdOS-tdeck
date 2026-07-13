@@ -40,6 +40,9 @@ jobs:
       - name: Run native tests
         run: pio test -e native_test -v
 
+      - name: Verify release evidence contracts
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
   build:
     name: Build firmware
     runs-on: ubuntu-latest
@@ -83,7 +86,16 @@ jobs:
           fi
 
       - name: Build firmware
-        run: pio run -e SigurdOS_TDeck
+        run: |
+          set -o pipefail
+          pio run -e SigurdOS_TDeck | tee build.log
+
+      - name: Enforce first-party warning budget
+        run: >-
+          python scripts/check_first_party_warnings.py
+          --log build.log
+          --baseline ci/first_party_warnings.json
+          --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Save webflasher assets (before debug build overwrites)
         run: |

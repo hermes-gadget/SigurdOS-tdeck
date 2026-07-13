@@ -24,6 +24,8 @@
 #include "../contact_paging.h"
 #include "../chat_screen.h"
 #include "../notifications.h"
+#include "../contact_list_power.h"
+#include "../repeater_transcript.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/qr_show.h"
@@ -53,14 +55,14 @@ void show_contact_memory_error(lv_obj_t* scr)
     lv_obj_align(err, LV_ALIGN_CENTER, 0, 0);
 }
 
-void add_contact_pager(lv_obj_t* scr, int page, int pages, int total,
-                              lv_event_cb_t prev_cb, lv_event_cb_t next_cb)
+static void add_contact_pager_at(lv_obj_t* scr, int y, int page, int pages, int total,
+                                 lv_event_cb_t prev_cb, lv_event_cb_t next_cb)
 {
     if (pages <= 1) return;
 
     lv_obj_t* pager = lv_obj_create(scr);
     lv_obj_set_size(pager, CONTENT_W, 24);
-    lv_obj_align(pager, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 2);
+    lv_obj_align(pager, LV_ALIGN_TOP_LEFT, 0, y + 2);
     lv_obj_set_style_bg_opa(pager, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(pager, 0, 0);
     lv_obj_set_style_pad_all(pager, 0, 0);
@@ -98,11 +100,76 @@ void add_contact_pager(lv_obj_t* scr, int page, int pages, int total,
     lv_obj_center(next_l);
 }
 
-static int compare_contacts_by_name(const void* a, const void* b)
+void add_contact_pager(lv_obj_t* scr, int page, int pages, int total,
+                       lv_event_cb_t prev_cb, lv_event_cb_t next_cb)
 {
-    const auto* ca = static_cast<const sigurdos::mesh::ContactInfo*>(a);
-    const auto* cb = static_cast<const sigurdos::mesh::ContactInfo*>(b);
-    return strcmp(ca->name, cb->name);
+    add_contact_pager_at(scr, CONTENT_Y, page, pages, total, prev_cb, next_cb);
+}
+
+using ContactListEntry = sigurdos::mesh::ContactInfo;
+
+static ContactSortMode g_contact_sort = ContactSortMode::Alpha;
+static ContactFilterMode g_contact_filter = ContactFilterMode::All;
+
+static int compare_contact_entries(const void* a, const void* b)
+{
+    const auto* ca = static_cast<const ContactListEntry*>(a);
+    const auto* cb = static_cast<const ContactListEntry*>(b);
+    return contact_sort_compare(g_contact_sort,
+        ca->name, ca->type, ca->last_seen,
+        cb->name, cb->type, cb->last_seen);
+}
+
+static void show_manual_contact_dialog();
+
+static void add_contact_power_bar(lv_obj_t* scr)
+{
+    lv_obj_t* bar = lv_obj_create(scr);
+    lv_obj_set_size(bar, LV_PCT(100), 26);
+    lv_obj_align(bar, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_pad_all(bar, 1, 0);
+    lv_obj_set_style_pad_gap(bar, 3, 0);
+    lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_scroll_dir(bar, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(bar, LV_SCROLLBAR_MODE_OFF);
+
+    auto chip = [bar](const char* text, bool selected, lv_event_cb_t cb, void* data) {
+        lv_obj_t* btn = lv_btn_create(bar);
+        lv_obj_set_size(btn, LV_SIZE_CONTENT, 23);
+        selected ? apply_pixel_btn(btn) : apply_pixel_btn_outline(btn);
+        lv_obj_set_style_pad_left(btn, 7, 0);
+        lv_obj_set_style_pad_right(btn, 7, 0);
+        lv_obj_t* label = lv_label_create(btn);
+        lv_label_set_text(label, text);
+        lv_obj_set_style_text_font(label, emoji_wrapped_montserrat_10, 0);
+        lv_obj_center(label);
+        lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, data);
+    };
+    auto filter_cb = [](lv_event_t* e) {
+        g_contact_filter = (ContactFilterMode)(intptr_t)lv_event_get_user_data(e);
+        g_contacts_page = 0;
+        contacts_screen_show();
+    };
+    chip("ALL", g_contact_filter == ContactFilterMode::All, filter_cb,
+         (void*)(intptr_t)ContactFilterMode::All);
+    chip("FAV", g_contact_filter == ContactFilterMode::Favourites, filter_cb,
+         (void*)(intptr_t)ContactFilterMode::Favourites);
+    chip("INFRA", g_contact_filter == ContactFilterMode::Infrastructure, filter_cb,
+         (void*)(intptr_t)ContactFilterMode::Infrastructure);
+    chip("PATH", g_contact_filter == ContactFilterMode::HasPath, filter_cb,
+         (void*)(intptr_t)ContactFilterMode::HasPath);
+    const char* sort_text = g_contact_sort == ContactSortMode::Alpha ? "SORT A-Z" :
+        (g_contact_sort == ContactSortMode::Recent ? "SORT RECENT" : "SORT TYPE");
+    chip(sort_text, false, [](lv_event_t*) {
+        g_contact_sort = g_contact_sort == ContactSortMode::Alpha
+            ? ContactSortMode::Recent : (g_contact_sort == ContactSortMode::Recent
+                ? ContactSortMode::Type : ContactSortMode::Alpha);
+        g_contacts_page = 0;
+        contacts_screen_show();
+    }, nullptr);
+    chip("+ ADD", false, [](lv_event_t*) { show_manual_contact_dialog(); }, nullptr);
 }
 
 // ════════════════════════════════════════════════════════
@@ -131,27 +198,37 @@ void contacts_screen_show()
     if (total < 0) total = 0;
     if (total > MAX_CONTACTS) total = MAX_CONTACTS;
 
-    // Filter based on mode
+    ContactListEntry* entries = new(std::nothrow) ContactListEntry[MAX_CONTACTS];
+    if (!entries) {
+        delete[] all_contacts;
+        show_contact_memory_error(scr);
+        show_screen(scr);
+        return;
+    }
+
+    // Filter and annotate once before paging; no per-row mesh scans.
     int n = 0;
     for (int i = 0; i < total; i++) {
-        bool keep = false;
+        bool keep = true;
         if (contacts_filter_type >= 0) {
-            // Specific type filter (e.g. ROOMS → ADV_TYPE_ROOM only)
             keep = (all_contacts[i].type == contacts_filter_type);
-        } else {
-            // Default: companions (CHAT) and room servers (ROOM)
-            keep = (all_contacts[i].type == ADV_TYPE_CHAT ||
-                    all_contacts[i].type == ADV_TYPE_ROOM);
         }
+        const bool favourite = all_contacts[i].favourite;
+        const bool has_path = all_contacts[i].has_path;
+        keep = keep && contact_filter_accepts(
+            g_contact_filter, all_contacts[i].type, favourite, has_path);
         if (keep) {
-            if (n < i) all_contacts[n] = all_contacts[i];
+            entries[n] = all_contacts[i];
             n++;
         }
     }
-    sigurdos::mesh::ContactInfo* contacts = all_contacts;
+    delete[] all_contacts;
+    all_contacts = nullptr;
 
-    // Sort alphabetically across the full 350-contact table before paging.
-    if (n > 1) qsort(contacts, n, sizeof(contacts[0]), compare_contacts_by_name);
+    add_contact_power_bar(scr);
+    const int content_start = CONTENT_Y + 28;
+
+    if (n > 1) qsort(entries, n, sizeof(entries[0]), compare_contact_entries);
 
     if (n == 0) {
         g_contacts_page = 0;
@@ -168,8 +245,8 @@ void contacts_screen_show()
         lv_obj_set_style_text_align(info, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_color(info, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(info, emoji_wrapped_montserrat_12, 0);
-        lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, CONTENT_Y + 4);
-        delete[] all_contacts;
+        lv_obj_align(info, LV_ALIGN_TOP_LEFT, 0, content_start + 4);
+        delete[] entries;
         show_screen(scr);
         return;
     }
@@ -181,25 +258,24 @@ void contacts_screen_show()
     int page_n = page_end - page_start;
     // Heap-allocate the per-page buffer rather than placing ~1.8 KB on the
     // stack — this runs in the LVGL task context (navigation + pager clicks).
-    sigurdos::mesh::ContactInfo* page_contacts =
-        new(std::nothrow) sigurdos::mesh::ContactInfo[CONTACT_LIST_PAGE_SIZE];
+    ContactListEntry* page_contacts =
+        new(std::nothrow) ContactListEntry[CONTACT_LIST_PAGE_SIZE];
     if (!page_contacts) {
-        delete[] all_contacts;
+        delete[] entries;
         show_contact_memory_error(scr);
         show_screen(scr);
         return;
     }
     for (int i = 0; i < page_n; i++) {
-        page_contacts[i] = contacts[page_start + i];
+        page_contacts[i] = entries[page_start + i];
     }
-    delete[] all_contacts;
-    all_contacts = nullptr;
-    contacts = page_contacts;
+    delete[] entries;
+    entries = nullptr;
 
-    int list_y = CONTENT_Y;
-    int list_h = CONTENT_H;
+    int list_y = content_start;
+    int list_h = CONTENT_H - 28;
     if (pages > 1) {
-        add_contact_pager(scr, g_contacts_page, pages, n,
+        add_contact_pager_at(scr, content_start, g_contacts_page, pages, n,
             [](lv_event_t*) {
                 if (g_contacts_page > 0) g_contacts_page--;
                 contacts_screen_show();
@@ -231,7 +307,7 @@ void contacts_screen_show()
     static constexpr int ROW_H = 32;
 
     for (int i = 0; i < page_n; i++) {
-        auto& c = contacts[i];
+        auto& c = page_contacts[i];
 
         lv_obj_t* row = lv_obj_create(list);
         if (!row) break;
@@ -257,27 +333,21 @@ void contacts_screen_show()
         // Name
         lv_obj_t* name_l = lv_label_create(row);
         lv_label_set_text(name_l, c.name);
+        lv_obj_set_width(name_l, CONTENT_W - 100);
+        lv_label_set_long_mode(name_l, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(name_l, LV_ALIGN_LEFT_MID, 28, 0);
 
-        // RSSI
-        char rssi_buf[12];
-        snprintf(rssi_buf, sizeof(rssi_buf), "%ddBm", c.rssi);
-        lv_obj_t* rssi_l = lv_label_create(row);
-        lv_label_set_text(rssi_l, rssi_buf);
-        lv_obj_set_style_text_color(rssi_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(rssi_l, emoji_wrapped_montserrat_10, 0);
-        lv_obj_align(rssi_l, LV_ALIGN_RIGHT_MID, -6, 0);
-
-        // SNR
-        char snr_buf[12];
-        snprintf(snr_buf, sizeof(snr_buf), "%.1fdB", c.snr);
-        lv_obj_t* snr_l = lv_label_create(row);
-        lv_label_set_text(snr_l, snr_buf);
-        lv_obj_set_style_text_color(snr_l, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(snr_l, emoji_wrapped_montserrat_10, 0);
-        lv_obj_align(snr_l, LV_ALIGN_RIGHT_MID, -56, 0);
+        const char* quality = contact_quality_name(c.rssi, c.snr);
+        lv_obj_t* quality_l = lv_label_create(row);
+        lv_label_set_text(quality_l, quality);
+        lv_obj_set_style_text_color(quality_l, lv_color_hex(
+            strcmp(quality, "GOOD") == 0 ? ACCENT_GREEN :
+            (strcmp(quality, "FAIR") == 0 ? ACCENT_ORANGE :
+             (strcmp(quality, "WEAK") == 0 ? ACCENT_RED : TEXT_MUTED))), 0);
+        lv_obj_set_style_text_font(quality_l, emoji_wrapped_montserrat_10, 0);
+        lv_obj_align(quality_l, LV_ALIGN_RIGHT_MID, -6, 0);
 
         // Store name + type for click handler
         // Room servers open the detail screen; chat nodes open DM
@@ -308,8 +378,128 @@ void contacts_screen_show()
     show_screen(scr);
 }
 
+struct ManualContactCtx {
+    lv_obj_t* name;
+    lv_obj_t* pubkey;
+    lv_obj_t* type_label;
+    lv_obj_t* error;
+    uint8_t type;
+};
+
+static const char* manual_contact_type_name(uint8_t type)
+{
+    return type == ADV_TYPE_REPEATER ? "REPEATER" :
+        (type == ADV_TYPE_ROOM ? "ROOM" : "CHAT");
+}
+
+static void show_manual_contact_dialog()
+{
+    lv_obj_t* parent = lv_obj_get_screen(lv_scr_act());
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, 290, 190);
+    lv_obj_center(dlg);
+    apply_pixel_card_accent(dlg);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, "ADD CONTACT");
+    lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lv_obj_t* name = lv_textarea_create(dlg);
+    lv_obj_set_size(name, 274, 28);
+    lv_obj_align(name, LV_ALIGN_TOP_LEFT, 0, 24);
+    lv_textarea_set_one_line(name, true);
+    lv_textarea_set_max_length(name, 31);
+    lv_textarea_set_placeholder_text(name, "Contact name");
+    apply_pixel_input(name);
+
+    lv_obj_t* key = lv_textarea_create(dlg);
+    lv_obj_set_size(key, 274, 28);
+    lv_obj_align(key, LV_ALIGN_TOP_LEFT, 0, 56);
+    lv_textarea_set_one_line(key, true);
+    lv_textarea_set_max_length(key, 64);
+    lv_textarea_set_placeholder_text(key, "64-hex public key");
+    lv_obj_set_style_text_font(key, emoji_wrapped_montserrat_10, 0);
+    apply_pixel_input(key);
+
+    lv_obj_t* type = lv_btn_create(dlg);
+    lv_obj_set_size(type, 110, 24);
+    lv_obj_align(type, LV_ALIGN_TOP_LEFT, 0, 90);
+    apply_pixel_btn_outline(type);
+    lv_obj_t* type_label = lv_label_create(type);
+    lv_label_set_text(type_label, "TYPE: CHAT");
+    lv_obj_center(type_label);
+
+    lv_obj_t* error = lv_label_create(dlg);
+    lv_label_set_text(error, "");
+    lv_obj_set_width(error, 274);
+    lv_obj_set_style_text_color(error, lv_color_hex(ACCENT_RED), 0);
+    lv_obj_set_style_text_font(error, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(error, LV_ALIGN_TOP_LEFT, 0, 120);
+
+    ManualContactCtx* ctx = new ManualContactCtx{
+        name, key, type_label, error, ADV_TYPE_CHAT};
+    lv_obj_set_user_data(dlg, ctx);
+    lv_obj_set_user_data(type, ctx);
+    lv_obj_add_event_cb(type, [](lv_event_t* e) {
+        auto* data = (ManualContactCtx*)lv_obj_get_user_data(
+            (lv_obj_t*)lv_event_get_target(e));
+        if (!data) return;
+        data->type = data->type == ADV_TYPE_CHAT ? ADV_TYPE_REPEATER :
+            (data->type == ADV_TYPE_REPEATER ? ADV_TYPE_ROOM : ADV_TYPE_CHAT);
+        char text[24];
+        snprintf(text, sizeof(text), "TYPE: %s", manual_contact_type_name(data->type));
+        lv_label_set_text(data->type_label, text);
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* cancel = lv_btn_create(dlg);
+    lv_obj_set_size(cancel, 80, 24);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    apply_pixel_btn_outline(cancel);
+    lv_obj_t* cancel_l = lv_label_create(cancel);
+    lv_label_set_text(cancel_l, "CANCEL");
+    lv_obj_center(cancel_l);
+    lv_obj_add_event_cb(cancel, [](lv_event_t* e) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* add = lv_btn_create(dlg);
+    lv_obj_set_size(add, 80, 24);
+    lv_obj_align(add, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    apply_pixel_btn(add);
+    lv_obj_t* add_l = lv_label_create(add);
+    lv_label_set_text(add_l, "ADD");
+    lv_obj_center(add_l);
+    lv_obj_set_user_data(add, ctx);
+    lv_obj_add_event_cb(add, [](lv_event_t* e) {
+        auto* data = (ManualContactCtx*)lv_obj_get_user_data(
+            (lv_obj_t*)lv_event_get_target(e));
+        if (!data) return;
+        const char* name_text = lv_textarea_get_text(data->name);
+        const char* key_text = lv_textarea_get_text(data->pubkey);
+        if (!contact_manual_fields_valid(name_text, key_text)) {
+            lv_label_set_text(data->error, "Name or public key is invalid");
+            return;
+        }
+        if (!sigurdos::mesh::addContactManual(name_text, key_text, data->type)) {
+            lv_label_set_text(data->error, "Duplicate contact or list full");
+            return;
+        }
+        g_contacts_page = 0;
+        contacts_screen_show();
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        delete (ManualContactCtx*)lv_obj_get_user_data(
+            (lv_obj_t*)lv_event_get_target(e));
+    }, LV_EVENT_DELETE, nullptr);
+    if (lv_group_get_default()) lv_group_focus_obj(name);
+}
+
 // Forward declaration of login-polling timer (defined after dialog functions)
 static void start_login_poll_timer(const char* name);
+static void start_connection_watch_timer(const char* name);
 
 // ── Login password dialog ─────────────────────────
 // Shows a modal dialog for entering a password to log into a repeater/room server.
@@ -458,12 +648,12 @@ void show_login_password_dialog(const char* contact_name)
 // ── Login status polling timer ────────────────────
 // After a login attempt, this timer polls getLoginStatus() every 2 seconds.
 // On LOGIN_OK → rebuilds the screen with the post-login (management) view.
-// On LOGIN_FAILED → rebuilds pre-login so the failure text is visible.
+// On terminal failure/timeout/drop → rebuilds pre-login so the reason is visible.
 // Cancels itself if the user navigates away.
 struct LoginPollCtx {
     char* name;
     lv_obj_t* screen;
-
+    bool watch_connection;
     uint32_t gen;        // matches g_login_poll_gen at creation time; stale if timer restarted
 };
 static lv_timer_t* g_login_poll_timer = nullptr;
@@ -493,6 +683,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
     uint8_t st = sigurdos::mesh::getLoginStatus(ctx->name);
     if (st == LOGIN_STATUS_OK) {
         notifications_login_result(ctx->name, true);
+        if (ctx->watch_connection) return;
         char* n = strdup(ctx->name);
         free(ctx->name);
         delete ctx;
@@ -500,10 +691,13 @@ static void on_login_poll_timer(lv_timer_t* t) {
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
         // Rebuild screen in post-login mode
         repeater_detail_screen_show(n, true);
+        start_connection_watch_timer(n);
         free(n);
-    } else if (st == LOGIN_STATUS_FAILED) {
+    } else if (st == LOGIN_STATUS_FAILED || st == LOGIN_STATUS_TIMEOUT ||
+               st == LOGIN_STATUS_DROPPED ||
+               (ctx->watch_connection && st == LOGIN_STATUS_NONE)) {
         notifications_login_result(ctx->name, false);
-        // Rebuild pre-login view so it shows "Login failed" and the Login button
+        // Rebuild pre-login view so the terminal reason and Login button show.
         char* n = strdup(ctx->name);
         free(ctx->name);
         delete ctx;
@@ -512,10 +706,10 @@ static void on_login_poll_timer(lv_timer_t* t) {
         repeater_detail_screen_show(n, false);
         free(n);
     }
-    // LOGIN_PENDING or LOGIN_NONE → keep polling
+    // LOGIN_PENDING/LOGIN_NONE while waiting, or LOGIN_OK while watching, keep polling.
 }
 
-static void start_login_poll_timer(const char* name) {
+static void start_session_poll_timer(const char* name, bool watch_connection) {
     if (!name) return;
     // Cancel any existing timer first
     if (g_login_poll_timer) {
@@ -526,9 +720,18 @@ static void start_login_poll_timer(const char* name) {
     }
 
     g_login_poll_gen++;
-    LoginPollCtx* ctx = new LoginPollCtx{strdup(name), lv_scr_act(), g_login_poll_gen};
+    LoginPollCtx* ctx = new LoginPollCtx{
+        strdup(name), lv_scr_act(), watch_connection, g_login_poll_gen};
 
     g_login_poll_timer = lv_timer_create(on_login_poll_timer, 2000, ctx);
+}
+
+static void start_login_poll_timer(const char* name) {
+    start_session_poll_timer(name, false);
+}
+
+static void start_connection_watch_timer(const char* name) {
+    start_session_poll_timer(name, true);
 }
 
 // ── Admin command dialog ──────────────────────────
@@ -689,7 +892,7 @@ void show_admin_cmd_dialog(const char* contact_name)
                             if (dd2->deleted) return;
                             if (dd2->name && strcmp(nb, dd2->name) == 0) {
                                 char rb[256];
-                                snprintf(rb, sizeof(rb), "< %s\n", tb);
+                                format_repeater_cli_reply(rb, sizeof(rb), tb);
                                 // Trim output if near max to prevent overflow
                                 const char* full = lv_textarea_get_text(dd2->out);
                                 if (full && strlen(full) > 3500) {
@@ -1031,6 +1234,8 @@ void contact_detail_screen_show(const char* contact_name)
             case LOGIN_STATUS_PENDING: login_text = "Login pending..."; login_color = ACCENT; break;
             case LOGIN_STATUS_OK:      login_text = "Logged in";        login_color = ACCENT_GREEN; break;
             case LOGIN_STATUS_FAILED:  login_text = "Login failed";     login_color = ACCENT_RED; break;
+            case LOGIN_STATUS_TIMEOUT: login_text = "Login timed out";  login_color = ACCENT_RED; break;
+            case LOGIN_STATUS_DROPPED: login_text = "Connection dropped"; login_color = ACCENT_RED; break;
         }
         add_row("Login", login_text, login_color);
 
@@ -1403,13 +1608,47 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_add_event_cb(rp_btn, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(target);
-            if (name) {
-                sigurdos::mesh::resetPathTo(name);
-            }
-            lv_timer_create([](lv_timer_t* t) {
-                go_back();
-                lv_timer_del(t);
-            }, 800, nullptr);
+            if (!name) return;
+            lv_obj_t* dlg = lv_obj_create(lv_obj_get_screen(target));
+            lv_obj_set_size(dlg, 240, 100);
+            lv_obj_center(dlg);
+            apply_pixel_card_accent(dlg);
+            lv_obj_t* msg = lv_label_create(dlg);
+            lv_label_set_text(msg, "Reset saved route?\nNext send will flood.");
+            lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_align(msg, LV_ALIGN_TOP_MID, 0, 6);
+            lv_obj_t* cancel = lv_btn_create(dlg);
+            lv_obj_set_size(cancel, 80, 24);
+            lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 8, -4);
+            apply_pixel_btn_outline(cancel);
+            lv_obj_t* cancel_l = lv_label_create(cancel);
+            lv_label_set_text(cancel_l, "CANCEL");
+            lv_obj_center(cancel_l);
+            lv_obj_add_event_cb(cancel, [](lv_event_t* ce) {
+                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
+            }, LV_EVENT_CLICKED, nullptr);
+            char* confirm_name = strdup(name);
+            lv_obj_set_user_data(dlg, confirm_name);
+            lv_obj_t* confirm = lv_btn_create(dlg);
+            lv_obj_set_size(confirm, 80, 24);
+            lv_obj_align(confirm, LV_ALIGN_BOTTOM_RIGHT, -8, -4);
+            apply_pixel_btn(confirm);
+            lv_obj_t* confirm_l = lv_label_create(confirm);
+            lv_label_set_text(confirm_l, "RESET");
+            lv_obj_center(confirm_l);
+            lv_obj_set_user_data(confirm, confirm_name);
+            lv_obj_add_event_cb(confirm, [](lv_event_t* ce) {
+                const char* value = (const char*)lv_obj_get_user_data(
+                    (lv_obj_t*)lv_event_get_target(ce));
+                char copy[32] = {};
+                if (value) strncpy(copy, value, sizeof(copy) - 1);
+                if (copy[0] && sigurdos::mesh::resetPathTo(copy)) {
+                    contact_detail_screen_show(copy);
+                }
+            }, LV_EVENT_CLICKED, nullptr);
+            lv_obj_add_event_cb(dlg, [](lv_event_t* de) {
+                free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(de)));
+            }, LV_EVENT_DELETE, nullptr);
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(rp_btn, [](lv_event_t* e) {
             free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
@@ -1553,7 +1792,8 @@ void contact_detail_screen_show(const char* contact_name)
             }, LV_EVENT_DELETE, nullptr);
 
             // When login pending or failed, show Cancel button
-            if (login_st == LOGIN_STATUS_PENDING || login_st == LOGIN_STATUS_FAILED) {
+            if (login_st == LOGIN_STATUS_PENDING || login_st == LOGIN_STATUS_FAILED ||
+                login_st == LOGIN_STATUS_TIMEOUT || login_st == LOGIN_STATUS_DROPPED) {
                 char* cx_name = strdup(contact_name);
                 lv_obj_t* cx_btn = lv_btn_create(login_row);
                 lv_obj_set_size(cx_btn, 100, 24);

@@ -241,7 +241,7 @@ is green while an official companion is connected. See
 ### SPIFFS Persistence
 - **State storage** — SPIFFS filesystem for persisting identity keys, contact list, channel config, and message history
 - **Graceful fallback** — if SPIFFS mount fails at boot, device continues without persistence (warning logged)
-- **Chat persistence** — `chat_save_messages()` / `chat_load_messages()` per-channel history
+- **Chat persistence** — one `message_store` log shared by chat restore and companion offline sync, with one-time `/msgs` migration
 **Sources:** [`src/main.cpp`](../src/main.cpp), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/ui/chat_screen.h`](../src/ui/chat_screen.h)
 
 ### Contact Persistence
@@ -403,6 +403,7 @@ A dedicated app-level feature bridging the display, SD card, and GPS systems.
 - **Rendering:** LVGL canvas grid overlaid with decoded tile pixels
 - **Cache:** PSRAM-backed LRU tile cache (4 entries @ 256×256 RGB565 ≈ 524 KB)
 - **Cache internals:** `tile_cache_init()`, `tile_cache_lookup()`, `tile_cache_evict_slot()` — 64-bit monotonic clock, safe for 584M years
+- **Sparse-tile protection:** 24-entry, 30-second negative cache plus a two-decode-per-render budget and bounded warmup renders; missing tiles show a red X
 - **Interaction:** Pan by pixel delta, zoom in/out by one level
 - **Position overlay:** Renders own GPS position as a marker on the map
 **Full documentation:** [`docs/MAP_SCREEN.md`](MAP_SCREEN.md)

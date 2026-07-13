@@ -24,11 +24,11 @@ This audit records what is already present in the codebase so future roadmap wor
 | --- | --- | --- |
 | Mesh core | `SigurdMeshV2` extends `BaseChatMesh`; DMs, group channels, ACK tracking, advert discovery, trace, ping nearby, telemetry request/answer, client repeat, packet stats, and duty-cycle APIs exist. | Hardware interop matrix, release warning budget, and third-party warning isolation still need to catch up with the source state. |
 | Regions | `src/mesh/regions.*` wraps `RegionMap`; channel names can seed regions; active scope persists in prefs; `sendFloodScoped()` stamps transport codes; Settings/region UI surfaces exist. | Physical scoped-flood interop, `$` private key persistence, collision tests, and app-driven flood-scope edge cases need validation. |
-| Message persistence | Chat has legacy `/msgs` history and the newer `/companion_msgs` shared store with dedup, ACK flag, companion-sent flag, path length, and recent-message loading. | Unify the stores, add schema migration/power-loss tests, preserve text subtype metadata, and expand capacity/compaction policy. |
+| Message persistence | Chat and companion sync share the versioned `/companion_msgs` log with dedup, ACK/delivery flags, path/text metadata, 512-record capacity, amortized atomic compaction, power-loss recovery, and one-time `/msgs` migration. | Physical reboot/flash-wear soak and richer delivery-attempt/unread metadata remain. |
 | Companion app bridge | `CompanionBridge` implements the stock frame dispatcher for device query, app start, contacts, DMs, channel text/data, channels, time get/set, stats, signing, identity import/export, flood scope, login, status, telemetry, trace, and async pushes. `SigurdOS_TDeck_ble_validation` links the MeshCore ESP32 BLE NUS transport. | Treat BLE as experimental until official app hardware pairing, reconnect, sync, security, RAM, and repeater-management flows are validated. |
 | Time | `CMD_GET_DEVICE_TIME` and `CMD_SET_DEVICE_TIME` are implemented through the companion host. GPS parsing includes NMEA checksum validation and currently sets the system RTC on first valid GPS date/time when GPS is active. | Add a clock policy and UI that identifies time source/age. GPS time sync should be user-polled or opportunistic when GPS is already active; it must not keep GPS powered or polling solely to maintain time. |
 | GPS | GPS init, baud probing, interval-gated polling, fix data, satellite diagnostics, map/adverts, and settings toggles exist. GPS is off by default; when enabled, the current default interval still maps to every-loop polling. | Add a "Sync time from GPS" action, add fix-acquisition timeout/status UX, make enabled-GPS polling less aggressive by default, and test sleep/wake behavior with GPS disabled/enabled. |
-| Repeater/room workflows | Local UI supports repeater/room login, saved passwords, CLI command rows, fetch messages, status/telemetry requests, and command response display. Companion bridge sends login/status/telemetry and CLI-data requests. | Official MeshCore app repeater management needs a focused audit: CLI replies are currently re-stored/framed as plain messages instead of `TXT_TYPE_CLI_DATA`, allowed-repeat-frequency replies are empty, timeout/error mapping is incomplete, and keep-alive/session state needs app-level validation. |
+| Repeater/room workflows | Local UI supports repeater/room login, saved passwords, CLI command rows, fetch messages, status/telemetry requests, command response display, and profile-aware allowed repeat-frequency replies. Companion bridge sends login/status/telemetry and CLI-data requests. | Official MeshCore app repeater management still needs app-level hardware validation. |
 | OTA and release ops | AP upload OTA, GitHub pull OTA, WiFi credential prefs, merged firmware script, and release docs exist. | Negative OTA tests, rollback/recovery docs, checksums, and release evidence still need to become routine. |
 
 ## Production-release Remainder
@@ -140,7 +140,6 @@ Goal: make message, contact, channel, region, and clock state durable enough for
 
 Priority tasks:
 
-- Unify the legacy `/msgs` chat history and the newer `/companion_msgs` shared store into one append-friendly store that supports compaction and power-loss recovery.
 - Persist message metadata beyond sender/text/timestamp/self: ACK state, delivery attempts, route/path hints, RSSI/SNR, channel/DM identity, unread state, stable message IDs, companion-sent state, path length, and text subtype (`TXT_TYPE_PLAIN`, `TXT_TYPE_CLI_DATA`, signed text).
 - Version every persistent schema and add migration tests for older SPIFFS/NVS data.
 - Harden contact persistence so path metadata, shared secrets, permissions, favorite/pinned state, manual contacts, app-imported contacts, and repeater session hints survive reboot.
@@ -177,7 +176,7 @@ Priority tasks:
 - Add offline queueing so outbound companion messages survive disconnects, while preserving the T-Deck local message store.
 - Audit and fix official MeshCore app repeater management timeouts. Cover `CMD_SEND_LOGIN`, `PUSH_CODE_LOGIN_*`, `CMD_SEND_STATUS_REQ`, `PUSH_CODE_STATUS_RESPONSE`, `CMD_GET_ALLOWED_REPEAT_FREQ`, `RESP_ALLOWED_REPEAT_FREQ`, CLI-data sends through `CMD_SEND_TXT_MSG`, and repeater keep-alive/session state.
 - Preserve `TXT_TYPE_CLI_DATA` from `onCommandDataRecv()` through persistence and `RESP_CODE_CONTACT_MSG_RECV_V3`; do not reframe repeater command replies as plain chat messages for the app.
-- Return accurate allowed repeat-frequency ranges, or document and test the empty response semantics if SigurdOS intentionally does not gate client repeat by frequency.
+- Keep allowed repeat-frequency responses and client-repeat validation tied to a recognized active radio profile; custom radio settings may still be saved with repeat disabled.
 - Add a protocol compatibility test plan against official MeshCore clients, terminal-client behavior, and golden frames captured from stock companion firmware.
 
 Done when:

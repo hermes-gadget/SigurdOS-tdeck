@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include "ui/home_screen.h"
+#include "ui/bluetooth_help.h"
 #include "ui/screens.h"
 #include "ui/ui.h"
 #include "ui/notifications.h"
@@ -119,6 +120,13 @@ TEST(UIContractTest, NotificationApisStayStable) {
     (void)static_cast<bool_fn>(sigurdos::ui::notifications_has_unread_mention);
     (void)static_cast<void_fn>(sigurdos::ui::notifications_clear_unread_mentions);
     SUCCEED();
+}
+
+TEST(UIContractTest, BluetoothExplainsDeviceAuthoredMessageLimit) {
+    EXPECT_STREQ(
+        "Messages typed on T-Deck stay here.\n"
+        "The official app will not show them.",
+        sigurdos::ui::bluetooth_device_authored_notice());
 }
 
 TEST(UIContractTest, TerminalAndBackButtonApisStayStable) {

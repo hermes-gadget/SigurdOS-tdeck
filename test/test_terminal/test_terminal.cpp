@@ -25,6 +25,7 @@
  * command creates a new LVGL label that accumulates indefinitely, consuming heap.
  */
 #include <gtest/gtest.h>
+#include "ui/repeater_transcript.h"
 #include <cstring>
 #include <cstdio>
 #include <vector>
@@ -141,6 +142,18 @@ TEST(TermLineCapTest, ManyOverflowsKeepsCapacity) {
     // Oldest should be line 936
     EXPECT_STREQ(log.lines[0].c_str(), "line 936");
     EXPECT_STREQ(log.lines[MAX_TERM_LINES - 1].c_str(), "line 999");
+}
+
+TEST(RepeaterTranscriptTest, CliReplyHasExplicitTypeBadge) {
+    char out[64];
+    EXPECT_TRUE(sigurdos::ui::format_repeater_cli_reply(out, sizeof(out), "version 1.2"));
+    EXPECT_STREQ(out, "< [CLI] version 1.2\n");
+}
+
+TEST(RepeaterTranscriptTest, CliReplyReportsTruncationAndStaysTerminated) {
+    char out[12];
+    EXPECT_FALSE(sigurdos::ui::format_repeater_cli_reply(out, sizeof(out), "long response"));
+    EXPECT_EQ(out[sizeof(out) - 1], '\0');
 }
 
 } // anonymous namespace

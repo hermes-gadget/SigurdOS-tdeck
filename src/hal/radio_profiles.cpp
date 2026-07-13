@@ -108,4 +108,19 @@ void radio_profile_set_custom(NodePrefs& prefs)
     copy_profile_id(prefs.radio_profile, "custom");
 }
 
+bool radio_profile_repeat_frequency_khz(const NodePrefs& prefs,
+                                        uint32_t* frequency_khz)
+{
+    if (!prefs.configured || !frequency_khz ||
+        std::strcmp(prefs.radio_profile, "custom") == 0) {
+        return false;
+    }
+
+    const RadioProfile* profile = radio_profile_match(prefs);
+    if (!profile) return false;
+
+    *frequency_khz = (uint32_t)std::lround(profile->freq_mhz * 1000.0f);
+    return true;
+}
+
 } // namespace sigurdos

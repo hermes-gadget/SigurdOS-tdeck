@@ -18,12 +18,13 @@ namespace {
 static constexpr uint32_t HISTORY_MAGIC = 0x536d534c; // "SLmS"
 static constexpr uint8_t HISTORY_VERSION = 1;
 static constexpr size_t HISTORY_HEADER_BYTES = 4 + 1 + 1;
-static constexpr size_t HISTORY_CHANNEL_BYTES = CHAT_HISTORY_CHANNEL_NAME_LEN + 1;
+static constexpr size_t HISTORY_CHANNEL_BYTES = LEGACY_CHAT_HISTORY_CHANNEL_NAME_LEN + 1;
 static constexpr size_t HISTORY_RECORD_BYTES =
-    CHAT_HISTORY_SENDER_LEN + CHAT_HISTORY_TEXT_LEN + 4 + 1;
+    LEGACY_CHAT_HISTORY_SENDER_LEN + LEGACY_CHAT_HISTORY_TEXT_LEN + 4 + 1;
 static constexpr size_t HISTORY_MAX_FILE_SIZE =
-    HISTORY_HEADER_BYTES + CHAT_HISTORY_MAX_CHANNELS *
-        (HISTORY_CHANNEL_BYTES + CHAT_HISTORY_MAX_MESSAGES * HISTORY_RECORD_BYTES);
+    HISTORY_HEADER_BYTES + LEGACY_CHAT_HISTORY_MAX_CHANNELS *
+        (HISTORY_CHANNEL_BYTES +
+         LEGACY_CHAT_HISTORY_MAX_MESSAGES * HISTORY_RECORD_BYTES);
 
 #if defined(ESP32_PLATFORM)
 static constexpr const char* HISTORY_PATH = "/msgs";
@@ -73,63 +74,6 @@ bool removePath(const char* path)
 #endif
 }
 
-struct SaveCtx {
-    int channel_count;
-    ChatHistoryChannelReadFn read_channel;
-    ChatHistoryMessageReadFn read_message;
-    void* source_ctx;
-};
-
-bool writeHistory(sigurdos::storage::AtomicFileWriter& writer, void* raw)
-{
-    SaveCtx* ctx = static_cast<SaveCtx*>(raw);
-    if (!ctx || ctx->channel_count < 0 ||
-        ctx->channel_count > (int)CHAT_HISTORY_MAX_CHANNELS ||
-        (ctx->channel_count > 0 && (!ctx->read_channel || !ctx->read_message))) {
-        return false;
-    }
-
-    const uint8_t channel_count = (uint8_t)ctx->channel_count;
-    if (writer.write(&HISTORY_MAGIC, sizeof(HISTORY_MAGIC)) != sizeof(HISTORY_MAGIC) ||
-        writer.write(&HISTORY_VERSION, 1) != 1 ||
-        writer.write(&channel_count, 1) != 1) {
-        return false;
-    }
-
-    for (int channel = 0; channel < ctx->channel_count; ++channel) {
-        char name[CHAT_HISTORY_CHANNEL_NAME_LEN] = {};
-        uint8_t message_count = 0;
-        if (!ctx->read_channel(channel, name, sizeof(name),
-                               &message_count, ctx->source_ctx) ||
-            message_count > CHAT_HISTORY_MAX_MESSAGES) {
-            return false;
-        }
-        name[sizeof(name) - 1] = '\0';
-        if (writer.write(name, sizeof(name)) != sizeof(name) ||
-            writer.write(&message_count, 1) != 1) {
-            return false;
-        }
-
-        for (int message = 0; message < message_count; ++message) {
-            PersistedChatMessage record{};
-            if (!ctx->read_message(channel, message, &record, ctx->source_ctx)) {
-                return false;
-            }
-            record.sender[sizeof(record.sender) - 1] = '\0';
-            record.text[sizeof(record.text) - 1] = '\0';
-            const uint8_t self = record.is_self ? 1 : 0;
-            if (writer.write(record.sender, sizeof(record.sender)) != sizeof(record.sender) ||
-                writer.write(record.text, sizeof(record.text)) != sizeof(record.text) ||
-                writer.write(&record.timestamp, sizeof(record.timestamp)) !=
-                    sizeof(record.timestamp) ||
-                writer.write(&self, 1) != 1) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 bool readHeader(sigurdos::storage::AtomicFileReader& reader, uint8_t& channel_count)
 {
     uint32_t magic = 0;
@@ -139,7 +83,7 @@ bool readHeader(sigurdos::storage::AtomicFileReader& reader, uint8_t& channel_co
         reader.read(&magic, sizeof(magic)) == sizeof(magic) &&
         magic == HISTORY_MAGIC && reader.read(&version, 1) == 1 &&
         version == HISTORY_VERSION && reader.read(&channel_count, 1) == 1 &&
-        channel_count <= CHAT_HISTORY_MAX_CHANNELS;
+        channel_count <= LEGACY_CHAT_HISTORY_MAX_CHANNELS;
 }
 
 bool validateHistory(sigurdos::storage::AtomicFileReader& reader, void*)
@@ -148,11 +92,11 @@ bool validateHistory(sigurdos::storage::AtomicFileReader& reader, void*)
     if (!readHeader(reader, channel_count)) return false;
     size_t expected_size = HISTORY_HEADER_BYTES;
     for (int channel = 0; channel < channel_count; ++channel) {
-        char name[CHAT_HISTORY_CHANNEL_NAME_LEN];
+        char name[LEGACY_CHAT_HISTORY_CHANNEL_NAME_LEN];
         uint8_t message_count = 0;
         if (reader.read(name, sizeof(name)) != sizeof(name) ||
             reader.read(&message_count, 1) != 1 ||
-            message_count > CHAT_HISTORY_MAX_MESSAGES) {
+            message_count > LEGACY_CHAT_HISTORY_MAX_MESSAGES) {
             return false;
         }
         expected_size += HISTORY_CHANNEL_BYTES +
@@ -163,24 +107,24 @@ bool validateHistory(sigurdos::storage::AtomicFileReader& reader, void*)
 }
 
 bool loadFromReader(sigurdos::storage::AtomicFileReader& reader,
-                    ChatHistoryMessageWriteFn write_message, void* ctx,
+                    LegacyChatHistoryMessageFn write_message, void* ctx,
                     int& loaded)
 {
     uint8_t channel_count = 0;
     if (!readHeader(reader, channel_count)) return false;
     for (int channel = 0; channel < channel_count; ++channel) {
-        char name[CHAT_HISTORY_CHANNEL_NAME_LEN + 1] = {};
+        char name[LEGACY_CHAT_HISTORY_CHANNEL_NAME_LEN + 1] = {};
         uint8_t message_count = 0;
-        if (reader.read(name, CHAT_HISTORY_CHANNEL_NAME_LEN) !=
-                CHAT_HISTORY_CHANNEL_NAME_LEN ||
+        if (reader.read(name, LEGACY_CHAT_HISTORY_CHANNEL_NAME_LEN) !=
+                LEGACY_CHAT_HISTORY_CHANNEL_NAME_LEN ||
             reader.read(&message_count, 1) != 1 ||
-            message_count > CHAT_HISTORY_MAX_MESSAGES) {
+            message_count > LEGACY_CHAT_HISTORY_MAX_MESSAGES) {
             return false;
         }
-        name[CHAT_HISTORY_CHANNEL_NAME_LEN - 1] = '\0';
+        name[LEGACY_CHAT_HISTORY_CHANNEL_NAME_LEN - 1] = '\0';
 
         for (int message = 0; message < message_count; ++message) {
-            PersistedChatMessage record{};
+            LegacyChatMessage record{};
             uint8_t self = 0;
             if (reader.read(record.sender, sizeof(record.sender)) != sizeof(record.sender) ||
                 reader.read(record.text, sizeof(record.text)) != sizeof(record.text) ||
@@ -201,54 +145,44 @@ bool loadFromReader(sigurdos::storage::AtomicFileReader& reader,
 
 } // namespace
 
-bool chatHistorySave(int channel_count,
-                     ChatHistoryChannelReadFn read_channel,
-                     ChatHistoryMessageReadFn read_message,
-                     void* ctx)
+LegacyChatHistoryResult legacyChatHistoryMigrate(
+    LegacyChatHistoryMessageFn write_message, void* ctx, int* migrated_count)
 {
-    if (!ensureFs()) return false;
-    SaveCtx save_ctx{channel_count, read_channel, read_message, ctx};
-    return sigurdos::storage::atomicFileReplace(
-        historyPath(), writeHistory, &save_ctx, validateHistory, nullptr);
-}
-
-int chatHistoryLoad(ChatHistoryMessageWriteFn write_message, void* ctx)
-{
-    if (!write_message || !ensureFs()) return 0;
+    if (migrated_count) *migrated_count = 0;
+    if (!write_message || !ensureFs()) return LegacyChatHistoryResult::Failed;
     sigurdos::storage::atomicFileRecover(historyPath(), validateHistory, nullptr);
-    if (!pathExists(historyPath())) return 0;
+    if (!pathExists(historyPath())) return LegacyChatHistoryResult::NotFound;
 
 #if defined(ESP32_PLATFORM)
     File file = SPIFFS.open(historyPath(), "r");
-    if (!file) return 0;
+    if (!file) return LegacyChatHistoryResult::Failed;
     sigurdos::storage::AtomicFileReader reader(&file);
 #else
     FILE* file = std::fopen(historyPath(), "rb");
-    if (!file) return 0;
+    if (!file) return LegacyChatHistoryResult::Failed;
     sigurdos::storage::AtomicFileReader reader(file);
 #endif
     int loaded = 0;
-    loadFromReader(reader, write_message, ctx, loaded);
+    const bool loaded_ok = loadFromReader(reader, write_message, ctx, loaded);
 #if defined(ESP32_PLATFORM)
     file.close();
 #else
     std::fclose(file);
 #endif
-    return loaded;
-}
+    if (!loaded_ok) return LegacyChatHistoryResult::Failed;
 
-bool chatHistoryClear()
-{
-    if (!ensureFs()) return false;
     char temp_path[192];
     if (!sigurdos::storage::atomicFileTempPath(
-            historyPath(), temp_path, sizeof(temp_path))) return false;
-    const bool temp_ok = removePath(temp_path);
-    return removePath(historyPath()) && temp_ok;
+            historyPath(), temp_path, sizeof(temp_path)) ||
+        !removePath(temp_path) || !removePath(historyPath())) {
+        return LegacyChatHistoryResult::Failed;
+    }
+    if (migrated_count) *migrated_count = loaded;
+    return LegacyChatHistoryResult::Migrated;
 }
 
 #if !defined(ESP32_PLATFORM)
-void chatHistorySetNativePath(const char* path)
+void legacyChatHistorySetNativePath(const char* path)
 {
     if (!path || !path[0]) return;
     std::strncpy(g_history_path, path, sizeof(g_history_path) - 1);

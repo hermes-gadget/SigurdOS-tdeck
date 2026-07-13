@@ -227,17 +227,9 @@ void loop()
             sigurdos::ui::update_wifi_status();  // bottom bar WiFi icon
         }
     }
-    {   // GPS enabled + interval gate
-        static uint32_t last_gps_poll = 0;
+    {   // Persisted background cadence plus explicit map/time-sync demand.
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();
-        if (gp.gps_enabled) {
-            uint32_t now = millis();
-            uint32_t interval_ms = (uint32_t)gp.gps_interval * 1000;
-            if (interval_ms == 0 || (now - last_gps_poll >= interval_ms)) {
-                last_gps_poll = now;
-                sigurdos_gps_loop();
-            }
-        }
+        sigurdos_gps_service(gp.gps_enabled, gp.gps_interval);
     }
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
     sigurdos::mesh::loop();

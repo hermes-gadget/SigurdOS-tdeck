@@ -59,6 +59,15 @@ TEST_F(MapRendererMathTest, TileValidationChecksZoomAndCoordinates) {
     EXPECT_FALSE(sigurdos_map_tile_valid(19, 0, 0));
 }
 
+TEST_F(MapRendererMathTest, ViewportIntersectionRejectsBoundaryOnlyTiles) {
+    EXPECT_TRUE(sigurdos_map_tile_intersects_viewport(-255, 0, 320, 240));
+    EXPECT_TRUE(sigurdos_map_tile_intersects_viewport(319, 239, 320, 240));
+    EXPECT_FALSE(sigurdos_map_tile_intersects_viewport(-256, 0, 320, 240));
+    EXPECT_FALSE(sigurdos_map_tile_intersects_viewport(320, 0, 320, 240));
+    EXPECT_FALSE(sigurdos_map_tile_intersects_viewport(0, -256, 320, 240));
+    EXPECT_FALSE(sigurdos_map_tile_intersects_viewport(0, 240, 320, 240));
+}
+
 TEST_F(MapRendererMathTest, LongitudeConvertsToExpectedTileX) {
     EXPECT_NEAR(sigurdos_map_lon_to_tile_x(0.0, 0), 0.5, 1e-9);
     EXPECT_NEAR(sigurdos_map_lon_to_tile_x(0.0, 1), 1.0, 1e-9);

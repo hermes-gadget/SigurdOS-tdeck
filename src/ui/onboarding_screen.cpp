@@ -401,7 +401,6 @@ static void build_step3()
         // and cannot decrypt any group traffic after restart.
         sigurdos::mesh::joinPublicChannel();
         sigurdos::mesh::saveChannels();
-        chat_save_messages();
         // Flush and wait for flash writes to complete before restart
         SPIFFS.end();
         delay(200);

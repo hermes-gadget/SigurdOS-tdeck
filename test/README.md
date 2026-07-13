@@ -43,7 +43,7 @@ test/
 |-- test_channel_store/             Transactional two-bank channel persistence
 |-- test_channel_validation/        Channel name validation and sanitising
 |-- test_chat_config/               Chat message cap clamping and config bounds
-|-- test_chat_history_store/        Atomic chat history codec and recovery
+|-- test_chat_history_store/        Legacy `/msgs` migration, recovery, and unified-store dedup
 |-- test_chat_message_buffer/       Per-channel buffer alloc fallback, eviction, remap handoff
 |-- test_chat_truncation/           UTF-8 safe chat truncation
 |-- test_companion_protocol/        Companion protocol frame shapes and sync behavior
@@ -65,7 +65,7 @@ test/
 |-- test_layout/                    Screen layout overlap regression checks
 |-- test_lodepng_alloc/             LodePNG PSRAM allocator with DRAM fallback
 |-- test_log/                       Logging macro levels and compile-time gating
-|-- test_map/                       Map projection, tile math, tile cache behavior
+|-- test_map/                       Map projection, LRU/negative cache, and load budgets
 |-- test_map_renderer/              Map renderer constants, zoom validation, and tile math
 |-- test_mesh_contract/             Mesh advert types, contact flags, and buffer capacity stability
 |-- test_mesh_messaging/            Message queues, contacts, responses, LPP parsing
