@@ -106,6 +106,12 @@ void mock_otadata_partition(bool present, uint32_t address);
 // and whether the partition content appears erased (all 0xFF).
 void mock_spiffs_partition(bool present, bool erased);
 
+// Place one programmed byte at an exact offset in an otherwise erased SPIFFS
+// partition, or fail the read covering an exact offset.
+void mock_spiffs_partition_programmed_byte(size_t offset);
+void mock_spiffs_partition_read_error(size_t offset);
+size_t mock_spiffs_partition_read_count();
+
 } // namespace test
 } // namespace sigurdos
 #endif

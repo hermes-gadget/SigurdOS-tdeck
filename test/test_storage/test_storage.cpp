@@ -2,9 +2,8 @@
 // Copyright (C) 2026 Ben
 //
 // Native tests for the safe SPIFFS storage init helper.
-// These tests validate the API contract, return values, and
-// idempotency.  The full hardware path (partition erased
-// detection + auto-format) is validated on-device.
+// These tests validate the API contract, return values, idempotency,
+// partition-wide erased detection, and recovery failures.
 
 #include <gtest/gtest.h>
 
@@ -87,6 +86,51 @@ TEST_F(StorageTest, DoesNotFormatNonErasedPartition) {
 
     EXPECT_FALSE(sigurdos::storage_init());
     EXPECT_FALSE(SPIFFS.mock_was_formatted());
+    EXPECT_EQ(SPIFFS.mock_format_count(), 0u);
+    EXPECT_FALSE(sigurdos::storage_available());
+}
+
+TEST_F(StorageTest, DoesNotFormatWhenDataExistsPastOldPrefix) {
+    sigurdos::test::mock_spiffs_partition(true, true);
+    sigurdos::test::mock_spiffs_partition_programmed_byte(64 * 1024 + 17);
+    SPIFFS.mock_set_mount_result(false);
+
+    EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_FALSE(SPIFFS.mock_was_formatted());
+    EXPECT_GT(sigurdos::test::mock_spiffs_partition_read_count(), 1u);
+}
+
+TEST_F(StorageTest, DoesNotFormatWhenPartitionScanFails) {
+    sigurdos::test::mock_spiffs_partition(true, true);
+    sigurdos::test::mock_spiffs_partition_read_error(96 * 1024);
+    SPIFFS.mock_set_mount_result(false);
+
+    EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_FALSE(SPIFFS.mock_was_formatted());
+    EXPECT_GT(sigurdos::test::mock_spiffs_partition_read_count(), 1u);
+}
+
+TEST_F(StorageTest, ReportsFormatFailureWithoutMounting) {
+    sigurdos::test::mock_spiffs_partition(true, true);
+    SPIFFS.mock_set_mount_result(false);
+    SPIFFS.mock_set_format_result(false);
+
+    EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_FALSE(SPIFFS.mock_was_formatted());
+    EXPECT_EQ(SPIFFS.mock_format_count(), 1u);
+    EXPECT_FALSE(sigurdos::storage_available());
+}
+
+TEST_F(StorageTest, ReportsRemountFailureAfterSuccessfulFormat) {
+    sigurdos::test::mock_spiffs_partition(true, true);
+    SPIFFS.mock_set_mount_result(false);
+    SPIFFS.mock_set_format_result(true);
+    SPIFFS.mock_set_mount_after_format_result(false);
+
+    EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_TRUE(SPIFFS.mock_was_formatted());
+    EXPECT_EQ(SPIFFS.mock_format_count(), 1u);
+    EXPECT_EQ(SPIFFS.mock_begin_count(), 2u);
     EXPECT_FALSE(sigurdos::storage_available());
 }
 

@@ -28,6 +28,7 @@ private:
 class SPIFFSClass {
 public:
     bool begin(bool formatIfMountFailed = false) {
+        _mock_begin_count++;
         if (_mock_mount_succeeds) return true;
         if (formatIfMountFailed && _mock_format_succeeds) {
             _mock_formatted = true;
@@ -37,9 +38,10 @@ public:
     }
 
     bool format() {
+        _mock_format_count++;
         if (_mock_format_succeeds) {
             _mock_formatted = true;
-            _mock_mount_succeeds = true;  // after format, mount should work
+            _mock_mount_succeeds = _mock_mount_after_format_succeeds;
             return true;
         }
         return false;
@@ -54,17 +56,28 @@ public:
     // Test control
     void mock_set_mount_result(bool succeeds) { _mock_mount_succeeds = succeeds; }
     void mock_set_format_result(bool succeeds) { _mock_format_succeeds = succeeds; }
+    void mock_set_mount_after_format_result(bool succeeds) {
+        _mock_mount_after_format_succeeds = succeeds;
+    }
     bool mock_was_formatted() const { return _mock_formatted; }
+    size_t mock_begin_count() const { return _mock_begin_count; }
+    size_t mock_format_count() const { return _mock_format_count; }
     void mock_reset() {
         _mock_mount_succeeds = false;
         _mock_format_succeeds = true;
+        _mock_mount_after_format_succeeds = true;
         _mock_formatted = false;
+        _mock_begin_count = 0;
+        _mock_format_count = 0;
     }
 
 private:
     bool _mock_mount_succeeds = false;
     bool _mock_format_succeeds = true;
+    bool _mock_mount_after_format_succeeds = true;
     bool _mock_formatted = false;
+    size_t _mock_begin_count = 0;
+    size_t _mock_format_count = 0;
 };
 
 extern SPIFFSClass SPIFFS;

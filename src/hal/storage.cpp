@@ -12,6 +12,35 @@ namespace sigurdos {
 static bool s_storage_available = false;
 static bool s_storage_init_called = false;
 
+enum class PartitionEraseState : uint8_t {
+    FullyErased,
+    ContainsData,
+    ReadError,
+};
+
+static PartitionEraseState partition_erase_state(const esp_partition_t* part)
+{
+    if (!part || part->size == 0) return PartitionEraseState::ReadError;
+
+    // A short prefix is not evidence that the filesystem is blank: an
+    // interrupted erase can leave early sectors at 0xFF while later sectors
+    // still contain user data. Scan the complete partition in bounded chunks
+    // and treat read errors as uncertainty, never as permission to format.
+    uint8_t buf[1024];
+    for (size_t offset = 0; offset < part->size;) {
+        const size_t remaining = part->size - offset;
+        const size_t length = remaining < sizeof(buf) ? remaining : sizeof(buf);
+        if (esp_partition_read(part, offset, buf, length) != ESP_OK) {
+            return PartitionEraseState::ReadError;
+        }
+        for (size_t i = 0; i < length; i++) {
+            if (buf[i] != 0xFF) return PartitionEraseState::ContainsData;
+        }
+        offset += length;
+    }
+    return PartitionEraseState::FullyErased;
+}
+
 bool storage_init()
 {
     if (s_storage_init_called) return s_storage_available;
@@ -35,21 +64,9 @@ bool storage_init()
         return false;
     }
 
-    // Read the first 64 bytes to check if the partition is all 0xFF (erased).
-    uint8_t buf[64];
-    esp_err_t err = esp_partition_read(part, 0, buf, sizeof(buf));
-    bool erased = (err == ESP_OK);
-    if (erased) {
-        for (size_t i = 0; i < sizeof(buf); i++) {
-            if (buf[i] != 0xFF) {
-                erased = false;
-                break;
-            }
-        }
-    }
-
-    if (erased) {
-        Serial.println("[storage] SPIFFS partition appears erased — formatting once");
+    const PartitionEraseState erase_state = partition_erase_state(part);
+    if (erase_state == PartitionEraseState::FullyErased) {
+        Serial.println("[storage] SPIFFS partition is fully erased — formatting once");
         if (!SPIFFS.format()) {
             Serial.println("[storage] SPIFFS format failed — storage unavailable");
             s_storage_available = false;
@@ -63,6 +80,12 @@ bool storage_init()
         Serial.println("[storage] SPIFFS formatted and mounted");
         s_storage_available = true;
         return true;
+    }
+
+    if (erase_state == PartitionEraseState::ReadError) {
+        Serial.println("[storage] Could not verify the complete SPIFFS partition — refusing to format");
+        s_storage_available = false;
+        return false;
     }
 
     // Partition has data but SPIFFS can't mount it — likely corruption.
