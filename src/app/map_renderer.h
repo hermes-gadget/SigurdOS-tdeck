@@ -237,6 +237,11 @@ inline bool sigurdos_map_contact_args_valid(const void* contacts, int count) {
     return count >= 0 && (count == 0 || contacts != nullptr);
 }
 
+inline bool sigurdos_map_parent_delete_is_current(const void* deleted_parent,
+                                                   const void* current_parent) {
+    return deleted_parent != nullptr && deleted_parent == current_parent;
+}
+
 template <typename T, typename FreeFn>
 inline bool sigurdos_map_release_owned_buffer(T*& buffer, FreeFn free_fn) {
     if (!buffer) return false;

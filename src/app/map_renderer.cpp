@@ -801,7 +801,7 @@ static void load_metadata() {
 // PUBLIC API
 // ════════════════════════════════════════════════════════
 
-static bool delete_cb_registered = false;
+static lv_obj_t* map_canvas_parent = nullptr;
 
 void sigurdos_map_init() {
     if (initialized) return;
@@ -850,11 +850,18 @@ void sigurdos_map_reparent(lv_obj_t* new_parent) {
                          TFT_WIDTH, TFT_HEIGHT, LV_COLOR_FORMAT_RGB565);
     lv_obj_move_to_index(map_canvas, 0);
 
-    if (!delete_cb_registered) {
+    if (map_canvas_parent != new_parent) {
+        map_canvas_parent = new_parent;
         lv_obj_add_event_cb(new_parent, [](lv_event_t* e) {
+            lv_obj_t* deleted_parent = static_cast<lv_obj_t*>(
+                lv_event_get_current_target(e));
+            if (!sigurdos_map_parent_delete_is_current(
+                    deleted_parent, map_canvas_parent)) {
+                return;
+            }
+            map_canvas_parent = nullptr;
             sigurdos_map_deinit();
         }, LV_EVENT_DELETE, nullptr);
-        delete_cb_registered = true;
     }
 }
 
@@ -868,7 +875,7 @@ void sigurdos_map_discover_tiles() {
 void sigurdos_map_deinit() {
     sigurdos_map_release_owned_buffer(discovery_xcache, map_free);
     if (!initialized) return;
-    delete_cb_registered = false;
+    map_canvas_parent = nullptr;
 
     // Clean up contact marker dots so dangling LVGL pointers don't
     // cause a use-after-free crash on the next map visit.

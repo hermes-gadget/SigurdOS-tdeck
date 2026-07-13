@@ -256,6 +256,23 @@ TEST_F(MapRendererMathTest, ContactApisRejectInvalidPointerCountCombinations) {
     EXPECT_FALSE(sigurdos_map_contact_args_valid(&contact_storage, -1));
 }
 
+TEST_F(MapRendererMathTest, ParentDeleteOnlyCleansCurrentCanvasGeneration) {
+    int first_parent = 0;
+    int second_parent = 0;
+    const void* current_parent = &first_parent;
+
+    EXPECT_TRUE(sigurdos_map_parent_delete_is_current(
+        &first_parent, current_parent));
+
+    current_parent = &second_parent;
+    EXPECT_FALSE(sigurdos_map_parent_delete_is_current(
+        &first_parent, current_parent));
+    EXPECT_TRUE(sigurdos_map_parent_delete_is_current(
+        &second_parent, current_parent));
+    EXPECT_FALSE(sigurdos_map_parent_delete_is_current(
+        nullptr, current_parent));
+}
+
 TEST_F(MapRendererMathTest, OwnedDiscoveryBufferIsFreedExactlyOnce) {
     int allocations = 0;
     int frees = 0;
