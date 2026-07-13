@@ -486,14 +486,14 @@ bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success
 bool CompanionBridge::pushStatusResponse(const uint8_t* pubkey_prefix,
                                          const uint8_t* blob, size_t blob_len)
 {
-    if (!_serial || !pubkey_prefix) return false;
+    if (!_serial || !pubkey_prefix || (blob_len > 0 && !blob) ||
+        blob_len > SIGURDOS_COMPANION_PUSH_BLOB_MAX_PAYLOAD) return false;
     int i = 0;
     _out_frame[i++] = PUSH_CODE_STATUS_RESPONSE;
     _out_frame[i++] = 0;  // reserved
     std::memcpy(&_out_frame[i], pubkey_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
     i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
-    if (blob && blob_len) {
-        if (i + blob_len > MAX_FRAME_SIZE) blob_len = MAX_FRAME_SIZE - i;
+    if (blob_len > 0) {
         std::memcpy(&_out_frame[i], blob, blob_len);
         i += (int)blob_len;
     }
@@ -503,14 +503,14 @@ bool CompanionBridge::pushStatusResponse(const uint8_t* pubkey_prefix,
 bool CompanionBridge::pushTelemetryResponse(const uint8_t* pubkey_prefix,
                                             const uint8_t* blob, size_t blob_len)
 {
-    if (!_serial || !pubkey_prefix) return false;
+    if (!_serial || !pubkey_prefix || (blob_len > 0 && !blob) ||
+        blob_len > SIGURDOS_COMPANION_PUSH_BLOB_MAX_PAYLOAD) return false;
     int i = 0;
     _out_frame[i++] = PUSH_CODE_TELEMETRY_RESPONSE;
     _out_frame[i++] = 0;  // reserved
     std::memcpy(&_out_frame[i], pubkey_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
     i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
-    if (blob && blob_len) {
-        if (i + blob_len > MAX_FRAME_SIZE) blob_len = MAX_FRAME_SIZE - i;
+    if (blob_len > 0) {
         std::memcpy(&_out_frame[i], blob, blob_len);
         i += (int)blob_len;
     }

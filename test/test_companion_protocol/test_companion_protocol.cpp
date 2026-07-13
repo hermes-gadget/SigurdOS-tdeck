@@ -1487,6 +1487,32 @@ TEST_F(CompanionProtocolTest, PushLoginStatusTelemetryTrace) {
     EXPECT_EQ((int8_t)t[16], -8);
 }
 
+TEST_F(CompanionProtocolTest, StatusAndTelemetryPushesRejectOversizedBlobs) {
+    uint8_t prefix[cc::SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE] =
+        {1, 2, 3, 4, 5, 6};
+    std::vector<uint8_t> maximum(cc::SIGURDOS_COMPANION_PUSH_BLOB_MAX_PAYLOAD,
+                                 0xA5);
+
+    ASSERT_TRUE(bridge.pushStatusResponse(prefix, maximum.data(), maximum.size()));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0].size(), (size_t)MAX_FRAME_SIZE);
+    EXPECT_EQ(std::vector<uint8_t>(serial.writes[0].begin() + 8,
+                                   serial.writes[0].end()), maximum);
+
+    serial.writes.clear();
+    ASSERT_TRUE(bridge.pushTelemetryResponse(prefix, maximum.data(), maximum.size()));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0].size(), (size_t)MAX_FRAME_SIZE);
+
+    maximum.push_back(0x5A);
+    serial.writes.clear();
+    EXPECT_FALSE(bridge.pushStatusResponse(prefix, maximum.data(), maximum.size()));
+    EXPECT_FALSE(bridge.pushTelemetryResponse(prefix, maximum.data(), maximum.size()));
+    EXPECT_FALSE(bridge.pushStatusResponse(prefix, nullptr, 1));
+    EXPECT_FALSE(bridge.pushTelemetryResponse(prefix, nullptr, 1));
+    EXPECT_TRUE(serial.writes.empty());
+}
+
 TEST_F(CompanionProtocolTest, PushRawDataMatchesStockFrameLayout) {
     uint8_t payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
     ASSERT_TRUE(bridge.pushRawData(-8, -91, payload, sizeof(payload)));

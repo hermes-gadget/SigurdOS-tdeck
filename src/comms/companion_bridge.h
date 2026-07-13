@@ -17,6 +17,8 @@ static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_SIZE = 32;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE = 6;
 static constexpr size_t  SIGURDOS_COMPANION_PATH_SIZE = 64;
 static constexpr size_t  SIGURDOS_COMPANION_CHANNEL_DATA_MAX_PAYLOAD = MAX_FRAME_SIZE - 9;
+static constexpr size_t  SIGURDOS_COMPANION_PUSH_BLOB_MAX_PAYLOAD =
+    MAX_FRAME_SIZE - 2 - SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
 
 enum CompanionCommand : uint8_t {
     CMD_APP_START = 1,
