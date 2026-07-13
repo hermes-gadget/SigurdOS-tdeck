@@ -451,6 +451,9 @@ struct XColCache {
     bool valid;
 };
 
+static constexpr int MAX_XCOLS = 2048;
+static XColCache* discovery_xcache = nullptr;
+
 static bool scan_zoom_coverage(int z, TileCoverage* out) {
     if (!out) return false;
 
@@ -466,10 +469,11 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
     // once from PSRAM (DRAM fallback) and reuse across scans. Map rendering
     // already depends on PSRAM, so this adds no new requirement.
     // Overflow detection below logs a warning if the cache is exhausted.
-    static constexpr int MAX_XCOLS = 2048;
-    static XColCache* xcache = nullptr;
-    if (!xcache) xcache = (XColCache*)map_alloc(sizeof(XColCache) * MAX_XCOLS);
-    if (!xcache) {
+    if (!discovery_xcache) {
+        discovery_xcache =
+            (XColCache*)map_alloc(sizeof(XColCache) * MAX_XCOLS);
+    }
+    if (!discovery_xcache) {
         MAP_DEBUG_PRINTLN("[map] scan: xcache alloc failed");
         closedir(xd);
         return false;
@@ -508,11 +512,11 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
             continue;
         }
 
-        xcache[xcache_count].x = x;
-        xcache[xcache_count].min_y = mn_y;
-        xcache[xcache_count].max_y = mx_y;
-        xcache[xcache_count].sample_y = sample_y;
-        xcache[xcache_count].valid = true;
+        discovery_xcache[xcache_count].x = x;
+        discovery_xcache[xcache_count].min_y = mn_y;
+        discovery_xcache[xcache_count].max_y = mx_y;
+        discovery_xcache[xcache_count].sample_y = sample_y;
+        discovery_xcache[xcache_count].valid = true;
         xcache_count++;
 
         if (!c.valid) {
@@ -543,14 +547,14 @@ static bool scan_zoom_coverage(int z, TileCoverage* out) {
     bool have_sample = false;
 
     for (int i = 0; i < xcache_count; i++) {
-        if (!xcache[i].valid) continue;
+        if (!discovery_xcache[i].valid) continue;
 
-        double dist_x = (double)xcache[i].x - mid_x;
-        double dist_y = (double)xcache[i].sample_y - mid_y;
+        double dist_x = (double)discovery_xcache[i].x - mid_x;
+        double dist_y = (double)discovery_xcache[i].sample_y - mid_y;
         double dist = dist_x * dist_x + dist_y * dist_y;
         if (!have_sample || dist < best_dist) {
-            c.sample_x = xcache[i].x;
-            c.sample_y = xcache[i].sample_y;
+            c.sample_x = discovery_xcache[i].x;
+            c.sample_y = discovery_xcache[i].sample_y;
             best_dist = dist;
             have_sample = true;
         }
@@ -773,6 +777,7 @@ void sigurdos_map_discover_tiles() {
 }
 
 void sigurdos_map_deinit() {
+    sigurdos_map_release_owned_buffer(discovery_xcache, map_free);
     if (!initialized) return;
     delete_cb_registered = false;
 
