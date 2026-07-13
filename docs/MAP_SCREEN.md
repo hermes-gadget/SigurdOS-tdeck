@@ -10,11 +10,11 @@ The Map screen renders **offline map tiles** from the SD card onto an LVGL canva
 |------|---------|
 | `src/app/map_renderer.h` | Public API — init, render, pan, zoom, reparent, deinit, pixel-to-lat/lon |
 | `src/app/map_renderer.cpp` | Full implementation — Web Mercator math, tile loading, draw pipeline, tile discovery, metadata parsing |
-| `src/app/tile_cache.h` | `CachedTile` struct, `TILE_CACHE_SIZE`, function declarations for LRU cache |
-| `src/app/tile_cache.cpp` | LRU cache implementation — init, lookup, evict-slot |
+| `src/app/tile_cache.h` | Positive/negative cache structs, LRU API, and load-budget policy |
+| `src/app/tile_cache.cpp` | LRU cache plus wrap-safe missing-tile expiry/eviction |
 | `src/app/lodepng_alloc.cpp` | lodepng memory allocator with PSRAM-fallback (for PNG decode) |
 | `scripts/download_maps.py` | Python tile downloader — fetches PNG tiles from OSM/CyclOSM/Carto servers |
-| `test/test_map/test_map.cpp` | 14 unit tests — tile math, zoom levels, LRU cache eviction, path format |
+| `test/test_map/test_map.cpp` | Tile math, LRU/negative cache, budget, expiry, and path tests |
 
 ---
 
@@ -53,7 +53,8 @@ The Map screen is invoked from the **MAP tile** on the home screen:
 4. Calls `sigurdos_map_render()` — draws the initial tile grid
 5. Wires a transparent, clickable overlay for **drag-to-pan** (throttled to 200ms between renders)
 6. Adds **zoom buttons** (`+` and `-`, 32×32px, bottom-right, pixel-themed)
-7. Schedules a deferred render via `lv_timer_create(250ms)` to catch any late-widget layout
+7. Schedules up to three screen-owned 250ms warmup renders while tiles remain
+   budget-deferred; navigation cancels the timer safely
 
 ---
 
@@ -67,11 +68,10 @@ void sigurdos_map_reparent(lv_obj_t* new_parent);
 void sigurdos_map_deinit();
 ```
 
-1. **`sigurdos_map_init()`** — allocates the pixel draw buffer and discovers tiles:
+1. **`sigurdos_map_init()`** — allocates the pixel draw buffer and resets caches:
    - Draw buffer: `TFT_WIDTH × TFT_HEIGHT × 2` = **320 × 240 × 2 = 153,600 bytes** (RGB565)
-   - Allocates from **DRAM** first (`MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT`), falls back to PSRAM
-   - DRAM is preferred because LVGL canvas draw operations require CPU/DMA-accessible memory
-   - Calls `load_metadata()` which runs tile discovery and parses `metadata.json`
+   - Allocates from **PSRAM** first (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`), with a DRAM fallback
+   - Tile discovery remains deferred until the first Map screen visit
    - Sets `initialized = true`
 
 2. **`sigurdos_map_reparent(new_parent)`** — creates or reparents the LVGL canvas:
@@ -152,15 +152,16 @@ sigurdos_map_render()
 │   ├── Check tile coverage (skip tiles outside SD card bounds)
 │   ├── Compute screen_x, screen_y position
 │   ├── If on-screen:
-│   │   ├── load_tile(zoom, tile_x, tile_y)
-│   │   │   ├── Check LRU cache → hit
-│   │   │   └── Miss: evict slot, read PNG from SD, decode via lodepng
+│   │   ├── load_tile(zoom, tile_x, tile_y, budget)
+│   │   │   ├── Check LRU cache → hit (no budget token)
+│   │   │   ├── Check 30s missing-tile cache → hit (no SD access/token)
+│   │   │   ├── No token → defer to the next bounded warmup render
+│   │   │   └── Consume token: read PNG from SD, decode via lodepng
 │   │   │         → RGBA→RGB565 conversion → store in cache
-│   │   ├── tile_cache_lookup() → get cached tile entry
 │   │   └── draw_tile_from_cache(ct, screen_x, screen_y)
 │   │         → memcpy rows with screen-edge clipping
-│   └── Fallback (no tile): draw checkerboard placeholder
-│         (alternating #1a1a2e / #16213e)
+│   └── Fallback: checkerboard placeholder; confirmed missing/corrupt tiles
+│         also receive a red X while budget-deferred tiles remain neutral
 │
 ├── If no tiles loaded at all:
 │   └── Draw status label ("No map tiles found" or debug summary)
@@ -175,6 +176,8 @@ sigurdos_map_render()
 - The display is 320×240 pixels
 - Grid spans: `1 + 320/256 + 1 = 3` across, `1 + 240/256 + 1 = 2` down (plus the center tile)
 - Total grid: 4 columns × 3 rows = up to **12 tiles** per render pass
+- At most **2 uncached SD read/decode attempts** occur in one render. Positive
+  cache hits and active negative-cache hits do not spend the budget.
 
 ### Tile Coverage System
 
@@ -292,13 +295,27 @@ Evict:    find first nullptr slot, else LRU (lowest last_used)
 | `tile_cache_lookup(cache, count, zoom, tx, ty, &clock)` | Linear scan. On hit: updates `last_used` to `++(*clock)`, returns entry. On miss: returns `nullptr` (clock unchanged). |
 | `tile_cache_evict_slot(cache, count)` | Returns the first empty slot (`pixels == nullptr`), or the entry with the lowest `last_used` (LRU). **Does NOT free memory** — the caller must free `slot->pixels` before overwriting it. |
 
+### Missing-tile negative cache and load budget
+
+- `MissingTileCacheEntry[24]` stores `(zoom, x, y, failed_at_ms)` without
+  allocating heap memory.
+- Entries expire after 30 seconds using unsigned subtraction, so expiry remains
+  correct across `millis()` wraparound. A full cache evicts its oldest failure.
+- Missing, corrupt, unreadable, or allocation-failed tiles enter the cache;
+  re-entering Map or rediscovering an SD tile set clears stale misses.
+- `TileLoadBudget` permits two uncached file/decode attempts per render. Cache
+  hits and known misses are free, while excess candidates are deferred.
+- `sigurdos_map_last_load_attempts()`, `sigurdos_map_last_negative_hits()`,
+  `sigurdos_map_last_deferred_tiles()`, and
+  `sigurdos_map_missing_cache_count()` expose bounded diagnostics.
+
 ### Memory Budget
 
 | Allocation | Size per entry | Total (4 entries) | Location |
 |------------|---------------|-------------------|----------|
 | Decoded RGB565 pixels | 256 × 256 × 2 = 131,072 bytes | **524,288 bytes (~512 KB)** | PSRAM (with DRAM fallback via `map_alloc`) |
 | PNG file buffer (ephemeral) | ~15–30 KB per tile load | Allocated per-load, freed after decode | PSRAM |
-| Canvas draw buffer | 320 × 240 × 2 = 153,600 bytes | **153,600 bytes (~150 KB)** | DRAM (PSRAM fallback) |
+| Canvas draw buffer | 320 × 240 × 2 = 153,600 bytes | **153,600 bytes (~150 KB)** | PSRAM (DRAM fallback) |
 
 **Total map-related PSRAM usage:** ~677 KB (cache + canvas fallback + transient decode buffers)
 
@@ -324,6 +341,11 @@ The fix also extracted the tile cache into its own reusable module (`tile_cache.
 
 ```
 SD Card: /sdcard/tiles/{z}/{x}/{y}.png
+               │
+               ▼
+       positive cache? → draw
+       negative cache? → missing marker
+       no budget token? → defer
                │
                ▼
         fopen(path, "rb")

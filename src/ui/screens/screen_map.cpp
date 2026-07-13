@@ -20,6 +20,7 @@
 #include "../screens_common.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../screen_lifetime.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/map_renderer.h"
 #include "../../hal/gps.h"
@@ -73,6 +74,9 @@ bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
 
 // Helper: render map tiles then overlay contact markers
 static sigurdos::mesh::ContactInfo* map_contacts = nullptr;
+static lv_timer_t* g_map_warmup_timer = nullptr;
+static int g_map_warmup_passes = 0;
+static ScreenLifetime g_map_lifetime;
 
 static void render_map_with_contacts() {
     sigurdos_map_render();
@@ -95,11 +99,14 @@ void map_screen_show()
     // It does not mutate the persisted background GPS preference.
     sigurdos_gps_set_map_high_rate(true);
     lv_obj_t* scr = make_screen_full("Map");
-    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+    g_map_lifetime.bind(scr);
+    g_map_lifetime.trackTimer(&g_map_warmup_timer);
+    g_map_lifetime.onDelete([] {
         sigurdos_gps_set_map_high_rate(false);
         delete[] map_contacts;
         map_contacts = nullptr;
-    }, LV_EVENT_DELETE, nullptr);
+        g_map_warmup_passes = 0;
+    });
 
     // Create the map overlay container before initializing contacts
     lv_obj_t* map = lv_obj_create(scr);
@@ -181,9 +188,15 @@ void map_screen_show()
 
     (void)zoom_y_base;
     show_screen(scr);
-    lv_timer_create([](lv_timer_t* t) {
+    // Two loads per render keep input responsive. Repeat a few bounded warmup
+    // passes so every visible tile can fill without user interaction.
+    g_map_warmup_passes = 3;
+    g_map_warmup_timer = lv_timer_create([](lv_timer_t* t) {
         sigurdos_map_render();
-        lv_timer_del(t);
+        if (sigurdos_map_last_deferred_tiles() == 0 || --g_map_warmup_passes <= 0) {
+            lv_timer_del(t);
+            if (g_map_warmup_timer == t) g_map_warmup_timer = nullptr;
+        }
     }, 250, nullptr);
 }
 

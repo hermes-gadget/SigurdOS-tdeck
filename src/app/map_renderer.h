@@ -93,6 +93,13 @@ inline bool sigurdos_map_tile_valid(int zoom, int x, int y) {
     return n > 0 && x >= 0 && x < n && y >= 0 && y < n;
 }
 
+inline bool sigurdos_map_tile_intersects_viewport(int screen_x, int screen_y,
+                                                   int viewport_w, int viewport_h) {
+    return viewport_w > 0 && viewport_h > 0 &&
+        screen_x + SIGURDOS_MAP_TILE_SIZE > 0 && screen_x < viewport_w &&
+        screen_y + SIGURDOS_MAP_TILE_SIZE > 0 && screen_y < viewport_h;
+}
+
 inline double sigurdos_map_lon_to_tile_x(double lon, int zoom) {
     const int n = sigurdos_map_tiles_per_axis(zoom);
     if (n <= 0) return 0.0;
@@ -155,6 +162,12 @@ void sigurdos_map_deinit();
 
 // Check if map tiles are available on SD card
 bool sigurdos_map_tiles_available();
+
+// Last render's bounded tile-I/O diagnostics.
+int sigurdos_map_last_load_attempts();
+int sigurdos_map_last_negative_hits();
+int sigurdos_map_last_deferred_tiles();
+int sigurdos_map_missing_cache_count();
 
 // Convert screen pixel to lat/lon
 void sigurdos_map_pixel_to_latlon(int px, int py, double* out_lat, double* out_lon);

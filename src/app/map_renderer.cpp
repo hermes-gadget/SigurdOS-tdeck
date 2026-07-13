@@ -214,13 +214,44 @@ static void clamp_view_to_coverage() {
 // Types and functions defined in tile_cache.h / tile_cache.cpp
 static CachedTile tile_cache[TILE_CACHE_SIZE];
 static uint64_t   cache_clock = 0;
+static MissingTileCacheEntry missing_tile_cache[MISSING_TILE_CACHE_SIZE];
+static int last_load_attempts = 0;
+static int last_negative_hits = 0;
+static int last_deferred_tiles = 0;
+
+enum class TileLoadResult : uint8_t { Ready, Missing, Deferred };
 
 // ── Tile loading (PNG) ─────────────────────────────────────
 
-static bool load_tile(int zoom, int tx, int ty) {
-    if (tile_cache_lookup(tile_cache, TILE_CACHE_SIZE, zoom, tx, ty, &cache_clock)) {
+static TileLoadResult record_tile_failure(int zoom, int tx, int ty,
+                                          uint32_t now_ms) {
+    missing_tile_cache_record(missing_tile_cache, MISSING_TILE_CACHE_SIZE,
+                              zoom, tx, ty, now_ms);
+    return TileLoadResult::Missing;
+}
+
+static TileLoadResult load_tile(int zoom, int tx, int ty,
+                                TileLoadBudget* budget, uint32_t now_ms,
+                                CachedTile** out) {
+    if (out) *out = nullptr;
+    CachedTile* cached = tile_cache_lookup(
+        tile_cache, TILE_CACHE_SIZE, zoom, tx, ty, &cache_clock);
+    if (cached) {
         set_tile_status("load:cache %d/%d/%d", zoom, tx, ty);
-        return true;
+        if (out) *out = cached;
+        return TileLoadResult::Ready;
+    }
+    if (missing_tile_cache_contains(
+            missing_tile_cache, MISSING_TILE_CACHE_SIZE, zoom, tx, ty,
+            now_ms, MISSING_TILE_CACHE_TTL_MS)) {
+        last_negative_hits++;
+        set_tile_status("load:negative %d/%d/%d", zoom, tx, ty);
+        return TileLoadResult::Missing;
+    }
+    if (!budget || !budget->consume()) {
+        last_deferred_tiles++;
+        set_tile_status("load:budget %d/%d/%d", zoom, tx, ty);
+        return TileLoadResult::Deferred;
     }
 
     char path[64];
@@ -230,7 +261,7 @@ static bool load_tile(int zoom, int tx, int ty) {
     if (!f) {
         MAP_DEBUG_PRINTF("[map] tile miss: %s\n", path);
         set_tile_status("load:fopen fail %d/%d/%d", zoom, tx, ty);
-        return false;
+        return record_tile_failure(zoom, tx, ty, now_ms);
     }
     MAP_DEBUG_PRINTF("[map] tile hit: %s\n", path);
 
@@ -240,18 +271,19 @@ static bool load_tile(int zoom, int tx, int ty) {
 
     if (fsize <= 0 || fsize > 196 * 1024) {
         set_tile_status("load:size %ld %d/%d/%d", fsize, zoom, tx, ty);
-        fclose(f); return false;
+        fclose(f); return record_tile_failure(zoom, tx, ty, now_ms);
     }
 
     uint8_t* png_buf = (uint8_t*)map_alloc((size_t)fsize);
     if (!png_buf) {
         set_tile_status("load:no png buf %ld", fsize);
-        fclose(f); return false;
+        fclose(f); return record_tile_failure(zoom, tx, ty, now_ms);
     }
 
     if (fread(png_buf, 1, (size_t)fsize, f) != (size_t)fsize) {
         set_tile_status("load:read fail %ld", fsize);
-        fclose(f); map_free(png_buf); return false;
+        fclose(f); map_free(png_buf);
+        return record_tile_failure(zoom, tx, ty, now_ms);
     }
     fclose(f);
 
@@ -262,14 +294,15 @@ static bool load_tile(int zoom, int tx, int ty) {
 
     if (err != 0 || w != TILE_SIZE || h != TILE_SIZE) {
         set_tile_status("load:png err %u %ux%u", err, w, h);
-        lodepng_free(rgba); return false;
+        lodepng_free(rgba);
+        return record_tile_failure(zoom, tx, ty, now_ms);
     }
 
     uint16_t* decoded_pixels = (uint16_t*)map_alloc(TILE_SIZE * TILE_SIZE * 2);
     if (!decoded_pixels) {
         set_tile_status("load:no tile buf");
         lodepng_free(rgba);
-        return false;
+        return record_tile_failure(zoom, tx, ty, now_ms);
     }
 
     for (int y = 0; y < TILE_SIZE; y++) {
@@ -287,6 +320,10 @@ static bool load_tile(int zoom, int tx, int ty) {
     // Do not destroy a valid cached tile until the replacement file has been
     // opened, bounded, read, decoded, validated, and converted successfully.
     CachedTile* slot = tile_cache_evict_slot(tile_cache, TILE_CACHE_SIZE);
+    if (!slot) {
+        map_free(decoded_pixels);
+        return record_tile_failure(zoom, tx, ty, now_ms);
+    }
     if (slot->pixels) map_free(slot->pixels);
     slot->pixels = decoded_pixels;
 
@@ -295,7 +332,8 @@ static bool load_tile(int zoom, int tx, int ty) {
     slot->ty = ty;
     slot->last_used = ++cache_clock;
     set_tile_status("load:ok %d/%d/%d %ldB", zoom, tx, ty, fsize);
-    return true;
+    if (out) *out = slot;
+    return TileLoadResult::Ready;
 }
 
 // ── Draw tile to canvas buffer ─────────────────────────────
@@ -677,6 +715,10 @@ void sigurdos_map_init() {
 
     // Reset monotonic clock for fresh cache entries
     cache_clock = 0;
+    missing_tile_cache_init(missing_tile_cache, MISSING_TILE_CACHE_SIZE);
+    last_load_attempts = 0;
+    last_negative_hits = 0;
+    last_deferred_tiles = 0;
 
     // Allocate draw buffer (320×240×2 = 153KB for RGB565).
     // PSRAM first: DRAM is scarce (~320KB free) and a 153KB allocation there
@@ -724,6 +766,9 @@ void sigurdos_map_reparent(lv_obj_t* new_parent) {
 }
 
 void sigurdos_map_discover_tiles() {
+    // Tile discovery follows an SD insertion/re-entry and is the natural point
+    // to forget stale misses from a previous sparse/missing tile set.
+    missing_tile_cache_init(missing_tile_cache, MISSING_TILE_CACHE_SIZE);
     load_metadata();
 }
 
@@ -742,6 +787,7 @@ void sigurdos_map_deinit() {
             tile_cache[i].pixels = nullptr;
         }
     }
+    missing_tile_cache_init(missing_tile_cache, MISSING_TILE_CACHE_SIZE);
 
     if (canvas_pixels) { heap_caps_free(canvas_pixels); canvas_pixels = nullptr; }
 
@@ -922,6 +968,11 @@ void sigurdos_map_render() {
     int center_py = TFT_HEIGHT / 2;
 
     bool any_tile_loaded = false;
+    const bool sd_mounted = sigurdos_sdcard_mounted();
+    const uint32_t render_now_ms = millis();
+    TileLoadBudget load_budget(MAP_TILE_LOAD_BUDGET_PER_RENDER);
+    last_negative_hits = 0;
+    last_deferred_tiles = 0;
 
     for (int ty = -1; ty <= tiles_down; ty++) {
         for (int tx = -1; tx <= tiles_across; tx++) {
@@ -946,18 +997,21 @@ void sigurdos_map_render() {
                                  (center_ty - (int)center_ty) * px_per_tile);
 
             // Skip if completely off-screen
-            if (screen_x + TILE_SIZE < 0 || screen_x > TFT_WIDTH ||
-                screen_y + TILE_SIZE < 0 || screen_y > TFT_HEIGHT) {
+            if (!sigurdos_map_tile_intersects_viewport(
+                    screen_x, screen_y, TFT_WIDTH, TFT_HEIGHT)) {
                 continue;
             }
 
-            // Try to load and render the tile (cache-aware, PNG)
-            if (sigurdos_sdcard_mounted() && load_tile(zoom_level, tile_x, tile_y)) {
-                CachedTile* ct = tile_cache_lookup(tile_cache, TILE_CACHE_SIZE, zoom_level, tile_x, tile_y, &cache_clock);
-                if (ct) {
-                    draw_tile_from_cache(ct, screen_x, screen_y);
-                    any_tile_loaded = true;
-                }
+            // Try to load and render the tile. Positive/negative cache hits do
+            // not consume the per-render file/decode budget.
+            CachedTile* cached = nullptr;
+            const TileLoadResult result = sd_mounted
+                ? load_tile(zoom_level, tile_x, tile_y, &load_budget,
+                            render_now_ms, &cached)
+                : TileLoadResult::Missing;
+            if (result == TileLoadResult::Ready && cached) {
+                draw_tile_from_cache(cached, screen_x, screen_y);
+                any_tile_loaded = true;
             } else {
                 // Fallback: placeholder grid
                 lv_draw_rect_dsc_t rect_dsc;
@@ -974,9 +1028,36 @@ void sigurdos_map_render() {
                 area.y2 = screen_y + TILE_SIZE - 1;
 
                 lv_draw_rect(&layer, &rect_dsc, &area);
+
+                // A red X distinguishes a confirmed missing/corrupt tile from
+                // a neutral tile deferred by this render's load budget.
+                if (sd_mounted && result == TileLoadResult::Missing) {
+                    const int left = screen_x < 0 ? 0 : screen_x;
+                    const int top = screen_y < 0 ? 0 : screen_y;
+                    const int right = screen_x + TILE_SIZE - 1 >= TFT_WIDTH
+                        ? TFT_WIDTH - 1 : screen_x + TILE_SIZE - 1;
+                    const int bottom = screen_y + TILE_SIZE - 1 >= TFT_HEIGHT
+                        ? TFT_HEIGHT - 1 : screen_y + TILE_SIZE - 1;
+                    const int marker_x = (left + right) / 2;
+                    const int marker_y = (top + bottom) / 2;
+                    lv_draw_line_dsc_t missing_dsc;
+                    lv_draw_line_dsc_init(&missing_dsc);
+                    missing_dsc.color = lv_color_hex(0xed4245);
+                    missing_dsc.width = 2;
+                    missing_dsc.opa = LV_OPA_70;
+                    missing_dsc.p1.x = marker_x - 6;
+                    missing_dsc.p1.y = marker_y - 6;
+                    missing_dsc.p2.x = marker_x + 6;
+                    missing_dsc.p2.y = marker_y + 6;
+                    lv_draw_line(&layer, &missing_dsc);
+                    missing_dsc.p1.y = marker_y + 6;
+                    missing_dsc.p2.y = marker_y - 6;
+                    lv_draw_line(&layer, &missing_dsc);
+                }
             }
         }
     }
+    last_load_attempts = load_budget.used;
 
     // If no tiles loaded at all, show status message
     if (!any_tile_loaded) {
@@ -1040,6 +1121,15 @@ bool sigurdos_map_tiles_available() {
     FILE* f = fopen(path, "r");
     if (f) { fclose(f); return true; }
     return false;
+}
+
+int sigurdos_map_last_load_attempts() { return last_load_attempts; }
+int sigurdos_map_last_negative_hits() { return last_negative_hits; }
+int sigurdos_map_last_deferred_tiles() { return last_deferred_tiles; }
+int sigurdos_map_missing_cache_count() {
+    return missing_tile_cache_active_count(
+        missing_tile_cache, MISSING_TILE_CACHE_SIZE, millis(),
+        MISSING_TILE_CACHE_TTL_MS);
 }
 
 void sigurdos_map_pixel_to_latlon(int px, int py, double* out_lat, double* out_lon) {

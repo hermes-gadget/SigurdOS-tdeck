@@ -391,6 +391,7 @@ A dedicated app-level feature bridging the display, SD card, and GPS systems.
 - **Rendering:** LVGL canvas grid overlaid with decoded tile pixels
 - **Cache:** PSRAM-backed LRU tile cache (4 entries @ 256×256 RGB565 ≈ 524 KB)
 - **Cache internals:** `tile_cache_init()`, `tile_cache_lookup()`, `tile_cache_evict_slot()` — 64-bit monotonic clock, safe for 584M years
+- **Sparse-tile protection:** 24-entry, 30-second negative cache plus a two-decode-per-render budget and bounded warmup renders; missing tiles show a red X
 - **Interaction:** Pan by pixel delta, zoom in/out by one level
 - **Position overlay:** Renders own GPS position as a marker on the map
 **Full documentation:** [`docs/MAP_SCREEN.md`](MAP_SCREEN.md)

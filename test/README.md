@@ -65,7 +65,7 @@ test/
 |-- test_layout/                    Screen layout overlap regression checks
 |-- test_lodepng_alloc/             LodePNG PSRAM allocator with DRAM fallback
 |-- test_log/                       Logging macro levels and compile-time gating
-|-- test_map/                       Map projection, tile math, tile cache behavior
+|-- test_map/                       Map projection, LRU/negative cache, and load budgets
 |-- test_map_renderer/              Map renderer constants, zoom validation, and tile math
 |-- test_mesh_contract/             Mesh advert types, contact flags, and buffer capacity stability
 |-- test_mesh_messaging/            Message queues, contacts, responses, LPP parsing
