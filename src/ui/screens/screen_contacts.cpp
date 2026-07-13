@@ -1240,6 +1240,8 @@ void contact_detail_screen_show(const char* contact_name)
         add_row("Location", loc_buf, ACCENT_GREEN);
     } else {
         add_row("Location", "Not shared", TEXT_SECONDARY);
+    }
+
     // ── Login status row (repeater/room only) ─────────
     if (target->type == ADV_TYPE_REPEATER || target->type == ADV_TYPE_ROOM) {
         uint8_t st = sigurdos::mesh::getLoginStatus(contact_name);
@@ -1269,8 +1271,6 @@ void contact_detail_screen_show(const char* contact_name)
             }
             add_row("Permission", perm_buf, ACCENT);
         }
-    }
-
     }
 
     // ── Local ACL display ──────────────────────────
