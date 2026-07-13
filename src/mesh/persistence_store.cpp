@@ -267,6 +267,7 @@ bool channelStoreSave(int count, ChannelReadFn read, void* ctx)
     return ok;
 #else
     (void)count;
+    (void)ctx;
     return false;
 #endif
 }
@@ -284,6 +285,7 @@ int channelStoreLoad(ChannelLoadFn load, void* ctx)
     return loaded;
 #else
     (void)load;
+    (void)ctx;
     return 0;
 #endif
 }

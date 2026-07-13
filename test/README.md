@@ -16,6 +16,12 @@ pio test -e native_test -f test_gps
 # Run the full host-side native suite.
 pio test -e native_test
 
+# Run every native suite under ASan, UBSan, and leak detection.
+pio test -e native_sanitize
+
+# Generate gcov data for production sources.
+pio test -e native_coverage
+
 # Build the firmware image for the LilyGo T-Deck target.
 pio run -e SigurdOS_TDeck
 ```
@@ -26,6 +32,15 @@ PR body:
 
 - `Remote test: not run; no remote T-Deck fixture is attached.`
 - `Physical hardware test: not run; no LilyGo T-Deck hardware is attached.`
+
+The native compiler enables `-Wall -Wextra -Wpedantic`. CI records the complete
+native log and applies a zero-warning budget to first-party `src/` files; test
+mocks remain visible in the log but are not part of that production budget.
+`native_sanitize` intentionally has no suite allowlist or exclusion manifest:
+PlatformIO discovers every `test/test_*` suite, so a newly added suite is
+sanitized automatically instead of silently missing the gate. Sanitizer errors,
+undefined behavior, and leaks all terminate the job. `native_coverage` uses the
+same automatic suite discovery and reports line and branch coverage for `src/`.
 
 ## Test Structure
 

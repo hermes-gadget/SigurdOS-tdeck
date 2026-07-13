@@ -1393,7 +1393,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         uint8_t path_len = (uint8_t)(len - 10);
         uint8_t flags = _cmd_frame[9];
         uint8_t path_sz = flags & 0x03;
-        if ((path_len >> path_sz) > SIGURDOS_COMPANION_PATH_SIZE ||
+        if (static_cast<size_t>(path_len >> path_sz) > SIGURDOS_COMPANION_PATH_SIZE ||
             (path_len % (1 << path_sz)) != 0) {
             writeErrFrame(ERR_CODE_ILLEGAL_ARG);
             return true;

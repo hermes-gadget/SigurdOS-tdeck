@@ -303,7 +303,7 @@ static uint32_t one_shot_symbol(uint8_t key_code, bool shifted)
     return key_code;
 }
 
-static void update_modifier_sample(const uint8_t matrix[KB_RAW_COLS])
+[[maybe_unused]] static void update_modifier_sample(const uint8_t matrix[KB_RAW_COLS])
 {
     const bool sym_down = raw_key_down(matrix, 0, 2);
     const bool alt_down = raw_key_down(matrix, 0, 4);

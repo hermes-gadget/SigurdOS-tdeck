@@ -44,7 +44,16 @@ jobs:
         run: python -m pip install --upgrade platformio
 
       - name: Run native tests
-        run: pio test -e native_test -v
+        run: |
+          set -o pipefail
+          pio test -e native_test -v | tee native-test.log
+
+      - name: Enforce zero first-party native warnings
+        run: >-
+          python scripts/check_first_party_warnings.py
+          --log native-test.log
+          --baseline ci/native_first_party_warnings.json
+          --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Verify release evidence contracts
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
@@ -168,7 +177,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   sanitize:
-    name: Native ASan + UBSan
+    name: Native ASan + UBSan + LSan
     runs-on: ubuntu-latest
 
     steps:
@@ -185,15 +194,62 @@ jobs:
       - name: Install PlatformIO
         run: python -m pip install --upgrade platformio
 
-      - name: Run memory-sensitive native tests
+      - name: Run all sanitizer-capable native tests
         env:
-          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:check_initialization_order=1
-          UBSAN_OPTIONS: print_stacktrace=1
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:check_initialization_order=1:halt_on_error=1
+          LSAN_OPTIONS: exitcode=23:print_suppressions=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: pio test -e native_sanitize -v
+
+  coverage:
+    name: Native production coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned coverage tooling
+        run: python -m pip install platformio==6.1.19 gcovr==8.6
+
+      - name: Run all coverage-capable native tests
+        run: pio test -e native_coverage -v
+
+      - name: Publish line and branch summary
         run: |
-          pio test -e native_sanitize -f test_storage -v
-          pio test -e native_sanitize -f test_contact_store -v
-          pio test -e native_sanitize -f test_message_store -v
-          pio test -e native_sanitize -f test_companion_protocol -v
+          gcovr \
+            --root . \
+            --filter '^src/' \
+            --exclude-throw-branches \
+            --txt coverage.txt \
+            --txt-summary \
+            --html-details coverage.html \
+            --json-summary coverage-summary.json \
+            | tee coverage-summary.txt
+          {
+            echo '### Native production coverage'
+            echo '```text'
+            sed -n '1,120p' coverage-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-production-coverage
+          path: |
+            coverage.txt
+            coverage.html
+            coverage.*.html
+            coverage-summary.txt
+            coverage-summary.json
 
   lint:
     name: Static analysis + logging policy
