@@ -816,7 +816,7 @@ public:
         } else if (strcmp(name, "gps_interval") == 0) {
             int iv = atoi(value);
             if (iv >= 0 && iv <= 86400) {
-                p.gps_interval = (uint16_t)iv;
+                p.gps_interval = iv < 5 ? 5 : (uint16_t)iv;
                 sigurdos::prefs_set(p);
                 return true;
             }

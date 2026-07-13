@@ -22,6 +22,7 @@
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/map_renderer.h"
+#include "../../hal/gps.h"
 #include <Arduino.h>
 #include <lvgl.h>
 #include <new>
@@ -90,8 +91,12 @@ static void render_map_with_contacts() {
 
 void map_screen_show()
 {
+    // Opening Map is an explicit foreground request for responsive location.
+    // It does not mutate the persisted background GPS preference.
+    sigurdos_gps_set_map_high_rate(true);
     lv_obj_t* scr = make_screen_full("Map");
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
+        sigurdos_gps_set_map_high_rate(false);
         delete[] map_contacts;
         map_contacts = nullptr;
     }, LV_EVENT_DELETE, nullptr);

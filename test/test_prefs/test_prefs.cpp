@@ -115,4 +115,14 @@ TEST_F(PrefsTest, KeyboardLayoutRoundTripsThroughPrefs) {
     EXPECT_EQ(9, loaded.kbd_layout);
 }
 
+TEST_F(PrefsTest, GpsIntervalIsNormalizedWhenUpdatedAtRuntime) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    prefs.gps_interval = 0;
+
+    sigurdos::prefs_set(prefs);
+
+    EXPECT_EQ(5, sigurdos::prefs_get().gps_interval);
+}
+
 } // namespace
