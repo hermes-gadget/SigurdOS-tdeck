@@ -256,6 +256,7 @@ public:
     }
 
     uint32_t currentTime() const override { return sigurdos::mesh::getCurrentTime(); }
+    uint32_t monotonicMillis() const override { return millis(); }
     bool setCurrentTime(uint32_t epoch) override {
         // Accept time from the companion client unconditionally.
         // The official app/CLI sets time on every connect; rejecting
@@ -853,6 +854,9 @@ public:
     }
     void cancelBinaryReqs() override {
         if (mesh_ptr()) mesh_ptr()->cancelCompanionBinaryRequests();
+    }
+    void cancelBinaryReq(uint32_t tag) override {
+        if (mesh_ptr()) mesh_ptr()->cancelCompanionBinaryRequest(tag);
     }
     CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
                                       const uint8_t* path, uint8_t path_len) override {

@@ -466,6 +466,18 @@ namespace mesh {
         }
     }
 
+    void SigurdMeshV2::cancelCompanionBinaryRequest(uint32_t tag) {
+        if (tag == 0) return;
+        for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
+            if (_pending_reqs[i].in_use && _pending_reqs[i].companion_binary &&
+                _pending_reqs[i].tag == tag) {
+                _pending_reqs[i].in_use = false;
+                _pending_reqs[i].companion_binary = false;
+                return;
+            }
+        }
+    }
+
     bool SigurdMeshV2::sendRoomMsgFetchRequest(const char* name, const char* channel_name) {
         if (!name || !name[0] || !channel_name || !channel_name[0]) return false;
         _n_room_fetched = 0;

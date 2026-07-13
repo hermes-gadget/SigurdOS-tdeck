@@ -45,7 +45,10 @@ public:
     int anon_send_calls = 0;
     uint32_t next_binary_tag = 0x10203040u;
     uint32_t next_anon_tag = 0x50607080u;
+    uint32_t binary_timeout_ms = 3000;
+    uint32_t anon_timeout_ms = 4500;
     bool cancelled_binary = false;
+    std::vector<uint32_t> cancelled_binary_tags;
     std::vector<uint8_t> last_binary_data;
     std::vector<uint8_t> last_anon_data;
     uint8_t last_anon_key[32]{};
@@ -80,6 +83,7 @@ public:
     uint32_t allowed_repeat_ranges[4]{};
     size_t allowed_repeat_range_count = 0;
     uint32_t now = 1234;
+    uint32_t now_ms = 0;
 
     uint8_t path_hash_mode = 0;
 
@@ -100,6 +104,7 @@ public:
     }
 
     uint32_t currentTime() const override { return now; }
+    uint32_t monotonicMillis() const override { return now_ms; }
     bool setCurrentTime(uint32_t epoch) override { now = epoch; return true; }
     uint16_t batteryMilliVolts() const override { return 4100; }
     uint32_t storageUsedKb() const override { return 10; }
@@ -354,7 +359,7 @@ public:
         ++binary_send_calls;
         last_binary_data.assign(data, data + data_len);
         if (!last_send_ok) return {false, false, 0, 0};
-        return {true, false, next_binary_tag++, 3000};
+        return {true, false, next_binary_tag++, binary_timeout_ms};
     }
     sigurdos::comms::CompanionSendResult sendAnonReq(
         const uint8_t* pub_key, const uint8_t* data, uint8_t data_len) override {
@@ -363,8 +368,9 @@ public:
         std::memcpy(last_anon_key, pub_key, sizeof(last_anon_key));
         last_anon_data.assign(data, data + data_len);
         if (!last_send_ok) return {false, false, 0, 0};
-        return {true, true, next_anon_tag++, 4500};
+        return {true, true, next_anon_tag++, anon_timeout_ms};
     }
+    void cancelBinaryReq(uint32_t tag) override { cancelled_binary_tags.push_back(tag); }
     void cancelBinaryReqs() override { cancelled_binary = true; }
     sigurdos::comms::CompanionSendResult sendTracePath(uint32_t tag, uint32_t, uint8_t,
                                                        const uint8_t*, uint8_t path_len) override {
@@ -1314,6 +1320,58 @@ TEST_F(CompanionProtocolTest, BinaryRequestMapsMeshSendFailureToTableFull)
     ASSERT_EQ(serial.writes.size(), 1U);
     EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_ERR);
     EXPECT_EQ(serial.writes[0][1], sigurdos::comms::ERR_CODE_TABLE_FULL);
+}
+
+TEST_F(CompanionProtocolTest, BinaryPendingSlotsExpireAndRejectLateResponses)
+{
+    host.now_ms = 100;
+    for (int i = 0; i < 4; ++i) {
+        const auto frame = binaryRequestFrame({(uint8_t)i});
+        ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    }
+
+    host.now_ms = 3099;
+    const auto before_deadline = binaryRequestFrame({0xFE});
+    ASSERT_TRUE(bridge.handleFrame(before_deadline.data(), before_deadline.size()));
+    EXPECT_EQ(host.binary_send_calls, 4);
+    EXPECT_TRUE(host.cancelled_binary_tags.empty());
+
+    host.now_ms = 3100;
+    const auto replacement = binaryRequestFrame({0xFF});
+    ASSERT_TRUE(bridge.handleFrame(replacement.data(), replacement.size()));
+    EXPECT_EQ(host.binary_send_calls, 5);
+    EXPECT_EQ(host.cancelled_binary_tags,
+              (std::vector<uint32_t>{0x10203040U, 0x10203041U,
+                                     0x10203042U, 0x10203043U}));
+
+    serial.writes.clear();
+    const uint8_t response[] = {0x01};
+    EXPECT_FALSE(bridge.pushBinaryResponse(
+        0x10203040U, response, sizeof(response)));
+    EXPECT_TRUE(serial.writes.empty());
+    EXPECT_TRUE(bridge.pushBinaryResponse(
+        0x10203044U, response, sizeof(response)));
+}
+
+TEST_F(CompanionProtocolTest, BinaryFallbackTimeoutHandlesMillisWraparound)
+{
+    host.binary_timeout_ms = 0;
+    host.now_ms = UINT32_MAX - 999U;
+    const auto frame = binaryRequestFrame({0x03});
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+
+    host.now_ms = host.now_ms + 30000U - 1U;
+    serial.enabled = true;
+    bridge.loop();
+    EXPECT_TRUE(host.cancelled_binary_tags.empty());
+
+    ++host.now_ms;
+    bridge.loop();
+    EXPECT_EQ(host.cancelled_binary_tags,
+              (std::vector<uint32_t>{0x10203040U}));
+    const uint8_t response[] = {0x01};
+    EXPECT_FALSE(bridge.pushBinaryResponse(
+        0x10203040U, response, sizeof(response)));
 }
 
 TEST_F(CompanionProtocolTest, BinaryPendingTableIsBounded)

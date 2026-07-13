@@ -249,6 +249,7 @@ public:
     virtual void selfInfo(CompanionSelfInfo& out) const = 0;
 
     virtual uint32_t currentTime() const = 0;
+    virtual uint32_t monotonicMillis() const = 0;
     virtual bool setCurrentTime(uint32_t epoch) = 0;
     virtual uint16_t batteryMilliVolts() const = 0;
     virtual uint32_t storageUsedKb() const = 0;
@@ -345,6 +346,7 @@ public:
     virtual CompanionSendResult sendAnonReq(const uint8_t* pub_key,
                                             const uint8_t* data,
                                             uint8_t data_len) = 0;
+    virtual void cancelBinaryReq(uint32_t tag) = 0;
     virtual void cancelBinaryReqs() = 0;
     virtual CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
                                               const uint8_t* path, uint8_t path_len) = 0;
@@ -439,7 +441,15 @@ private:
                            uint8_t* out, size_t* out_len);
     int findPendingBinary(uint32_t tag) const;
     int findFreePendingBinary() const;
+    void expirePendingBinary();
     void clearPendingBinary();
+
+    struct PendingBinaryRequest {
+        uint32_t tag = 0;
+        uint32_t deadline_ms = 0;
+    };
+
+    static constexpr uint32_t BINARY_REQUEST_FALLBACK_TIMEOUT_MS = 30000;
 
     BaseSerialInterface* _serial = nullptr;
     CompanionBridgeHost* _host = nullptr;
@@ -450,7 +460,7 @@ private:
     int _contact_iter = -1;
     int _offline_len = 0;
     Frame _offline[OFFLINE_QUEUE_SIZE];
-    uint32_t _pending_binary[MAX_PENDING_BINARY_REQUESTS]{};
+    PendingBinaryRequest _pending_binary[MAX_PENDING_BINARY_REQUESTS]{};
     uint8_t _cmd_frame[MAX_FRAME_SIZE + 1];
     uint8_t _out_frame[MAX_FRAME_SIZE + 1];
 

@@ -95,7 +95,7 @@ int CompanionBridge::findPendingBinary(uint32_t tag) const
 {
     if (tag == 0) return -1;
     for (int i = 0; i < MAX_PENDING_BINARY_REQUESTS; ++i) {
-        if (_pending_binary[i] == tag) return i;
+        if (_pending_binary[i].tag == tag) return i;
     }
     return -1;
 }
@@ -103,9 +103,22 @@ int CompanionBridge::findPendingBinary(uint32_t tag) const
 int CompanionBridge::findFreePendingBinary() const
 {
     for (int i = 0; i < MAX_PENDING_BINARY_REQUESTS; ++i) {
-        if (_pending_binary[i] == 0) return i;
+        if (_pending_binary[i].tag == 0) return i;
     }
     return -1;
+}
+
+void CompanionBridge::expirePendingBinary()
+{
+    if (!_host) return;
+    const uint32_t now = _host->monotonicMillis();
+    for (int i = 0; i < MAX_PENDING_BINARY_REQUESTS; ++i) {
+        PendingBinaryRequest& request = _pending_binary[i];
+        if (request.tag == 0 || (int32_t)(now - request.deadline_ms) < 0) continue;
+        const uint32_t tag = request.tag;
+        request = {};
+        _host->cancelBinaryReq(tag);
+    }
 }
 
 void CompanionBridge::clearPendingBinary()
@@ -116,6 +129,8 @@ void CompanionBridge::clearPendingBinary()
 void CompanionBridge::loop()
 {
     if (!_serial || !_host || !_serial->isEnabled()) return;
+
+    expirePendingBinary();
 
     // Clear in-progress signing state on BLE disconnect to prevent
     // cross-session signature injection (#712).  Check before we
@@ -520,6 +535,7 @@ bool CompanionBridge::pushTelemetryResponse(const uint8_t* pubkey_prefix,
 bool CompanionBridge::pushBinaryResponse(uint32_t tag,
                                          const uint8_t* blob, size_t blob_len)
 {
+    expirePendingBinary();
     const int pending = findPendingBinary(tag);
     if (!_serial || pending < 0 || (blob_len > 0 && !blob) ||
         6 + blob_len > MAX_FRAME_SIZE) {
@@ -535,7 +551,7 @@ bool CompanionBridge::pushBinaryResponse(uint32_t tag,
         i += (int)blob_len;
     }
     const bool written = _serial->writeFrame(_out_frame, i) == (size_t)i;
-    if (written) _pending_binary[pending] = 0;
+    if (written) _pending_binary[pending] = {};
     return written;
 }
 
@@ -599,6 +615,7 @@ bool CompanionBridge::pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
 bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 {
     if (!_serial || !_host || !frame || len == 0 || len > MAX_FRAME_SIZE) return false;
+    expirePendingBinary();
     std::memcpy(_cmd_frame, frame, len);
     _cmd_frame[len] = 0;
 
@@ -1360,7 +1377,9 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             writeErrFrame(ERR_CODE_TABLE_FULL);
             return true;
         }
-        _pending_binary[pending] = r.expected_ack;
+        _pending_binary[pending].tag = r.expected_ack;
+        _pending_binary[pending].deadline_ms = _host->monotonicMillis() +
+            (r.est_timeout ? r.est_timeout : BINARY_REQUEST_FALLBACK_TIMEOUT_MS);
         writeSentOrErr(r);
         return true;
     }
@@ -1384,7 +1403,9 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             writeErrFrame(ERR_CODE_TABLE_FULL);
             return true;
         }
-        _pending_binary[pending] = r.expected_ack;
+        _pending_binary[pending].tag = r.expected_ack;
+        _pending_binary[pending].deadline_ms = _host->monotonicMillis() +
+            (r.est_timeout ? r.est_timeout : BINARY_REQUEST_FALLBACK_TIMEOUT_MS);
         writeSentOrErr(r);
         return true;
     }

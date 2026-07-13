@@ -252,6 +252,7 @@ public:
                                  uint32_t& tag, uint32_t& est_timeout);
 
     void cancelCompanionBinaryRequests();
+    void cancelCompanionBinaryRequest(uint32_t tag);
 
 
     // Polling API for received responses
