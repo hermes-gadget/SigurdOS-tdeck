@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ben
+
+#pragma once
+
+namespace sigurdos {
+namespace mesh {
+namespace detail {
+
+enum class MeshInitState {
+    Stopped,
+    ClockOnly,
+    Ready,
+};
+
+inline bool meshInitUsable(MeshInitState state)
+{
+    return state != MeshInitState::Stopped;
+}
+
+// Release dependent objects in reverse construction order. The module hook
+// handles library-specific state owned indirectly by Module (its HAL).
+template <typename MeshT, typename DriverT, typename RadioT, typename ModuleT,
+          typename ModuleCleanupFn>
+void cleanupMeshInitResources(MeshT*& mesh, DriverT*& driver,
+                              RadioT*& radio, ModuleT*& module,
+                              ModuleCleanupFn cleanup_module)
+{
+    delete mesh;
+    mesh = nullptr;
+    delete driver;
+    driver = nullptr;
+    delete radio;
+    radio = nullptr;
+    if (module) {
+        cleanup_module(*module);
+        delete module;
+        module = nullptr;
+    }
+}
+
+} // namespace detail
+} // namespace mesh
+} // namespace sigurdos

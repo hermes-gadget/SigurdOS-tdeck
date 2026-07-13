@@ -9,15 +9,18 @@
 
 #include <gtest/gtest.h>
 #include "mesh/scope_key_hex.h"
+#include "mesh/mesh_init_lifecycle.h"
 #include "mesh/mesh_wrapper_internal.h"
 
 #include <cstring>
+#include <vector>
 
 namespace {
 
 using sigurdos::mesh::scopeKeyHexEncode;
 using sigurdos::mesh::scopeKeyHexDecode;
 using sigurdos::mesh::formatDmConversation;
+using sigurdos::mesh::detail::MeshInitState;
 
 TEST(ScopeKeyHex, EncodeEmitsLowercaseAndNulTerminates)
 {
@@ -113,6 +116,59 @@ TEST(FormatDmConversation, ZeroSizeAndNullOutAreNoOps)
     formatDmConversation(out, 0, "alice");
     EXPECT_STREQ(out, "abc");
     formatDmConversation(nullptr, 16, "alice");  // must not crash
+}
+
+struct TrackedInitResource {
+    explicit TrackedInitResource(int value) : id(value) {}
+    ~TrackedInitResource() { destroyed.push_back(id); }
+
+    int id;
+    static std::vector<int> destroyed;
+};
+
+std::vector<int> TrackedInitResource::destroyed;
+
+TEST(MeshInitLifecycle, DistinguishesStoppedClockOnlyAndReady)
+{
+    EXPECT_FALSE(sigurdos::mesh::detail::meshInitUsable(
+        MeshInitState::Stopped));
+    EXPECT_TRUE(sigurdos::mesh::detail::meshInitUsable(
+        MeshInitState::ClockOnly));
+    EXPECT_TRUE(sigurdos::mesh::detail::meshInitUsable(
+        MeshInitState::Ready));
+}
+
+TEST(MeshInitLifecycle, CleansEveryPartialAllocationInReverseOrder)
+{
+    for (int allocated = 0; allocated <= 4; ++allocated) {
+        TrackedInitResource::destroyed.clear();
+        TrackedInitResource* module = allocated >= 1
+            ? new TrackedInitResource(1) : nullptr;
+        TrackedInitResource* radio = allocated >= 2
+            ? new TrackedInitResource(2) : nullptr;
+        TrackedInitResource* driver = allocated >= 3
+            ? new TrackedInitResource(3) : nullptr;
+        TrackedInitResource* mesh = allocated >= 4
+            ? new TrackedInitResource(4) : nullptr;
+        bool module_cleanup_called = false;
+
+        sigurdos::mesh::detail::cleanupMeshInitResources(
+            mesh, driver, radio, module,
+            [&module_cleanup_called](TrackedInitResource&) {
+                module_cleanup_called = true;
+            });
+
+        EXPECT_EQ(mesh, nullptr);
+        EXPECT_EQ(driver, nullptr);
+        EXPECT_EQ(radio, nullptr);
+        EXPECT_EQ(module, nullptr);
+        EXPECT_EQ(module_cleanup_called, allocated >= 1);
+        ASSERT_EQ(TrackedInitResource::destroyed.size(),
+                  (size_t)allocated);
+        for (int i = 0; i < allocated; ++i) {
+            EXPECT_EQ(TrackedInitResource::destroyed[i], allocated - i);
+        }
+    }
 }
 
 } // namespace

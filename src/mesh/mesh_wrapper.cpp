@@ -6,6 +6,7 @@
 
 #include "mesh_wrapper.h"
 #include "mesh_wrapper_internal.h"
+#include "mesh_init_lifecycle.h"
 #include "companion_adapter.h"
 #include "channel_validation.h"
 #include "public_channel.h"
@@ -41,6 +42,7 @@
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include "hal/spi_shared.h"
+#include <new>
 
 using sigurdos::mesh::MeshMessage;
 
@@ -64,12 +66,28 @@ using sigurdos::mesh::SigurdMeshV2;
 using mesh_impl_t = sigurdos::mesh::SigurdMeshV2;
 static mesh_impl_t*   g_mesh = nullptr;
 
-static bool initialized = false;
+static sigurdos::mesh::detail::MeshInitState init_state =
+    sigurdos::mesh::detail::MeshInitState::Stopped;
 static char own_name[32] = "SigurdOS";
 static uint32_t last_advert_time = 0;
 static bool     last_advert_success = false;
 static bool     last_advert_used_gps = false;
 static sigurdos::mesh::TimeSyncTracker time_sync_tracker;
+
+static void cleanupRadioModule(Module& module)
+{
+    module.term();
+    delete module.hal;
+    module.hal = nullptr;
+}
+
+static void cleanupMeshInit()
+{
+    sigurdos::mesh::detail::cleanupMeshInitResources(
+        g_mesh, radio_driver, radio_module, lora_mod, cleanupRadioModule);
+    radio_inited = false;
+    init_state = sigurdos::mesh::detail::MeshInitState::Stopped;
+}
 
 // formatDmConversation moved to mesh_wrapper_internal.h (shared with the
 // companion adapter).
@@ -853,6 +871,10 @@ void injectMessage(const char* sender, const char* channel, const char* text)
 
 bool init(bool spiffs_ok)
 {
+    if (sigurdos::mesh::detail::meshInitUsable(init_state)) return true;
+    // A prior failed attempt may have stopped after any allocation. Always
+    // begin from a fully-owned, empty resource set so init can be retried.
+    cleanupMeshInit();
     time_sync_tracker.reset();
     // Initialize the mesh-layer board instance. The main.cpp board runs
     // begin() earlier in boot for peripheral power/I2C, but this instance
@@ -872,26 +894,26 @@ bool init(bool spiffs_ok)
     // before PSRAM was available. On ESP32 Arduino builds, a failed
     // `new` returns nullptr (no exceptions). Delaying to init() time
     // and checking null avoids a silent crash when the radio starts.
-    lora_mod = new Module(P_LORA_NSS, P_LORA_DIO_1,
-                          P_LORA_RESET, P_LORA_BUSY, sigurdos_shared_spi());
-    if (!lora_mod) {
+    lora_mod = new (std::nothrow) Module(
+        P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY,
+        sigurdos_shared_spi());
+    if (!lora_mod || !lora_mod->hal) {
         Serial.println("[mesh] FATAL: Radio Module allocation failed (OOM)");
+        cleanupMeshInit();
         return false;
     }
-    radio_module = new CustomSX1262(lora_mod);
+    radio_module = new (std::nothrow) CustomSX1262(lora_mod);
     if (!radio_module) {
         Serial.println("[mesh] FATAL: CustomSX1262 allocation failed (OOM)");
+        cleanupMeshInit();
         return false;
     }
-    radio_driver = new CustomSX1262Wrapper(*radio_module, board);
+    radio_driver = new (std::nothrow) CustomSX1262Wrapper(*radio_module, board);
     if (!radio_driver) {
         Serial.println("[mesh] FATAL: Radio driver allocation failed (OOM)");
+        cleanupMeshInit();
         return false;
     }
-
-    // Mark clock as initialized so getCurrentTime() and other time APIs
-    // work even when the radio hasn't been configured yet.
-    initialized = true;
 
     // ── Radio configuration: use compile-time defaults if not configured ──
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
@@ -951,6 +973,7 @@ bool init(bool spiffs_ok)
             Serial.println("[mesh] Radio not configured — holding SX1262 in reset");
             pinMode(P_LORA_RESET, OUTPUT);
             digitalWrite(P_LORA_RESET, LOW);
+            init_state = sigurdos::mesh::detail::MeshInitState::ClockOnly;
             return true;
         }
         if (!cp.configured && companion_usb) {
@@ -981,6 +1004,7 @@ bool init(bool spiffs_ok)
 #endif
     if (!radio_module->std_init(&sigurdos_shared_spi())) {
         Serial.println("[mesh] ERROR: Radio init failed");
+        cleanupMeshInit();
         return false;
     }
     radio_inited = true;
@@ -1002,9 +1026,11 @@ bool init(bool spiffs_ok)
 
     fast_rng.begin(radio_module->random(0x7FFFFFFF));
 
-    g_mesh = new mesh_impl_t(*radio_driver, millis_clock, fast_rng, rtc_clock, pkt_mgr, tables);
+    g_mesh = new (std::nothrow) mesh_impl_t(
+        *radio_driver, millis_clock, fast_rng, rtc_clock, pkt_mgr, tables);
     if (!g_mesh) {
         Serial.println("[mesh] ERROR: SigurdMeshV2 allocation failed");
+        cleanupMeshInit();
         return false;
     }
     g_mesh->setOwnName(own_name);
@@ -1089,7 +1115,7 @@ bool init(bool spiffs_ok)
     // No boot-time one-shot advert occurs — all advert traffic must be
     // explicitly authorised by the user via Settings → Auto-advert.
 
-    initialized = true;
+    init_state = sigurdos::mesh::detail::MeshInitState::Ready;
 #if SIGURDOS_DEBUG_MESH
     Serial.println("[mesh] SigurdMeshV2 initialized");
 #endif
@@ -1099,7 +1125,7 @@ bool init(bool spiffs_ok)
 #else
     // Remote test without SIGURDOS_REMOTE_TEST_RADIO: init SPI bus for SD card only, no LoRa radio
     sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
-    initialized = true;
+    init_state = sigurdos::mesh::detail::MeshInitState::ClockOnly;
     return true;
 #endif
 }
@@ -1111,7 +1137,7 @@ extern "C" uint32_t lv_timer_handler(void);
 
 void loop()
 {
-    if (!initialized) return;
+    if (!sigurdos::mesh::detail::meshInitUsable(init_state)) return;
     if (g_mesh) {
         g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
         g_mesh->expirePendingAcks();
@@ -1495,11 +1521,12 @@ bool getLastAdvertUsedGps() {
 }
 
 uint32_t getCurrentTime() {
-    return initialized ? rtc_clock.getCurrentTime() : 0;
+    return sigurdos::mesh::detail::meshInitUsable(init_state)
+        ? rtc_clock.getCurrentTime() : 0;
 }
 
 bool setSystemTime(uint32_t epoch_seconds, TimeSource source) {
-    if (!initialized) return false;
+    if (!sigurdos::mesh::detail::meshInitUsable(init_state)) return false;
     rtc_clock.setCurrentTime(epoch_seconds);
     fallback_clock.setCurrentTime(epoch_seconds);  // always keep soft RTC in sync too
     time_sync_tracker.record(source, epoch_seconds);
@@ -1511,7 +1538,8 @@ TimeSyncStatus getTimeSyncStatus() {
 }
 
 void getCurrentLocalDateTime(int* year, int* month, int* day, int* hour, int* minute) {
-    if (!initialized || !year || !month || !day || !hour || !minute) {
+    if (!sigurdos::mesh::detail::meshInitUsable(init_state) ||
+        !year || !month || !day || !hour || !minute) {
         if (year) *year = 2024;
         if (month) *month = 1;
         if (day) *day = 1;
@@ -1725,7 +1753,7 @@ void reloadContactsAfterIdentityChange() {
 
 void shutdown()
 {
-    if (!initialized) return;
+    if (!sigurdos::mesh::detail::meshInitUsable(init_state)) return;
     // Save all persistent state to NVS/SPIFFS before shutting down
     saveChannels();
     saveState();
