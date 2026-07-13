@@ -19,6 +19,10 @@
 #include <gtest/gtest.h>
 
 #include "Arduino.h"
+
+// Defining the master switch numerically as zero must behave exactly like an
+// undefined release-build switch.
+#define SIGURDOS_DEBUG 0
 #include "diagnostics/log.h"
 
 TEST(LogMacrosTest, ErrorAndWarningAddLevelPrefixAndNewline) {
@@ -35,11 +39,15 @@ TEST(LogMacrosTest, DebugLogsCompileOutUnlessDebugBuild) {
 
     SIG_LOGD("debug %s", "message");
 
-#if defined(SIGURDOS_DEBUG)
+#if SIGURDOS_DEBUG_ACTIVE
     EXPECT_EQ("[D] debug message\n", Serial.mock_tx_output());
 #else
     EXPECT_TRUE(Serial.mock_tx_output().empty());
 #endif
+}
+
+TEST(LogMacrosTest, NumericZeroDisablesDebugLogging) {
+    EXPECT_EQ(SIGURDOS_DEBUG_ACTIVE, 0);
 }
 
 int main(int argc, char** argv) {

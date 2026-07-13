@@ -22,13 +22,14 @@
 #endif
 
 // ── Crash ring buffer ───────────────────────────────────
-// Captures last N debug lines in DRAM. Auto-dumped on boot
-// after a crash (panic, watchdog, brownout).
+// Captures the last N debug lines in checksummed RTC no-init memory and
+// auto-dumps them after a panic or watchdog reset. RTC retention is not
+// guaranteed across power loss or brownout.
 #ifndef SIGURDOS_CRASH_RING
 #define SIGURDOS_CRASH_RING 0
 #endif
 
-#define DEBUG_RING_SIZE 128
+#define DEBUG_RING_SIZE 48
 
 struct DebugRingEntry {
     uint32_t timestamp_ms;

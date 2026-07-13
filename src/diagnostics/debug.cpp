@@ -22,6 +22,8 @@
 #include <Arduino.h>
 #include <lvgl.h>
 #include <esp_core_dump.h>
+#include <cstddef>
+#include <cstring>
 
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
@@ -56,34 +58,81 @@ static bool feat_diag    = SIGURDOS_DEBUG_DIAG    ? true : false;
 
 // ── Crash ring buffer ───────────────────────────────────
 #if SIGURDOS_CRASH_RING
-static DebugRingEntry s_ring[DEBUG_RING_SIZE];
-static uint8_t s_ring_head = 0;
-static uint8_t s_ring_count = 0;
+static constexpr uint32_t DEBUG_RING_MAGIC = 0x53445247U;  // "SDRG"
+static constexpr uint16_t DEBUG_RING_VERSION = 1;
+
+struct DebugRingRecord {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t head;
+    uint16_t count;
+    uint16_t reserved;
+    DebugRingEntry entries[DEBUG_RING_SIZE];
+    uint32_t checksum;
+};
+
+// RTC_NOINIT_ATTR avoids startup zeroing so the previous boot's final log
+// entries survive panic, watchdog, and software resets.
+static RTC_NOINIT_ATTR DebugRingRecord s_ring;
+
+static uint32_t ring_checksum(const DebugRingRecord& record)
+{
+    const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&record);
+    uint32_t hash = 2166136261U;
+    for (size_t i = 0; i < offsetof(DebugRingRecord, checksum); i++) {
+        hash ^= bytes[i];
+        hash *= 16777619U;
+    }
+    return hash;
+}
+
+static bool ring_valid()
+{
+    return s_ring.magic == DEBUG_RING_MAGIC &&
+           s_ring.version == DEBUG_RING_VERSION &&
+           s_ring.head < DEBUG_RING_SIZE &&
+           s_ring.count <= DEBUG_RING_SIZE &&
+           s_ring.checksum == ring_checksum(s_ring);
+}
+
+static void ring_reset_record()
+{
+    memset(&s_ring, 0, sizeof(s_ring));
+    s_ring.magic = DEBUG_RING_MAGIC;
+    s_ring.version = DEBUG_RING_VERSION;
+    s_ring.checksum = ring_checksum(s_ring);
+}
+
+static void ring_prepare()
+{
+    if (!ring_valid()) ring_reset_record();
+}
 
 void ring_log(const char* line)
 {
-    DebugRingEntry* e = &s_ring[s_ring_head % DEBUG_RING_SIZE];
+    ring_prepare();
+    DebugRingEntry* e = &s_ring.entries[s_ring.head];
     e->timestamp_ms = millis();
-    strncpy(e->line, line, sizeof(e->line) - 1);
+    strncpy(e->line, line ? line : "", sizeof(e->line) - 1);
     e->line[sizeof(e->line) - 1] = '\0';
-    s_ring_head++;
-    if (s_ring_count < DEBUG_RING_SIZE) s_ring_count++;
+    s_ring.head = (uint16_t)((s_ring.head + 1U) % DEBUG_RING_SIZE);
+    if (s_ring.count < DEBUG_RING_SIZE) s_ring.count++;
+    s_ring.checksum = ring_checksum(s_ring);
 }
 
 void ring_dump()
 {
-    uint8_t start = (s_ring_count < DEBUG_RING_SIZE) ? 0
-                   : (s_ring_head % DEBUG_RING_SIZE);
-    for (uint8_t i = 0; i < s_ring_count; i++) {
-        auto* e = &s_ring[(start + i) % DEBUG_RING_SIZE];
+    if (!ring_valid()) return;
+    const uint16_t start = (s_ring.count < DEBUG_RING_SIZE) ? 0 : s_ring.head;
+    for (uint16_t i = 0; i < s_ring.count; i++) {
+        const auto* e = &s_ring.entries[(start + i) % DEBUG_RING_SIZE];
         Serial.printf("[ring] t=%lu %s\n", (unsigned long)e->timestamp_ms, e->line);
     }
 }
 
 void ring_clear()
 {
-    s_ring_head = 0;
-    s_ring_count = 0;
+    ring_reset_record();
 }
 
 bool has_crash_record()
@@ -159,7 +208,16 @@ void init()
         Serial.println("⚠ PREVIOUS BOOT ENDED IN A CRASH");
         Serial.printf("⚠ Reason: %d\n", (int)reason);
         Serial.println("⚠═══════════════════════════════════════");
-        ring_dump();
+        if (ring_valid() && s_ring.count > 0) {
+            ring_dump();
+            // Keep the retained record intact until all bytes have been handed
+            // to the serial driver, then start a fresh ring for this boot.
+            Serial.flush();
+            ring_clear();
+        } else {
+            Serial.println("[ring] no valid retained entries");
+            ring_clear();
+        }
         if (esp_core_dump_image_check() == ESP_OK) {
             Serial.println("[crash] Core dump saved to flash. Use esptool.py to extract.");
         }
