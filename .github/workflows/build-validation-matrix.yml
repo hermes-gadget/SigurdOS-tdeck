@@ -1,6 +1,8 @@
 name: Build Validation Matrix
 
 on:
+  schedule:
+    - cron: '0 4 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -14,13 +16,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { env: SigurdOS_TDeck, requires_wifi: false }
-          - { env: SigurdOS_TDeck_telemetry, requires_wifi: false }
-          - { env: SigurdOS_TDeck_remote_test, requires_wifi: false }
-          - { env: SigurdOS_TDeck_remote_test_radio, requires_wifi: false }
-          - { env: SigurdOS_TDeck_ble_validation, requires_wifi: false }
-          - { env: SigurdOS_TDeck_gps_validation, requires_wifi: false }
-          - { env: SigurdOS_TDeck_gps_validation_wifi, requires_wifi: true }
+          # Canonical and feature variants
+          - env: SigurdOS_TDeck
+          - env: SigurdOS_TDeck_ble_validation
+          - env: SigurdOS_TDeck_ble_agent
+          - env: SigurdOS_TDeck_meshv2
+          - env: SigurdOS_TDeck_trackball_debug
+          # Debug variants
+          - env: SigurdOS_TDeck_debug
+          - env: SigurdOS_TDeck_debug_869
+          - env: SigurdOS_TDeck_debug_display
+          - env: SigurdOS_TDeck_debug_mesh
+          - env: SigurdOS_TDeck_debug_ui
+          - env: SigurdOS_TDeck_debug_map
+          - env: SigurdOS_TDeck_debug_diag
+          # Telemetry and remote-test variants
+          - env: SigurdOS_TDeck_telemetry
+          - env: SigurdOS_TDeck_telemetry_diff
+          - env: SigurdOS_TDeck_remote_test
+          - env: SigurdOS_TDeck_remote_test_radio
+          - env: SigurdOS_TDeck_remote_test_radio_testfreq
+          - env: SigurdOS_TDeck_remote_test_radio_roomtest
+          - env: SigurdOS_TDeck_remote_test_radio_usca
+          - env: SigurdOS_TDeck_remote_test_radio_usca_rxonly
+          - env: SigurdOS_TDeck_remote_test_radio_meshv2
+          # Host-protocol and hardware-validation compile targets
+          - env: SigurdOS_TDeck_companion_usb
+          - env: SigurdOS_TDeck_gps_validation
+          - env: SigurdOS_TDeck_gps_validation_wifi
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,14 +68,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
       - name: Build ${{ matrix.env }}
-        if: ${{ !matrix.requires_wifi || (vars.GPS_WIFI_SSID != '' && vars.GPS_WIFI_HOST != '') }}
+        env:
+          # Compile-only placeholders: no network or device interaction occurs in CI.
+          SIGURDOS_GPS_VALIDATION_WIFI_SSID: ci-compile-only
+          SIGURDOS_GPS_VALIDATION_WIFI_PASS: ci-not-a-secret
+          SIGURDOS_GPS_VALIDATION_WIFI_HOST: 192.0.2.1
         run: pio run -e ${{ matrix.env }}
       - name: Upload firmware artifacts for ${{ matrix.env }}
-        if: ${{ !matrix.requires_wifi || (vars.GPS_WIFI_SSID != '' && vars.GPS_WIFI_HOST != '') }}
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.env }}
-          path: |
-            .pio/build/${{ matrix.env }}/firmware.bin
-            .pio/build/${{ matrix.env }}/firmware-merged.bin
-          if-no-files-found: warn
+          path: .pio/build/${{ matrix.env }}/firmware*.bin
+          if-no-files-found: error
