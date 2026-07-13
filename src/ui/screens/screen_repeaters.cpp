@@ -245,7 +245,10 @@ static void repeater_input_dialog(const char* contact_name,
                                   const char* cmd_prefix,
                                   bool password_mode)
 {
-    if (!contact_name) return;
+    static constexpr size_t MAX_REPEATER_CLI_COMMAND_LENGTH = 63;
+    if (!contact_name || !cmd_prefix) return;
+    const size_t prefix_len = strlen(cmd_prefix);
+    if (prefix_len >= MAX_REPEATER_CLI_COMMAND_LENGTH) return;
     lv_obj_t* scr = lv_obj_get_screen(lv_scr_act());
     auto dlg_sz = dialog_size(260, 124);
     lv_obj_t* dlg = lv_obj_create(scr);
@@ -277,6 +280,8 @@ static void repeater_input_dialog(const char* contact_name,
     lv_textarea_set_placeholder_text(ta, "Value (Enter to send)");
     lv_textarea_set_password_mode(ta, password_mode);
     lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_max_length(ta,
+        MAX_REPEATER_CLI_COMMAND_LENGTH - prefix_len);
     lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_radius(ta, 0, 0);

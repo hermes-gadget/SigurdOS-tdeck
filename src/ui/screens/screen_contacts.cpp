@@ -534,6 +534,7 @@ void show_login_password_dialog(const char* contact_name)
     lv_textarea_set_placeholder_text(ta, "Password (press Enter to submit)");
     lv_textarea_set_password_mode(ta, true);
     lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_max_length(ta, 15);  // MeshCore login payload limit
     lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_radius(ta, 0, 0);
@@ -1009,6 +1010,7 @@ void show_fetch_msgs_dialog(const char* contact_name)
     lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 38);
     lv_textarea_set_placeholder_text(ta, "#channel");
     lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_max_length(ta, 31);  // pending-request channel buffer
     lv_obj_set_style_bg_color(ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(ta, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_radius(ta, 0, 0);

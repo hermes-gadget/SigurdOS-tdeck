@@ -65,6 +65,7 @@ static void regions_add_dialog(lv_obj_t* parent_scr) {
     lv_obj_set_size(name_ta, dlg_sz.w - 16, 22);
     lv_obj_align(name_ta, LV_ALIGN_TOP_MID, 0, 28);
     lv_textarea_set_one_line(name_ta, true);
+    lv_textarea_set_max_length(name_ta, 30);  // RegionEntry::name minus null
     lv_textarea_set_placeholder_text(name_ta, "#name or $name");
     lv_obj_set_style_bg_color(name_ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(name_ta, lv_color_hex(TEXT_PRIMARY), 0);
@@ -79,6 +80,9 @@ static void regions_add_dialog(lv_obj_t* parent_scr) {
     lv_obj_set_size(key_ta, dlg_sz.w - 16, 22);
     lv_obj_align(key_ta, LV_ALIGN_TOP_MID, 0, 56);
     lv_textarea_set_one_line(key_ta, true);
+    lv_textarea_set_max_length(key_ta, 24);  // 16-byte key in base64
+    lv_textarea_set_accepted_chars(key_ta,
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=");
     lv_textarea_set_placeholder_text(key_ta, "24-char base64 key");
     lv_obj_set_style_bg_color(key_ta, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_text_color(key_ta, lv_color_hex(TEXT_PRIMARY), 0);

@@ -469,6 +469,9 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
     lv_obj_set_style_text_font(input, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_border_width(input, 0, 0);
     lv_textarea_set_one_line(input, true);
+    lv_textarea_set_max_length(input, is_date ? 10 : 5);
+    lv_textarea_set_accepted_chars(input,
+        is_date ? "0123456789-" : "0123456789:");
     lv_textarea_set_text(input, cur);
     apply_focus_style(input);
 

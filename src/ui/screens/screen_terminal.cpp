@@ -58,6 +58,23 @@ static uint32_t term_classify_line(const char* text)
 
 // ── Terminal line cap — prevent unbounded label accumulation ──
 static constexpr unsigned MAX_TERM_LINES = 64;
+static constexpr uint32_t MAX_TERM_COMMAND_LENGTH = 255;
+static constexpr size_t MAX_TERM_VAR_KEY_LENGTH = 31;
+static constexpr size_t MAX_TERM_VAR_VALUE_LENGTH = 127;
+
+static bool terminal_var_key_valid(const char* key, size_t len)
+{
+    if (!key || len == 0 || len > MAX_TERM_VAR_KEY_LENGTH) return false;
+    for (size_t i = 0; i < len; ++i) {
+        const char c = key[i];
+        const bool valid = (c >= 'a' && c <= 'z') ||
+                           (c >= 'A' && c <= 'Z') ||
+                           (c >= '0' && c <= '9') ||
+                           c == '_' || c == '-' || c == '.';
+        if (!valid) return false;
+    }
+    return true;
+}
 
 static void term_add_line(lv_obj_t* log, const char* text)
 {
@@ -134,6 +151,7 @@ void terminal_screen_show()
     lv_obj_set_style_border_width(input, 0, 0);
     lv_obj_set_style_pad_all(input, 4, 0);
     lv_textarea_set_one_line(input, true);
+    lv_textarea_set_max_length(input, MAX_TERM_COMMAND_LENGTH);
     lv_textarea_set_placeholder_text(input, "> enter command...");
     apply_focus_style(input);
 
@@ -206,29 +224,40 @@ void terminal_screen_show()
             if (!sep || sep == arg) {
                 snprintf(result, sizeof(result), "Usage: setvar <key> <value>");
             } else {
-                char key[48]; size_t klen = (size_t)(sep - arg);
-                if (klen > 47) klen = 47;
-                memcpy(key, arg, klen); key[klen] = '\0';
+                const size_t klen = (size_t)(sep - arg);
                 const char* value = sep + 1;
-                // Read existing vars, update or append
-                String all;
-                File f = SPIFFS.open("/custom_vars.txt", "r");
-                if (f) {
-                    while (f.available()) {
-                        String line = f.readStringUntil('\n');
-                        line.trim();
-                        if (line.length() > 0) {
-                            if (!line.startsWith(key) || line.charAt(strlen(key)) != '=') {
-                                all += line + "\n";
+                const size_t value_len = strlen(value);
+                if (!terminal_var_key_valid(arg, klen)) {
+                    snprintf(result, sizeof(result),
+                        "Invalid key (max %zu; use letters, digits, _, -, .)",
+                        MAX_TERM_VAR_KEY_LENGTH);
+                } else if (value_len == 0 || value_len > MAX_TERM_VAR_VALUE_LENGTH) {
+                    snprintf(result, sizeof(result), "Value must be 1-%zu characters",
+                        MAX_TERM_VAR_VALUE_LENGTH);
+                } else {
+                    char key[MAX_TERM_VAR_KEY_LENGTH + 1];
+                    memcpy(key, arg, klen);
+                    key[klen] = '\0';
+                    // Read existing vars, update or append
+                    String all;
+                    File f = SPIFFS.open("/custom_vars.txt", "r");
+                    if (f) {
+                        while (f.available()) {
+                            String line = f.readStringUntil('\n');
+                            line.trim();
+                            if (line.length() > 0) {
+                                if (!line.startsWith(key) || line.charAt(strlen(key)) != '=') {
+                                    all += line + "\n";
+                                }
                             }
                         }
+                        f.close();
                     }
-                    f.close();
+                    all += String(key) + "=" + value + "\n";
+                    File wf = SPIFFS.open("/custom_vars.txt", "w");
+                    if (wf) { wf.print(all); wf.close(); }
+                    snprintf(result, sizeof(result), "Set: %s = %s", key, value);
                 }
-                all += String(key) + "=" + value + "\n";
-                File wf = SPIFFS.open("/custom_vars.txt", "w");
-                if (wf) { wf.print(all); wf.close(); }
-                snprintf(result, sizeof(result), "Set: %s = %s", key, value);
             }
         } else if (strncmp(cmd, "delvar ", 7) == 0) {
             const char* key = cmd + 7;
