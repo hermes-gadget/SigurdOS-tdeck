@@ -1358,9 +1358,10 @@ bool addChannel(const char* name, const char* psk) {
 }
 
 bool addHashtagChannel(const char* name) {
-    // Validate channel name
-    if (!channel_name_valid(name)) return false;
-    bool ok = g_mesh ? g_mesh->addHashtagChannel(name) : false;
+    char normalized[32];
+    if (!hashtag_channel_name_normalise(name, normalized,
+                                        sizeof(normalized))) return false;
+    bool ok = g_mesh ? g_mesh->addHashtagChannel(normalized) : false;
     if (ok) syncRegionsFromChannels();
     return ok;
 }

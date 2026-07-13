@@ -7,6 +7,7 @@
 #include "companion_message_policy.h"
 #include "advert_blob.h"
 #include "control_parser.h"
+#include "channel_validation.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -1237,19 +1238,9 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::addHashtagChannel(const char* name) {
-        if (!name || !name[0]) return false;
-
         char normalized[32];
-        size_t src = 0;
-        while (name[src] == ' ' || name[src] == '\t') src++;
-        size_t out = 0;
-        if (name[src] != '#') normalized[out++] = '#';
-        while (name[src] && name[src] != ' ' && name[src] != '\t' &&
-               name[src] != '\r' && name[src] != '\n' && out < sizeof(normalized) - 1) {
-            normalized[out++] = name[src++];
-        }
-        normalized[out] = '\0';
-        if (out <= 1) return false;
+        if (!hashtag_channel_name_normalise(name, normalized,
+                                            sizeof(normalized))) return false;
 
         int idx = getChannelCount();
         if (idx >= MAX_GROUP_CHANNELS) return false;
@@ -1261,8 +1252,7 @@ namespace mesh {
         ChannelDetails cd{};
         ::mesh::Utils::sha256(cd.channel.secret, CIPHER_KEY_SIZE,
                               (const uint8_t*)normalized, strlen(normalized));
-        strncpy(cd.name, normalized, sizeof(cd.name) - 1);
-        cd.name[sizeof(cd.name) - 1] = '\0';
+        memcpy(cd.name, normalized, strlen(normalized) + 1);
         return BaseChatMesh::setChannel(idx, cd);  // setChannel recomputes hash
     }
 

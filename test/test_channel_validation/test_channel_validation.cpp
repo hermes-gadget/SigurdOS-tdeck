@@ -58,8 +58,8 @@ TEST(ChannelValidationTest, ValidMaxLengthName) {
 }
 
 TEST(ChannelValidationTest, ValidMaxLengthNameWithLeadingHash) {
-    // The leading '#' is display syntax and does not count toward the limit.
-    EXPECT_TRUE(sigurdos::mesh::channel_name_valid("#abcdefghijklmnopqrstuvwxyz12345"));
+    // '#'+30 body characters is the maximum 31-byte stored name.
+    EXPECT_TRUE(sigurdos::mesh::channel_name_valid("#abcdefghijklmnopqrstuvwxyz1234"));
 }
 
 TEST(ChannelValidationTest, ValidNameWithLeadingHash) {
@@ -138,7 +138,26 @@ TEST(ChannelValidationTest, RejectsTooLongNameWithLeadingHash) {
     const char* name = "#abcdefghijklmnopqrstuvwxyz123456";
     EXPECT_FALSE(sigurdos::mesh::channel_name_valid(name, &reason));
     ASSERT_NE(reason, nullptr);
-    EXPECT_STREQ(reason, "Name too long (max 31 chars)");
+    EXPECT_STREQ(reason, "Name too long (max 31 chars including '#')");
+}
+
+TEST(ChannelValidationTest, HashtagNormalisePreservesExactMaximumStoredName) {
+    char normalized[32];
+    ASSERT_TRUE(sigurdos::mesh::hashtag_channel_name_normalise(
+        "  Abcdefghijklmnopqrstuvwxyz1234  ", normalized,
+        sizeof(normalized)));
+    EXPECT_STREQ(normalized, "#Abcdefghijklmnopqrstuvwxyz1234");
+    EXPECT_EQ(strlen(normalized), 31u);
+}
+
+TEST(ChannelValidationTest, HashtagNormaliseRejectsBodyThatWouldBeTruncated) {
+    char normalized[32] = "unchanged";
+    const char* reason = nullptr;
+    EXPECT_FALSE(sigurdos::mesh::hashtag_channel_name_normalise(
+        "abcdefghijklmnopqrstuvwxyz12345", normalized,
+        sizeof(normalized), &reason));
+    ASSERT_NE(reason, nullptr);
+    EXPECT_STREQ(reason, "Name too long (max '#' plus 30 chars)");
 }
 
 TEST(ChannelValidationTest, RejectsNameWithMultipleInternalDashes) {

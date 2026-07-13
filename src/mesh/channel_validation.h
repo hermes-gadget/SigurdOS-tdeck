@@ -16,12 +16,20 @@ namespace mesh {
 // Returns true if `name` is a valid channel name.
 //
 // Rules:
-//   - 1–31 characters after trimming whitespace
+//   - 1–31 stored characters after trimming whitespace (an optional leading
+//     '#' counts toward this limit)
 //   - Letters (A-Z, a-z), digits (0-9), and hyphens only (no consecutive dashes)
 //   - Leading/trailing hyphens and empty strings are rejected
 //
 // `reason` (if non-null) receives a short description of the first failure.
 bool channel_name_valid(const char* name, const char** reason = nullptr);
+
+// Normalize a hashtag channel into the exact stored/key-derivation form.
+// The result always starts with '#', preserves body case, and is rejected
+// rather than truncated when it cannot fit in the supplied destination.
+bool hashtag_channel_name_normalise(const char* name, char* out,
+                                    size_t out_size,
+                                    const char** reason = nullptr);
 
 // Sanitise `name` in-place for storage:
 //   - Trims leading/trailing whitespace
