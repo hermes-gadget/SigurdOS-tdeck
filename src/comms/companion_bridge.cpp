@@ -3,7 +3,6 @@
 
 #include "companion_bridge.h"
 
-#include <cstdlib>
 #include <cstring>
 
 #if defined(ESP32_PLATFORM)
@@ -313,12 +312,8 @@ bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg
 
 void CompanionBridge::seedOfflineQueueFromStore()
 {
-    // Heap-allocate the snapshot rather than using a static array — keeping it
-    // off the tight internal dram0_0_seg .bss region. Freed before returning.
-    sigurdos::mesh::StoredMessage* recent = (sigurdos::mesh::StoredMessage*)
-        std::malloc(sizeof(sigurdos::mesh::StoredMessage) * OFFLINE_QUEUE_SIZE);
-    if (!recent) return;
-    int n = sigurdos::mesh::messageStoreLoadUnsent(recent, OFFLINE_QUEUE_SIZE);
+    const int n = sigurdos::mesh::messageStoreLoadUnsent(
+        _offline_snapshot, OFFLINE_QUEUE_SIZE);
     bool added_any = false;
     for (int idx = 0; idx < n; idx++) {
         // The offline queue is a mirror of *incoming* messages only. Never feed
@@ -326,15 +321,14 @@ void CompanionBridge::seedOfflineQueueFromStore()
         // got RESP_CODE_SENT), and the companion protocol has no
         // device-originated-send frame — echoing one back arrives as a bogus
         // *incoming* message (mis-attributed sender, duplicate bubble).
-        if (recent[idx].is_self) continue;
+        if (_offline_snapshot[idx].is_self) continue;
         uint8_t frame[MAX_FRAME_SIZE];
         size_t len = 0;
-        if (buildMessageFrame(recent[idx], frame, &len) &&
-            addToOfflineQueue(recent[idx].store_id, true, frame, len)) {
+        if (buildMessageFrame(_offline_snapshot[idx], frame, &len) &&
+            addToOfflineQueue(_offline_snapshot[idx].store_id, true, frame, len)) {
             added_any = true;
         }
     }
-    std::free(recent);
     // Do NOT mark any records as sent here. Records are marked individually
     // only when CMD_SYNC_NEXT_MESSAGE successfully writes the frame to the
     // app (see the SYNC_NEXT_MESSAGE handler below).

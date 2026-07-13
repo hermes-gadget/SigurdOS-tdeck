@@ -590,6 +590,31 @@ TEST_F(CompanionProtocolTest, AppStartSeedsPersistedMessagesForSync) {
     EXPECT_TRUE(stored.companion_sent);
 }
 
+TEST_F(CompanionProtocolTest, RepeatedAppStartDoesNotDuplicateSnapshotMessages) {
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "persisted", sizeof(msg.text) - 1);
+    msg.timestamp = 88;
+    for (int i = 0; i < 6; ++i) msg.sender_prefix[i] = (uint8_t)(0xA0 + i);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+
+    uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    ASSERT_EQ(serial.writes.size(), 3U);
+    EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_SELF_INFO);
+    EXPECT_EQ(serial.writes[1][0], sigurdos::comms::PUSH_CODE_MSG_WAITING);
+    EXPECT_EQ(serial.writes[2][0], sigurdos::comms::RESP_CODE_SELF_INFO);
+
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(serial.writes.size(), 5U);
+    EXPECT_EQ(serial.writes[3][0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+    EXPECT_EQ(serial.writes[4][0], sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
+}
+
 TEST_F(CompanionProtocolTest, AppStartDoesNotEchoSelfSentMessages) {
     // A message the device sent itself (is_self) must never be mirrored back to
     // the app: the app already has the ones it sent, and the protocol has no

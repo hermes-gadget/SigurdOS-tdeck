@@ -450,6 +450,7 @@ private:
     int _contact_iter = -1;
     int _offline_len = 0;
     Frame _offline[OFFLINE_QUEUE_SIZE];
+    sigurdos::mesh::StoredMessage _offline_snapshot[OFFLINE_QUEUE_SIZE]{};
     uint32_t _pending_binary[MAX_PENDING_BINARY_REQUESTS]{};
     uint8_t _cmd_frame[MAX_FRAME_SIZE + 1];
     uint8_t _out_frame[MAX_FRAME_SIZE + 1];

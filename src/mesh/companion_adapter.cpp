@@ -74,9 +74,10 @@ static_assert(sigurdos::mesh::COMPANION_TEXT_SIGNED_PLAIN ==
 static_assert(sigurdos::mesh::SIGURDOS_ADVERT_BLOB_MAX_LEN <= MAX_FRAME_SIZE - 1,
               "serialized adverts must fit the companion response frame");
 
-// g_companion_bridge carries ~3 KB of frame and offline-queue buffers. The
-// internal dram0_0_seg .bss region is nearly full at baseline, so the instance
-// is constructed in PSRAM (with an internal-DRAM fallback) instead of .bss.
+// g_companion_bridge carries frame, offline-queue, signing, and reusable
+// message-snapshot buffers. The internal dram0_0_seg .bss region is nearly
+// full at baseline, so the instance is constructed once in PSRAM (with an
+// internal-DRAM fallback) instead of .bss.
 static CompanionBridge* g_companion_bridge_ptr = nullptr;
 
 static CompanionBridge* companionBridge()
