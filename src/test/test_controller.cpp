@@ -19,9 +19,6 @@
 //   inject <from> channel=<ch> <text>  Simulate incoming channel msg
 //   screen                        Show current screen name
 //   status                        Show device info (heap, psram, batt)
-//   term-log                      Dump terminal log content to serial
-//   term-clear                    Clear terminal log
-//   term-submit <text>            Submit a command directly to the terminal
 
 #include "test_controller.h"
 #include "hal/display.h"
@@ -152,11 +149,8 @@ static void print_help() {
     Serial.println(F("║  debug <level>  Set debug level (1=quiet, 2=normal, 3=verbose)║"));
     Serial.println(F("║  debug <feat> <1|0>  Toggle feature: display/mesh/ui/map/diag║"));
     Serial.println(F("║  debug all <1|0>     Enable/disable all debug features      ║"));
-    Serial.println(F("║  term-log    Dump terminal log       ║"));
-    Serial.println(F("║  term-clear  Clear terminal log      ║"));
     Serial.println(F("║  sendmessage <name> <text>       Send DM to contact         ║"));
     Serial.println(F("║  opendm <name>                  Open DM conversation        ║"));
-    Serial.println(F("║  term-submit <cmd>  Run cmd in terminal║"));
     Serial.println(F("║  emoji       Show emoji test grid     ║"));
     Serial.println(F("║  emoji-ac <p> Emoji autocomplete test ║"));
     Serial.println(F("║  capture     Capture framebuffer(hex)║"));
@@ -943,30 +937,20 @@ static void cmd_sendmessage(const char* arg) {
     }
 
     uint32_t send_ts = sigurdos::mesh::sendMessage(name, text);
-    bool ok = (send_ts != 0);
-    if (ok) {
-
-        Serial.printf("[test] sendmessage OK: DM to %s sent %d chars\n", name, (int)strlen(text));
-
-    } else {
-        send_ts = sigurdos::mesh::getCurrentTime();  // fallback for the simulated ACK even on failure
+    if (send_ts == 0) {
+        Serial.printf("[test] sendmessage FAILED: DM to %s was not sent\n", name);
+        return;
     }
-    // Always add local UI entry + simulated ACK for UI verification.
-
-    // The UI's chat_screen_add_msg() internally calls getCurrentTime(); this
-    // captures 'now' once so registerAckedMessage uses the same value.
-    // TODO: add chat_screen_add_msg_with_ts() to accept an explicit timestamp.
-    uint32_t now = sigurdos::mesh::getCurrentTime();
+    Serial.printf("[test] sendmessage OK: DM to %s sent %d chars\n",
+                  name, (int)strlen(text));
 
     char dm_channel[64];
     snprintf(dm_channel, sizeof(dm_channel), "DM: %s", name);
     const char* own = sigurdos::mesh::getOwnName();
-    sigurdos::ui::chat_screen_add_msg(dm_channel, own ? own : "self", text, true);
-    // Directly register a simulated ACK with the same timestamp the UI stored.
-
-    sigurdos::mesh::registerAckedMessage(name, now);
-
-    Serial.println(ok ? "[test] (ACK simulated)" : "[test] (local only + ACK simulated)");
+    sigurdos::ui::chat_screen_add_msg_at(
+        dm_channel, own ? own : "self", text, send_ts, true);
+    sigurdos::mesh::registerAckedMessage(name, send_ts);
+    Serial.printf("[test] ACK simulated at timestamp %lu\n", (unsigned long)send_ts);
 }
 
 // ── Open DM ──────────────────────────────────────
@@ -1502,13 +1486,6 @@ static bool dispatch(const char* line) {
         }
     } else if (strcmp(cmd, "debug") == 0) {
         cmd_debug(arg);
-    } else if (strcmp(cmd, "term-log") == 0) {
-        sigurdos::ui::term_dump_log();
-    } else if (strcmp(cmd, "term-clear") == 0) {
-        sigurdos::ui::term_clear_log();
-    } else if (strcmp(cmd, "term-submit") == 0) {
-        if (!arg) { Serial.println("[test] term-submit: missing command text"); return true; }
-        sigurdos::ui::term_submit(arg);
     } else if (strcmp(cmd, "emoji") == 0) {
         cmd_emoji();
     } else if (strcmp(cmd, "emoji-ac") == 0) {
@@ -1595,6 +1572,7 @@ static bool dispatch(const char* line) {
         cmd_advert();
     } else {
         Serial.printf("[test] unknown command: %s (try 'help')\n", cmd);
+        return false;
     }
     return true;
 }
@@ -1655,13 +1633,3 @@ void sigurdos_test_controller_loop() {
         }
     }
 }
-
-// ── Stub implementations for functions declared in screens.h ──
-// These are needed by the test controller dispatch table but only
-// meaningful when a real terminal screen is active.
-namespace sigurdos::ui {
-void term_dump_log()  { Serial.println("[term] dump: no terminal screen (test mode)"); }
-void term_clear_log() { Serial.println("[term] cleared (test mode)"); }
-void term_submit(const char* text) { Serial.printf("[term] submit: %s (test mode, ignored)\n", text); }
-lv_obj_t* term_get_input() { return nullptr; }
-} // namespace sigurdos::ui

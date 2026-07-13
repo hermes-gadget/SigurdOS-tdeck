@@ -390,21 +390,6 @@ The radio configuration line reads from `sigurdos::prefs_get()` at the moment th
 - Focus is immediately set to the input textarea, so the physical keyboard is ready for typing
 - The back button in the top bar navigates to the Home screen (`go_back()`)
 
-### Test Mode Stubs
-
-When compiled in test mode (no LVGL display), the Terminal functions are replaced with stubs in `src/test/test_controller.cpp`:
-
-| Function | Stub Behaviour |
-|---|---|
-| `term_dump_log()` | Prints `[term] dump: no terminal screen (test mode)` |
-| `term_clear_log()` | Prints `[term] cleared (test mode)` |
-| `term_submit(text)` | Prints `[term] submit: <text> (test mode, ignored)` |
-| `term_get_input()` | Returns `nullptr` |
-
-These stubs are declared in `src/ui/screens.h` and are reachable from the test controller for integration testing.
-
----
-
 ## Theme Constants Reference
 
 Colours referenced by the Terminal screen, defined in `src/ui/theme.h`:

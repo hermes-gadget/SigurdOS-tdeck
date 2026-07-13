@@ -131,15 +131,9 @@ TEST(UIContractTest, BluetoothExplainsDeviceAuthoredMessageLimit) {
 
 TEST(UIContractTest, TerminalAndBackButtonApisStayStable) {
     using void_fn = void (*)();
-    using submit_fn = void (*)(const char*);
-    using input_fn = lv_obj_t* (*)();
     using highlight_fn = void (*)(bool);
 
     (void)static_cast<void_fn>(sigurdos::ui::terminal_screen_show);
-    (void)static_cast<void_fn>(sigurdos::ui::term_dump_log);
-    (void)static_cast<void_fn>(sigurdos::ui::term_clear_log);
-    (void)static_cast<submit_fn>(sigurdos::ui::term_submit);
-    (void)static_cast<input_fn>(sigurdos::ui::term_get_input);
     (void)static_cast<highlight_fn>(sigurdos::ui::highlight_back_button);
     (void)static_cast<void_fn>(sigurdos::ui::screens_clear_back_btn);
     (void)static_cast<void_fn>(sigurdos::ui::screens_clear_wifi_icon);

@@ -81,7 +81,8 @@ void sigurdos_test_controller_init();
 void sigurdos_test_controller_loop();
 
 // Handle a single command string (for programmatic use or parsing).
-// Returns true if the command was recognised.
+// Returns true only when the command name was recognised. Null, empty,
+// comment-only, and unknown command lines return false.
 bool sigurdos_test_controller_exec(const char* cmd);
 
 // ── New test controller API functions ──────────────────────
