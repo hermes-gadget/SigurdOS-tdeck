@@ -237,6 +237,32 @@ inline bool sigurdos_map_contact_args_valid(const void* contacts, int count) {
     return count >= 0 && (count == 0 || contacts != nullptr);
 }
 
+template <typename AvailableFn>
+inline int sigurdos_map_select_available_zoom(int current, int direction,
+                                               int min_zoom, int max_zoom,
+                                               AvailableFn available) {
+    if (min_zoom > max_zoom) return current;
+    current = sigurdos_map_clamp_int(current, min_zoom, max_zoom);
+
+    if (direction != 0) {
+        const int step = direction > 0 ? 1 : -1;
+        for (int zoom = current + step;
+             zoom >= min_zoom && zoom <= max_zoom; zoom += step) {
+            if (available(zoom)) return zoom;
+        }
+        return current;
+    }
+
+    if (available(current)) return current;
+    for (int distance = 1; distance <= max_zoom - min_zoom; ++distance) {
+        const int lower = current - distance;
+        if (lower >= min_zoom && available(lower)) return lower;
+        const int upper = current + distance;
+        if (upper <= max_zoom && available(upper)) return upper;
+    }
+    return current;
+}
+
 template <typename T, typename FreeFn>
 inline bool sigurdos_map_release_owned_buffer(T*& buffer, FreeFn free_fn) {
     if (!buffer) return false;

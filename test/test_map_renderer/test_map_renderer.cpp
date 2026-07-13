@@ -121,6 +121,28 @@ TEST_F(MapRendererMathTest, ZoomValidationRejectsOutOfRangeValues) {
     EXPECT_FALSE(sigurdos_map_zoom_valid(19));
 }
 
+TEST_F(MapRendererMathTest, SparseZoomNavigationSkipsUnavailableLevels) {
+    bool available[SIGURDOS_MAP_MAX_ZOOM + 1] = {};
+    available[8] = true;
+    available[10] = true;
+    const auto is_available = [&available](int zoom) { return available[zoom]; };
+
+    EXPECT_EQ(sigurdos_map_select_available_zoom(10, -1, 8, 10, is_available), 8);
+    EXPECT_EQ(sigurdos_map_select_available_zoom(8, 1, 8, 10, is_available), 10);
+    EXPECT_EQ(sigurdos_map_select_available_zoom(8, -1, 8, 10, is_available), 8);
+    EXPECT_EQ(sigurdos_map_select_available_zoom(10, 1, 8, 10, is_available), 10);
+}
+
+TEST_F(MapRendererMathTest, InvalidCurrentZoomSnapsToNearestAvailableLevel) {
+    bool available[SIGURDOS_MAP_MAX_ZOOM + 1] = {};
+    available[8] = true;
+    available[10] = true;
+    const auto is_available = [&available](int zoom) { return available[zoom]; };
+
+    EXPECT_EQ(sigurdos_map_select_available_zoom(9, 0, 8, 10, is_available), 8);
+    EXPECT_EQ(sigurdos_map_select_available_zoom(10, 0, 8, 10, is_available), 10);
+}
+
 TEST_F(MapRendererMathTest, TilesPerAxisUsesZoomPowerOfTwo) {
     EXPECT_EQ(sigurdos_map_tiles_per_axis(0), 1);
     EXPECT_EQ(sigurdos_map_tiles_per_axis(1), 2);

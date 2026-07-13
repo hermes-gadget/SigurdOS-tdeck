@@ -180,7 +180,9 @@ static void apply_preset_default_view() {
 static void clamp_view_to_coverage() {
     if (!have_tile_coverage) return;
 
-    zoom_level = clamp(zoom_level, min_available_zoom, max_available_zoom);
+    zoom_level = sigurdos_map_select_available_zoom(
+        zoom_level, 0, min_available_zoom, max_available_zoom,
+        [](int zoom) { return tile_coverage[zoom].valid; });
     const TileCoverage& c = tile_coverage[zoom_level];
     if (!c.valid) return;
 
@@ -917,12 +919,24 @@ void sigurdos_map_pan(int dx, int dy) {
 }
 
 void sigurdos_map_zoom_in()  {
-    zoom_level = clamp(zoom_level + 1, MIN_ZOOM, MAX_ZOOM);
+    if (have_tile_coverage) {
+        zoom_level = sigurdos_map_select_available_zoom(
+            zoom_level, 1, min_available_zoom, max_available_zoom,
+            [](int zoom) { return tile_coverage[zoom].valid; });
+    } else {
+        zoom_level = clamp(zoom_level + 1, MIN_ZOOM, MAX_ZOOM);
+    }
     clamp_view_to_coverage();
 }
 
 void sigurdos_map_zoom_out() {
-    zoom_level = clamp(zoom_level - 1, MIN_ZOOM, MAX_ZOOM);
+    if (have_tile_coverage) {
+        zoom_level = sigurdos_map_select_available_zoom(
+            zoom_level, -1, min_available_zoom, max_available_zoom,
+            [](int zoom) { return tile_coverage[zoom].valid; });
+    } else {
+        zoom_level = clamp(zoom_level - 1, MIN_ZOOM, MAX_ZOOM);
+    }
     clamp_view_to_coverage();
 }
 
