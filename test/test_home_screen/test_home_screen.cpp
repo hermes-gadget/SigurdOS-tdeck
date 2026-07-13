@@ -76,6 +76,15 @@ static const IconDef icons[] = {
 
 static constexpr int ICON_COUNT = sizeof(icons) / sizeof(icons[0]);
 
+static int row_height(int base_h, int extra_h, int row) {
+    return base_h + (row < extra_h ? 1 : 0);
+}
+
+static int row_origin(int base_h, int gap, int extra_h, int row) {
+    const int remainder_offset = row < extra_h ? row : extra_h;
+    return row * (base_h + gap) + remainder_offset;
+}
+
 // ── Tests ────────────────────────────────────────────────
 
 TEST(HomeScreenIconTest, AllTilesHaveUniqueTargets) {
@@ -157,6 +166,32 @@ TEST(HomeScreenIconTest, SetupTargetsOnboarding) {
 
 TEST(HomeScreenIconTest, SignalTargetsSignal) {
     EXPECT_EQ(icons[11].target, Screen::Signal);
+}
+
+TEST(HomeScreenGridTest, SingleRemainderPixelOffsetsEveryFollowingRow) {
+    constexpr int base_h = 62;
+    constexpr int gap = 3;
+    constexpr int extra_h = 1;
+
+    EXPECT_EQ(row_origin(base_h, gap, extra_h, 0), 0);
+    EXPECT_EQ(row_origin(base_h, gap, extra_h, 1), 66);
+    EXPECT_EQ(row_origin(base_h, gap, extra_h, 2), 131);
+    for (int row = 0; row < 2; ++row) {
+        EXPECT_EQ(row_origin(base_h, gap, extra_h, row + 1),
+                  row_origin(base_h, gap, extra_h, row) +
+                      row_height(base_h, extra_h, row) + gap);
+    }
+}
+
+TEST(HomeScreenGridTest, MultipleRemainderPixelsAccumulateByRow) {
+    constexpr int base_h = 10;
+    constexpr int gap = 3;
+    constexpr int extra_h = 2;
+
+    EXPECT_EQ(row_origin(base_h, gap, extra_h, 0), 0);
+    EXPECT_EQ(row_origin(base_h, gap, extra_h, 1), 14);
+    EXPECT_EQ(row_origin(base_h, gap, extra_h, 2), 28);
+    EXPECT_EQ(row_origin(base_h, gap, extra_h, 3), 41);
 }
 
 } // anonymous namespace
