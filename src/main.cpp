@@ -227,6 +227,8 @@ void loop()
     // Process display/LVGL first so UI stays responsive during mesh ops
     sigurdos_display_loop();
     sigurdos::ui::loop();
+    // Pump the radio dispatcher and companion BLE/USB transports every pass.
+    sigurdos::mesh::loop();
     sigurdos::hal::buzzer_loop();  // non-blocking beep pattern playback
     sigurdos::ota::loop();         // WiFi OTA web server
     sigurdos::github_ota::loop();  // GitHub OTA downloader
