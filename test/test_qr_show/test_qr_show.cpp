@@ -18,17 +18,21 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+
 #include "app/qr_show.h"
 
 namespace {
 
 using sigurdos::app::SIGURDOS_QR_CANVAS_MAX_PX;
 using sigurdos::app::SIGURDOS_QR_MODULE_BUFFER_BYTES;
+using sigurdos::app::SIGURDOS_QR_MAX_PAYLOAD_BYTES;
 using sigurdos::app::SIGURDOS_QR_VERSION;
 using sigurdos::app::QrCanvasLayout;
 using sigurdos::app::sigurdos_qr_module_buffer_bytes;
 using sigurdos::app::sigurdos_qr_module_count;
 using sigurdos::app::sigurdos_qr_canvas_layout;
+using sigurdos::app::sigurdos_qr_payload_fits;
 
 class QrShowLayoutTest : public ::testing::Test {};
 
@@ -38,6 +42,24 @@ TEST_F(QrShowLayoutTest, ConfiguredQrVersionHasExactModuleBufferSize) {
     EXPECT_EQ(SIGURDOS_QR_MODULE_BUFFER_BYTES, 407);
     EXPECT_EQ(SIGURDOS_QR_MODULE_BUFFER_BYTES,
               sigurdos_qr_module_buffer_bytes(SIGURDOS_QR_VERSION));
+}
+
+TEST_F(QrShowLayoutTest, VersionTenMediumEccAccepts213BytePayload) {
+    const std::string payload(SIGURDOS_QR_MAX_PAYLOAD_BYTES, 'a');
+
+    EXPECT_TRUE(sigurdos_qr_payload_fits(payload.c_str()));
+}
+
+TEST_F(QrShowLayoutTest, VersionTenMediumEccRejects214BytePayload) {
+    const std::string payload(SIGURDOS_QR_MAX_PAYLOAD_BYTES + 1, 'a');
+
+    EXPECT_FALSE(sigurdos_qr_payload_fits(payload.c_str()));
+}
+
+TEST_F(QrShowLayoutTest, VersionTenMediumEccRejects400BytePayload) {
+    const std::string payload(400, 'a');
+
+    EXPECT_FALSE(sigurdos_qr_payload_fits(payload.c_str()));
 }
 
 TEST_F(QrShowLayoutTest, VersionZeroDoesNotProduceUsableBufferSize) {

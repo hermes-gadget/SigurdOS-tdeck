@@ -121,7 +121,7 @@ void qr_show(const char* title, const char* data)
     uint8_t qr_modules[SIGURDOS_QR_MODULE_BUFFER_BYTES];
     QRCode qr;
 
-    if (!data || !data[0] ||
+    if (!data || !data[0] || !sigurdos_qr_payload_fits(data) ||
         qrcode_initText(&qr, qr_modules, SIGURDOS_QR_VERSION, ECC_MEDIUM, data) != 0) {
         // Show error if QR generation fails
         // Still show screen so user can go back

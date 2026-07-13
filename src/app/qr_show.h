@@ -6,6 +6,9 @@
 // QR code display screen for SigurdOS.
 // Uses ricmoo's QRCode library (MIT) to render QR codes on a full-screen LVGL canvas.
 
+#include <cstddef>
+#include <cstring>
+
 namespace sigurdos {
 namespace app {
 
@@ -13,6 +16,11 @@ static constexpr int SIGURDOS_QR_LAYOUT_MARGIN_PX = 20;
 static constexpr int SIGURDOS_QR_MAX_SCALE = 6;
 static constexpr int SIGURDOS_QR_CANVAS_MAX_PX = 180;
 static constexpr int SIGURDOS_QR_VERSION = 10;
+static constexpr std::size_t SIGURDOS_QR_MAX_PAYLOAD_BYTES = 213;
+
+inline bool sigurdos_qr_payload_fits(const char* data) {
+    return data && std::strlen(data) <= SIGURDOS_QR_MAX_PAYLOAD_BYTES;
+}
 
 inline constexpr int sigurdos_qr_module_count(int version) {
     return (version <= 0) ? 0 : (4 * version) + 17;
