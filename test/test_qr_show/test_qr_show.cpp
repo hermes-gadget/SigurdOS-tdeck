@@ -16,6 +16,8 @@
 // You should have received a copy of the GNU General Public License
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
+#include <cstdlib>
+
 #include <gtest/gtest.h>
 
 #include "app/qr_show.h"
@@ -29,6 +31,7 @@ using sigurdos::app::QrCanvasLayout;
 using sigurdos::app::sigurdos_qr_module_buffer_bytes;
 using sigurdos::app::sigurdos_qr_module_count;
 using sigurdos::app::sigurdos_qr_canvas_layout;
+using sigurdos::app::sigurdos_qr_release_canvas_buffer;
 
 class QrShowLayoutTest : public ::testing::Test {};
 
@@ -94,6 +97,29 @@ TEST_F(QrShowLayoutTest, CustomCanvasLimitConstrainsScale) {
     EXPECT_TRUE(layout.fits);
     EXPECT_EQ(layout.scale, 2);
     EXPECT_EQ(layout.canvas_size, 100);
+}
+
+TEST_F(QrShowLayoutTest, CanvasDeleteLifecycleReleasesScreenOwnedBuffer) {
+    int allocations = 0;
+    int frees = 0;
+    uint8_t* canvas_buffer = static_cast<uint8_t*>(std::malloc(64800));
+    ASSERT_NE(canvas_buffer, nullptr);
+    ++allocations;
+
+    EXPECT_TRUE(sigurdos_qr_release_canvas_buffer(
+        canvas_buffer, [&frees](uint8_t* buffer) {
+            ++frees;
+            std::free(buffer);
+        }));
+    EXPECT_EQ(allocations, 1);
+    EXPECT_EQ(frees, 1);
+
+    EXPECT_FALSE(sigurdos_qr_release_canvas_buffer(
+        static_cast<uint8_t*>(nullptr), [&frees](uint8_t* buffer) {
+            ++frees;
+            std::free(buffer);
+        }));
+    EXPECT_EQ(frees, 1);
 }
 
 } // namespace

@@ -64,6 +64,13 @@ inline QrCanvasLayout sigurdos_qr_canvas_layout(
     return layout;
 }
 
+template <typename T, typename FreeFn>
+inline bool sigurdos_qr_release_canvas_buffer(T* buffer, FreeFn free_fn) {
+    if (!buffer) return false;
+    free_fn(buffer);
+    return true;
+}
+
 /// Show a full-screen QR code displaying the given data string.
 /// The screen has a themed top bar with a back button and a bottom bar.
 /// The QR code is auto-sized and centered in the content area.

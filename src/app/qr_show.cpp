@@ -142,18 +142,17 @@ void qr_show(const char* title, const char* data)
     int canvas_size = qr_layout.canvas_size;
 
     // ── Create canvas for QR rendering ─────────────────────
-    // 180*180*2 = 64,800 bytes — far too large to keep permanently in internal
-    // DRAM. Allocate once from PSRAM and reuse: only one QR screen exists at a
-    // time (screens auto-delete on navigation), so a persistent buffer is safe.
-    // Fall back to internal RAM only if PSRAM is unavailable.
+    // 180*180*2 = 64,800 bytes — far too large for ordinary internal DRAM.
+    // Each screen owns its buffer until LVGL deletes the canvas, which also
+    // keeps asynchronous deletion of an older screen independent from a newer
+    // QR screen. Fall back to internal RAM only if PSRAM is unavailable.
     static constexpr size_t kCanvasBytes =
         (size_t)SIGURDOS_QR_CANVAS_MAX_PX * SIGURDOS_QR_CANVAS_MAX_PX * 2;
-    static uint8_t* cbuf = nullptr;
+    uint8_t* cbuf = (uint8_t*)heap_caps_malloc(
+        kCanvasBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!cbuf) {
-        cbuf = (uint8_t*)heap_caps_malloc(kCanvasBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!cbuf) {
-            cbuf = (uint8_t*)heap_caps_malloc(kCanvasBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        }
+        cbuf = (uint8_t*)heap_caps_malloc(
+            kCanvasBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (!cbuf) {
         qr_show_error(scr, "QR: out of memory");
@@ -162,6 +161,11 @@ void qr_show(const char* title, const char* data)
 
     lv_obj_t* canvas = lv_canvas_create(scr);
     lv_canvas_set_buffer(canvas, cbuf, canvas_size, canvas_size, LV_COLOR_FORMAT_RGB565);
+    lv_obj_add_event_cb(canvas, [](lv_event_t* event) {
+        sigurdos_qr_release_canvas_buffer(
+            static_cast<uint8_t*>(lv_event_get_user_data(event)),
+            [](uint8_t* buffer) { heap_caps_free(buffer); });
+    }, LV_EVENT_DELETE, cbuf);
     lv_canvas_fill_bg(canvas, lv_color_hex(BG_PRIMARY), LV_OPA_COVER);
 
     // Draw QR code modules onto canvas
