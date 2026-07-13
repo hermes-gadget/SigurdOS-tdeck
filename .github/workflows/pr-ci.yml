@@ -241,6 +241,11 @@ jobs:
           fi
           echo "Logging policy: OK"
 
+      - name: Release hygiene contracts
+        run: |
+          python scripts/check_release_contracts.py
+          python scripts/tests/test_release_contracts.py -v
+
       - name: Doc reference check
         run: |
           # Verify src/... file paths cited in docs/*.md exist in this repo

@@ -127,7 +127,7 @@ Handoff is `ESP.restart()` — a **software reset**. The ESP32-S3's own GPIO mat
 | Identity/contacts/channels persist in **SPIFFS**; mount failure = ephemeral identity (warning printed, mesh still starts) | `src/main.cpp:50-52`, `sigurdos::mesh::init(spiffs_ok)` in `src/mesh/mesh_wrapper.*` |
 | Settings persist in **NVS** via `Preferences`, namespace `"sigurdos"` | `src/hal/prefs.cpp:9` |
 | Self-OTA #1: WiFi AP + web upload page using Arduino `Update`; header comment explicitly states "Depends on OTA partition table (`board_build.partitions = default_16MB.csv`)" | `src/hal/wifi_ota.h`, `src/hal/wifi_ota.cpp` |
-| Self-OTA #2: GitHub release download (`…/releases/latest/download/firmware.bin`) flashed via `Update` | `src/hal/github_ota.cpp:318-399`, `src/hal/github_ota_plan.h` |
+| Self-OTA #2: GitHub release selection followed by a versioned `…/releases/download/<tag>/firmware.bin` download flashed via `Update` | `src/hal/github_ota.cpp:318-399`, `src/hal/github_ota_plan.h` |
 | Full hardware ownership at boot: peripheral power GPIO 10, shared SPI singleton (display CS 12 / LoRa CS 9 / SD CS 39), I2C bus (keyboard 0x55, GT911 0x5D), trackball GPIOs, GPS UART 43/44, USB CDC serial | `src/hal/tdeck_board.h`, `src/hal/spi_shared.cpp`, `src/hal/keyboard.cpp`, `src/hal/touch.cpp`, `src/hal/gps.cpp`; pinout in `src/hal/tdeck_pins.h` and `CLAUDE.md` |
 | Keyboard driver switches the C3 keyboard MCU into **raw matrix mode** (I2C cmd `0x03`) after probing 0x55 | `src/hal/keyboard.cpp:31-76` (protocol), `src/hal/keyboard.cpp:353-399` (init) |
 | Touch driver probes GT911 at 0x5D **and falls back to 0x14** | `src/hal/touch.cpp:31-41` |
@@ -245,7 +245,7 @@ Everything here is additive; standalone behavior is untouched. Items marked **[d
 
 - **One binary, two names.** The Launcher artifact is byte-identical to `firmware-merged.bin`. Launcher consumes the embedded partition table as a *manifest* (app source offset + "this firmware wants SPIFFS") — exactly what its 2.6.7 changelog describes for non-merged binaries with attached tables (Launcher `README.md`).
 - **Why not a special app+table-only artifact?** Launcher would accept one (table @0x8000, no bootloader), but it is a third artifact to maintain and is *dangerous outside Launcher* (not bootable if esptool-flashed). The merged image is valid in both worlds: esptool @0x0 standalone, or fed to Launcher.
-- **Naming:** `SigurdOS-tdeck-launcher.bin` (≤ 20 chars of stem shown in Launcher's menu). Keep `firmware.bin` / `firmware-merged.bin` untouched for standalone users and the existing GitHub-OTA fallback URL (`src/hal/github_ota_plan.h` hardcodes `…/releases/latest/download/firmware.bin`).
+- **Naming:** `SigurdOS-tdeck-launcher.bin` (≤ 20 chars of stem shown in Launcher's menu). Keep `firmware.bin` / `firmware-merged.bin` untouched for standalone users and the versioned GitHub-OTA asset selected through the release API.
 - **Hosting:** GitHub release assets (already range-request capable for Launcher's online installer). No new infrastructure.
 
 ## Partition / Flash Strategy
@@ -313,7 +313,7 @@ Hardware notes: T4/T9 specifically exercise the physical input layer and **must*
 
 ## Release / Catalog Integration Steps
 
-1. Ship C1/C2 in the next tagged release so a stable `…/releases/latest/download/SigurdOS-tdeck-launcher.bin` URL exists.
+1. Ship C1/C2 in the next tagged release so a versioned `…/releases/download/<tag>/SigurdOS-tdeck-launcher.bin` URL exists.
 2. Verify Launcher's direct-URL install against that asset (T6).
 3. Apply for a LauncherHub listing (category `t-deck`). **The submission process is not documented in the Launcher repo** — the catalog is fed by `api.launcherhub.net` and curated by the Launcher maintainer (the "Starred" list is explicitly maintainer-controlled, Launcher `README.md` 2.6.0 notes). Path: open an issue on bmorcelli/Launcher or ask in the project's Discord (linked from their README). Until listed, document the direct-URL/SD path.
 4. Add the Launcher install path to release notes template in `build-release.yml`.
@@ -380,7 +380,7 @@ Hardware notes: T4/T9 specifically exercise the physical input layer and **must*
 
 ### Phase 6 — Release integration and maintainer handoff *(catalog info gathered)*
 - Tagged release including the Launcher artifact; release-notes section for Launcher users
-- LauncherHub submission (Q5): **API researched (2026-06-10).** LauncherHub at `api.launcherhub.net` has 16 T-Deck firmwares; format is `{fid, name, author, star}`. **Submission requires opening an issue on [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) or contacting the maintainer via Discord** — the catalog is curated (no self-service API). Our release assets are ready: `SigurdOS-tdeck-launcher.bin` with range-request support at `…/releases/latest/download/SigurdOS-tdeck-launcher.bin`.
+- LauncherHub submission (Q5): **API researched (2026-06-10).** LauncherHub at `api.launcherhub.net` has 16 T-Deck firmwares; format is `{fid, name, author, star}`. **Submission requires opening an issue on [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) or contacting the maintainer via Discord** — the catalog is curated (no self-service API). Our release assets are ready: `SigurdOS-tdeck-launcher.bin` with range-request support at the versioned `…/releases/download/<tag>/SigurdOS-tdeck-launcher.bin` asset.
 - Update this document to "supported" status with the validated Launcher version range; hand off the re-verification checklist (risk table) to the release process
 - **Exit:** Launcher install path documented, released, and reproducible by users without maintainer involvement
 
