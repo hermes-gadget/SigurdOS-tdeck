@@ -27,13 +27,14 @@ namespace {
 
 TEST(HalContractTest, DisplayLifecycleAndPowerApisStayStable) {
     using init_fn = bool (*)();
+    using input_init_fn = SigurdOSInputInitStatus (*)();
     using void_fn = void (*)();
     using millis_fn = uint32_t (*)();
     using brightness_fn = void (*)(uint8_t);
     using bool_fn = bool (*)();
 
     (void)static_cast<init_fn>(sigurdos_display_init);
-    (void)static_cast<void_fn>(sigurdos_display_init_inputs);
+    (void)static_cast<input_init_fn>(sigurdos_display_init_inputs);
     (void)static_cast<void_fn>(sigurdos_display_loop);
     (void)static_cast<void_fn>(sigurdos_display_render_now);
     (void)static_cast<millis_fn>(sigurdos_display_millis);
@@ -42,6 +43,22 @@ TEST(HalContractTest, DisplayLifecycleAndPowerApisStayStable) {
     (void)static_cast<brightness_fn>(sigurdos_display_set_brightness);
     (void)static_cast<void_fn>(sigurdos_display_reset_auto_off);
     SUCCEED();
+}
+
+TEST(HalContractTest, DisplayInputHealthRequiresEveryDeferredStep) {
+    EXPECT_TRUE((SigurdOSInputInitStatus{true, true, true, true}).all_ready());
+    EXPECT_FALSE((SigurdOSInputInitStatus{false, true, true, true}).all_ready());
+    EXPECT_FALSE((SigurdOSInputInitStatus{true, true, false, true}).all_ready());
+}
+
+TEST(HalContractTest, DisplayAutoOffElapsedComparisonIsWrapSafe) {
+    EXPECT_FALSE(sigurdos_display_auto_off_expired(1000, 500, 0));
+    EXPECT_FALSE(sigurdos_display_auto_off_expired(1099, 1000, 100));
+    EXPECT_TRUE(sigurdos_display_auto_off_expired(1100, 1000, 100));
+
+    const uint32_t activity = UINT32_MAX - 49U;
+    EXPECT_FALSE(sigurdos_display_auto_off_expired(49, activity, 100));
+    EXPECT_TRUE(sigurdos_display_auto_off_expired(50, activity, 100));
 }
 
 TEST(HalContractTest, DisplayDebugCaptureApisStayStable) {

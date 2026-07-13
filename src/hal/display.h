@@ -22,7 +22,20 @@
 
 // ── Display lifecycle ───────────────────────────────────
 bool sigurdos_display_init();
-void sigurdos_display_init_inputs();
+
+struct SigurdOSInputInitStatus {
+    bool lvgl_ready;
+    bool touch_ready;
+    bool keyboard_ready;
+    bool trackball_ready;
+
+    bool all_ready() const {
+        return lvgl_ready && touch_ready && keyboard_ready && trackball_ready;
+    }
+};
+
+// Deferred input setup. Returns cached, per-component health on repeat calls.
+SigurdOSInputInitStatus sigurdos_display_init_inputs();
 void sigurdos_display_loop();
 void sigurdos_display_render_now();
 uint32_t sigurdos_display_millis();
@@ -38,6 +51,14 @@ void sigurdos_display_set_brightness(uint8_t brightness);
 // Re-reads auto_off_timeout from prefs and resets the auto-off timer.
 // Call after changing the timeout in Settings.
 void sigurdos_display_reset_auto_off();
+
+inline bool sigurdos_display_auto_off_expired(uint32_t now_ms,
+                                               uint32_t activity_ms,
+                                               uint32_t timeout_ms)
+{
+    return timeout_ms > 0 &&
+           static_cast<uint32_t>(now_ms - activity_ms) >= timeout_ms;
+}
 
 // Return the current screen buffer for screenshot capture.
 // Only available when full-screen buffer mode is active (PSRAM present).

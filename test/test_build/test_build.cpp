@@ -73,11 +73,12 @@ TEST_F(BuildIntegrationTest, BatteryAPIExists) {
 
 TEST_F(BuildIntegrationTest, DisplayAPIExists) {
     using init_fn = bool (*)();
+    using input_init_fn = SigurdOSInputInitStatus (*)();
     using loop_fn = void (*)();
     using ms_fn = uint32_t (*)();
 
     (void)static_cast<init_fn>(sigurdos_display_init);
-    (void)static_cast<loop_fn>(sigurdos_display_init_inputs);
+    (void)static_cast<input_init_fn>(sigurdos_display_init_inputs);
     (void)static_cast<loop_fn>(sigurdos_display_loop);
     (void)static_cast<loop_fn>(sigurdos_display_render_now);
     (void)static_cast<ms_fn>(sigurdos_display_millis);

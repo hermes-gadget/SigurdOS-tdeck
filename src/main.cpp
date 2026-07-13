@@ -123,8 +123,17 @@ void setup()
     boot_log("settings loaded");
 
     boot_status("Starting input...");
-    sigurdos_display_init_inputs();
-    boot_status("Input ready");
+    const SigurdOSInputInitStatus input = sigurdos_display_init_inputs();
+    if (input.all_ready()) {
+        boot_status("Input ready");
+    } else {
+        Serial.printf("[boot] WARNING: Input degraded (lvgl=%d touch=%d keyboard=%d trackball=%d)\n",
+                      input.lvgl_ready ? 1 : 0,
+                      input.touch_ready ? 1 : 0,
+                      input.keyboard_ready ? 1 : 0,
+                      input.trackball_ready ? 1 : 0);
+        boot_status("Input degraded");
+    }
 
     if (p.gps_enabled) {
         boot_status("Starting GPS...");
