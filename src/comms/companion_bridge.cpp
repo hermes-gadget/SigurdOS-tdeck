@@ -1181,23 +1181,26 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 
     if (cmd == CMD_GET_ADVERT_PATH && len >= 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
         // Look up stored advert path for this contact's pubkey
-        uint8_t path_buf[SIGURDOS_COMPANION_PATH_SIZE];
+        uint8_t path_buf[SIGURDOS_COMPANION_PATH_SIZE]{};
+        uint8_t path_descriptor = 0;
+        size_t path_bytes = 0;
         uint32_t timestamp = 0;
-        uint8_t plen = _host->getAdvertPath(&_cmd_frame[2], path_buf,
-                                            sizeof(path_buf), &timestamp);
-        if (plen == 0) {
+        if (!_host->getAdvertPath(&_cmd_frame[2], path_buf, sizeof(path_buf),
+                                  &path_descriptor, &path_bytes, &timestamp) ||
+            path_bytes > sizeof(path_buf) ||
+            1 + sizeof(timestamp) + 1 + path_bytes > MAX_FRAME_SIZE) {
             writeErrFrame(ERR_CODE_NOT_FOUND);
             return true;
         }
         int i = 0;
         _out_frame[i++] = RESP_CODE_ADVERT_PATH;
-        _out_frame[i++] = plen;
-        if (plen > 0) {
-            std::memcpy(&_out_frame[i], path_buf, plen);
-            i += plen;
-        }
         std::memcpy(&_out_frame[i], &timestamp, 4);
         i += 4;
+        _out_frame[i++] = path_descriptor;
+        if (path_bytes > 0) {
+            std::memcpy(&_out_frame[i], path_buf, path_bytes);
+            i += (int)path_bytes;
+        }
         _serial->writeFrame(_out_frame, i);
         return true;
     }

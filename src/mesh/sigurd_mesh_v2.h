@@ -685,7 +685,7 @@ public:
     static constexpr int ADVERT_PATH_TABLE_SIZE = 16;
     struct AdvertPathEntry {
         uint8_t pubkey_prefix[7];  // first 7 bytes of pub_key
-        uint8_t path_len;          // number of hops in the advert path
+        uint8_t path_len;          // encoded MeshCore path descriptor
         uint8_t path[MAX_PATH_SIZE];  // actual path bytes (MeshCore MAX_PATH_SIZE)
         char    name[32];
         uint32_t recv_timestamp;
@@ -694,7 +694,10 @@ public:
 
     void storeAdvertPath(const uint8_t* pub_key, const char* name,
                          uint8_t path_len, const uint8_t* path) {
-        if (!pub_key || !name) return;
+        if (!pub_key || !name || !::mesh::Packet::isValidPathLen(path_len)) return;
+        const size_t path_bytes =
+            (size_t)(path_len & 63) * (size_t)((path_len >> 6) + 1);
+        if (path_bytes > 0 && !path) return;
         // Find existing entry for this pubkey or the oldest slot
         AdvertPathEntry* target = &_advert_paths[0];
         uint32_t oldest = _advert_paths[0].recv_timestamp;
@@ -710,9 +713,10 @@ public:
             }
         }
         memcpy(target->pubkey_prefix, pub_key, sizeof(target->pubkey_prefix));
+        memset(target->path, 0, sizeof(target->path));
         target->path_len = path_len;
-        if (path && path_len > 0 && path_len <= MAX_PATH_SIZE) {
-            memcpy(target->path, path, path_len);
+        if (path_bytes > 0) {
+            ::mesh::Packet::writePath(target->path, path, path_len);
         }
         strncpy(target->name, name, sizeof(target->name) - 1);
         target->name[sizeof(target->name) - 1] = '\0';

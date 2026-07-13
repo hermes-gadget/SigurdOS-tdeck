@@ -924,18 +924,25 @@ public:
         mesh_ptr()->self_id.sign(sig_out, data, len);
         return (int)sigurdos::comms::SIGURDOS_COMPANION_SIGNATURE_SIZE;
     }
-    uint8_t getAdvertPath(const uint8_t* pub_key,
-                          uint8_t* path_out, uint8_t max_path,
-                          uint32_t* timestamp_out) const override {
-        if (!mesh_ptr() || !pub_key) return 0;
+    bool getAdvertPath(const uint8_t* pub_key,
+                       uint8_t* path_out, size_t path_capacity,
+                       uint8_t* path_descriptor_out,
+                       size_t* path_bytes_out,
+                       uint32_t* timestamp_out) const override {
+        if (!mesh_ptr() || !pub_key) return false;
         const auto* entry = mesh_ptr()->getAdvertPathByKey(pub_key);
-        if (!entry) return 0;
-        uint8_t plen = entry->path_len;
-        if (path_out && plen > 0 && max_path > 0) {
-            memcpy(path_out, entry->path, plen < max_path ? plen : max_path);
+        if (!entry || !::mesh::Packet::isValidPathLen(entry->path_len)) return false;
+        const size_t path_bytes =
+            (size_t)(entry->path_len & 63) * (size_t)((entry->path_len >> 6) + 1);
+        if (path_bytes > path_capacity || (path_bytes > 0 && !path_out)) return false;
+        if (path_bytes > 0 &&
+            ::mesh::Packet::writePath(path_out, entry->path, entry->path_len) != path_bytes) {
+            return false;
         }
+        if (path_descriptor_out) *path_descriptor_out = entry->path_len;
+        if (path_bytes_out) *path_bytes_out = path_bytes;
         if (timestamp_out) *timestamp_out = entry->recv_timestamp;
-        return plen;
+        return true;
     }
 
 private:

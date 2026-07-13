@@ -82,6 +82,10 @@ public:
     uint32_t now = 1234;
 
     uint8_t path_hash_mode = 0;
+    bool advert_path_found = false;
+    uint8_t advert_path_descriptor = 0;
+    uint32_t advert_path_timestamp = 0;
+    std::vector<uint8_t> advert_path_bytes;
 
     uint32_t blePin() const override { return 123456; }
     uint8_t clientRepeat() const override { return 0; }
@@ -382,8 +386,19 @@ public:
     sigurdos::comms::CompanionSendResult sendPathDiscovery(const uint8_t*) override {
         return {false, false, 0, 0};  // not found by default
     }
-    uint8_t getAdvertPath(const uint8_t*, uint8_t*, uint8_t,
-                          uint32_t*) const override { return 0; }
+    bool getAdvertPath(const uint8_t*, uint8_t* path_out, size_t path_capacity,
+                       uint8_t* descriptor_out, size_t* path_bytes_out,
+                       uint32_t* timestamp_out) const override {
+        if (!advert_path_found || advert_path_bytes.size() > path_capacity) return false;
+        if (!advert_path_bytes.empty() && !path_out) return false;
+        if (!advert_path_bytes.empty()) {
+            std::memcpy(path_out, advert_path_bytes.data(), advert_path_bytes.size());
+        }
+        if (descriptor_out) *descriptor_out = advert_path_descriptor;
+        if (path_bytes_out) *path_bytes_out = advert_path_bytes.size();
+        if (timestamp_out) *timestamp_out = advert_path_timestamp;
+        return true;
+    }
 };
 
 class CompanionProtocolTest : public ::testing::Test {
@@ -1197,6 +1212,54 @@ TEST_F(CompanionProtocolTest, GetCustomVarsEmptyAndAllowedFreq) {
     ASSERT_TRUE(bridge.handleFrame(rf, sizeof(rf)));
     ASSERT_EQ(serial.writes[0].size(), 1u);
     EXPECT_EQ(serial.writes[0][0], cc::RESP_ALLOWED_REPEAT_FREQ);
+}
+
+TEST_F(CompanionProtocolTest, AdvertPathUsesOfficialDescriptorAndFieldOrder) {
+    struct AdvertPathCase {
+        uint8_t descriptor;
+        size_t path_bytes;
+    };
+    const AdvertPathCase cases[] = {
+        {0x00, 0},  // zero hop
+        {0x01, 1},  // one 1-byte hash
+        {0x41, 2},  // one 2-byte hash
+        {0x60, 64}, // maximum encoded path: 32 two-byte hashes
+    };
+
+    host.advert_path_found = true;
+    host.advert_path_timestamp = 0x44332211U;
+    for (const auto& test_case : cases) {
+        host.advert_path_descriptor = test_case.descriptor;
+        host.advert_path_bytes.resize(test_case.path_bytes);
+        for (size_t i = 0; i < test_case.path_bytes; ++i) {
+            host.advert_path_bytes[i] = (uint8_t)(0x80 + i);
+        }
+        serial.writes.clear();
+        uint8_t frame[2 + cc::SIGURDOS_COMPANION_PUB_KEY_SIZE]{};
+        frame[0] = cc::CMD_GET_ADVERT_PATH;
+
+        ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+        ASSERT_EQ(serial.writes.size(), 1U);
+        const auto& out = serial.writes[0];
+        ASSERT_EQ(out.size(), 6U + test_case.path_bytes);
+        EXPECT_EQ(out[0], cc::RESP_CODE_ADVERT_PATH);
+        uint32_t timestamp = 0;
+        std::memcpy(&timestamp, &out[1], sizeof(timestamp));
+        EXPECT_EQ(timestamp, host.advert_path_timestamp);
+        EXPECT_EQ(out[5], test_case.descriptor);
+        EXPECT_EQ(std::vector<uint8_t>(out.begin() + 6, out.end()),
+                  host.advert_path_bytes);
+    }
+}
+
+TEST_F(CompanionProtocolTest, AdvertPathMissingEntryReturnsNotFound) {
+    uint8_t frame[2 + cc::SIGURDOS_COMPANION_PUB_KEY_SIZE]{};
+    frame[0] = cc::CMD_GET_ADVERT_PATH;
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0],
+              (std::vector<uint8_t>{cc::RESP_CODE_ERR, cc::ERR_CODE_NOT_FOUND}));
 }
 
 TEST_F(CompanionProtocolTest, BinaryRequestReturnsStockSentFrame)

@@ -361,11 +361,14 @@ public:
     virtual bool setCustomVar(const char* name, const char* value) = 0;
     // signData signs len bytes with the node key; returns signature length.
     virtual int signData(const uint8_t* data, size_t len, uint8_t* sig_out) = 0;
-    // getAdvertPath fills path bytes and timestamp for a contact pubkey.
-    // Returns path_len on success, 0 if not found.
-    virtual uint8_t getAdvertPath(const uint8_t* pub_key,
-                                  uint8_t* path_out, uint8_t max_path,
-                                  uint32_t* timestamp_out) const = 0;
+    // getAdvertPath returns the encoded MeshCore path descriptor separately
+    // from the number of bytes copied. A zero descriptor is a valid zero-hop
+    // path, so the boolean return value reports whether an entry was found.
+    virtual bool getAdvertPath(const uint8_t* pub_key,
+                               uint8_t* path_out, size_t path_capacity,
+                               uint8_t* path_descriptor_out,
+                               size_t* path_bytes_out,
+                               uint32_t* timestamp_out) const = 0;
 };
 
 class CompanionBridge {
