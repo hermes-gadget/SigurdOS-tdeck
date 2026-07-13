@@ -61,6 +61,8 @@ static constexpr unsigned MAX_TERM_LINES = 64;
 static constexpr uint32_t MAX_TERM_COMMAND_LENGTH = 255;
 static constexpr size_t MAX_TERM_VAR_KEY_LENGTH = 31;
 static constexpr size_t MAX_TERM_VAR_VALUE_LENGTH = 127;
+static lv_obj_t* g_term_log = nullptr;
+static unsigned g_term_pending_deletions = 0;
 
 static bool terminal_var_key_valid(const char* key, size_t len)
 {
@@ -78,11 +80,24 @@ static bool terminal_var_key_valid(const char* key, size_t len)
 
 static void term_add_line(lv_obj_t* log, const char* text)
 {
-    // Prune oldest line if at cap
-    while (lv_obj_get_child_cnt(log) >= MAX_TERM_LINES) {
-        lv_obj_t* first = lv_obj_get_child(log, 0);
-        if (first) lv_obj_del_async(first);
-        else break;
+    // Async deletion leaves the victim in the child list until LVGL returns
+    // to its task handler. Account for already-queued victims so a burst of
+    // output schedules each old row exactly once without spinning on the
+    // unchanged child count.
+    const unsigned pending = log == g_term_log ? g_term_pending_deletions : 0;
+    const unsigned child_count = lv_obj_get_child_cnt(log);
+    if (child_count >= MAX_TERM_LINES + pending) {
+        lv_obj_t* first_live = lv_obj_get_child(log, static_cast<int32_t>(pending));
+        if (first_live) {
+            if (log == g_term_log) g_term_pending_deletions++;
+            lv_obj_add_event_cb(first_live, [](lv_event_t* e) {
+                lv_obj_t* owner = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+                if (owner == g_term_log && g_term_pending_deletions > 0) {
+                    g_term_pending_deletions--;
+                }
+            }, LV_EVENT_DELETE, log);
+            lv_obj_del_async(first_live);
+        }
     }
 
     lv_obj_t* lbl = lv_label_create(log);
@@ -120,6 +135,14 @@ void terminal_screen_show()
     lv_obj_set_flex_flow(log, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scroll_dir(log, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(log, LV_SCROLLBAR_MODE_OFF);
+    g_term_log = log;
+    g_term_pending_deletions = 0;
+    lv_obj_add_event_cb(log, [](lv_event_t* e) {
+        if (static_cast<lv_obj_t*>(lv_event_get_target(e)) == g_term_log) {
+            g_term_log = nullptr;
+            g_term_pending_deletions = 0;
+        }
+    }, LV_EVENT_DELETE, nullptr);
 
     // Boot header lines
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();

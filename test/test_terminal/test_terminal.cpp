@@ -29,6 +29,7 @@
 #include "ui/repeater_transcript.h"
 #include <cstring>
 #include <cstdio>
+#include <algorithm>
 #include <vector>
 #include <string>
 
@@ -53,6 +54,41 @@ struct LogContainer {
             deleted_first = true;
         }
         lines.push_back(text);
+    }
+};
+
+// Models LVGL's deferred deletion: queued children remain visible to
+// child_count() until the event loop flushes the async-delete queue.
+struct AsyncLogContainer {
+    struct Line {
+        std::string text;
+        bool pending_delete;
+    };
+
+    std::vector<Line> lines;
+    int pending_deletions = 0;
+    int scheduled_deletions = 0;
+
+    int effective_count() const {
+        return static_cast<int>(lines.size()) - pending_deletions;
+    }
+
+    void add_line(const char* text) {
+        if (static_cast<int>(lines.size()) >= MAX_TERM_LINES + pending_deletions) {
+            ASSERT_LT(pending_deletions, static_cast<int>(lines.size()));
+            ASSERT_FALSE(lines[pending_deletions].pending_delete);
+            lines[pending_deletions].pending_delete = true;
+            pending_deletions++;
+            scheduled_deletions++;
+        }
+        lines.push_back({text, false});
+    }
+
+    void flush_async_deletes() {
+        lines.erase(std::remove_if(lines.begin(), lines.end(),
+                                   [](const Line& line) { return line.pending_delete; }),
+                    lines.end());
+        pending_deletions = 0;
     }
 };
 
@@ -143,6 +179,24 @@ TEST(TermLineCapTest, ManyOverflowsKeepsCapacity) {
     // Oldest should be line 936
     EXPECT_STREQ(log.lines[0].c_str(), "line 936");
     EXPECT_STREQ(log.lines[MAX_TERM_LINES - 1].c_str(), "line 999");
+}
+
+TEST(TermLineCapTest, AsyncBurstSchedulesEveryVictimOnceWithoutLooping) {
+    AsyncLogContainer log;
+    for (int i = 0; i < 1000; i++) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "line %d", i);
+        log.add_line(buf);
+        EXPECT_EQ(log.effective_count(), std::min(i + 1, MAX_TERM_LINES));
+    }
+
+    EXPECT_EQ(log.scheduled_deletions, 1000 - MAX_TERM_LINES);
+    EXPECT_EQ(log.pending_deletions, 1000 - MAX_TERM_LINES);
+
+    log.flush_async_deletes();
+    ASSERT_EQ(log.lines.size(), static_cast<size_t>(MAX_TERM_LINES));
+    EXPECT_EQ(log.lines.front().text, "line 936");
+    EXPECT_EQ(log.lines.back().text, "line 999");
 }
 
 TEST(RepeaterTranscriptTest, CliReplyHasExplicitTypeBadge) {
