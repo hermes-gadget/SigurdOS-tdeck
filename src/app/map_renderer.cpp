@@ -287,9 +287,39 @@ static TileLoadResult load_tile(int zoom, int tx, int ty,
     }
     fclose(f);
 
-    unsigned w, h;
+    unsigned w = 0;
+    unsigned h = 0;
+    LodePNGState header_state;
+    lodepng_state_init(&header_state);
+    const unsigned header_err = lodepng_inspect(
+        &w, &h, &header_state, png_buf, (size_t)fsize);
+    const unsigned source_bit_depth = header_state.info_png.color.bitdepth;
+    const unsigned source_color_type = header_state.info_png.color.colortype;
+    const bool header_supported = header_err == 0 &&
+        sigurdos_map_png_ihdr_supported(png_buf, (size_t)fsize);
+    lodepng_state_cleanup(&header_state);
+
+    if (!header_supported) {
+        set_tile_status("load:ihdr err %u %ux%u b%u c%u",
+                        header_err, w, h, source_bit_depth, source_color_type);
+        map_free(png_buf);
+        return record_tile_failure(zoom, tx, ty, now_ms);
+    }
+
     uint8_t* rgba = nullptr;
-    unsigned err = lodepng_decode_memory(&rgba, &w, &h, png_buf, (size_t)fsize, LCT_RGBA, 8);
+    LodePNGState decode_state;
+    lodepng_state_init(&decode_state);
+    decode_state.info_raw.colortype = LCT_RGBA;
+    decode_state.info_raw.bitdepth = 8;
+    decode_state.decoder.zlibsettings.max_output_size =
+        SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES;
+#ifdef LODEPNG_COMPILE_ANCILLARY_CHUNKS
+    decode_state.decoder.read_text_chunks = 0;
+    decode_state.decoder.remember_unknown_chunks = 0;
+#endif
+    unsigned err = lodepng_decode(
+        &rgba, &w, &h, &decode_state, png_buf, (size_t)fsize);
+    lodepng_state_cleanup(&decode_state);
     map_free(png_buf);
 
     if (err != 0 || w != TILE_SIZE || h != TILE_SIZE) {

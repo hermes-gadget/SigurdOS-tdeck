@@ -38,6 +38,54 @@ static constexpr int SIGURDOS_MAP_DEFAULT_US_ZOOM = 4;
 static constexpr double SIGURDOS_MAP_DEFAULT_CA_LAT = 56.1304;
 static constexpr double SIGURDOS_MAP_DEFAULT_CA_LON = -106.3468;
 static constexpr int SIGURDOS_MAP_DEFAULT_CA_ZOOM = 3;
+static constexpr std::size_t SIGURDOS_MAP_PNG_IHDR_SIZE = 33;
+static constexpr std::size_t SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES =
+    static_cast<std::size_t>(SIGURDOS_MAP_TILE_SIZE) *
+    (SIGURDOS_MAP_TILE_SIZE * 4 + 1);
+
+inline std::uint32_t sigurdos_map_png_read_u32(const std::uint8_t* value) {
+    return (static_cast<std::uint32_t>(value[0]) << 24) |
+           (static_cast<std::uint32_t>(value[1]) << 16) |
+           (static_cast<std::uint32_t>(value[2]) << 8) |
+           static_cast<std::uint32_t>(value[3]);
+}
+
+inline bool sigurdos_map_png_ihdr_supported(const std::uint8_t* png,
+                                             std::size_t size) {
+    if (!png || size < SIGURDOS_MAP_PNG_IHDR_SIZE) return false;
+    if (png[0] != 137 || png[1] != 80 || png[2] != 78 || png[3] != 71 ||
+        png[4] != 13 || png[5] != 10 || png[6] != 26 || png[7] != 10) {
+        return false;
+    }
+    if (sigurdos_map_png_read_u32(png + 8) != 13 ||
+        png[12] != 'I' || png[13] != 'H' || png[14] != 'D' || png[15] != 'R') {
+        return false;
+    }
+    if (sigurdos_map_png_read_u32(png + 16) != SIGURDOS_MAP_TILE_SIZE ||
+        sigurdos_map_png_read_u32(png + 20) != SIGURDOS_MAP_TILE_SIZE) {
+        return false;
+    }
+
+    const unsigned bit_depth = png[24];
+    const unsigned color_type = png[25];
+    bool color_supported = false;
+    switch (color_type) {
+        case 0:  // Greyscale
+        case 3:  // Palette
+            color_supported = bit_depth == 1 || bit_depth == 2 ||
+                              bit_depth == 4 || bit_depth == 8;
+            break;
+        case 2:  // RGB
+        case 4:  // Greyscale + alpha
+        case 6:  // RGBA
+            color_supported = bit_depth == 8;
+            break;
+        default:
+            return false;
+    }
+
+    return color_supported && png[26] == 0 && png[27] == 0 && png[28] == 0;
+}
 
 struct SigurdosMapDefaultView {
     double lat;

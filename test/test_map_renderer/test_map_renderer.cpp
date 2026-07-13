@@ -17,12 +17,45 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <cmath>
+#include <array>
 
 #include <gtest/gtest.h>
 
 #include "app/map_renderer.h"
 
 namespace {
+
+using PngIhdrFixture = std::array<std::uint8_t, SIGURDOS_MAP_PNG_IHDR_SIZE>;
+
+void write_u32(PngIhdrFixture* png, std::size_t offset, std::uint32_t value) {
+    (*png)[offset] = static_cast<std::uint8_t>(value >> 24);
+    (*png)[offset + 1] = static_cast<std::uint8_t>(value >> 16);
+    (*png)[offset + 2] = static_cast<std::uint8_t>(value >> 8);
+    (*png)[offset + 3] = static_cast<std::uint8_t>(value);
+}
+
+PngIhdrFixture make_png_ihdr(std::uint32_t width, std::uint32_t height,
+                             std::uint8_t bit_depth, std::uint8_t color_type) {
+    PngIhdrFixture png{};
+    png[0] = 137;
+    png[1] = 80;
+    png[2] = 78;
+    png[3] = 71;
+    png[4] = 13;
+    png[5] = 10;
+    png[6] = 26;
+    png[7] = 10;
+    write_u32(&png, 8, 13);
+    png[12] = 'I';
+    png[13] = 'H';
+    png[14] = 'D';
+    png[15] = 'R';
+    write_u32(&png, 16, width);
+    write_u32(&png, 20, height);
+    png[24] = bit_depth;
+    png[25] = color_type;
+    return png;
+}
 
 class MapRendererMathTest : public ::testing::Test {};
 
@@ -32,6 +65,52 @@ TEST_F(MapRendererMathTest, ConstantsMatchTDeckMapContract) {
     EXPECT_EQ(SIGURDOS_MAP_MAX_ZOOM, 18);
     EXPECT_DOUBLE_EQ(SIGURDOS_MAP_MIN_LON, -180.0);
     EXPECT_DOUBLE_EQ(SIGURDOS_MAP_MAX_LON, 180.0);
+}
+
+TEST_F(MapRendererMathTest, CraftedRgbaTileIhdrIsAccepted) {
+    const PngIhdrFixture png = make_png_ihdr(256, 256, 8, 6);
+
+    EXPECT_TRUE(sigurdos_map_png_ihdr_supported(png.data(), png.size()));
+    EXPECT_EQ(SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES, 262400U);
+}
+
+TEST_F(MapRendererMathTest, CraftedPaletteTileIhdrIsAccepted) {
+    const PngIhdrFixture png = make_png_ihdr(256, 256, 4, 3);
+
+    EXPECT_TRUE(sigurdos_map_png_ihdr_supported(png.data(), png.size()));
+}
+
+TEST_F(MapRendererMathTest, CraftedWrongDimensionsAreRejected) {
+    const PngIhdrFixture oversized = make_png_ihdr(8192, 8192, 8, 6);
+    const PngIhdrFixture wrong_height = make_png_ihdr(256, 255, 8, 6);
+
+    EXPECT_FALSE(sigurdos_map_png_ihdr_supported(oversized.data(), oversized.size()));
+    EXPECT_FALSE(sigurdos_map_png_ihdr_supported(
+        wrong_height.data(), wrong_height.size()));
+}
+
+TEST_F(MapRendererMathTest, CraftedUnsupportedColorModesAreRejected) {
+    const PngIhdrFixture sixteen_bit = make_png_ihdr(256, 256, 16, 6);
+    const PngIhdrFixture invalid_rgb_depth = make_png_ihdr(256, 256, 4, 2);
+    const PngIhdrFixture unknown_color = make_png_ihdr(256, 256, 8, 1);
+
+    EXPECT_FALSE(sigurdos_map_png_ihdr_supported(
+        sixteen_bit.data(), sixteen_bit.size()));
+    EXPECT_FALSE(sigurdos_map_png_ihdr_supported(
+        invalid_rgb_depth.data(), invalid_rgb_depth.size()));
+    EXPECT_FALSE(sigurdos_map_png_ihdr_supported(
+        unknown_color.data(), unknown_color.size()));
+}
+
+TEST_F(MapRendererMathTest, CraftedTruncatedOrInterlacedHeadersAreRejected) {
+    PngIhdrFixture interlaced = make_png_ihdr(256, 256, 8, 6);
+    interlaced[28] = 1;
+
+    EXPECT_FALSE(sigurdos_map_png_ihdr_supported(
+        interlaced.data(), interlaced.size()));
+    EXPECT_FALSE(sigurdos_map_png_ihdr_supported(
+        interlaced.data(), SIGURDOS_MAP_PNG_IHDR_SIZE - 1));
+    EXPECT_FALSE(sigurdos_map_png_ihdr_supported(nullptr, interlaced.size()));
 }
 
 TEST_F(MapRendererMathTest, ZoomValidationRejectsOutOfRangeValues) {
