@@ -16,7 +16,8 @@ class SecurityWorkflowTests(unittest.TestCase):
             ROOT / ".github" / "workflows" / "security.yml"
         ).read_text()
 
-    def test_dependency_checks_run_on_pull_requests_and_a_schedule(self) -> None:
+    def test_dependency_checks_run_on_dev_prs_pushes_and_a_schedule(self) -> None:
+        self.assertIn("push:", self.workflow)
         self.assertIn("pull_request:", self.workflow)
         self.assertIn("schedule:", self.workflow)
         self.assertIn("npm audit --omit=dev --audit-level=high", self.workflow)
