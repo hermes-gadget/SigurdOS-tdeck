@@ -19,6 +19,7 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <lvgl.h>
+#include <cstdint>
 #include "../hal/trackball.h"
 
 namespace sigurdos::ui {
@@ -45,8 +46,10 @@ void settings_gps_show();
 void settings_display_show();
 void settings_system_show();
 void telemetry_screen_show();
+void telemetry_screen_begin_request(bool request_sent, uint32_t started_at_ms);
 void node_stats_screen_show();
 void node_status_screen_show();
+void node_status_screen_begin_request(bool request_sent, uint32_t started_at_ms);
 void wifi_networks_screen_show();
 void bluetooth_screen_show();
 void regions_screen_show();

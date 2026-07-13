@@ -20,6 +20,9 @@
 #include "../screens_common.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../navigation.h"
+#include "../response_wait_state.h"
+#include "../screen_lifetime.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
@@ -30,13 +33,61 @@ namespace sigurdos::ui {
 using namespace theme;
 using namespace responsive;
 
+static lv_timer_t* g_status_poll_timer = nullptr;
+static lv_obj_t* g_status_waiting_label = nullptr;
+static ScreenLifetime g_status_lifetime;
+static ResponseWaitState g_status_wait;
+
+void node_status_screen_begin_request(bool request_sent, uint32_t started_at_ms)
+{
+    g_status_wait.begin(started_at_ms, request_sent);
+}
+
+static const char* status_wait_message(ResponseWaitPhase phase)
+{
+    switch (phase) {
+        case ResponseWaitPhase::SendFailed:
+            return "Unable to send status request.";
+        case ResponseWaitPhase::TimedOut:
+            return "No status response.\nRequest timed out.";
+        default:
+            return "Requesting status...\nWaiting for response...";
+    }
+}
+
+static void status_poll_timer_cb(lv_timer_t* timer)
+{
+    const ResponseWaitPhase phase = g_status_wait.phase(
+        lv_tick_get(), sigurdos::mesh::hasStatusResponse());
+    if (phase == ResponseWaitPhase::Loading) return;
+
+    lv_timer_del(timer);
+    if (g_status_poll_timer == timer) g_status_poll_timer = nullptr;
+
+    if (phase == ResponseWaitPhase::Ready) {
+        refresh_current_screen();
+    } else if (g_status_waiting_label && lv_obj_is_valid(g_status_waiting_label)) {
+        lv_label_set_text(g_status_waiting_label, status_wait_message(phase));
+    }
+}
+
 // ════════════════════════════════════════════════════════
 // Node Status screen (Phase 4.2)
 // ════════════════════════════════════════════════════════
 void node_status_screen_show()
 {
     static constexpr int ROW_H = 18;
+    if (g_status_poll_timer) {
+        lv_timer_del(g_status_poll_timer);
+        g_status_poll_timer = nullptr;
+    }
+    g_status_waiting_label = nullptr;
+
     lv_obj_t* scr = make_screen_full("Node Status");
+    g_status_lifetime.bind(scr);
+    g_status_lifetime.track(&g_status_waiting_label);
+    g_status_lifetime.trackTimer(&g_status_poll_timer);
+    g_status_lifetime.onDelete([] { g_status_wait.reset(); });
 
     lv_obj_t* list = lv_obj_create(scr);
     lv_obj_set_size(list, LV_PCT(100), CONTENT_H - 24);
@@ -68,7 +119,11 @@ void node_status_screen_show()
         lv_obj_align(val, LV_ALIGN_RIGHT_MID, -8, 0);
     };
 
-    if (sigurdos::mesh::hasStatusResponse()) {
+    g_status_wait.ensureStarted(lv_tick_get());
+    const ResponseWaitPhase wait_phase = g_status_wait.phase(
+        lv_tick_get(), sigurdos::mesh::hasStatusResponse());
+
+    if (wait_phase == ResponseWaitPhase::Ready) {
         sigurdos::mesh::NodeStatus st;
         sigurdos::mesh::getStatusResult(&st);
 
@@ -114,15 +169,19 @@ void node_status_screen_show()
         add_row("Dup/Err", buf);
 
         sigurdos::mesh::clearResponses();
+        g_status_wait.reset();
     } else {
-        lv_obj_t* waiting = lv_label_create(list);
-        lv_label_set_text(waiting, "Requesting status...\nWaiting for response...");
-        lv_obj_set_style_text_color(waiting, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(waiting, emoji_wrapped_montserrat_12, 0);
-        lv_obj_align(waiting, LV_ALIGN_CENTER, 0, 0);
+        g_status_waiting_label = lv_label_create(list);
+        lv_label_set_text(g_status_waiting_label, status_wait_message(wait_phase));
+        lv_obj_set_style_text_color(g_status_waiting_label, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(g_status_waiting_label, emoji_wrapped_montserrat_12, 0);
+        lv_obj_align(g_status_waiting_label, LV_ALIGN_CENTER, 0, 0);
     }
 
     show_screen(scr);
+    if (wait_phase == ResponseWaitPhase::Loading) {
+        g_status_poll_timer = lv_timer_create(status_poll_timer_cb, 250, nullptr);
+    }
 }
 
 } // namespace sigurdos::ui

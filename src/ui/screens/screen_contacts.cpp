@@ -1424,7 +1424,9 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(btn);
             if (name) {
-                sigurdos::mesh::requestStatus(name);
+                const uint32_t started_at_ms = lv_tick_get();
+                const bool request_sent = sigurdos::mesh::requestStatus(name);
+                sigurdos::ui::node_status_screen_begin_request(request_sent, started_at_ms);
                 sigurdos::ui::navigate_to(sigurdos::ui::Screen::NodeStatus);
             }
         }, LV_EVENT_CLICKED, nullptr);
@@ -1457,7 +1459,9 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
             const char* name = (const char*)lv_obj_get_user_data(btn);
             if (name) {
-                sigurdos::mesh::requestTelemetry(name);
+                const uint32_t started_at_ms = lv_tick_get();
+                const bool request_sent = sigurdos::mesh::requestTelemetry(name);
+                sigurdos::ui::telemetry_screen_begin_request(request_sent, started_at_ms);
                 sigurdos::ui::navigate_to(sigurdos::ui::Screen::Telemetry);
             }
         }, LV_EVENT_CLICKED, nullptr);
