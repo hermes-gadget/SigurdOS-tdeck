@@ -143,6 +143,10 @@ jobs:
         working-directory: scripts/official-meshcore-client-test
         run: node --check matrix.mjs
 
+      - name: Verify evidence privacy allowlist
+        working-directory: scripts/official-meshcore-client-test
+        run: npm run test:privacy
+
       - name: Package self-test (no hardware)
         working-directory: scripts/official-meshcore-client-test
         run: |

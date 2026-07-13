@@ -7,6 +7,7 @@
   "scripts": {
     "test:heltec": "node matrix.mjs --port /dev/ttyUSB0 --label heltec-stock-companion",
     "test:tdeck": "node matrix.mjs --port /dev/ttyACM0 --label tdeck-companion-usb",
+    "test:privacy": "node --test privacy.test.mjs privacy.integration.test.mjs",
     "test": "node matrix.mjs"
   },
   "dependencies": {

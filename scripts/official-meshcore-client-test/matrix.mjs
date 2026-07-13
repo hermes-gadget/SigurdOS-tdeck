@@ -17,6 +17,7 @@
 import { NodeJSSerialConnection } from "@liamcottle/meshcore.js";
 import { parseArgs } from "node:util";
 import { writeFileSync } from "node:fs";
+import { redactError, sanitize, summarize } from "./privacy.mjs";
 
 const { values: args } = parseArgs({
   options: {
@@ -31,8 +32,16 @@ const { values: args } = parseArgs({
 const TIMEOUT_MS = Number(args.timeout) || 8000;
 const results = [];
 
+// The client package logs raw transport errors and response objects with
+// console.log(). Evidence stdout must contain only the allowlisted JSON below.
+console.log = () => {};
+
 function log(...a) {
   console.error(...a);
+}
+
+function emitPayload(payload) {
+  process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
 function add(name, ok, detail = "", data = {}) {
@@ -48,54 +57,15 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, t]).finally(() => clearTimeout(timer));
 }
 
-function hexPreview(buf, max = 16) {
-  if (!buf) return null;
-  if (typeof buf === "string") return buf.slice(0, 64);
-  try {
-    const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-    return Buffer.from(u8.slice(0, max)).toString("hex");
-  } catch {
-    return String(buf).slice(0, 64);
-  }
-}
-
 async function runCase(name, fn) {
   try {
     const data = await withTimeout(fn(), TIMEOUT_MS, name);
     add(name, true, summarize(data), sanitize(data));
     return data;
   } catch (e) {
-    add(name, false, e?.message || String(e));
+    add(name, false, redactError(e));
     return null;
   }
-}
-
-function summarize(data) {
-  if (data == null) return "";
-  if (Array.isArray(data)) return `count=${data.length}`;
-  if (typeof data === "object") {
-    if ("name" in data) return `name=${data.name}`;
-    if ("epochSecs" in data) return `epoch=${data.epochSecs}`;
-    if ("batteryMilliVolts" in data || "millivolts" in data || "level" in data) {
-      return JSON.stringify(data).slice(0, 80);
-    }
-    if ("publicKey" in data) return `pk=${hexPreview(data.publicKey)} name=${data.name || ""}`;
-    return `keys=${Object.keys(data).join(",")}`;
-  }
-  return String(data).slice(0, 80);
-}
-
-function sanitize(data) {
-  if (data == null) return {};
-  if (Array.isArray(data)) return { count: data.length };
-  if (typeof data !== "object") return { value: String(data).slice(0, 120) };
-  const out = {};
-  for (const [k, v] of Object.entries(data)) {
-    if (v instanceof Uint8Array || Buffer.isBuffer?.(v)) out[k] = hexPreview(v);
-    else if (typeof v === "object" && v !== null) out[k] = "[obj]";
-    else out[k] = v;
-  }
-  return out;
 }
 
 function connect(port) {
@@ -129,23 +99,22 @@ async function main() {
   const payload = {
     client: "@liamcottle/meshcore.js",
     note: "Same library as https://app.meshcore.nz/ (USB serial transport)",
-    label: args.label,
-    port: args.port,
+    target: "companion",
     results: [],
     summary: {},
   };
 
-  log(`Connecting official meshcore.js → ${args.port} (${args.label})`);
+  log("Connecting official meshcore.js client");
 
   let connection;
   try {
     connection = await connect(args.port);
     add("connect", true, "deviceQuery ran in onConnected()");
   } catch (e) {
-    add("connect", false, e?.message || String(e));
+    add("connect", false, redactError(e));
     payload.results = results;
     payload.summary = { total: 1, passed: 0, failed: 1 };
-    console.log(JSON.stringify(payload, null, 2));
+    emitPayload(payload);
     if (args["json-out"]) writeFileSync(args["json-out"], JSON.stringify(payload, null, 2));
     process.exit(2);
   }
@@ -186,7 +155,7 @@ async function main() {
     passed: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok).length,
   };
-  console.log(JSON.stringify(payload, null, 2));
+  emitPayload(payload);
   if (args["json-out"]) writeFileSync(args["json-out"], JSON.stringify(payload, null, 2));
 
   const reqFail = results.filter((r) => required.has(r.name) && !r.ok);
@@ -195,6 +164,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
+  console.error(`Official client matrix failed: ${redactError(e)}`);
   process.exit(2);
 });
