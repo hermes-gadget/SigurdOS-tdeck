@@ -945,28 +945,74 @@ int messageStoreMarkOrphanedPendingLost()
 
 bool messageStoreMarkCompanionSent(uint32_t store_id)
 {
+    if (store_id == 0) return false;
     uint32_t count = 0;
     if (!readHeader(&count)) return false;
     if (count == 0) return false;
     if (count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
-    StoredMessage* msgs = allocateMessages(count);
-    if (!msgs) return false;
-    int n = messageStoreLoadAll(msgs, (int)count);
-    bool found = false;
-    for (int i = 0; i < n; i++) {
-        if (msgs[i].store_id == store_id) {
-            msgs[i].companion_sent = true;
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        freeMessages(msgs);
+
+#if defined(ESP32_PLATFORM)
+    File file = SPIFFS.open(STORE_PATH, "r+");
+    if (!file || !file.seek(detail::MESSAGE_STORE_HEADER_SIZE, SeekSet)) {
+        if (file) file.close();
         return false;
     }
-    bool ok = atomicReplaceStore(msgs, (uint32_t)n);
-    freeMessages(msgs);
-    return ok;
+#else
+    FILE* file = std::fopen(g_native_path, "r+b");
+    if (!file || std::fseek(file, (long)detail::MESSAGE_STORE_HEADER_SIZE,
+                            SEEK_SET) != 0) {
+        if (file) std::fclose(file);
+        return false;
+    }
+#endif
+
+    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
+    for (uint32_t index = 0; index < count; ++index) {
+#if defined(ESP32_PLATFORM)
+        const bool read_ok = file.read(record, sizeof(record)) == sizeof(record);
+#else
+        const bool read_ok =
+            std::fread(record, 1, sizeof(record), file) == sizeof(record);
+#endif
+        if (!read_ok) break;
+
+        uint32_t record_id = 0;
+        std::memcpy(&record_id, record, sizeof(record_id));
+        if (record_id != store_id) continue;
+
+        uint8_t& flags = record[detail::MESSAGE_STORE_RECORD_SIZE - 1];
+        if ((flags & 0x08) != 0) {
+#if defined(ESP32_PLATFORM)
+            file.close();
+#else
+            std::fclose(file);
+#endif
+            return true;
+        }
+
+        flags |= 0x08;
+        const size_t flag_offset = detail::MESSAGE_STORE_HEADER_SIZE +
+            (size_t)index * detail::MESSAGE_STORE_RECORD_SIZE +
+            detail::MESSAGE_STORE_RECORD_SIZE - 1;
+#if defined(ESP32_PLATFORM)
+        const bool ok = file.seek(flag_offset, SeekSet) &&
+            file.write(&flags, 1) == 1;
+        file.close();
+        return ok;
+#else
+        bool ok = std::fseek(file, (long)flag_offset, SEEK_SET) == 0 &&
+            std::fwrite(&flags, 1, 1, file) == 1 && std::fflush(file) == 0;
+        if (std::fclose(file) != 0) ok = false;
+        return ok;
+#endif
+    }
+
+#if defined(ESP32_PLATFORM)
+    file.close();
+#else
+    std::fclose(file);
+#endif
+    return false;
 }
 
 int messageStoreLoadUnsent(StoredMessage* out, int max)
