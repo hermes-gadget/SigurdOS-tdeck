@@ -14,6 +14,9 @@ namespace {
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_DEFAULT;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MAX;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MIN;
+using sigurdos::ui::CHAT_SCREEN_CONVERSATION_MAX;
+using sigurdos::ui::chat_screen_dm_has_capacity;
+using sigurdos::ui::chat_screen_dm_requires_navigation;
 using sigurdos::ui::chat_screen_filter_accepts_channel;
 using sigurdos::ui::chat_screen_is_dm_name;
 using sigurdos::ui::chat_screen_normalize_message_cap;
@@ -74,6 +77,21 @@ TEST(ChatConfig, DmFilterKeepsOnlyDmConversations) {
     EXPECT_TRUE(chat_screen_filter_accepts_channel(2, "DM: Alice"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "Public"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "#general"));
+}
+
+TEST(ChatConfig, NewDmRequiresFreeConversationSlot) {
+    EXPECT_TRUE(chat_screen_dm_has_capacity(CHAT_SCREEN_CONVERSATION_MAX - 1, false));
+    EXPECT_FALSE(chat_screen_dm_has_capacity(CHAT_SCREEN_CONVERSATION_MAX, false));
+    EXPECT_FALSE(chat_screen_dm_has_capacity(CHAT_SCREEN_CONVERSATION_MAX + 1, false));
+}
+
+TEST(ChatConfig, ExistingDmCanOpenAtConversationLimit) {
+    EXPECT_TRUE(chat_screen_dm_has_capacity(CHAT_SCREEN_CONVERSATION_MAX, true));
+}
+
+TEST(ChatConfig, AlreadyOnChatDoesNotArmChannelListSkip) {
+    EXPECT_FALSE(chat_screen_dm_requires_navigation(true));
+    EXPECT_TRUE(chat_screen_dm_requires_navigation(false));
 }
 
 TEST(MessageDetail, FormatsRouteSignalTypeAndPrefix) {

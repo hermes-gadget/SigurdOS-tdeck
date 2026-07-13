@@ -30,6 +30,7 @@ namespace sigurdos::ui {
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MAX     = 200;
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_DEFAULT = 200;
 static constexpr uint16_t CHAT_SCREEN_MESSAGE_CAP_MIN     = 8;
+static constexpr int CHAT_SCREEN_CONVERSATION_MAX         = 16;
 
 inline uint16_t chat_screen_normalize_message_cap(uint16_t cap)
 {
@@ -55,6 +56,16 @@ inline uint32_t chat_screen_resolve_message_timestamp(
     uint32_t authoritative_timestamp, uint32_t fallback_now)
 {
     return authoritative_timestamp ? authoritative_timestamp : fallback_now;
+}
+
+inline bool chat_screen_dm_has_capacity(int conversation_count, bool already_exists)
+{
+    return already_exists || conversation_count < CHAT_SCREEN_CONVERSATION_MAX;
+}
+
+inline bool chat_screen_dm_requires_navigation(bool chat_is_current)
+{
+    return !chat_is_current;
 }
 
 // Create and show the chat screen

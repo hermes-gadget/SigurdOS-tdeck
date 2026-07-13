@@ -128,7 +128,7 @@ static constexpr int LIST_CONT_H = DISPLAY_H - LIST_CONT_Y - LIST_DIV_H - BOT_BA
 static constexpr int LIST_ROW_H  = 44;
 
 // ── Channel state ──────────────────────────────────────────
-static constexpr int MAX_CHANNELS = 16;
+static constexpr int MAX_CHANNELS = CHAT_SCREEN_CONVERSATION_MAX;
 // Row width of the channel-name table: "DM: " (4) + contact name (31) + null
 // = 36 → 37 for safety. Every buffer that mirrors a dyn_channels entry MUST use
 // this constant — a stride mismatch silently corrupts the channel-state snapshot
@@ -137,6 +137,7 @@ static constexpr int CHANNEL_NAME_CAP = 37;
 static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
+static lv_obj_t* g_dm_capacity_dialog = nullptr;
 static int   active_channel = 0;
 static int   chat_render_channel = -1;
 static int   chat_render_offset = 0; // entries newer than the visible window
@@ -2492,16 +2493,50 @@ void chat_screen_show()
     sigurdos::mesh::resetUnreadMessageCount();
 }
 
+static void show_dm_capacity_error()
+{
+    if (g_dm_capacity_dialog && lv_obj_is_valid(g_dm_capacity_dialog)) return;
+
+    lv_obj_t* scr = lv_screen_active();
+    if (!scr) return;
+
+    lv_obj_t* dlg = lv_obj_create(scr);
+    g_dm_capacity_dialog = dlg;
+    lv_obj_set_size(dlg, 250, 88);
+    lv_obj_center(dlg);
+    apply_pixel_card(dlg);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+    lv_obj_clear_flag(dlg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
+        if (static_cast<lv_obj_t*>(lv_event_get_target(e)) == g_dm_capacity_dialog) {
+            g_dm_capacity_dialog = nullptr;
+        }
+    }, LV_EVENT_DELETE, nullptr);
+
+    lv_obj_t* message = lv_label_create(dlg);
+    lv_label_set_text(message, "Conversation limit reached.\nRemove a chat before opening a new DM.");
+    lv_obj_set_width(message, 230);
+    lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(message, lv_color_hex(ACCENT_RED), 0);
+    lv_obj_set_style_text_font(message, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(message, LV_ALIGN_TOP_MID, 0, 2);
+
+    lv_obj_t* close = lv_btn_create(dlg);
+    lv_obj_set_size(close, 64, 22);
+    lv_obj_align(close, LV_ALIGN_BOTTOM_MID, 0, 0);
+    apply_pixel_btn(close);
+    lv_obj_t* label = lv_label_create(close);
+    lv_label_set_text(label, "OK");
+    lv_obj_center(label);
+    lv_obj_add_event_cb(close, [](lv_event_t* e) {
+        lv_obj_del_async(lv_obj_get_parent(static_cast<lv_obj_t*>(lv_event_get_target(e))));
+    }, LV_EVENT_CLICKED, nullptr);
+}
+
 void chat_screen_open_dm(const char* contact_name)
 {
     if (!contact_name || !contact_name[0]) return;
 
-    // Signal chat_screen_show() to skip the channel-list screen
-    // so we go directly to the messaging view without a wasteful
-    // intermediate lv_scr_load_anim that causes a crash when
-    // open_channel_messaging() triggers a second screen load.
-    g_skip_channel_list = true;
-    navigate_to(Screen::Chat);
     refresh_channels();
 
     // Buffer must fit "DM: " (4) + max contact name (31) + null (1) = 36
@@ -2509,12 +2544,26 @@ void chat_screen_open_dm(const char* contact_name)
     snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
 
     int idx = find_channel_idx(dm_name);
-    if (idx < 0 && dyn_count < MAX_CHANNELS) {
+    if (!chat_screen_dm_has_capacity(dyn_count, idx >= 0)) {
+        g_skip_channel_list = false;
+        show_dm_capacity_error();
+        return;
+    }
+
+    if (idx < 0) {
         idx = dyn_count;
         strncpy(dyn_channels[idx], dm_name, sizeof(dyn_channels[idx]) - 1);
         dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
         dyn_count++;
     }
+
+    // Only a real route transition needs the channel-list skip. When Chat is
+    // already current, setting the flag would survive the same-screen guard
+    // and break the next Chat entry.
+    const bool needs_navigation = chat_screen_dm_requires_navigation(
+        current_screen() == Screen::Chat);
+    g_skip_channel_list = needs_navigation;
+    if (needs_navigation) navigate_to(Screen::Chat);
 
     if (idx >= 0 && idx < MAX_CHANNELS) {
         open_channel_messaging(idx);
