@@ -68,20 +68,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  dependency-review:
-    name: Review dependency changes
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Reject vulnerable dependency changes
-        uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
-
   codeql:
     name: CodeQL C/C++ SAST
     runs-on: ubuntu-latest

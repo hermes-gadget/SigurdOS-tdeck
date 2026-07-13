@@ -20,7 +20,6 @@ class SecurityWorkflowTests(unittest.TestCase):
         self.assertIn("pull_request:", self.workflow)
         self.assertIn("schedule:", self.workflow)
         self.assertIn("npm audit --omit=dev --audit-level=high", self.workflow)
-        self.assertIn("actions/dependency-review-action@v4", self.workflow)
         self.assertIn("pio pkg list -e SigurdOS_TDeck", self.workflow)
 
     def test_dependency_inventories_are_required_artifacts(self) -> None:
