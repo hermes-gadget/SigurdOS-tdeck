@@ -56,13 +56,13 @@ def main() -> int:
     else:
         lines.append("No warning fingerprint exceeded its checked-in budget.")
     if reductions:
-        lines += ["", "Reductions found:", ""] + [f"- {item}" for item in reductions]
+        lines += ["", "Stale warning budgets:", ""] + [f"- {item}" for item in reductions]
     output = "\n".join(lines) + "\n"
     print(output, end="")
     if args.summary:
         with args.summary.open("a") as stream:
             stream.write(output)
-    return 1 if errors else 0
+    return 1 if errors or reductions else 0
 
 
 if __name__ == "__main__":

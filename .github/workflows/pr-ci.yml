@@ -81,7 +81,7 @@ jobs:
       - name: Build firmware
         run: |
           set -o pipefail
-          pio run -e SigurdOS_TDeck | tee build.log
+          pio run -e SigurdOS_TDeck 2>&1 | tee build.log
 
       - name: Enforce first-party warning budget
         run: >-

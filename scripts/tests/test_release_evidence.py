@@ -59,7 +59,8 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "build.log"
             log.write_text(
-                "src/hal/keyboard.cpp:306:13: warning: unused [-Wunused-function]\n"
+                "src/ui/screens/screen_settings_display.cpp:551:23: "
+                "warning: unused [-Wunused-variable]\n"
                 "lib/vendor.cpp:1: warning: ignored [-Wunused-variable]\n"
             )
             result = self.run_script("check_first_party_warnings.py", "--log", log)
@@ -69,6 +70,26 @@ class ReleaseEvidenceTests(unittest.TestCase):
             result = self.run_script("check_first_party_warnings.py", "--log", log)
             self.assertEqual(result.returncode, 1)
             self.assertIn("src/new.cpp", result.stdout)
+
+    def test_stale_warning_budget_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            log = directory / "build.log"
+            baseline = directory / "warnings.json"
+            log.write_text("")
+            baseline.write_text(json.dumps({
+                "schema_version": 1,
+                "environment": "SigurdOS_TDeck",
+                "budgets": {"src/old.cpp|-Wunused-variable": 1},
+            }))
+            result = self.run_script(
+                "check_first_party_warnings.py",
+                "--log", log,
+                "--baseline", baseline,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Stale warning budgets", result.stdout)
+            self.assertIn("src/old.cpp", result.stdout)
 
     def test_unclassified_first_party_warning_is_not_ignored(self):
         with tempfile.TemporaryDirectory() as directory:
