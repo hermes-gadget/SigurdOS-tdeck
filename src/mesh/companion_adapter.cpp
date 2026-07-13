@@ -898,7 +898,7 @@ public:
     }
     int getCustomVars(char* out, size_t out_cap) const override {
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-        int n = snprintf(out, out_cap, "gps=%d,gps_interval=%d",
+        int n = snprintf(out, out_cap, "gps:%d,gps_interval:%d",
                          p.gps_enabled ? 1 : 0, (int)p.gps_interval);
         return (n > 0 && (size_t)n < out_cap) ? n : 0;
     }

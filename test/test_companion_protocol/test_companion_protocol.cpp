@@ -82,6 +82,11 @@ public:
     uint32_t now = 1234;
 
     uint8_t path_hash_mode = 0;
+    std::string custom_vars;
+    bool custom_var_result = false;
+    int set_custom_var_calls = 0;
+    std::string custom_var_name;
+    std::string custom_var_value;
 
     uint32_t blePin() const override { return 123456; }
     uint8_t clientRepeat() const override { return 0; }
@@ -372,8 +377,17 @@ public:
         return {last_send_ok, false, tag, 4000};
     }
     void selfTelemetry(uint8_t*, size_t* out_len) const override { if (out_len) *out_len = 0; }
-    int getCustomVars(char*, size_t) const override { return 0; }  // empty by default
-    bool setCustomVar(const char*, const char*) override { return false; }  // fail by default
+    int getCustomVars(char* out, size_t out_cap) const override {
+        if (custom_vars.size() > out_cap) return 0;
+        if (!custom_vars.empty()) std::memcpy(out, custom_vars.data(), custom_vars.size());
+        return (int)custom_vars.size();
+    }
+    bool setCustomVar(const char* name, const char* value) override {
+        ++set_custom_var_calls;
+        custom_var_name = name ? name : "";
+        custom_var_value = value ? value : "";
+        return custom_var_result;
+    }
     int signData(const uint8_t*, size_t len, uint8_t* sig_out) override {
         sign_len_seen = (int)len;
         std::memset(sig_out, 0xAB, 64);
@@ -1197,6 +1211,40 @@ TEST_F(CompanionProtocolTest, GetCustomVarsEmptyAndAllowedFreq) {
     ASSERT_TRUE(bridge.handleFrame(rf, sizeof(rf)));
     ASSERT_EQ(serial.writes[0].size(), 1u);
     EXPECT_EQ(serial.writes[0][0], cc::RESP_ALLOWED_REPEAT_FREQ);
+}
+
+TEST_F(CompanionProtocolTest, CustomVarsUseOfficialNameValueWireFormat) {
+    host.custom_vars = "gps:1,gps_interval:30";
+    uint8_t get_frame[] = {cc::CMD_GET_CUSTOM_VARS};
+
+    ASSERT_TRUE(bridge.handleFrame(get_frame, sizeof(get_frame)));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    std::vector<uint8_t> expected{cc::RESP_CODE_CUSTOM_VARS};
+    expected.insert(expected.end(), host.custom_vars.begin(), host.custom_vars.end());
+    EXPECT_EQ(serial.writes[0], expected);
+
+    serial.writes.clear();
+    host.custom_var_result = true;
+    const uint8_t set_frame[] = {
+        cc::CMD_SET_CUSTOM_VAR, 'g', 'p', 's', '_', 'i', 'n', 't', 'e', 'r', 'v', 'a', 'l',
+        ':', '3', '0'
+    };
+    ASSERT_TRUE(bridge.handleFrame(set_frame, sizeof(set_frame)));
+    EXPECT_EQ(host.set_custom_var_calls, 1);
+    EXPECT_EQ(host.custom_var_name, "gps_interval");
+    EXPECT_EQ(host.custom_var_value, "30");
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0], (std::vector<uint8_t>{cc::RESP_CODE_OK}));
+}
+
+TEST_F(CompanionProtocolTest, SetCustomVarRejectsMissingSeparator) {
+    const uint8_t frame[] = {cc::CMD_SET_CUSTOM_VAR, 'g', 'p', 's'};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    EXPECT_EQ(host.set_custom_var_calls, 0);
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0],
+              (std::vector<uint8_t>{cc::RESP_CODE_ERR, cc::ERR_CODE_ILLEGAL_ARG}));
 }
 
 TEST_F(CompanionProtocolTest, BinaryRequestReturnsStockSentFrame)

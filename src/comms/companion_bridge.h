@@ -354,7 +354,7 @@ public:
     // selfTelemetry fills a MeshCore telemetry blob (CayenneLPP-style). out_len
     // is set to bytes written (0 if unsupported).
     virtual void selfTelemetry(uint8_t* out, size_t* out_len) const = 0;
-    // getCustomVars writes companion custom-variable key=value pairs to out,
+    // getCustomVars writes comma-separated companion name:value pairs to out,
     // returns bytes written (excluding null terminator). 0 = no variables.
     virtual int getCustomVars(char* out, size_t out_cap) const = 0;
     // setCustomVar sets a named companion custom variable. Returns true on success.

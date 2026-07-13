@@ -1164,13 +1164,15 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
-    if (cmd == CMD_SET_CUSTOM_VAR && len >= 3) {
-        const char* varname = (const char*)&_cmd_frame[1];
-        const char* value = varname + strlen(varname) + 1;
-        if ((size_t)(value - (const char*)_cmd_frame) >= len) {
+    if (cmd == CMD_SET_CUSTOM_VAR && len >= 4) {
+        char* varname = (char*)&_cmd_frame[1];
+        char* separator = std::strchr(varname, ':');
+        if (!separator) {
             writeErrFrame(ERR_CODE_ILLEGAL_ARG);
             return true;
         }
+        *separator = '\0';
+        const char* value = separator + 1;
         if (_host->setCustomVar(varname, value)) {
             writeOKFrame();
         } else {
