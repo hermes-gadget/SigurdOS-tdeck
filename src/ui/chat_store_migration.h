@@ -40,7 +40,7 @@ inline sigurdos::mesh::StoredMessage legacyChatMessageToStored(
         std::memcpy(msg.text + pos, legacy.text, keep);
         msg.text[pos + keep] = '\0';
     } else {
-        std::strncpy(msg.text, legacy.text, sizeof(msg.text) - 1);
+        sigurdos::utf8_copy_truncate(msg.text, sizeof(msg.text), legacy.text);
     }
     return msg;
 }

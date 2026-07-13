@@ -186,4 +186,16 @@ TEST(RepeaterTranscriptTest, ResponseQueuePreservesTimestampAndOrder) {
     EXPECT_FALSE(queue.poll(name, sizeof(name), text, sizeof(text), &timestamp));
 }
 
+TEST(RepeaterTranscriptTest, ResponseQueuePreservesUtf8Boundaries) {
+    sigurdos::mesh::CmdResponseQueue<1> queue;
+    const std::string response = std::string(157, 'x') + "\xE2\x82\xAC";
+    ASSERT_TRUE(queue.push("alpha", response.c_str(), 101));
+
+    char name[32];
+    char text[160];
+    ASSERT_TRUE(queue.poll(name, sizeof(name), text, sizeof(text), nullptr));
+    EXPECT_EQ(strlen(text), 157u);
+    EXPECT_EQ(text[156], 'x');
+}
+
 } // anonymous namespace

@@ -3,6 +3,8 @@
 
 #include "chat_message_buffer.h"
 
+#include "utils/utf8_util.h"
+
 #include <cstring>
 
 #include <esp_heap_caps.h>
@@ -67,8 +69,7 @@ ChannelMessage* ChatMessageBuffer::append(const char* sender, const char* text,
     ChannelMessage& msg = _msgs[pos];
     strncpy(msg.sender, sender ? sender : "", sizeof(msg.sender) - 1);
     msg.sender[sizeof(msg.sender) - 1] = '\0';
-    strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
-    msg.text[sizeof(msg.text) - 1] = '\0';
+    sigurdos::utf8_copy_truncate(msg.text, sizeof(msg.text), text ? text : "");
     msg.timestamp = timestamp;
     msg.store_id = store_id;
     msg.is_self = is_self;

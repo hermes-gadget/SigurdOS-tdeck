@@ -8,6 +8,7 @@
 // (ARCH-001, #820).
 
 #include "companion_adapter.h"
+#include "utils/utf8_util.h"
 #include "companion_message_policy.h"
 #include "mesh_wrapper.h"
 #include "mesh_wrapper_internal.h"
@@ -146,24 +147,13 @@ bool sigurdos::mesh::storeIncomingMessageForCompanion(
     const bool is_channel = channel && channel[0];
     if (is_channel) {
         strncpy(msg.conversation, channel, sizeof(msg.conversation) - 1);
-        snprintf(msg.text, sizeof(msg.text), "%s: %s", sender ? sender : "", text ? text : "");
-        // Don't split a multi-byte UTF-8 character at the truncation boundary.
-        // Walk back from the last byte; if it's a continuation byte (0x80-0xBF),
-        // find and truncate at the character start (0xC0-0xFD or 0x00-0x7F).
-        {
-            size_t tlen = strlen(msg.text);
-            while (tlen > 0 && (msg.text[tlen - 1] & 0xC0) == 0x80) {
-                msg.text[--tlen] = '\0';
-            }
-            // Strip any orphaned multi-byte start byte (0xC0–0xFD)
-            // left after continuation-byte cleanup (follow-up to #653).
-            if (tlen > 0 && (msg.text[tlen - 1] & 0xC0) == 0xC0) {
-                msg.text[--tlen] = '\0';
-            }
-        }
+        msg.text[0] = '\0';
+        sigurdos::utf8_append_truncate(msg.text, sizeof(msg.text), sender ? sender : "");
+        sigurdos::utf8_append_truncate(msg.text, sizeof(msg.text), ": ");
+        sigurdos::utf8_append_truncate(msg.text, sizeof(msg.text), text ? text : "");
     } else {
         formatDmConversation(msg.conversation, sizeof(msg.conversation), sender);
-        strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
+        sigurdos::utf8_copy_truncate(msg.text, sizeof(msg.text), text ? text : "");
     }
     strncpy(msg.sender, sender ? sender : "", sizeof(msg.sender) - 1);
     // Use the originating packet's timestamp so the app shows the real send
@@ -331,10 +321,13 @@ public:
         uint32_t expected_ack = 0;
         uint32_t est_timeout = 0;
         int send_result = MSG_SEND_FAILED;
+        char safe_text[sigurdos::mesh::SIGURDOS_MSG_TEXT_LEN];
+        sigurdos::utf8_copy_truncate(safe_text, sizeof(safe_text), text);
         if (txt_type == sigurdos::comms::COMPANION_TXT_CLI_DATA) {
-            send_result = mesh_ptr()->sendCommandData(*contact, ts, attempt, text, est_timeout);
+            send_result = mesh_ptr()->sendCommandData(*contact, ts, attempt,
+                                                       safe_text, est_timeout);
         } else {
-            send_result = mesh_ptr()->sendMessage(*contact, ts, attempt, text,
+            send_result = mesh_ptr()->sendMessage(*contact, ts, attempt, safe_text,
                                               expected_ack, est_timeout);
         }
         if (send_result == MSG_SEND_FAILED) return result;
@@ -346,8 +339,8 @@ public:
         formatDmConversation(conversation, sizeof(conversation), contact->name);
         const bool sent_flood = send_result == MSG_SEND_SENT_FLOOD;
         const uint32_t store_id = meshStoreOutgoingMessage(
-            conversation, text, ts, false, sent_flood, attempt, txt_type);
-        meshQueuePushOutgoing(conversation, meshOwnName(), text, ts, store_id);
+            conversation, safe_text, ts, false, sent_flood, attempt, txt_type);
+        meshQueuePushOutgoing(conversation, meshOwnName(), safe_text, ts, store_id);
         sigurdos::mesh::pushPacketLog(meshOwnName(), 0, 0.0f, "TX_DM");
 
         result.ok = true;
@@ -365,12 +358,19 @@ public:
         ChannelDetails cd;
         if (!mesh_ptr()->BaseChatMesh::getChannel(channel_index, cd)) return result;
         uint32_t ts = timestamp ? timestamp : meshRtcTime();
-        if (!mesh_ptr()->sendGroupMessage(ts, cd.channel, meshOwnName(), text, (int)strlen(text))) {
+        const size_t prefix_len = strnlen(meshOwnName(), MAX_TEXT_LEN) + 2;
+        if (prefix_len >= MAX_TEXT_LEN) return result;
+        char safe_text[MAX_TEXT_LEN + 1];
+        const size_t text_len = sigurdos::utf8_copy_truncate(
+            safe_text, MAX_TEXT_LEN - prefix_len + 1, text);
+        if (!mesh_ptr()->sendGroupMessage(ts, cd.channel, meshOwnName(), safe_text,
+                                          (int)text_len)) {
             return result;
         }
         const uint32_t store_id = meshStoreOutgoingMessage(
-            cd.name, text, ts, true, true, 0, sigurdos::comms::COMPANION_TXT_PLAIN);
-        meshQueuePushOutgoing(cd.name, meshOwnName(), text, ts, store_id);
+            cd.name, safe_text, ts, true, true, 0,
+            sigurdos::comms::COMPANION_TXT_PLAIN);
+        meshQueuePushOutgoing(cd.name, meshOwnName(), safe_text, ts, store_id);
         sigurdos::mesh::pushPacketLog(meshOwnName(), 0, 0.0f, "TX_CHAN");
         result.ok = true;
         result.sent_flood = true;

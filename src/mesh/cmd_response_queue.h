@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "utils/utf8_util.h"
+
 namespace sigurdos::mesh {
 
 template <size_t Capacity>
@@ -55,9 +57,7 @@ public:
 private:
     static void copy(char* destination, size_t size, const char* source)
     {
-        if (!destination || size == 0) return;
-        std::strncpy(destination, source ? source : "", size - 1);
-        destination[size - 1] = '\0';
+        sigurdos::utf8_copy_truncate(destination, size, source ? source : "");
     }
 
     Entry entries_[Capacity]{};

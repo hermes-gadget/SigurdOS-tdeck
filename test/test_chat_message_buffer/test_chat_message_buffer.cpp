@@ -139,6 +139,8 @@ TEST_F(ChatMessageBufferTest, NewMessagesStartWithoutConfirmationLoss)
     ASSERT_NE(msg, nullptr);
     EXPECT_FALSE(msg->acked);
     EXPECT_FALSE(msg->confirmation_lost);
+}
+
 TEST_F(ChatMessageBufferTest, RetainsPersistentStoreId)
 {
     ChatMessageBuffer buf;
@@ -146,3 +148,16 @@ TEST_F(ChatMessageBufferTest, RetainsPersistentStoreId)
                                      FULL_CAP, FULL_CAP, FALLBACK_CAP, 77);
     ASSERT_NE(msg, nullptr);
     EXPECT_EQ(msg->store_id, 77u);
+}
+
+TEST_F(ChatMessageBufferTest, TimelineDoesNotKeepPartialUtf8CodePoint)
+{
+    ChatMessageBuffer buf;
+    const std::string text = std::string(157, 'x') + "\xF0\x9F\x9A\x80";
+    ChannelMessage* msg = append(buf, text.c_str());
+    ASSERT_NE(msg, nullptr);
+    EXPECT_EQ(strlen(msg->text), 157u);
+    EXPECT_EQ(msg->text[156], 'x');
+}
+
+} // anonymous namespace

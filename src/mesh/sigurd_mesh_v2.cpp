@@ -7,6 +7,7 @@
 #include "companion_message_policy.h"
 #include "advert_blob.h"
 #include "control_parser.h"
+#include "utils/utf8_util.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -526,8 +527,7 @@ namespace mesh {
             RoomMsgFetchEntry& e = _room_fetch_buf[_n_room_fetched++];
             strncpy(e.sender, sender, sizeof(e.sender) - 1);
             e.sender[sizeof(e.sender) - 1] = '\0';
-            strncpy(e.text, text, sizeof(e.text) - 1);
-            e.text[sizeof(e.text) - 1] = '\0';
+            sigurdos::utf8_copy_truncate(e.text, sizeof(e.text), text);
             e.timestamp = getRTCClock()->getCurrentTime();
             strncpy(e.channel, channel_name, sizeof(e.channel) - 1);
             e.channel[sizeof(e.channel) - 1] = '\0';
@@ -683,11 +683,9 @@ namespace mesh {
         if (len <= 4 || !data) return;
         // Copy text to local buffer — do NOT modify the packet data in-place
         // (the buffer may be shared between multiple callers).
-        size_t tlen = len - 4;
-        if (tlen > 159) tlen = 159;
         char text[160];
-        memcpy(text, data + 4, tlen);
-        text[tlen] = '\0';
+        sigurdos::utf8_copy_truncate_n(
+            text, sizeof(text), reinterpret_cast<const char*>(data + 4), len - 4);
 
         int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
@@ -1283,13 +1281,15 @@ namespace mesh {
 
     bool SigurdMeshV2::sendTextTo(const char* name, const char* text) {
         if (!name || !text) return false;
+        char safe_text[MAX_TEXT_LEN];
+        sigurdos::utf8_copy_truncate(safe_text, sizeof(safe_text), text);
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
             if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 uint32_t expected_ack = 0, est_timeout = 0;
                 uint32_t ts = getRTCClock()->getCurrentTime();
-                int r = BaseChatMesh::sendMessage(tmp, ts, 0, text,
+                int r = BaseChatMesh::sendMessage(tmp, ts, 0, safe_text,
                                                   expected_ack, est_timeout);
                 if (r != MSG_SEND_FAILED) {
                     addPendingAck(name, ts, expected_ack, est_timeout);
@@ -1302,12 +1302,14 @@ namespace mesh {
 
     bool SigurdMeshV2::sendTextTo(const char* name, const char* text, uint32_t fixed_ts) {
         if (!name || !text) return false;
+        char safe_text[MAX_TEXT_LEN];
+        sigurdos::utf8_copy_truncate(safe_text, sizeof(safe_text), text);
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
             if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 uint32_t expected_ack = 0, est_timeout = 0;
-                int r = BaseChatMesh::sendMessage(tmp, fixed_ts, 0, text,
+                int r = BaseChatMesh::sendMessage(tmp, fixed_ts, 0, safe_text,
                                                   expected_ack, est_timeout);
                 if (r != MSG_SEND_FAILED) {
                     addPendingAck(name, fixed_ts, expected_ack, est_timeout);
@@ -1323,8 +1325,13 @@ namespace mesh {
         ChannelDetails cd;
         if (!BaseChatMesh::getChannel(idx, cd)) return false;
         uint32_t ts = getRTCClock()->getCurrentTime();
-        return BaseChatMesh::sendGroupMessage(ts, cd.channel, _own_name, text,
-                                              (int)strlen(text));
+        const size_t prefix_len = strnlen(_own_name, MAX_TEXT_LEN) + 2;
+        if (prefix_len >= MAX_TEXT_LEN) return false;
+        char safe_text[MAX_TEXT_LEN + 1];
+        const size_t text_len = sigurdos::utf8_copy_truncate(
+            safe_text, MAX_TEXT_LEN - prefix_len + 1, text);
+        return BaseChatMesh::sendGroupMessage(ts, cd.channel, _own_name, safe_text,
+                                              (int)text_len);
     }
 
     bool SigurdMeshV2::sendGroupDataToChannel(int idx, uint16_t data_type, const uint8_t* data, int data_len) {
@@ -1420,9 +1427,10 @@ namespace mesh {
         // Data format: [4-byte timestamp][null-terminated text]
         uint8_t buf[256];
         memcpy(buf, &ts, 4);
-        size_t tlen = strlen(text);
-        if (tlen > 250) tlen = 250;
-        memcpy(buf + 4, text, tlen);
+        char safe_text[251];
+        const size_t tlen = sigurdos::utf8_copy_truncate(
+            safe_text, sizeof(safe_text), text);
+        memcpy(buf + 4, safe_text, tlen);
         buf[4 + tlen] = '\0';
 
         int r = BaseChatMesh::sendAnonReq(tmp, buf, 5 + tlen, tag, est_timeout);

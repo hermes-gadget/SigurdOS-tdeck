@@ -94,6 +94,46 @@ TEST(Utf8Truncation, PreservesCompleteMultibyteAtLimitWithoutTerminator) {
     EXPECT_EQ(utf8_truncate_bytes(s, sizeof(s)), sizeof(s));
 }
 
+TEST(Utf8Truncation, CopyDropsTwoThreeAndFourByteBoundarySplits) {
+    char out[5];
+    EXPECT_EQ(utf8_copy_truncate(out, sizeof(out), "abc\xC3\xA9"), 3u);
+    EXPECT_STREQ(out, "abc");
+    EXPECT_EQ(utf8_copy_truncate(out, sizeof(out), "ab\xE2\x82\xAC"), 2u);
+    EXPECT_STREQ(out, "ab");
+    EXPECT_EQ(utf8_copy_truncate(out, sizeof(out), "a\xF0\x9F\x9A\x80"), 1u);
+    EXPECT_STREQ(out, "a");
+}
+
+TEST(Utf8Truncation, BoundedAnonymousPayloadDoesNotReadOrCopyPastLength) {
+    const char payload[] = {'O', 'K', static_cast<char>(0xF0),
+                            static_cast<char>(0x9F)};
+    char out[16];
+    EXPECT_EQ(utf8_copy_truncate_n(out, sizeof(out), payload, sizeof(payload)), 2u);
+    EXPECT_STREQ(out, "OK");
+}
+
+TEST(Utf8Truncation, InPlacePersistedReplayDropsIncompleteSuffix) {
+    char text[8] = {'D', 'M', static_cast<char>(0xE2),
+                    static_cast<char>(0x82), '\0'};
+    EXPECT_EQ(utf8_copy_truncate(text, sizeof(text), text), 2u);
+    EXPECT_STREQ(text, "DM");
+}
+
+TEST(Utf8Truncation, ChannelFormattingAppendsOnlyWholeCodePoints) {
+    char text[12] = {};
+    utf8_append_truncate(text, sizeof(text), "alice");
+    utf8_append_truncate(text, sizeof(text), ": ");
+    utf8_append_truncate(text, sizeof(text), "hey\xF0\x9F\x9A\x80");
+    EXPECT_STREQ(text, "alice: hey");
+}
+
+TEST(Utf8Truncation, RejectsMalformedUtf8InsteadOfPersistingIt) {
+    const char malformed[] = {'o', 'k', static_cast<char>(0x80), 'x', '\0'};
+    char out[8];
+    EXPECT_EQ(utf8_copy_truncate(out, sizeof(out), malformed), 2u);
+    EXPECT_STREQ(out, "ok");
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

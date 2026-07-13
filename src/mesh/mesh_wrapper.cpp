@@ -21,6 +21,7 @@
 #include "hal/prefs.h"
 #include "sigurd_mesh_v2.h"
 #include "regions.h"
+#include "utils/utf8_util.h"
 #include "../diagnostics/debug_cfg.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 
@@ -144,8 +145,7 @@ static bool presentIncomingMessage(void* raw)
     m.sender[sizeof(m.sender) - 1] = '\0';
     strncpy(m.channel, ctx->channel ? ctx->channel : "", sizeof(m.channel) - 1);
     m.channel[sizeof(m.channel) - 1] = '\0';
-    strncpy(m.text, ctx->text, sizeof(m.text) - 1);
-    m.text[sizeof(m.text) - 1] = '\0';
+    sigurdos::utf8_copy_truncate(m.text, sizeof(m.text), ctx->text);
     m.timestamp = ctx->sender_timestamp
         ? ctx->sender_timestamp : rtc_clock.getCurrentTime();
     m.store_id = ctx->store_id;
@@ -205,8 +205,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
     m.sender[sizeof(m.sender) - 1] = '\0';
     strncpy(m.channel, channel ? channel : "", sizeof(m.channel) - 1);
     m.channel[sizeof(m.channel) - 1] = '\0';
-    strncpy(m.text, text, sizeof(m.text) - 1);
-    m.text[sizeof(m.text) - 1] = '\0';
+    sigurdos::utf8_copy_truncate(m.text, sizeof(m.text), text);
     m.timestamp = rtc_clock.getCurrentTime();
     m.store_id = 0;
     m.is_self = false;
@@ -304,7 +303,7 @@ uint32_t sigurdos::mesh::meshStoreOutgoingMessage(const char* conversation, cons
     sigurdos::mesh::StoredMessage msg{};
     strncpy(msg.conversation, conversation ? conversation : "", sizeof(msg.conversation) - 1);
     strncpy(msg.sender, own_name, sizeof(msg.sender) - 1);
-    strncpy(msg.text, text ? text : "", sizeof(msg.text) - 1);
+    sigurdos::utf8_copy_truncate(msg.text, sizeof(msg.text), text ? text : "");
     msg.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
     msg.is_self = true;
     msg.is_channel = is_channel;
@@ -337,8 +336,7 @@ void sigurdos::mesh::meshQueuePushOutgoing(const char* conversation, const char*
     m.sender[sizeof(m.sender) - 1] = '\0';
     strncpy(m.channel, conversation, sizeof(m.channel) - 1);
     m.channel[sizeof(m.channel) - 1] = '\0';
-    strncpy(m.text, text, sizeof(m.text) - 1);
-    m.text[sizeof(m.text) - 1] = '\0';
+    sigurdos::utf8_copy_truncate(m.text, sizeof(m.text), text);
     m.timestamp = timestamp ? timestamp : rtc_clock.getCurrentTime();
     m.store_id = store_id;
     m.is_self = true;
@@ -604,8 +602,7 @@ bool getRoomMsgFetchEntry(int index, char* sender_out, int sender_sz,
         sender_out[sender_sz - 1] = '\0';
     }
     if (text_out && text_sz > 0) {
-        strncpy(text_out, e->text, text_sz - 1);
-        text_out[text_sz - 1] = '\0';
+        sigurdos::utf8_copy_truncate(text_out, (size_t)text_sz, e->text);
     }
     if (channel_out && channel_sz > 0) {
         strncpy(channel_out, e->channel, channel_sz - 1);
@@ -625,10 +622,10 @@ uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, con
     if (!g_mesh || !contact_name || !channel_name || !text) return 0;
     // Format: "[channel_name] text" — embeds the channel name in the message text
     // so the room server can identify which channel the message is for.
-    char buf[160];
-    int n = snprintf(buf, sizeof(buf), "#%s %s", channel_name, text);
-    if (n <= 0) return 0;
-    if (n >= (int)sizeof(buf)) n = sizeof(buf) - 1;
+    char buf[sigurdos::mesh::SIGURDOS_MSG_TEXT_LEN] = "#";
+    sigurdos::utf8_append_truncate(buf, sizeof(buf), channel_name);
+    sigurdos::utf8_append_truncate(buf, sizeof(buf), " ");
+    sigurdos::utf8_append_truncate(buf, sizeof(buf), text);
     // Send as a peer TXT_MSG to the room server contact (like a DM).
     return sendMessage(contact_name, buf);
 }
