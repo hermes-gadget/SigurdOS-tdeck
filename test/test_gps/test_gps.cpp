@@ -25,6 +25,7 @@
 #include <gtest/gtest.h>
 #include "Arduino.h"
 #include "hal/gps.h"
+#include "hal/gps_demand.h"
 #include "hal/tdeck_pins.h"
 #include <cstdint>
 #include <cstring>
@@ -32,6 +33,32 @@
 #include <cstdio>
 
 namespace {
+
+TEST(GPSDemandTest, BackgroundCadenceIsNeverEveryLoop) {
+    EXPECT_EQ(sigurdos_gps_normalize_interval(0), 5);
+    EXPECT_EQ(sigurdos_gps_normalize_interval(1), 5);
+    EXPECT_EQ(sigurdos_gps_effective_poll_ms(true, 0, false, false), 5000u);
+    EXPECT_EQ(sigurdos_gps_effective_poll_ms(false, 5, false, false), 0u);
+}
+
+TEST(GPSDemandTest, ForegroundDemandOverridesBackgroundSetting) {
+    EXPECT_EQ(sigurdos_gps_effective_poll_ms(false, 60, true, false), 200u);
+    EXPECT_EQ(sigurdos_gps_effective_poll_ms(false, 60, false, true), 200u);
+    EXPECT_TRUE(sigurdos_gps_poll_due(100, 0, 200));
+    EXPECT_FALSE(sigurdos_gps_poll_due(299, 100, 200));
+    EXPECT_TRUE(sigurdos_gps_poll_due(300, 100, 200));
+}
+
+TEST(GPSDemandTest, OneShotSyncTimesOutWithoutEnablingBackgroundGps) {
+    arduino_mock::reset();
+    arduino_mock::current_millis = 100;
+    sigurdos_gps_init();
+    sigurdos_gps_start_time_sync(1000);
+    EXPECT_EQ(sigurdos_gps_time_sync_status(), SigurdOSGpsSyncStatus::Waiting);
+    arduino_mock::current_millis = 1100;
+    sigurdos_gps_service(false, 5);
+    EXPECT_EQ(sigurdos_gps_time_sync_status(), SigurdOSGpsSyncStatus::TimedOut);
+}
 
 // ── GPS fix data ──────────────────────────────────────────
 struct GPSFix {

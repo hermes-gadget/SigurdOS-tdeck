@@ -13,6 +13,11 @@ static constexpr size_t SIGURDOS_MSG_CONVERSATION_LEN = 32;
 static constexpr size_t SIGURDOS_MSG_SENDER_LEN = 32;
 static constexpr size_t SIGURDOS_MSG_TEXT_LEN = 160;
 static constexpr size_t SIGURDOS_MSG_PREFIX_LEN = 6;
+// The unified log retains enough history for all UI conversations while
+// staying bounded on SPIFFS. When full, compact in a batch so appending does
+// not trigger an O(n) rewrite for every subsequent message.
+static constexpr uint32_t MESSAGE_STORE_MAX_RECORDS = 512;
+static constexpr uint32_t MESSAGE_STORE_COMPACT_TO_RECORDS = 448;
 
 struct StoredMessage {
     // Monotonic store ID assigned at append time — used for per-record

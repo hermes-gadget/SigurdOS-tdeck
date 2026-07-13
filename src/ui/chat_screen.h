@@ -22,7 +22,6 @@
 #include "../hal/trackball.h"
 #include <lvgl.h>
 #include <cstdint>
-#include "chat_history_checkpoint.h"
 #include <cstring>
 
 namespace sigurdos::ui {
@@ -95,9 +94,8 @@ bool chat_screen_overlay_active();
 uint16_t chat_screen_get_message_cap();
 void     chat_screen_set_message_cap(uint16_t cap);
 
-// Persist/restore per-channel message history to/from SPIFFS
-void chat_save_messages();
-void chat_save_messages_if_due(uint32_t now);
+// Restore the UI's RAM window from the unified SPIFFS message log. On first
+// boot after upgrade this also migrates and removes the retired /msgs file.
 void chat_load_messages();
 
 // Periodically check for newly arrived ACKs and re-render if needed.

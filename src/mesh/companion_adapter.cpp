@@ -8,6 +8,7 @@
 // (ARCH-001, #820).
 
 #include "companion_adapter.h"
+#include "companion_message_policy.h"
 #include "mesh_wrapper.h"
 #include "mesh_wrapper_internal.h"
 #include "scope_key_hex.h"
@@ -19,6 +20,7 @@
 #include "comms/observed_ble_interface.h"
 #include "hal/tdeck_pins.h"
 #include "hal/prefs.h"
+#include "hal/radio_profiles.h"
 #include "hal/gps.h"
 #include "hal/battery.h"
 #include "diagnostics/log.h"
@@ -58,6 +60,16 @@ using sigurdos::comms::CompanionOtherParams;
 using sigurdos::comms::CompanionCoreStats;
 using sigurdos::comms::CompanionRadioStats;
 using sigurdos::comms::CompanionPacketStats;
+
+static_assert(sigurdos::mesh::COMPANION_TEXT_PLAIN ==
+                  sigurdos::comms::COMPANION_TXT_PLAIN,
+              "plain-text companion type must match the wire protocol");
+static_assert(sigurdos::mesh::COMPANION_TEXT_CLI_DATA ==
+                  sigurdos::comms::COMPANION_TXT_CLI_DATA,
+              "CLI-data companion type must match the wire protocol");
+static_assert(sigurdos::mesh::COMPANION_TEXT_SIGNED_PLAIN ==
+                  sigurdos::comms::COMPANION_TXT_SIGNED_PLAIN,
+              "signed-text companion type must match the wire protocol");
 
 static_assert(sigurdos::mesh::SIGURDOS_ADVERT_BLOB_MAX_LEN <= MAX_FRAME_SIZE - 1,
               "serialized adverts must fit the companion response frame");
@@ -368,7 +380,12 @@ public:
         }
         if (payload_len > 0 && !payload) return false;
         return mesh_ptr()->sendGroupDataToChannel(channel_index, path, path_len,
-                                              data_type, payload, (int)payload_len);
+                                                  data_type, payload, (int)payload_len);
+    }
+    bool sendRawData(const uint8_t* path, uint8_t path_len,
+                     const uint8_t* payload, size_t payload_len) override {
+        if (!meshRadioTxAllowed() || !mesh_ptr()) return false;
+        return mesh_ptr()->sendRawDataCompanion(path, path_len, payload, payload_len);
     }
 
     bool sendAdvert(bool flood) override {
@@ -430,25 +447,43 @@ public:
         if (cr < 5 || cr > 8) return false;
         if (client_repeat > 1) return false;
 
-        sigurdos::NodePrefs p = sigurdos::prefs_get();
-        const int8_t tx_power = (p.tx_power_dbm >= -9 && p.tx_power_dbm <= 22)
-            ? p.tx_power_dbm
+        sigurdos::NodePrefs proposed = sigurdos::prefs_get();
+        const int8_t tx_power =
+            (proposed.tx_power_dbm >= -9 && proposed.tx_power_dbm <= 22)
+            ? proposed.tx_power_dbm
             : LORA_TX_PWR;
         const float freq = (float)freq_khz / 1000.0f;
         const float bw = (float)bw_hz / 1000.0f;
-        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
-                                              tx_power, p.rx_boosted_gain)) {
+
+        proposed.configured = true;
+        proposed.freq = freq;
+        proposed.bw = bw;
+        proposed.sf = sf;
+        proposed.cr = cr;
+        proposed.tx_power_dbm = tx_power;
+        proposed.client_repeat = client_repeat;
+
+        const sigurdos::RadioProfile* matched = sigurdos::radio_profile_match(proposed);
+        if (matched) {
+            sigurdos::radio_profile_apply(*matched, proposed);
+        } else {
+            sigurdos::radio_profile_set_custom(proposed);
+        }
+
+        uint32_t repeat_freq_khz = 0;
+        if (client_repeat != 0 &&
+            (!sigurdos::radio_profile_repeat_frequency_khz(proposed,
+                                                           &repeat_freq_khz) ||
+             repeat_freq_khz != freq_khz)) {
             return false;
         }
 
-        p.configured = true;
-        p.freq = freq;
-        p.bw = bw;
-        p.sf = sf;
-        p.cr = cr;
-        p.tx_power_dbm = (int8_t)tx_power;
-        p.client_repeat = client_repeat;
-        sigurdos::prefs_set(p);
+        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
+                                              tx_power, proposed.rx_boosted_gain)) {
+            return false;
+        }
+
+        sigurdos::prefs_set(proposed);
         return true;
     }
 
@@ -665,14 +700,17 @@ public:
         s.recv_errors = d.packets_recv_errors;
     }
     size_t allowedRepeatFreqRanges(uint32_t* pairs, size_t max_pairs) const override {
-        // Return the actual supported frequency range(s) for client-repeat.
-        // For SX1262 on T-Deck: 150 MHz – 960 MHz (usable range).
-        if (pairs && max_pairs >= 1) {
-            pairs[0] = 150000;   // 150 MHz in kHz (lower)
-            pairs[1] = 960000;   // 960 MHz in kHz (upper)
-            return 1;            // 1 range pair
+        if (!pairs || max_pairs == 0) return 0;
+
+        uint32_t frequency_khz = 0;
+        if (!sigurdos::radio_profile_repeat_frequency_khz(
+                sigurdos::prefs_get(), &frequency_khz)) {
+            return 0;
         }
-        return 0;
+
+        pairs[0] = frequency_khz;
+        pairs[1] = frequency_khz;
+        return 1;
     }
 
     // ── Flood scope (companion regions) ──────────────────────
@@ -758,6 +796,30 @@ public:
     CompanionSendResult sendTelemetryReq(const uint8_t* pub_key) override {
         return sendReqByPubKey(pub_key, /*telemetry=*/true);
     }
+    CompanionSendResult sendBinaryReq(const uint8_t* pub_key,
+                                      const uint8_t* data,
+                                      uint8_t data_len) override {
+        CompanionSendResult r{};
+        if (!meshRadioTxAllowed() || !mesh_ptr() || !pub_key ||
+            !data || data_len == 0) {
+            return r;
+        }
+        ::ContactInfo* contact = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
+        if (!contact) return r;
+        uint32_t tag = 0;
+        uint32_t est_timeout = 0;
+        const int result = mesh_ptr()->sendBinaryRequestCompanion(
+            *contact, data, data_len, tag, est_timeout);
+        if (result == MSG_SEND_FAILED) return r;
+        r.ok = true;
+        r.sent_flood = result == MSG_SEND_SENT_FLOOD;
+        r.expected_ack = tag;
+        r.est_timeout = est_timeout;
+        return r;
+    }
+    void cancelBinaryReqs() override {
+        if (mesh_ptr()) mesh_ptr()->cancelCompanionBinaryRequests();
+    }
     CompanionSendResult sendTracePath(uint32_t tag, uint32_t auth, uint8_t flags,
                                       const uint8_t* path, uint8_t path_len) override {
         CompanionSendResult r{};
@@ -816,7 +878,7 @@ public:
         } else if (strcmp(name, "gps_interval") == 0) {
             int iv = atoi(value);
             if (iv >= 0 && iv <= 86400) {
-                p.gps_interval = (uint16_t)iv;
+                p.gps_interval = iv < 5 ? 5 : (uint16_t)iv;
                 sigurdos::prefs_set(p);
                 return true;
             }
@@ -932,6 +994,20 @@ void sigurdos::mesh::mesh_v2_companion_telemetry_push(const uint8_t* pub_key,
 {
     if (g_companion_bridge_ptr)
         g_companion_bridge_ptr->pushTelemetryResponse(pub_key, blob, len);
+}
+
+void sigurdos::mesh::mesh_v2_companion_binary_push(uint32_t tag,
+                                                   const uint8_t* blob,
+                                                   size_t len)
+{
+    if (g_companion_bridge_ptr)
+        g_companion_bridge_ptr->pushBinaryResponse(tag, blob, len);
+void sigurdos::mesh::mesh_v2_companion_raw_data_push(int8_t snr_quarters, int8_t rssi,
+                                                     const uint8_t* payload,
+                                                     size_t payload_len)
+{
+    if (g_companion_bridge_ptr)
+        g_companion_bridge_ptr->pushRawData(snr_quarters, rssi, payload, payload_len);
 }
 
 void sigurdos::mesh::mesh_v2_companion_trace_push(uint32_t tag, uint32_t auth, uint8_t flags,

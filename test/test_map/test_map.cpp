@@ -431,4 +431,65 @@ TEST_F(TileCacheTest, SearchSmallerCache) {
     EXPECT_EQ(evicted, &small_cache[1]);
 }
 
+// ════════════════════════════════════════════════════════
+// Missing tile cache + per-render load budget
+// ════════════════════════════════════════════════════════
+
+TEST(MissingTileCacheTest, HitExpiresAfterBoundedTtl) {
+    MissingTileCacheEntry cache[3];
+    missing_tile_cache_init(cache, 3);
+    missing_tile_cache_record(cache, 3, 10, 512, 340, 1000);
+
+    EXPECT_TRUE(missing_tile_cache_contains(cache, 3, 10, 512, 340,
+                                            1001, 30000));
+    EXPECT_EQ(1, missing_tile_cache_active_count(cache, 3, 2000, 30000));
+    EXPECT_FALSE(missing_tile_cache_contains(cache, 3, 10, 512, 340,
+                                             31000, 30000));
+    EXPECT_EQ(0, missing_tile_cache_active_count(cache, 3, 31000, 30000));
+}
+
+TEST(MissingTileCacheTest, ExpiryMathHandlesMillisWrap) {
+    MissingTileCacheEntry cache[1];
+    missing_tile_cache_init(cache, 1);
+    missing_tile_cache_record(cache, 1, 5, 1, 2, UINT32_MAX - 100);
+
+    EXPECT_TRUE(missing_tile_cache_contains(cache, 1, 5, 1, 2, 50, 200));
+    EXPECT_FALSE(missing_tile_cache_contains(cache, 1, 5, 1, 2, 100, 200));
+}
+
+TEST(MissingTileCacheTest, FullCacheEvictsOldestFailure) {
+    MissingTileCacheEntry cache[2];
+    missing_tile_cache_init(cache, 2);
+    missing_tile_cache_record(cache, 2, 1, 1, 1, 100);
+    missing_tile_cache_record(cache, 2, 1, 2, 2, 200);
+    missing_tile_cache_record(cache, 2, 1, 3, 3, 300);
+
+    EXPECT_FALSE(missing_tile_cache_contains(cache, 2, 1, 1, 1, 301, 1000));
+    EXPECT_TRUE(missing_tile_cache_contains(cache, 2, 1, 2, 2, 301, 1000));
+    EXPECT_TRUE(missing_tile_cache_contains(cache, 2, 1, 3, 3, 301, 1000));
+}
+
+TEST(MissingTileCacheTest, DuplicateFailureRefreshesTimestampWithoutGrowing) {
+    MissingTileCacheEntry cache[2];
+    missing_tile_cache_init(cache, 2);
+    missing_tile_cache_record(cache, 2, 1, 2, 3, 100);
+    missing_tile_cache_record(cache, 2, 1, 2, 3, 500);
+
+    EXPECT_EQ(1, missing_tile_cache_active_count(cache, 2, 600, 1000));
+    EXPECT_TRUE(missing_tile_cache_contains(cache, 2, 1, 2, 3, 1400, 1000));
+}
+
+TEST(TileLoadBudgetTest, AttemptsNeverExceedConfiguredLimit) {
+    TileLoadBudget budget(MAP_TILE_LOAD_BUDGET_PER_RENDER);
+    EXPECT_EQ(2, budget.remaining());
+    EXPECT_TRUE(budget.consume());
+    EXPECT_TRUE(budget.consume());
+    EXPECT_FALSE(budget.consume());
+    EXPECT_EQ(2, budget.used);
+    EXPECT_EQ(0, budget.remaining());
+
+    TileLoadBudget disabled(0);
+    EXPECT_FALSE(disabled.consume());
+}
+
 } // anonymous namespace

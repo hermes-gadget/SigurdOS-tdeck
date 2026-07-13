@@ -43,7 +43,7 @@ test/
 |-- test_channel_store/             Transactional two-bank channel persistence
 |-- test_channel_validation/        Channel name validation and sanitising
 |-- test_chat_config/               Chat message cap clamping and config bounds
-|-- test_chat_history_store/        Atomic chat history codec and recovery
+|-- test_chat_history_store/        Legacy `/msgs` migration, recovery, and unified-store dedup
 |-- test_chat_message_buffer/       Per-channel buffer alloc fallback, eviction, remap handoff
 |-- test_chat_truncation/           UTF-8 safe chat truncation
 |-- test_companion_protocol/        Companion protocol frame shapes and sync behavior
@@ -66,7 +66,7 @@ test/
 |-- test_list_virtualization/       Bounded newest-first list window and page math
 |-- test_lodepng_alloc/             LodePNG PSRAM allocator with DRAM fallback
 |-- test_log/                       Logging macro levels and compile-time gating
-|-- test_map/                       Map projection, tile math, tile cache behavior
+|-- test_map/                       Map projection, LRU/negative cache, and load budgets
 |-- test_map_renderer/              Map renderer constants, zoom validation, and tile math
 |-- test_mesh_contract/             Mesh advert types, contact flags, and buffer capacity stability
 |-- test_mesh_messaging/            Message queues, contacts, responses, LPP parsing
@@ -75,6 +75,7 @@ test/
 |-- test_message_store/             Message append, dedup, rotation, and persistence
 |-- test_navigation/                Navigation stack and back-swipe behavior
 |-- test_navigation_contract/       Screen enum stability and screen inventory checks
+|-- test_notifications/             Alert priority, mention matching, expiry, and resource thresholds
 |-- test_onboarding/                Onboarding date/time validation and leap year rules
 |-- test_pins/                      GPIO ranges, conflicts, and board pin sanity
 |-- test_prefs/                     Preferences defaults and native mock persistence

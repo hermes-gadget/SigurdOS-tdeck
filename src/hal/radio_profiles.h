@@ -35,4 +35,10 @@ const RadioProfile* radio_profile_match(const NodePrefs& prefs);
 void radio_profile_apply(const RadioProfile& profile, NodePrefs& prefs);
 void radio_profile_set_custom(NodePrefs& prefs);
 
+// Client-repeat is only advertised/enabled for a configured, recognized
+// profile. The protocol encodes allowed ranges as kHz pairs; SigurdOS profiles
+// currently permit the profile's exact operating frequency.
+bool radio_profile_repeat_frequency_khz(const NodePrefs& prefs,
+                                        uint32_t* frequency_khz);
+
 } // namespace sigurdos

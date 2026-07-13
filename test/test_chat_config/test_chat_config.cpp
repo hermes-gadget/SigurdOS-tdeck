@@ -17,7 +17,6 @@ using sigurdos::ui::chat_screen_filter_accepts_channel;
 using sigurdos::ui::chat_screen_is_dm_name;
 using sigurdos::ui::chat_screen_normalize_message_cap;
 using sigurdos::ui::chat_screen_resolve_message_timestamp;
-using sigurdos::ui::ChatHistoryCheckpoint;
 
 TEST(ChatConfig, DelayedPollPreservesAuthoritativeTimestamp) {
     EXPECT_EQ(chat_screen_resolve_message_timestamp(1000, 1007), 1000U);
@@ -29,22 +28,6 @@ TEST(ChatConfig, ZeroTimestampFallsBackToCurrentClock) {
 
 TEST(ChatConfig, ZeroUsesDefaultMessageCap) {
     EXPECT_EQ(chat_screen_normalize_message_cap(0), CHAT_SCREEN_MESSAGE_CAP_DEFAULT);
-}
-
-TEST(ChatConfig, DirtyHistorySavesAfterDebounceOnly) {
-    ChatHistoryCheckpoint checkpoint;
-    EXPECT_FALSE(checkpoint.isDue(10000));
-    checkpoint.markDirty(100);
-    EXPECT_FALSE(checkpoint.isDue(5099));
-    EXPECT_TRUE(checkpoint.isDue(5100));
-    checkpoint.saved();
-    EXPECT_FALSE(checkpoint.isDue(20000));
-}
-
-TEST(ChatConfig, DirtySaveDeadlineHandlesMillisWrap) {
-    ChatHistoryCheckpoint checkpoint;
-    checkpoint.markDirty(0xFFFFFF00U);
-    EXPECT_TRUE(checkpoint.isDue(0x00001300U));
 }
 
 TEST(ChatConfig, ValuesBelowMinimumClampUp) {

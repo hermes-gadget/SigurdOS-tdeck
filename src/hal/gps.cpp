@@ -18,6 +18,7 @@
 
 
 #include "gps.h"
+#include "gps_demand.h"
 #include "tdeck_pins.h"
 #include <Arduino.h>
 #include <sys/time.h>
@@ -41,6 +42,7 @@ static struct GPSData {
     bool     has_fix;
     bool     initialized;
     bool     time_synced;
+    uint32_t epoch;
     uint32_t active_baud;
     uint32_t chars_processed;
     uint32_t sentences_received;
@@ -64,6 +66,11 @@ static struct GPSData {
 static char nmea_buf[128];
 static int  nmea_pos = 0;
 static uint8_t gps_baud_index = 0;
+static bool gps_map_high_rate = false;
+static SigurdOSGpsSyncStatus gps_sync_status = SigurdOSGpsSyncStatus::Idle;
+static uint32_t gps_sync_started_ms = 0;
+static uint32_t gps_sync_timeout_ms = 0;
+static uint32_t gps_last_service_ms = 0;
 
 static constexpr uint32_t GPS_BAUD_PROBE_INTERVAL_MS = 3000;
 static constexpr uint32_t GPS_PROBE_TIMEOUT_MS = 60000;  // stop cycling after 60s with no valid sentences
@@ -336,6 +343,10 @@ void sigurdos_gps_init() {
     nmea_pos = 0;
     gps_baud_index = 0;
     gps_probe_start_ms = 0;
+    gps_sync_status = SigurdOSGpsSyncStatus::Idle;
+    gps_sync_started_ms = 0;
+    gps_sync_timeout_ms = 0;
+    gps_last_service_ms = 0;
     gps_begin_uart(gps_baud_index, false);
     gps.initialized = true;
 }
@@ -374,6 +385,7 @@ void sigurdos_gps_loop() {
                     int days = (int)(era * 146097) + (int)doe - 719468;
                     uint32_t epoch = (uint32_t)days * 86400UL + gps.hour * 3600UL
                                    + gps.minute * 60UL + gps.second;
+                    gps.epoch = epoch;
                     // Set system RTC where settimeofday is available.
                     // Native Windows builds do not expose it, and the tests only
                     // need to validate that the GPS parser reaches synced state.
@@ -381,6 +393,9 @@ void sigurdos_gps_loop() {
                     struct timeval tv = { static_cast<time_t>(epoch), 0 };
                     settimeofday(&tv, nullptr);
 #endif
+                    if (gps_sync_status == SigurdOSGpsSyncStatus::Waiting) {
+                        gps_sync_status = SigurdOSGpsSyncStatus::Success;
+                    }
                 }
             }
         } else if (c == '\r') {
@@ -409,6 +424,53 @@ uint8_t  sigurdos_gps_hour()         { return gps.hour; }
 uint8_t  sigurdos_gps_minute()       { return gps.minute; }
 uint8_t  sigurdos_gps_second()       { return gps.second; }
 bool     sigurdos_gps_time_synced()  { return gps.time_synced; }
+uint32_t sigurdos_gps_epoch()        { return gps.epoch; }
+
+void sigurdos_gps_set_map_high_rate(bool enabled) {
+    gps_map_high_rate = enabled;
+    if (enabled && !gps.initialized) sigurdos_gps_init();
+}
+
+void sigurdos_gps_start_time_sync(uint32_t timeout_ms) {
+    if (timeout_ms == 0) timeout_ms = 60000;
+    if (!gps.initialized) sigurdos_gps_init();
+    gps.time_synced = false;
+    gps.epoch = 0;
+    gps_sync_started_ms = millis();
+    gps_sync_timeout_ms = timeout_ms;
+    gps_sync_status = SigurdOSGpsSyncStatus::Waiting;
+}
+
+void sigurdos_gps_cancel_time_sync() {
+    if (gps_sync_status == SigurdOSGpsSyncStatus::Waiting) {
+        gps_sync_status = SigurdOSGpsSyncStatus::Idle;
+    }
+}
+
+SigurdOSGpsSyncStatus sigurdos_gps_time_sync_status() { return gps_sync_status; }
+
+uint32_t sigurdos_gps_time_sync_remaining_ms() {
+    if (gps_sync_status != SigurdOSGpsSyncStatus::Waiting) return 0;
+    const uint32_t elapsed = (uint32_t)(millis() - gps_sync_started_ms);
+    return elapsed >= gps_sync_timeout_ms ? 0 : gps_sync_timeout_ms - elapsed;
+}
+
+void sigurdos_gps_service(bool background_enabled, uint16_t background_interval_s) {
+    const uint32_t now = millis();
+    if (gps_sync_status == SigurdOSGpsSyncStatus::Waiting &&
+        (uint32_t)(now - gps_sync_started_ms) >= gps_sync_timeout_ms) {
+        gps_sync_status = SigurdOSGpsSyncStatus::TimedOut;
+    }
+    const uint32_t interval = sigurdos_gps_effective_poll_ms(
+        background_enabled, background_interval_s, gps_map_high_rate,
+        gps_sync_status == SigurdOSGpsSyncStatus::Waiting);
+    if (interval == 0) return;
+    if (!gps.initialized) sigurdos_gps_init();
+    if (sigurdos_gps_poll_due(now, gps_last_service_ms, interval)) {
+        gps_last_service_ms = now;
+        sigurdos_gps_loop();
+    }
+}
 uint32_t sigurdos_gps_active_baud()  { return gps.active_baud; }
 uint32_t sigurdos_gps_chars_processed() { return gps.chars_processed; }
 uint32_t sigurdos_gps_sentences_received() { return gps.sentences_received; }

@@ -26,6 +26,7 @@
 #include "theme.h"
 #include "responsive.h"
 #include "list_window.h"
+#include "notifications.h"
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
 #include "../mesh/mesh_wrapper.h"
@@ -34,6 +35,7 @@
 #include "../mesh/message_store.h"
 #include "../hal/prefs.h"
 #include "chat_history_store.h"
+#include "chat_store_migration.h"
 #include "../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstring>
@@ -150,7 +152,6 @@ static void mark_chat_history_dirty()
 {
     chat_checkpoint.markDirty(millis());
 }
-
 // ── Channel filter mode ────────────────────────────────────
 // 0 = show all, 1 = channels only, 2 = DMs only
 static int   chat_filter_mode = 0;
@@ -767,7 +768,6 @@ static bool append_loaded_channel_message(int idx, const char* sender, const cha
     }
 
     append_channel_message(idx, sender, text, timestamp, is_self);
-    mark_chat_history_dirty();
     if (acked && has_channel_buffer(idx) && ch_buffers[idx].count() > 0) {
         ch_buffers[idx].markLastAcked();
     }
@@ -787,12 +787,12 @@ static int ensure_loaded_conversation(const char* conversation)
     return idx;
 }
 
-static void chat_load_companion_messages()
+static void chat_load_stored_messages()
 {
     // Scratch buffer for the persisted-message snapshot. Allocate from PSRAM
-    // (with internal-DRAM fallback) rather than a static array — at ~15 KB it
-    // would otherwise overflow the tight internal dram0_0_seg .bss region.
-    constexpr int kRecentCap = 64;
+    // (with internal-DRAM fallback) rather than a static ~130 KB array, which
+    // would overflow the tight internal dram0_0_seg .bss region.
+    constexpr int kRecentCap = (int)sigurdos::mesh::MESSAGE_STORE_MAX_RECORDS;
     const size_t bytes = sizeof(sigurdos::mesh::StoredMessage) * kRecentCap;
     sigurdos::mesh::StoredMessage* recent =
         (sigurdos::mesh::StoredMessage*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -875,6 +875,7 @@ static lv_obj_t* make_chat_list_screen()
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
+    create_companion_status_icon(top);
 
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(s);
@@ -1194,7 +1195,7 @@ static void create_top_bar()
     }, LV_EVENT_CLICKED, nullptr);
 
     // Horizontal scrollable channel ribbon — exact width for no warp (matches home grid uniform sizing)
-    int ribbon_w = CONTENT_W - 28 - 44 - 28; // back button + margins + time + search btn
+    int ribbon_w = CONTENT_W - 28 - 44 - 28 - 20; // back + time + search + Bluetooth
     channel_ribbon = lv_obj_create(top_bar);
     lv_obj_set_size(channel_ribbon, ribbon_w, TOP_H - 4);
     lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 28, 0);
@@ -1229,6 +1230,7 @@ static void create_top_bar()
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
+    create_companion_status_icon(top_bar, -56);
 
     // Search button (left of time label)
     lv_obj_t* search_btn = lv_btn_create(top_bar);
@@ -1700,7 +1702,6 @@ static void do_send()
         snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
     }
     append_channel_message(sent_channel, sigurdos::mesh::getOwnName(), display_text, ts, true);
-    mark_chat_history_dirty();
     mark_channel_used(sent_channel);
     chat_render_offset = 0;
     render_active_messages();
@@ -2482,6 +2483,8 @@ void chat_screen_show()
 {
     screens_clear_back_btn();
     screens_clear_wifi_icon();
+    screens_clear_companion_icon();
+    notifications_clear_unread_mentions();
     // Skip channel list when DM is being opened directly —
     // open_channel_messaging() will create the messaging screen instead.
     if (g_skip_channel_list) {
@@ -2557,8 +2560,6 @@ void chat_screen_add_msg_at(const char* channel, const char* sender, const char*
     if (idx >= MAX_CHANNELS) return;
 
     append_channel_message(idx, sender, text, message_time, is_self);
-    mark_chat_history_dirty();
-
     bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
     if (!is_self && !visible) ch_meta[idx].unread++;
     if (!visible) return;
@@ -2782,91 +2783,14 @@ const char* chat_screen_get_active_channel_name()
 // Message persistence
 // ════════════════════════════════════════════════════
 
-struct ChatHistorySaveCtx {
-    int channel_indices[CHAT_HISTORY_MAX_CHANNELS];
-    uint16_t message_cap;
-};
-
-static bool read_history_channel(int stored_index, char* name_out,
-                                 size_t name_len, uint8_t* message_count_out,
-                                 void* raw)
+static bool migrate_legacy_history_message(const char* channel,
+                                           const LegacyChatMessage& legacy,
+                                           void*)
 {
-    ChatHistorySaveCtx* ctx = static_cast<ChatHistorySaveCtx*>(raw);
-    if (!ctx || !name_out || name_len == 0 || !message_count_out ||
-        stored_index < 0 || stored_index >= (int)CHAT_HISTORY_MAX_CHANNELS) {
-        return false;
-    }
-    const int channel = ctx->channel_indices[stored_index];
-    if (channel < 0 || channel >= dyn_count || !has_channel_buffer(channel)) {
-        return false;
-    }
-    std::strncpy(name_out, dyn_channels[channel], name_len - 1);
-    name_out[name_len - 1] = '\0';
-    const uint16_t count = ch_buffers[channel].count() > ctx->message_cap
-        ? ctx->message_cap : ch_buffers[channel].count();
-    *message_count_out = (uint8_t)count;
-    return true;
-}
-
-static bool read_history_message(int stored_index, int message_index,
-                                 PersistedChatMessage* out, void* raw)
-{
-    ChatHistorySaveCtx* ctx = static_cast<ChatHistorySaveCtx*>(raw);
-    if (!ctx || !out || stored_index < 0 ||
-        stored_index >= (int)CHAT_HISTORY_MAX_CHANNELS) return false;
-    const int channel = ctx->channel_indices[stored_index];
-    if (channel < 0 || channel >= dyn_count || !has_channel_buffer(channel) ||
-        message_index < 0 || message_index >= ch_buffers[channel].count()) return false;
-
-    const ChannelMessage& source = ch_buffers[channel].at(message_index);
-    std::strncpy(out->sender, source.sender, sizeof(out->sender) - 1);
-    std::strncpy(out->text, source.text, sizeof(out->text) - 1);
-    out->timestamp = source.timestamp;
-    out->is_self = source.is_self;
-    return true;
-}
-
-static bool write_history_message(const char* channel,
-                                  const PersistedChatMessage& message,
-                                  void*)
-{
-    int idx = find_channel_idx(channel);
-    // DM pseudo-channels are not returned by exportChannels(), so restore them
-    // on demand when their first persisted message is read.
-    if (idx < 0 && std::strncmp(channel, "DM: ", 4) == 0 &&
-        dyn_count < MAX_CHANNELS) {
-        idx = dyn_count;
-        std::strncpy(dyn_channels[idx], channel, sizeof(dyn_channels[idx]) - 1);
-        dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
-        ++dyn_count;
-    }
-    if (idx < 0 || idx >= MAX_CHANNELS) return true;
-    append_channel_message(idx, message.sender, message.text,
-                           message.timestamp, message.is_self);
-    return true;
-}
-
-void chat_save_messages()
-{
-    ChatHistorySaveCtx ctx{{}, chat_msg_cap()};
-    int stored_count = 0;
-    for (int channel = 0; channel < dyn_count &&
-         stored_count < (int)CHAT_HISTORY_MAX_CHANNELS; ++channel) {
-        if (ch_buffers[channel].count() > 0 && has_channel_buffer(channel)) {
-            ctx.channel_indices[stored_count++] = channel;
-        }
-    }
-    if (chatHistorySave(stored_count, read_history_channel,
-                        read_history_message, &ctx)) {
-        chat_checkpoint.saved();
-    }
-}
-
-void chat_save_messages_if_due(uint32_t now)
-{
-    if (chat_checkpoint.isDue(now)) {
-        chat_save_messages();
-    }
+    if (!channel || !channel[0]) return false;
+    const sigurdos::mesh::StoredMessage msg =
+        legacyChatMessageToStored(channel, legacy);
+    return sigurdos::mesh::messageStoreAppend(msg);
 }
 
 void chat_load_messages()
@@ -2883,8 +2807,10 @@ void chat_load_messages()
         }
     }
 
-    chatHistoryLoad(write_history_message, nullptr);
-    chat_load_companion_messages();
+    // /msgs was the pre-companion UI snapshot. Stream it into the unified log
+    // once; the migration source is deleted only after every append succeeds.
+    legacyChatHistoryMigrate(migrate_legacy_history_message);
+    chat_load_stored_messages();
 }
 
 uint16_t chat_screen_get_message_cap()

@@ -35,6 +35,10 @@ void show_screen(lv_obj_t* scr);
 // Shared by the Bluetooth and Settings screens.
 void update_row_label(lv_obj_t* row, const char* new_text);
 
+// Add/update the live companion-Bluetooth icon used by top-bar variants.
+void create_companion_status_icon(lv_obj_t* top_bar, int right_offset = -82);
+void update_companion_status();
+
 // Device PIN gate — true while a previous unlock is within the grace window.
 bool pin_grace_active();
 // Show the PIN entry screen; loads target_screen on successful entry.
