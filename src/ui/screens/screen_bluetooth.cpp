@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../bluetooth_help.h"
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -98,6 +99,11 @@ void bluetooth_screen_show()
     lv_obj_set_style_bg_color(row_sync, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_bg_opa(row_sync, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(row_sync, lv_color_hex(TEXT_PRIMARY), 0);
+
+    lv_obj_t* notice = lv_list_add_text(list, bluetooth_device_authored_notice());
+    lv_obj_set_width(notice, CONTENT_W - 16);
+    lv_label_set_long_mode(notice, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(notice, lv_color_hex(TEXT_SECONDARY), 0);
 
     show_screen(scr);
 }

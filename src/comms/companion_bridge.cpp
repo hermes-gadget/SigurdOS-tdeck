@@ -482,6 +482,23 @@ bool CompanionBridge::pushTelemetryResponse(const uint8_t* pubkey_prefix,
     return _serial->writeFrame(_out_frame, i) == (size_t)i;
 }
 
+bool CompanionBridge::pushRawData(int8_t snr_quarters, int8_t rssi,
+                                  const uint8_t* payload, size_t payload_len)
+{
+    if (!isConnected() || (payload_len > 0 && !payload)) return false;
+    if (payload_len > MAX_FRAME_SIZE - 4) return false;
+    int i = 0;
+    _out_frame[i++] = PUSH_CODE_RAW_DATA;
+    _out_frame[i++] = (uint8_t)snr_quarters;
+    _out_frame[i++] = (uint8_t)rssi;
+    _out_frame[i++] = 0xFF;  // reserved by the stock companion protocol
+    if (payload_len > 0) {
+        std::memcpy(&_out_frame[i], payload, payload_len);
+        i += (int)payload_len;
+    }
+    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+}
+
 bool CompanionBridge::pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
                                     const uint8_t* path_hashes, const uint8_t* path_snrs,
                                     uint8_t path_len, int8_t final_snr_quarters)
@@ -1269,13 +1286,39 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
+    if (cmd == CMD_SEND_RAW_DATA) {
+        // Stock frame: [cmd][direct path length][path bytes][payload].  This
+        // command predates multi-byte path hashes, so only the unambiguous
+        // one-byte-hop encoding (0..63) is accepted.  0xFF is the flood
+        // sentinel and raw-data flooding is deliberately unsupported.
+        if (len < 6) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        const uint8_t path_len = _cmd_frame[1];
+        if (path_len == COMPANION_OUT_PATH_UNKNOWN) {
+            writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
+            return true;
+        }
+        if (path_len > 63 || 2u + (size_t)path_len + 4u > len) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
+        const uint8_t* path = &_cmd_frame[2];
+        const uint8_t* payload = path + path_len;
+        const size_t payload_len = len - 2u - (size_t)path_len;
+        if (_host->sendRawData(path, path_len, payload, payload_len)) {
+            writeOKFrame();
+        } else {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+        }
+        return true;
+    }
+
     // ── Stub handlers for upstream commands not yet implemented ──
     // These are recognized command IDs but return unsupported error until
     // full implementations and security review are added. Recognition is not
     // advertised as feature parity; see docs/COMPANION_SUPPORT.md.
-    if (cmd == CMD_SEND_RAW_DATA) {
-        writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
-    }
     if (cmd == CMD_SEND_BINARY_REQ) {
         writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); return true;
     }

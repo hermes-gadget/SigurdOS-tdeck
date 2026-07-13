@@ -1,0 +1,5 @@
+[boot] debug enabled level=2 heap=220000 psram=7000000 batt=90%
+[stat] t=0  heap=220000/218000  psram=7000000  batt=90%  flush=0  feat=ff
+[stat] t=5  heap=219800/217900  psram=6999900  batt=90%  flush=0  feat=ff
+[stat] t=10  heap=220100/217900  psram=7000100  batt=90%  flush=0  feat=ff
+[stat] t=15  heap=219900/217900  psram=6999800  batt=90%  flush=0  feat=ff

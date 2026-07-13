@@ -14,6 +14,7 @@
 #include <helpers/TransportKeyStore.h>
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
+#include "login_session.h"
 #include "hal/prefs.h"
 #include "regions.h"
 #include "hal/tdeck_board.h"
@@ -119,6 +120,11 @@ public:
     bool sendTracePathRaw(uint32_t tag, uint32_t auth, uint8_t flags,
                           const uint8_t* path, uint8_t path_len, uint32_t& est_timeout);
 
+    // Companion CMD_SEND_RAW_DATA: send an opaque payload on an explicit
+    // direct one-byte-hash path. Flood routing is rejected by the bridge.
+    bool sendRawDataCompanion(const uint8_t* path, uint8_t path_len,
+                              const uint8_t* data, size_t data_len);
+
 
     // Companion CMD_SEND_LOGIN: send a login and register the login entry so the
     // response is matched in onContactResponse. Returns the MSG_SEND_* result.
@@ -164,6 +170,8 @@ public:
 
 
     void onControlDataRecv(::mesh::Packet* pkt) override;
+
+    void onRawDataRecv(::mesh::Packet* pkt) override;
 
 
     bool pingIsActive() {
@@ -426,12 +434,14 @@ public:
     // ── Repeater/room login session tracking (Phase 4.5) ──
     static constexpr int MAX_LOGIN_ENTRIES = 4;
 
-    // Login status: NONE=no login, PENDING=request sent, OK=logged in, FAILED=login rejected
+    // Login status includes terminal timeout/drop reasons for explicit UI.
     enum LoginStatus : uint8_t {
-        LOGIN_NONE = 0,
-        LOGIN_PENDING,
-        LOGIN_OK,
-        LOGIN_FAILED
+        LOGIN_NONE = login_session::NONE,
+        LOGIN_PENDING = login_session::PENDING,
+        LOGIN_OK = login_session::OK,
+        LOGIN_FAILED = login_session::FAILED,
+        LOGIN_TIMED_OUT = login_session::TIMED_OUT,
+        LOGIN_DROPPED = login_session::DROPPED,
     };
 
     struct LoginEntry {
@@ -440,6 +450,8 @@ public:
         uint8_t  acl_permissions;   // v7+ ACL byte
         uint8_t  status;            // LoginStatus
         uint32_t started_at_ms;     // when login was initiated (for timeout)
+        uint32_t timeout_ms;        // normalized estimated response deadline
+        bool     keep_alive_active; // negotiated keep-alive should still exist
         bool     in_use = false;
     };
     LoginEntry _login_entries[MAX_LOGIN_ENTRIES];
@@ -453,7 +465,12 @@ public:
         return -1;
     }
 
-    int addLoginEntry(const char* name);
+    int addLoginEntry(const char* name, uint32_t estimated_timeout_ms = 0);
+
+    void updateLoginSessions(uint32_t now_ms);
+
+    // Extend BaseChatMesh::loop with login deadlines and keep-alive servicing.
+    void loop();
 
 
     void removeLoginEntry(const char* name) {
@@ -461,6 +478,7 @@ public:
         if (idx >= 0) {
             _login_entries[idx].in_use = false;
             _login_entries[idx].status = LOGIN_NONE;
+            _login_entries[idx].keep_alive_active = false;
         }
     }
 
@@ -468,6 +486,7 @@ public:
         for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
             _login_entries[i].in_use = false;
             _login_entries[i].status = LOGIN_NONE;
+            _login_entries[i].keep_alive_active = false;
         }
     }
 

@@ -65,6 +65,8 @@ void mesh_v2_companion_login_push(const uint8_t* pub_key, bool success,
                                   uint8_t permission, bool is_admin);
 void mesh_v2_companion_status_push(const uint8_t* pub_key, const uint8_t* blob, size_t len);
 void mesh_v2_companion_telemetry_push(const uint8_t* pub_key, const uint8_t* blob, size_t len);
+void mesh_v2_companion_raw_data_push(int8_t snr_quarters, int8_t rssi,
+                                     const uint8_t* payload, size_t payload_len);
 void mesh_v2_companion_trace_push(uint32_t tag, uint32_t auth, uint8_t flags,
                                   const uint8_t* path_hashes, const uint8_t* path_snrs,
                                   uint8_t path_len, int8_t final_snr_quarters);
@@ -338,6 +340,8 @@ uint8_t getAdvertPathLen(const char* name);
 #define LOGIN_STATUS_PENDING 1   // login request sent, awaiting response
 #define LOGIN_STATUS_OK      2   // logged in successfully
 #define LOGIN_STATUS_FAILED  3   // login was rejected
+#define LOGIN_STATUS_TIMEOUT 4   // no login response before the deadline
+#define LOGIN_STATUS_DROPPED 5   // negotiated keep-alive connection expired
 
 // ── Repeater/room login (Phase 4.5) ──────────────
 bool sendLogin(const char* name, const char* password);

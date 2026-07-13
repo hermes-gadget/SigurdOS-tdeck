@@ -10,6 +10,7 @@
 
 #if defined(ESP32_PLATFORM)
 #include <SPIFFS.h>
+#include <esp_heap_caps.h>
 #include "hal/storage.h"
 #else
 #include <cstdio>
@@ -24,8 +25,8 @@ namespace {
 static constexpr const char* STORE_PATH = "/companion_msgs";
 #endif
 
-static constexpr uint32_t MESSAGE_STORE_MAX_RECORDS = 64;
-static constexpr uint32_t MESSAGE_STORE_RECOVERY_MAX_RECORDS = 256;
+static constexpr uint32_t MESSAGE_STORE_RECOVERY_MAX_RECORDS =
+    MESSAGE_STORE_MAX_RECORDS + 1;
 
 #if !defined(ESP32_PLATFORM)
 static char g_native_path[160] = "/tmp/sigurdos_companion_msgs.bin";
@@ -104,6 +105,30 @@ static const char* storePath()
 #endif
 }
 
+static StoredMessage* allocateMessages(uint32_t count)
+{
+    if (count == 0) return nullptr;
+    const size_t bytes = sizeof(StoredMessage) * (size_t)count;
+#if defined(ESP32_PLATFORM)
+    void* memory = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!memory) {
+        memory = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    return static_cast<StoredMessage*>(memory);
+#else
+    return static_cast<StoredMessage*>(std::malloc(bytes));
+#endif
+}
+
+static void freeMessages(StoredMessage* messages)
+{
+#if defined(ESP32_PLATFORM)
+    heap_caps_free(messages);
+#else
+    std::free(messages);
+#endif
+}
+
 static bool readRecordRaw(StoredMessage& msg, const uint8_t* rec, size_t len)
 {
     if (!rec || len < detail::MESSAGE_STORE_RECORD_SIZE) return false;
@@ -140,30 +165,6 @@ static bool readRecordRaw(StoredMessage& msg, const uint8_t* rec, size_t len)
     std::memcpy(msg.extra, rec + pos, 8); pos += 8;
     applyFlags(msg, rec[pos++]);
     return true;
-}
-
-static bool readRecordAt(uint32_t index, StoredMessage& msg)
-{
-    uint32_t count = 0;
-    if (!readHeader(&count) || index >= count) return false;
-    const long offset = (long)detail::MESSAGE_STORE_HEADER_SIZE +
-        (long)index * (long)detail::MESSAGE_STORE_RECORD_SIZE;
-    uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
-
-#if defined(ESP32_PLATFORM)
-    File f = SPIFFS.open(STORE_PATH, "r");
-    if (!f) return false;
-    if (!f.seek(offset, SeekSet)) { f.close(); return false; }
-    bool ok = f.read(rec, sizeof(rec)) == sizeof(rec);
-    f.close();
-#else
-    FILE* f = std::fopen(g_native_path, "rb");
-    if (!f) return false;
-    if (std::fseek(f, offset, SEEK_SET) != 0) { std::fclose(f); return false; }
-    bool ok = std::fread(rec, 1, sizeof(rec), f) == sizeof(rec);
-    std::fclose(f);
-#endif
-    return ok && readRecordRaw(msg, rec, sizeof(rec));
 }
 
 static void writeRecordRaw(const StoredMessage& msg, uint8_t* rec, size_t len)
@@ -318,11 +319,62 @@ static int loadAllInternal(StoredMessage* out, int max)
     return n;
 }
 
+static int loadRecentInternal(const char* conversation, StoredMessage* out,
+                              int max, bool unsent_only)
+{
+    if (!out || max <= 0) return 0;
+    uint32_t count = 0;
+    if (!readHeader(&count)) return 0;
+
+#if defined(ESP32_PLATFORM)
+    File file = SPIFFS.open(STORE_PATH, "r");
+    if (!file) return 0;
+#else
+    FILE* file = std::fopen(g_native_path, "rb");
+    if (!file) return 0;
+#endif
+
+    int n = 0;
+    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
+    for (int i = (int)count - 1; i >= 0 && n < max; --i) {
+        const size_t offset = detail::MESSAGE_STORE_HEADER_SIZE +
+            (size_t)i * detail::MESSAGE_STORE_RECORD_SIZE;
+#if defined(ESP32_PLATFORM)
+        const bool read_ok = file.seek(offset, SeekSet) &&
+            file.read(record, sizeof(record)) == sizeof(record);
+#else
+        const bool read_ok = std::fseek(file, (long)offset, SEEK_SET) == 0 &&
+            std::fread(record, 1, sizeof(record), file) == sizeof(record);
+#endif
+        StoredMessage msg{};
+        if (!read_ok || !readRecordRaw(msg, record, sizeof(record))) continue;
+        if (unsent_only && msg.companion_sent) continue;
+        if (conversation && conversation[0] &&
+            std::strncmp(msg.conversation, conversation,
+                         SIGURDOS_MSG_CONVERSATION_LEN) != 0) {
+            continue;
+        }
+        out[n++] = msg;
+    }
+#if defined(ESP32_PLATFORM)
+    file.close();
+#else
+    std::fclose(file);
+#endif
+
+    for (int i = 0; i < n / 2; ++i) {
+        StoredMessage swap = out[i];
+        out[i] = out[n - 1 - i];
+        out[n - 1 - i] = swap;
+    }
+    return n;
+}
+
 // Check whether a message with the same identity already exists in the store.
 // Opens the store file ONCE and streams all records sequentially — O(n) reads,
 // but O(1) file opens.  Previously called readRecordAt() per record, which
 // opened the file twice for each (readHeader + seek/read), giving O(n²) SPIFFS
-// opens (~128 for a full 64-record store on every incoming message).  PERF-001.
+// opens repeatedly for every record on each incoming message. PERF-001.
 static bool messageExists(const StoredMessage& msg, uint32_t* store_id_out)
 {
     if (!ensureFs() || !existsStore()) return false;
@@ -417,6 +469,61 @@ static bool writeStore(sigurdos::storage::AtomicFileWriter& writer, void* raw)
         if (writer.write(record, sizeof(record)) != sizeof(record)) return false;
     }
     return true;
+}
+
+struct CompactWriteCtx {
+    uint32_t first_index;
+    uint32_t count;
+    uint32_t next_id;
+};
+
+static bool writeCompactedStore(sigurdos::storage::AtomicFileWriter& writer, void* raw)
+{
+    CompactWriteCtx* ctx = static_cast<CompactWriteCtx*>(raw);
+    if (!ctx || ctx->next_id == 0 || ctx->count > MESSAGE_STORE_MAX_RECORDS) {
+        return false;
+    }
+    const uint32_t magic = detail::MESSAGE_STORE_MAGIC;
+    const uint8_t version = detail::MESSAGE_STORE_VERSION;
+    if (writer.write(&magic, sizeof(magic)) != sizeof(magic) ||
+        writer.write(&version, 1) != 1 ||
+        writer.write(&ctx->count, sizeof(ctx->count)) != sizeof(ctx->count) ||
+        writer.write(&ctx->next_id, sizeof(ctx->next_id)) != sizeof(ctx->next_id)) {
+        return false;
+    }
+
+    const size_t offset = detail::MESSAGE_STORE_HEADER_SIZE +
+        (size_t)ctx->first_index * detail::MESSAGE_STORE_RECORD_SIZE;
+#if defined(ESP32_PLATFORM)
+    File source = SPIFFS.open(STORE_PATH, "r");
+    if (!source || !source.seek(offset, SeekSet)) {
+        if (source) source.close();
+        return false;
+    }
+#else
+    FILE* source = std::fopen(g_native_path, "rb");
+    if (!source || std::fseek(source, (long)offset, SEEK_SET) != 0) {
+        if (source) std::fclose(source);
+        return false;
+    }
+#endif
+
+    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < ctx->count; ++i) {
+#if defined(ESP32_PLATFORM)
+        ok = source.read(record, sizeof(record)) == sizeof(record);
+#else
+        ok = std::fread(record, 1, sizeof(record), source) == sizeof(record);
+#endif
+        if (ok) ok = writer.write(record, sizeof(record)) == sizeof(record);
+    }
+#if defined(ESP32_PLATFORM)
+    source.close();
+#else
+    std::fclose(source);
+#endif
+    return ok;
 }
 
 static bool validateStore(sigurdos::storage::AtomicFileReader& reader, void*)
@@ -570,9 +677,7 @@ static bool migrateVersion4Store()
         (uint32_t)(payload_size / detail::MESSAGE_STORE_RECORD_SIZE);
     if (complete_count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
 
-    StoredMessage* messages = complete_count > 0
-        ? (StoredMessage*)std::malloc(sizeof(StoredMessage) * complete_count)
-        : nullptr;
+    StoredMessage* messages = allocateMessages(complete_count);
     if (complete_count > 0 && !messages) return false;
     bool ok = readCompleteRecords(
         messages, complete_count, detail::MESSAGE_STORE_V4_HEADER_SIZE);
@@ -581,7 +686,7 @@ static bool migrateVersion4Store()
     }
     const uint32_t next_id = complete_count == UINT32_MAX ? 1U : complete_count + 1U;
     ok = ok && atomicReplaceStore(messages, complete_count, next_id);
-    std::free(messages);
+    freeMessages(messages);
     return ok;
 }
 
@@ -629,9 +734,7 @@ static bool repairInterruptedAppend()
     if (complete_count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
     if (!has_torn_tail && declared_count == complete_count) return true;
 
-    StoredMessage* messages = complete_count > 0
-        ? (StoredMessage*)std::malloc(sizeof(StoredMessage) * complete_count)
-        : nullptr;
+    StoredMessage* messages = allocateMessages(complete_count);
     if (complete_count > 0 && !messages) return false;
     const bool read_ok = readCompleteRecords(
         messages, complete_count, detail::MESSAGE_STORE_HEADER_SIZE);
@@ -639,22 +742,20 @@ static bool repairInterruptedAppend()
         ? deriveNextId(messages, complete_count) : 0;
     const bool replace_ok = read_ok &&
         atomicReplaceStore(messages, complete_count, recovered_next_id);
-    std::free(messages);
+    freeMessages(messages);
     return replace_ok;
 }
 
-static bool trimStoreToRecent(uint32_t max_records)
+static bool compactStoreToRecent(uint32_t max_records)
 {
     if (max_records == 0) return messageStoreClear();
-    StoredMessage* recent = (StoredMessage*)std::malloc(sizeof(StoredMessage) * max_records);
-    if (!recent) return false;
-    int n = messageStoreLoadRecent(nullptr, recent, (int)max_records);
-    if (!atomicReplaceStore(recent, (uint32_t)n)) {
-        std::free(recent);
-        return false;
-    }
-    std::free(recent);
-    return true;
+    uint32_t count = 0;
+    uint32_t next_id = 0;
+    if (!readHeader(&count, &next_id)) return false;
+    if (count <= max_records) return true;
+    CompactWriteCtx ctx{count - max_records, max_records, next_id};
+    return sigurdos::storage::atomicFileReplace(
+        storePath(), writeCompactedStore, &ctx, validateStore, nullptr);
 }
 
 } // namespace
@@ -663,9 +764,19 @@ namespace detail {
 
 bool storedMessageSameIdentity(const StoredMessage& a, const StoredMessage& b)
 {
+    bool a_has_prefix = false;
+    bool b_has_prefix = false;
+    for (size_t i = 0; i < SIGURDOS_MSG_PREFIX_LEN; ++i) {
+        a_has_prefix = a_has_prefix || a.sender_prefix[i] != 0;
+        b_has_prefix = b_has_prefix || b.sender_prefix[i] != 0;
+    }
+    const bool same_sender = a_has_prefix && b_has_prefix
+        ? std::memcmp(a.sender_prefix, b.sender_prefix, SIGURDOS_MSG_PREFIX_LEN) == 0
+        : std::strncmp(a.sender, b.sender, SIGURDOS_MSG_SENDER_LEN) == 0;
     return std::strncmp(a.conversation, b.conversation, SIGURDOS_MSG_CONVERSATION_LEN) == 0 &&
-           std::strncmp(a.sender, b.sender, SIGURDOS_MSG_SENDER_LEN) == 0 &&
+           same_sender &&
            a.timestamp == b.timestamp &&
+           a.txt_type == b.txt_type &&
            a.is_self == b.is_self &&
            a.is_channel == b.is_channel;
 }
@@ -692,7 +803,7 @@ bool messageStoreBegin()
     if (!writeHeaderIfNeeded()) return false;
     uint32_t count = 0;
     if (readHeader(&count) && count > MESSAGE_STORE_MAX_RECORDS) {
-        return trimStoreToRecent(MESSAGE_STORE_MAX_RECORDS);
+        return compactStoreToRecent(MESSAGE_STORE_MAX_RECORDS);
     }
     return true;
 }
@@ -739,7 +850,7 @@ bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out)
     uint32_t new_count = count + 1;
     if (!writeHeaderState(new_count, nextAfter(next_id))) return false;
     if (new_count > MESSAGE_STORE_MAX_RECORDS) {
-        if (!trimStoreToRecent(MESSAGE_STORE_MAX_RECORDS)) return false;
+        if (!compactStoreToRecent(MESSAGE_STORE_COMPACT_TO_RECORDS)) return false;
     }
     if (store_id_out) *store_id_out = norm.store_id;
     return true;
@@ -747,24 +858,7 @@ bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out)
 
 int messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max)
 {
-    if (!out || max <= 0) return 0;
-    uint32_t count = 0;
-    if (!readHeader(&count)) return 0;
-    int n = 0;
-    for (int i = (int)count - 1; i >= 0 && n < max; i--) {
-        StoredMessage msg;
-        if (!readRecordAt((uint32_t)i, msg)) continue;
-        if (!conversation || !conversation[0] ||
-            std::strncmp(msg.conversation, conversation, SIGURDOS_MSG_CONVERSATION_LEN) == 0) {
-            out[n++] = msg;
-        }
-    }
-    for (int i = 0; i < n / 2; i++) {
-        StoredMessage swap = out[i];
-        out[i] = out[n - 1 - i];
-        out[n - 1 - i] = swap;
-    }
-    return n;
+    return loadRecentInternal(conversation, out, max, false);
 }
 
 int messageStoreLoadAll(StoredMessage* out, int max)
@@ -777,8 +871,8 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
     if (!conversation || !conversation[0] || timestamp == 0) return false;
     uint32_t count = 0;
     if (!readHeader(&count)) return false;
-    if (count > 256) return false;
-    StoredMessage* msgs = (StoredMessage*)std::malloc(sizeof(StoredMessage) * count);
+    if (count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
+    StoredMessage* msgs = allocateMessages(count);
     if (!msgs) return false;
     int n = messageStoreLoadAll(msgs, (int)count);
     bool changed = false;
@@ -790,12 +884,12 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
         }
     }
     if (!changed) {
-        std::free(msgs);
+        freeMessages(msgs);
         return false;
     }
 
     bool ok = atomicReplaceStore(msgs, (uint32_t)n);
-    std::free(msgs);
+    freeMessages(msgs);
     return ok;
 }
 
@@ -804,8 +898,8 @@ bool messageStoreMarkCompanionSent(uint32_t store_id)
     uint32_t count = 0;
     if (!readHeader(&count)) return false;
     if (count == 0) return false;
-    if (count > 256) return false;
-    StoredMessage* msgs = (StoredMessage*)std::malloc(sizeof(StoredMessage) * count);
+    if (count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
+    StoredMessage* msgs = allocateMessages(count);
     if (!msgs) return false;
     int n = messageStoreLoadAll(msgs, (int)count);
     bool found = false;
@@ -817,34 +911,17 @@ bool messageStoreMarkCompanionSent(uint32_t store_id)
         }
     }
     if (!found) {
-        std::free(msgs);
+        freeMessages(msgs);
         return false;
     }
     bool ok = atomicReplaceStore(msgs, (uint32_t)n);
-    std::free(msgs);
+    freeMessages(msgs);
     return ok;
 }
 
 int messageStoreLoadUnsent(StoredMessage* out, int max)
 {
-    if (!out || max <= 0) return 0;
-    uint32_t count = 0;
-    if (!readHeader(&count)) return 0;
-    int out_idx = 0;
-    for (int i = (int)count - 1; i >= 0 && out_idx < max; i--) {
-        StoredMessage msg;
-        if (!readRecordAt((uint32_t)i, msg)) continue;
-        if (!msg.companion_sent) {
-            out[out_idx++] = msg;
-        }
-    }
-    // Reverse to chronological order (we loaded newest-first)
-    for (int i = 0; i < out_idx / 2; i++) {
-        StoredMessage swap = out[i];
-        out[i] = out[out_idx - 1 - i];
-        out[out_idx - 1 - i] = swap;
-    }
-    return out_idx;
+    return loadRecentInternal(nullptr, out, max, true);
 }
 
 int messageStoreCount()

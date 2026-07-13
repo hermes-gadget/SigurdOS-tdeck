@@ -29,6 +29,7 @@
 #include <algorithm>
 
 #include "mesh/durable_fanout.h"
+#include "mesh/companion_message_policy.h"
 
 namespace {
 
@@ -60,6 +61,16 @@ TEST(MessageFanout, FullPresentationQueueDoesNotSuppressDurableDelivery)
     ASSERT_EQ(probe.calls.size(), 2U);
     EXPECT_EQ(probe.calls[0], 'D');
     EXPECT_EQ(probe.calls[1], 'P');
+}
+
+TEST(CompanionMessagePolicy, CliDataUsesTranscriptInsteadOfChatTimeline)
+{
+    EXPECT_TRUE(sigurdos::mesh::companion_message_should_present_in_chat(
+        sigurdos::mesh::COMPANION_TEXT_PLAIN));
+    EXPECT_TRUE(sigurdos::mesh::companion_message_should_present_in_chat(
+        sigurdos::mesh::COMPANION_TEXT_SIGNED_PLAIN));
+    EXPECT_FALSE(sigurdos::mesh::companion_message_should_present_in_chat(
+        sigurdos::mesh::COMPANION_TEXT_CLI_DATA));
 }
 
 // ── Contact list (replicating SlopContact + LRU eviction logic) ──
