@@ -18,6 +18,8 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../finder_refresh_state.h"
+#include "../screen_lifetime.h"
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -30,14 +32,48 @@ namespace sigurdos::ui {
 using namespace theme;
 using namespace responsive;
 
+static lv_timer_t* g_finder_refresh_timer = nullptr;
+static ScreenLifetime g_finder_lifetime;
+static FinderRefreshSnapshot g_finder_snapshot;
+
+static FinderRefreshSnapshot read_finder_snapshot()
+{
+    const bool active = sigurdos::mesh::pingIsActive();
+    const bool cooldown = !active && sigurdos::mesh::pingOnCooldown();
+    return finder_refresh_snapshot(
+        active,
+        active ? sigurdos::mesh::activePingRemaining() : 0,
+        cooldown,
+        cooldown ? sigurdos::mesh::pingCooldownRemaining() : 0,
+        sigurdos::mesh::getPingResultCount());
+}
+
+static void finder_refresh_timer_cb(lv_timer_t* timer)
+{
+    const FinderRefreshSnapshot current = read_finder_snapshot();
+    if (current == g_finder_snapshot) return;
+
+    lv_timer_del(timer);
+    if (g_finder_refresh_timer == timer) g_finder_refresh_timer = nullptr;
+    finder_screen_show();
+}
+
 // ════════════════════════════════════════════════════════
 // Finder — nearby nodes with Ping Nearby
 // ════════════════════════════════════════════════════════
 void finder_screen_show()
 {
-    lv_obj_t* scr = make_screen_full("Finder");
+    if (g_finder_refresh_timer) {
+        lv_timer_del(g_finder_refresh_timer);
+        g_finder_refresh_timer = nullptr;
+    }
 
-    bool have_ping = sigurdos::mesh::getPingResultCount() > 0;
+    lv_obj_t* scr = make_screen_full("Finder");
+    g_finder_lifetime.bind(scr);
+    g_finder_lifetime.trackTimer(&g_finder_refresh_timer);
+    g_finder_snapshot = read_finder_snapshot();
+
+    bool have_ping = g_finder_snapshot.result_count > 0;
 
     // ── Ping status / button area ──────────────────
     lv_obj_t* ping_row = lv_obj_create(scr);
@@ -48,21 +84,20 @@ void finder_screen_show()
     lv_obj_set_flex_flow(ping_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(ping_row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    if (sigurdos::mesh::pingIsActive()) {
+    if (g_finder_snapshot.phase == FinderRefreshPhase::Active) {
         // Ping in progress — show countdown
-        uint32_t remain = sigurdos::mesh::activePingRemaining();
-        uint32_t elapsed = 3000 - (remain > 0 ? remain : 0);
         char ping_buf[40];
         snprintf(ping_buf, sizeof(ping_buf), "%s Listening... (%lu/%lu)",
-                 LV_SYMBOL_AUDIO, (unsigned long)(elapsed / 1000), 3UL);
+                 LV_SYMBOL_AUDIO,
+                 (unsigned long)g_finder_snapshot.displayed_seconds, 3UL);
         lv_obj_t* status = lv_label_create(ping_row);
         lv_label_set_text(status, ping_buf);
         lv_obj_set_style_text_color(status, lv_color_hex(ACCENT), 0);
-    } else if (sigurdos::mesh::pingOnCooldown()) {
+    } else if (g_finder_snapshot.phase == FinderRefreshPhase::Cooldown) {
         // On cooldown — show remaining time
-        uint32_t cd = (sigurdos::mesh::pingCooldownRemaining() + 999) / 1000;
         char ping_buf[32];
-        snprintf(ping_buf, sizeof(ping_buf), "%s Ping ready in %lus", LV_SYMBOL_WIFI, (unsigned long)cd);
+        snprintf(ping_buf, sizeof(ping_buf), "%s Ping ready in %lus", LV_SYMBOL_WIFI,
+                 (unsigned long)g_finder_snapshot.displayed_seconds);
         lv_obj_t* status = lv_label_create(ping_row);
         lv_label_set_text(status, ping_buf);
         lv_obj_set_style_text_color(status, lv_color_hex(TEXT_SECONDARY), 0);
@@ -155,7 +190,7 @@ void finder_screen_show()
     if (show_empty) {
         // Choose message based on state
         const char* msg;
-        if (sigurdos::mesh::pingIsActive()) {
+        if (g_finder_snapshot.phase == FinderRefreshPhase::Active) {
             msg = "Listening for nearby nodes...";
         } else if (have_ping) {
             msg = "Ping complete — no nodes responded.\n\n"
@@ -191,6 +226,9 @@ void finder_screen_show()
     }
 
     show_screen(scr);
+    if (g_finder_snapshot.needsPolling()) {
+        g_finder_refresh_timer = lv_timer_create(finder_refresh_timer_cb, 250, nullptr);
+    }
 }
 
 } // namespace sigurdos::ui
