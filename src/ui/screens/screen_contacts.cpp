@@ -23,6 +23,7 @@
 #include "../responsive.h"
 #include "../contact_paging.h"
 #include "../chat_screen.h"
+#include "../notifications.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/qr_show.h"
@@ -491,6 +492,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
 
     uint8_t st = sigurdos::mesh::getLoginStatus(ctx->name);
     if (st == LOGIN_STATUS_OK) {
+        notifications_login_result(ctx->name, true);
         char* n = strdup(ctx->name);
         free(ctx->name);
         delete ctx;
@@ -500,6 +502,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
         repeater_detail_screen_show(n, true);
         free(n);
     } else if (st == LOGIN_STATUS_FAILED) {
+        notifications_login_result(ctx->name, false);
         // Rebuild pre-login view so it shows "Login failed" and the Login button
         char* n = strdup(ctx->name);
         free(ctx->name);

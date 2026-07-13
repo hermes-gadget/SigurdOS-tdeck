@@ -74,6 +74,7 @@ test/
 |-- test_message_store/             Message append, dedup, rotation, and persistence
 |-- test_navigation/                Navigation stack and back-swipe behavior
 |-- test_navigation_contract/       Screen enum stability and screen inventory checks
+|-- test_notifications/             Alert priority, mention matching, expiry, and resource thresholds
 |-- test_onboarding/                Onboarding date/time validation and leap year rules
 |-- test_pins/                      GPIO ranges, conflicts, and board pin sanity
 |-- test_prefs/                     Preferences defaults and native mock persistence

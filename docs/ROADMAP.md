@@ -198,7 +198,6 @@ Priority tasks:
 - Expand message detail views with path, hop count, RSSI/SNR, ACK status, repeaters, route hints, and packet metadata.
 - Add path hash mode and route-reset workflows where compatible with MeshCore behavior.
 - Finish local and app-driven room server/repeater management: login status, permissions, CLI-data command responses, fetch message history, status/telemetry pushes, allowed repeat-frequency reporting, explicit errors, retries/timeouts, and keep-alive behavior.
-- Add alerts and popups for new DMs, mentions, battery, GPS fix/loss, companion connect/disconnect, OTA, and storage failures.
 - Add telemetry history views for battery/GPS/sensor data and remote node snapshots.
 - Add QR/import/export flows for contacts, channels, regions, and identity backup.
 

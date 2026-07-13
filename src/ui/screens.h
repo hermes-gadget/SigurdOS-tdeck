@@ -55,6 +55,7 @@ void wifi_networks_screen_show();
 void bluetooth_screen_show();
 void regions_screen_show();
 void update_wifi_status();
+void update_companion_status();
 
 // Highlight the current screen's back button border for back-swipe visual feedback.
 // Passing true sets a 2px accent border; false reverts to the default divider border.
@@ -66,6 +67,7 @@ void screens_clear_back_btn();
 // Null the WiFi icon pointer so update_wifi_status() doesn't
 // dereference a freed label after screen transitions.
 void screens_clear_wifi_icon();
+void screens_clear_companion_icon();
 // Returns true while the PIN entry overlay screen is displayed.
 // Used by the trackball handler to block back-swipe navigation.
 bool is_pin_entry_active();

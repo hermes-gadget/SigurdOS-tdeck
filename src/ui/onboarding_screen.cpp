@@ -432,6 +432,7 @@ void onboarding_screen_show()
 {
     screens_clear_back_btn();
     screens_clear_wifi_icon();
+    screens_clear_companion_icon();
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
 
     strncpy(s_name, p.node_name, sizeof(s_name) - 1);

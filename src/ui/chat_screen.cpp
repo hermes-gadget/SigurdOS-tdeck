@@ -25,6 +25,7 @@
 #include "screens_common.h"
 #include "theme.h"
 #include "responsive.h"
+#include "notifications.h"
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
 #include "../mesh/mesh_wrapper.h"
@@ -866,6 +867,7 @@ static lv_obj_t* make_chat_list_screen()
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
+    create_companion_status_icon(top);
 
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(s);
@@ -1183,7 +1185,7 @@ static void create_top_bar()
     }, LV_EVENT_CLICKED, nullptr);
 
     // Horizontal scrollable channel ribbon — exact width for no warp (matches home grid uniform sizing)
-    int ribbon_w = CONTENT_W - 28 - 44 - 28; // back button + margins + time + search btn
+    int ribbon_w = CONTENT_W - 28 - 44 - 28 - 20; // back + time + search + Bluetooth
     channel_ribbon = lv_obj_create(top_bar);
     lv_obj_set_size(channel_ribbon, ribbon_w, TOP_H - 4);
     lv_obj_align(channel_ribbon, LV_ALIGN_LEFT_MID, 28, 0);
@@ -1218,6 +1220,7 @@ static void create_top_bar()
         lv_obj_set_style_text_font(tl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -4, 0);
     }
+    create_companion_status_icon(top_bar, -56);
 
     // Search button (left of time label)
     lv_obj_t* search_btn = lv_btn_create(top_bar);
@@ -2353,6 +2356,8 @@ void chat_screen_show()
 {
     screens_clear_back_btn();
     screens_clear_wifi_icon();
+    screens_clear_companion_icon();
+    notifications_clear_unread_mentions();
     // Skip channel list when DM is being opened directly —
     // open_channel_messaging() will create the messaging screen instead.
     if (g_skip_channel_list) {

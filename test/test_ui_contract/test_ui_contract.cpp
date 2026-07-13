@@ -21,6 +21,7 @@
 #include "ui/home_screen.h"
 #include "ui/screens.h"
 #include "ui/ui.h"
+#include "ui/notifications.h"
 
 namespace {
 
@@ -99,6 +100,24 @@ TEST(UIContractTest, TelemetryStatusAndWifiScreenApisStayStable) {
     (void)static_cast<void_fn>(sigurdos::ui::wifi_networks_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::regions_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::update_wifi_status);
+    (void)static_cast<void_fn>(sigurdos::ui::update_companion_status);
+    SUCCEED();
+}
+
+TEST(UIContractTest, NotificationApisStayStable) {
+    using void_fn = void (*)();
+    using post_fn = void (*)(sigurdos::ui::NotificationEvent, const char*);
+    using message_fn = void (*)(const char*, const char*, const char*, bool);
+    using login_fn = void (*)(const char*, bool);
+    using bool_fn = bool (*)();
+
+    (void)static_cast<void_fn>(sigurdos::ui::notifications_init);
+    (void)static_cast<void_fn>(sigurdos::ui::notifications_loop);
+    (void)static_cast<post_fn>(sigurdos::ui::notifications_post);
+    (void)static_cast<message_fn>(sigurdos::ui::notifications_message);
+    (void)static_cast<login_fn>(sigurdos::ui::notifications_login_result);
+    (void)static_cast<bool_fn>(sigurdos::ui::notifications_has_unread_mention);
+    (void)static_cast<void_fn>(sigurdos::ui::notifications_clear_unread_mentions);
     SUCCEED();
 }
 
@@ -116,6 +135,7 @@ TEST(UIContractTest, TerminalAndBackButtonApisStayStable) {
     (void)static_cast<highlight_fn>(sigurdos::ui::highlight_back_button);
     (void)static_cast<void_fn>(sigurdos::ui::screens_clear_back_btn);
     (void)static_cast<void_fn>(sigurdos::ui::screens_clear_wifi_icon);
+    (void)static_cast<void_fn>(sigurdos::ui::screens_clear_companion_icon);
     SUCCEED();
 }
 

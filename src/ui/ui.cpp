@@ -22,6 +22,7 @@
 #include "chat_screen.h"
 #include "screens.h"
 #include "navigation.h"
+#include "notifications.h"
 #include "theme.h"
 #include "responsive.h"
 using namespace sigurdos::responsive;
@@ -44,6 +45,7 @@ static bool persisted_state_loaded = false;
 
 void init()
 {
+    notifications_init();
     // Register emoji font as fallback for all Montserrat fonts
     emoji_font_register_fallback();
 
@@ -157,18 +159,18 @@ void loop()
             last_msg_poll = millis();
             static sigurdos::mesh::MeshMessage msgs[4];  // static to avoid ~1300B stack in loop()
             int n = sigurdos::mesh::pollMessages(msgs, 4);
-            bool got_new = (n > 0);
             for (int i = 0; i < n; i++) {
+                notifications_message(msgs[i].channel, msgs[i].sender,
+                                      msgs[i].text, msgs[i].is_self);
                 chat_screen_add_msg_at(msgs[i].channel, msgs[i].sender,
                                        msgs[i].text, msgs[i].timestamp,
                                        msgs[i].is_self);
             }
-            if (got_new && !sigurdos::prefs_get().buzzer_quiet) {
-                sigurdos::hal::buzzer_beep_short();
-            }
+            if (n > 0) home_screen_update_badges();
             // Refresh ACK status on the current chat screen
             chat_screen_refresh_acks();
         }
+        notifications_loop();
     }
 }
 

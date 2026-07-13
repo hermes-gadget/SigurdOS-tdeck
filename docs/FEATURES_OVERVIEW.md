@@ -42,6 +42,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
   - [Structured Telemetry](#structured-telemetry)
   - [Launcher Compatibility](#launcher-compatibility)
   - [Companion BLE](#companion-ble-official-meshcore-app)
+  - [Notifications & Alerts](#notifications--alerts)
 - [Hardware Features](#hardware-features)
   - [ST7789 Display](#st7789-display)
   - [GT911 Touch](#gt911-touch)
@@ -126,6 +127,17 @@ Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal qua
 ---
 
 ## System Features
+
+### Notifications & Alerts
+
+The bounded on-device notification queue shows timed DMs, mentions,
+companion connect/disconnect changes, and repeater login results. Mentions
+preempt ordinary alerts and strengthen the home unread badge. Low battery,
+nearly-full SD storage, and OTA failures are sticky banners that retain the
+specific failure text until tapped. The live Bluetooth symbol in each top bar
+is green while an official companion is connected. See
+[`docs/NOTIFICATIONS.md`](NOTIFICATIONS.md) and
+[`src/ui/notifications.cpp`](../src/ui/notifications.cpp).
 
 ### Display & LVGL
 - **LovyanGFX** driver for ST7789 240×320 TFT via SPI
