@@ -28,6 +28,9 @@
 #include "Arduino.h"
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 // Include our mesh wrapper header (uses mocks for MeshCore)
 #include "mesh/mesh_wrapper.h"
@@ -40,6 +43,17 @@ protected:
         arduino_mock::reset();
     }
 };
+
+static std::string readProjectFile(const char* path) {
+    const char* prefixes[] = {"", "../", "../../", "../../../", "../../../../"};
+    for (const char* prefix : prefixes) {
+        std::ifstream in(std::string(prefix) + path);
+        if (in.good()) {
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        }
+    }
+    return {};
+}
 
 // ── API function signatures compile and link ────────────
 TEST_F(MeshWrapperTest, InitFunctionExists) {
@@ -54,6 +68,24 @@ TEST_F(MeshWrapperTest, LoopFunctionExists) {
     using loop_fn = void (*)();
     (void)static_cast<loop_fn>(sigurdos::mesh::loop);
     SUCCEED();
+}
+
+TEST_F(MeshWrapperTest, ProductionLoopServicesMeshOnceBeforeUiPolling) {
+    const std::string source = readProjectFile("src/main.cpp");
+    ASSERT_FALSE(source.empty());
+
+    const std::string mesh_call = "sigurdos::mesh::loop();";
+    const size_t display_pos = source.find("sigurdos_display_loop();");
+    const size_t mesh_pos = source.find(mesh_call);
+    const size_t ui_pos = source.find("sigurdos::ui::loop();");
+
+    ASSERT_NE(display_pos, std::string::npos);
+    ASSERT_NE(mesh_pos, std::string::npos);
+    ASSERT_NE(ui_pos, std::string::npos);
+    EXPECT_LT(display_pos, mesh_pos);
+    EXPECT_LT(mesh_pos, ui_pos);
+    EXPECT_EQ(source.find(mesh_call, mesh_pos + mesh_call.size()),
+              std::string::npos);
 }
 
 TEST_F(MeshWrapperTest, SendDirectSignature) {

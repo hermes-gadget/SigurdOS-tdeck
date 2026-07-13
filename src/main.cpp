@@ -226,6 +226,9 @@ void loop()
 
     // Process display/LVGL first so UI stays responsive during mesh ops
     sigurdos_display_loop();
+    // Keep radio dispatch, ACK expiry, companion I/O, RTC maintenance, and
+    // auto-adverts moving on the same task that owns the rest of the app.
+    sigurdos::mesh::loop();
     sigurdos::ui::loop();
     sigurdos::hal::buzzer_loop();  // non-blocking beep pattern playback
     sigurdos::ota::loop();         // WiFi OTA web server
