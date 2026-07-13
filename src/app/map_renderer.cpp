@@ -1280,12 +1280,14 @@ struct ContactDot {
 
 static ContactDot g_contact_dots[MAX_CONTACT_DOTS];
 static bool g_contact_pool_init = false;
+static int g_contact_parent_screen_y = 0;
 
-void sigurdos_map_contact_init(lv_obj_t* parent) {
+void sigurdos_map_contact_init(lv_obj_t* parent, int parent_screen_y) {
     if (!sigurdos_map_required_pointer_valid(parent)) {
         MAP_DEBUG_PRINTLN("[map] contact_init: null parent");
         return;
     }
+    g_contact_parent_screen_y = parent_screen_y;
     for (int i = 0; i < MAX_CONTACT_DOTS; i++) {
         lv_obj_t* dot = lv_obj_create(parent);
         lv_obj_set_size(dot, CONTACT_DOT_SIZE, CONTACT_DOT_SIZE);
@@ -1330,7 +1332,11 @@ void sigurdos_map_contact_render(const void* contacts_ptr, int count) {
         if (px < -20 || px > TFT_WIDTH + 20 || py < -20 || py > TFT_HEIGHT + 20) continue;
 
         lv_obj_clear_flag(g_contact_dots[slot].obj, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_pos(g_contact_dots[slot].obj, px - CONTACT_DOT_SIZE/2, py - CONTACT_DOT_SIZE/2);
+        lv_obj_set_pos(
+            g_contact_dots[slot].obj,
+            sigurdos_map_marker_origin(px, 0, CONTACT_DOT_SIZE),
+            sigurdos_map_marker_origin(
+                py, g_contact_parent_screen_y, CONTACT_DOT_SIZE));
         strncpy(g_contact_dots[slot].name, contacts[i].name, sizeof(g_contact_dots[slot].name) - 1);
         g_contact_dots[slot].name[sizeof(g_contact_dots[slot].name) - 1] = '\0';
         slot++;
@@ -1351,4 +1357,5 @@ void sigurdos_map_contact_deinit() {
         }
     }
     g_contact_pool_init = false;
+    g_contact_parent_screen_y = 0;
 }

@@ -237,6 +237,12 @@ inline bool sigurdos_map_contact_args_valid(const void* contacts, int count) {
     return count >= 0 && (count == 0 || contacts != nullptr);
 }
 
+inline int sigurdos_map_marker_origin(int screen_coordinate,
+                                      int parent_screen_offset,
+                                      int marker_size) {
+    return screen_coordinate - parent_screen_offset - marker_size / 2;
+}
+
 template <typename T, typename FreeFn>
 inline bool sigurdos_map_release_owned_buffer(T*& buffer, FreeFn free_fn) {
     if (!buffer) return false;
@@ -292,8 +298,9 @@ void sigurdos_map_pixel_to_latlon(int px, int py, double* out_lat, double* out_l
 void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_py);
 
 // Contact marker overlay (pool of pre-allocated dots)
-// Call after map_init, before first render. parent = the non-null map overlay object.
-void sigurdos_map_contact_init(lv_obj_t* parent);
+// Call after map_init, before first render. parent = the non-null map overlay
+// object; parent_screen_y is its full-screen y origin.
+void sigurdos_map_contact_init(lv_obj_t* parent, int parent_screen_y);
 // Reposition markers for contacts that have location data. contacts may be
 // null only when count is zero.
 void sigurdos_map_contact_render(const void* contacts, int count);

@@ -123,7 +123,7 @@ void map_screen_show()
     sigurdos_map_discover_tiles();
 
     // Pre-allocate contact marker dots on top of map BEFORE rendering
-    sigurdos_map_contact_init(map);
+    sigurdos_map_contact_init(map, CONTENT_Y);
     sigurdos_map_contact_set_tap_cb(contact_detail_screen_show);
 
     render_map_with_contacts();

@@ -256,6 +256,14 @@ TEST_F(MapRendererMathTest, ContactApisRejectInvalidPointerCountCombinations) {
     EXPECT_FALSE(sigurdos_map_contact_args_valid(&contact_storage, -1));
 }
 
+TEST_F(MapRendererMathTest, ContactMarkerOriginAccountsForContentOffset) {
+    constexpr int content_y = 22;
+    constexpr int marker_size = 8;
+
+    EXPECT_EQ(sigurdos_map_marker_origin(160, 0, marker_size), 156);
+    EXPECT_EQ(sigurdos_map_marker_origin(120, content_y, marker_size), 94);
+}
+
 TEST_F(MapRendererMathTest, OwnedDiscoveryBufferIsFreedExactlyOnce) {
     int allocations = 0;
     int frees = 0;
