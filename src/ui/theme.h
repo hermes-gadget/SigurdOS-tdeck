@@ -21,6 +21,10 @@ extern uint32_t BG_INPUT;      // input field
 // ── Themeable accents ───────────────────────────────────
 extern uint32_t ACCENT;        // bright cyan
 extern uint32_t ACCENT_HOVER;
+extern uint32_t ACCENT_FOREGROUND;
+
+// Choose black or white for maximum WCAG contrast against a background.
+uint32_t contrast_foreground(uint32_t background);
 
 // ── Semantic accents (always fixed — status indicators) ──
 constexpr uint32_t ACCENT_GREEN = 0x3ba55d;
@@ -87,6 +91,7 @@ inline void theme_apply(uint8_t id)
     BG_INPUT     = t.bg_input;
     ACCENT       = t.accent;
     ACCENT_HOVER = t.accent_hover;
+    ACCENT_FOREGROUND = contrast_foreground(t.accent);
     CHANNEL_HASH = t.channel_hash;
 }
 
@@ -182,6 +187,7 @@ inline void apply_pixel_card_accent(lv_obj_t* obj) {
 inline void apply_pixel_btn(lv_obj_t* obj) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(obj, lv_color_hex(ACCENT_FOREGROUND), 0);
     lv_obj_set_style_radius(obj, 0, 0);
     lv_obj_set_style_border_width(obj, PIXEL_BORDER, 0);
     lv_obj_set_style_border_color(obj, lv_color_hex(ACCENT_HOVER), 0);

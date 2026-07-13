@@ -106,6 +106,32 @@ TEST_F(ThemeTest, MutedTextHasReadableDarkSurfaceContrast) {
     EXPECT_GE(contrast(TEXT_MUTED, BG_INPUT), 4.5);
 }
 
+TEST_F(ThemeTest, AccentForegroundMeetsNormalTextContrastForEveryTheme) {
+    using namespace sigurdos::theme;
+    auto channel = [](uint8_t v) -> double {
+        const double c = v / 255.0;
+        return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+    };
+    auto luminance = [&](uint32_t c) -> double {
+        return 0.2126 * channel((c >> 16) & 0xFF)
+             + 0.7152 * channel((c >> 8) & 0xFF)
+             + 0.0722 * channel(c & 0xFF);
+    };
+    auto contrast = [&](uint32_t a, uint32_t b) -> double {
+        const double la = luminance(a);
+        const double lb = luminance(b);
+        const double hi = la > lb ? la : lb;
+        const double lo = la > lb ? lb : la;
+        return (hi + 0.05) / (lo + 0.05);
+    };
+
+    for (const auto& theme : THEMES) {
+        const uint32_t foreground = contrast_foreground(theme.accent);
+        EXPECT_TRUE(foreground == 0x000000 || foreground == 0xFFFFFF);
+        EXPECT_GE(contrast(foreground, theme.accent), 4.5) << theme.name;
+    }
+}
+
 // ── All constants are non-zero ──────────────────────────
 TEST_F(ThemeTest, AllConstantsNonZero) {
     using namespace sigurdos::theme;
@@ -138,11 +164,13 @@ TEST_F(ThemeTest, ThemeApplyUpdatesRuntimeColors) {
     EXPECT_EQ(BG_INPUT, THEMES[2].bg_input);
     EXPECT_EQ(ACCENT, THEMES[2].accent);
     EXPECT_EQ(ACCENT_HOVER, THEMES[2].accent_hover);
+    EXPECT_EQ(ACCENT_FOREGROUND, contrast_foreground(THEMES[2].accent));
     EXPECT_EQ(CHANNEL_HASH, THEMES[2].channel_hash);
 
     theme_apply(255);
     EXPECT_EQ(BG_PRIMARY, THEMES[0].bg_primary);
     EXPECT_EQ(ACCENT, THEMES[0].accent);
+    EXPECT_EQ(ACCENT_FOREGROUND, contrast_foreground(THEMES[0].accent));
     EXPECT_EQ(CHANNEL_HASH, THEMES[0].channel_hash);
 }
 

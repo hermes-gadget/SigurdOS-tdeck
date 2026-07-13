@@ -295,7 +295,7 @@ static lv_obj_t* create_channel_pill(lv_obj_t* parent, int idx)
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(label, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_text_color(label,
-        selected ? lv_color_hex(0xffffff) : lv_color_hex(CHANNEL_HASH), 0);
+        selected ? lv_color_hex(ACCENT_FOREGROUND) : lv_color_hex(CHANNEL_HASH), 0);
     disable_scroll(label);
     lv_obj_center(label);
 
@@ -593,7 +593,7 @@ static void populate_channel_rows(lv_obj_t* list) {
             else         snprintf(cnt_buf, sizeof(cnt_buf), "%d", cnt);
             lv_obj_t* cnt_lbl = lv_label_create(badge);
             lv_label_set_text(cnt_lbl, cnt_buf);
-            lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(ACCENT_FOREGROUND), 0);
             lv_obj_set_style_text_font(cnt_lbl, emoji_wrapped_montserrat_10, 0);
             lv_obj_center(cnt_lbl);
         }
@@ -965,6 +965,7 @@ static void show_channel_list()
     lv_obj_t* al = lv_label_create(ch_add_btn);
     lv_label_set_text(al, LV_SYMBOL_PLUS " Add # Channel");
     lv_obj_set_style_text_font(al, emoji_wrapped_montserrat_10, 0);
+    lv_obj_set_style_text_color(al, lv_color_hex(ACCENT_FOREGROUND), 0);
     lv_obj_center(al);
     lv_obj_add_event_cb(ch_add_btn, [](lv_event_t* e) {
         lv_obj_t* scr = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
@@ -1313,7 +1314,7 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_obj_t* name = lv_label_create(header);
     lv_label_set_text(name, sender);
     lv_obj_set_style_text_color(name,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(ACCENT), 0);
+        is_self ? lv_color_hex(ACCENT_FOREGROUND) : lv_color_hex(ACCENT), 0);
     lv_obj_set_style_text_font(name, emoji_wrapped_montserrat_10, 0);
 
     char time_buf[10];
@@ -1327,13 +1328,13 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     lv_obj_t* ts = lv_label_create(header);
     lv_label_set_text(ts, time_buf);
     lv_obj_set_style_text_color(ts,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY), 0);
+        is_self ? lv_color_hex(ACCENT_FOREGROUND) : lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(ts, emoji_wrapped_montserrat_10, 0);
 
     lv_obj_t* msg_text = lv_label_create(bubble);
     lv_label_set_text(msg_text, text);
     lv_obj_set_style_text_color(msg_text,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY), 0);
+        is_self ? lv_color_hex(ACCENT_FOREGROUND) : lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(msg_text, emoji_wrapped_montserrat_12, 0);
     lv_label_set_long_mode(msg_text, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(msg_text, LV_PCT(100));
@@ -1363,7 +1364,7 @@ static void bind_bubble(lv_obj_t* container, const char* sender,
 
     lv_label_set_text(name, sender ? sender : "");
     lv_obj_set_style_text_color(name,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(ACCENT), 0);
+        is_self ? lv_color_hex(ACCENT_FOREGROUND) : lv_color_hex(ACCENT), 0);
 
     char time_buf[10];
     if (is_self && acked) {
@@ -1375,11 +1376,11 @@ static void bind_bubble(lv_obj_t* container, const char* sender,
     }
     lv_label_set_text(ts, time_buf);
     lv_obj_set_style_text_color(ts,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY), 0);
+        is_self ? lv_color_hex(ACCENT_FOREGROUND) : lv_color_hex(TEXT_PRIMARY), 0);
 
     lv_label_set_text(msg_text, text ? text : "");
     lv_obj_set_style_text_color(msg_text,
-        is_self ? lv_color_hex(0xffffff) : lv_color_hex(TEXT_PRIMARY), 0);
+        is_self ? lv_color_hex(ACCENT_FOREGROUND) : lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_clear_flag(container, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1785,7 +1786,7 @@ static void create_input_bar()
     lv_obj_t* send_label = lv_label_create(send_btn);
     lv_label_set_text(send_label, "Send");
     lv_obj_set_style_text_font(send_label, emoji_wrapped_montserrat_10, 0);
-    lv_obj_set_style_text_color(send_label, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(send_label, lv_color_hex(ACCENT_FOREGROUND), 0);
     lv_obj_center(send_label);
 
     lv_obj_add_event_cb(send_btn, [](lv_event_t*) { do_send(); },

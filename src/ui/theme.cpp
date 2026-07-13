@@ -17,9 +17,37 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "theme.h"
+#include <cmath>
 
 namespace sigurdos {
 namespace theme {
+
+namespace {
+
+double linear_channel(uint8_t value)
+{
+    const double channel = value / 255.0;
+    return channel <= 0.04045
+        ? channel / 12.92
+        : std::pow((channel + 0.055) / 1.055, 2.4);
+}
+
+double relative_luminance(uint32_t color)
+{
+    return 0.2126 * linear_channel((color >> 16) & 0xFF) +
+           0.7152 * linear_channel((color >> 8) & 0xFF) +
+           0.0722 * linear_channel(color & 0xFF);
+}
+
+} // namespace
+
+uint32_t contrast_foreground(uint32_t background)
+{
+    const double luminance = relative_luminance(background);
+    const double black_contrast = (luminance + 0.05) / 0.05;
+    const double white_contrast = 1.05 / (luminance + 0.05);
+    return black_contrast >= white_contrast ? 0x000000 : 0xFFFFFF;
+}
 
 uint32_t BG_PRIMARY   = 0x0f0f0f;
 uint32_t BG_SECONDARY = 0x181818;
@@ -28,6 +56,7 @@ uint32_t BG_INPUT     = 0x252525;
 
 uint32_t ACCENT       = 0x00bfff;
 uint32_t ACCENT_HOVER = 0x00a5e0;
+uint32_t ACCENT_FOREGROUND = contrast_foreground(ACCENT);
 
 uint32_t CHANNEL_HASH = 0x00bfff;
 
