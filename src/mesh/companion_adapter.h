@@ -1,5 +1,10 @@
 #pragma once
 
+#if defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB && \
+    defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+#error "Companion USB-only builds must not enable the BLE transport"
+#endif
+
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Ben
 
