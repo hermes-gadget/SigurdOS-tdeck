@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Ben
 
 #include "companion_bridge.h"
+#include "mesh/path_codec.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -42,10 +43,11 @@ static bool pathByteLen(uint8_t path_len, size_t* out_len)
 {
     if (out_len) *out_len = 0;
     if (path_len == COMPANION_OUT_PATH_UNKNOWN) return true;
-    uint8_t hash_size = (path_len >> 6) + 1;
-    if (hash_size == 4) return false;
-    size_t n = (size_t)(path_len & 63) * (size_t)hash_size;
-    if (n > SIGURDOS_COMPANION_PATH_SIZE) return false;
+    if (!sigurdos::mesh::path::encodedLengthValid(path_len)) return false;
+    const size_t n = sigurdos::mesh::path::byteCount(path_len);
+    static_assert(SIGURDOS_COMPANION_PATH_SIZE ==
+                      sigurdos::mesh::path::MAX_ENCODED_PATH_BYTES,
+                  "companion and mesh path capacities must match");
     if (out_len) *out_len = n;
     return true;
 }
@@ -580,7 +582,12 @@ bool CompanionBridge::pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
 {
     if (!isConnected()) return false;
     uint8_t path_sz = flags & 0x03;
-    size_t snr_count = (size_t)(path_len >> path_sz);
+    const size_t hash_size = (size_t)1U << path_sz;
+    if (path_len > sigurdos::mesh::path::MAX_ENCODED_PATH_BYTES ||
+        path_len % hash_size != 0 ||
+        (path_len > 0 && !path_hashes)) return false;
+    size_t snr_count = (size_t)path_len / hash_size;
+    if (snr_count > 0 && !path_snrs) return false;
     // [code][reserved][path_len][flags][tag:4][auth:4][hashes][snrs][final_snr]
     if (12 + (size_t)path_len + snr_count + 1 > MAX_FRAME_SIZE) return false;
     int i = 0;
@@ -1036,6 +1043,10 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         c.type = _cmd_frame[i++];
         c.flags = _cmd_frame[i++];
         c.out_path_len = _cmd_frame[i++];
+        if (!sigurdos::mesh::path::storedLengthValid(c.out_path_len)) {
+            writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+            return true;
+        }
         std::memcpy(c.out_path, &_cmd_frame[i], SIGURDOS_COMPANION_PATH_SIZE);
         i += SIGURDOS_COMPANION_PATH_SIZE;
         std::memcpy(c.name, &_cmd_frame[i], 32);
@@ -1183,18 +1194,22 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         // Look up stored advert path for this contact's pubkey
         uint8_t path_buf[SIGURDOS_COMPANION_PATH_SIZE];
         uint32_t timestamp = 0;
-        uint8_t plen = _host->getAdvertPath(&_cmd_frame[2], path_buf,
-                                            sizeof(path_buf), &timestamp);
-        if (plen == 0) {
+        uint8_t encoded_len = 0;
+        uint8_t copied_bytes = 0;
+        if (!_host->getAdvertPath(&_cmd_frame[2], path_buf, sizeof(path_buf),
+                                  &encoded_len, &copied_bytes, &timestamp) ||
+            !sigurdos::mesh::path::encodedLengthValid(encoded_len) ||
+            copied_bytes != sigurdos::mesh::path::byteCount(encoded_len) ||
+            copied_bytes > sizeof(path_buf)) {
             writeErrFrame(ERR_CODE_NOT_FOUND);
             return true;
         }
         int i = 0;
         _out_frame[i++] = RESP_CODE_ADVERT_PATH;
-        _out_frame[i++] = plen;
-        if (plen > 0) {
-            std::memcpy(&_out_frame[i], path_buf, plen);
-            i += plen;
+        _out_frame[i++] = encoded_len;
+        if (copied_bytes > 0) {
+            std::memcpy(&_out_frame[i], path_buf, copied_bytes);
+            i += copied_bytes;
         }
         std::memcpy(&_out_frame[i], &timestamp, 4);
         i += 4;

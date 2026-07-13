@@ -16,6 +16,7 @@
 #include "mesh_wrapper.h"
 #include "pending_ack_policy.h"
 #include "login_session.h"
+#include "path_codec.h"
 #include "hal/prefs.h"
 #include "regions.h"
 #include "hal/tdeck_board.h"
@@ -109,6 +110,7 @@ public:
     bool     _has_trace_result = false;
     uint32_t _last_trace_tag = 0;
     uint8_t  _last_trace_len = 0;
+    uint8_t  _last_trace_hash_bytes = 0;
     uint8_t  _last_trace_snrs[MAX_PATH_SIZE] = {0};
     uint8_t  _last_trace_hashes[MAX_PATH_SIZE] = {0};
 
@@ -157,7 +159,11 @@ public:
     uint8_t getTracePathLen() { return _last_trace_len; }
     void getTracePath(uint8_t* snrs_out, uint8_t* hashes_out);
 
-    void clearTraceResult() { _has_trace_result = false; _last_trace_len = 0; }
+    void clearTraceResult() {
+        _has_trace_result = false;
+        _last_trace_len = 0;
+        _last_trace_hash_bytes = 0;
+    }
 
     // ── Ping Nearby ─────────────────────────────
     static constexpr int PING_RESULTS_MAX = 32;
@@ -685,7 +691,7 @@ public:
     static constexpr int ADVERT_PATH_TABLE_SIZE = 16;
     struct AdvertPathEntry {
         uint8_t pubkey_prefix[7];  // first 7 bytes of pub_key
-        uint8_t path_len;          // number of hops in the advert path
+        uint8_t encoded_path_len;  // MeshCore hash-size/count encoding
         uint8_t path[MAX_PATH_SIZE];  // actual path bytes (MeshCore MAX_PATH_SIZE)
         char    name[32];
         uint32_t recv_timestamp;
@@ -693,8 +699,12 @@ public:
     AdvertPathEntry _advert_paths[ADVERT_PATH_TABLE_SIZE] = {};
 
     void storeAdvertPath(const uint8_t* pub_key, const char* name,
-                         uint8_t path_len, const uint8_t* path) {
-        if (!pub_key || !name) return;
+                         uint8_t encoded_path_len, const uint8_t* path_bytes) {
+        static_assert(MAX_PATH_SIZE == path::MAX_ENCODED_PATH_BYTES,
+                      "path codec and MeshCore capacities must match");
+        if (!pub_key || !name || !path::encodedLengthValid(encoded_path_len)) return;
+        const size_t byte_count = path::byteCount(encoded_path_len);
+        if (byte_count > 0 && !path_bytes) return;
         // Find existing entry for this pubkey or the oldest slot
         AdvertPathEntry* target = &_advert_paths[0];
         uint32_t oldest = _advert_paths[0].recv_timestamp;
@@ -710,10 +720,9 @@ public:
             }
         }
         memcpy(target->pubkey_prefix, pub_key, sizeof(target->pubkey_prefix));
-        target->path_len = path_len;
-        if (path && path_len > 0 && path_len <= MAX_PATH_SIZE) {
-            memcpy(target->path, path, path_len);
-        }
+        target->encoded_path_len = encoded_path_len;
+        memset(target->path, 0, sizeof(target->path));
+        if (byte_count > 0) memcpy(target->path, path_bytes, byte_count);
         strncpy(target->name, name, sizeof(target->name) - 1);
         target->name[sizeof(target->name) - 1] = '\0';
         target->recv_timestamp = getRTCClock()->getCurrentTime();

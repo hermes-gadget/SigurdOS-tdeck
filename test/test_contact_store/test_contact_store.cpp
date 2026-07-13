@@ -289,7 +289,7 @@ TEST_F(ContactStoreTest, InvalidRouteLengthIsRejectedWithoutReplacingLive) {
     StoredContact live = makeRichContact(0x10, "Live");
     StoredContact invalid = makeRichContact(0x40, "Invalid");
     ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(&live, 1));
-    invalid.out_path_len = sigurdos::mesh::SIGURDOS_CONTACT_PATH_LEN + 1;
+    invalid.out_path_len = 0x61;  // 33 two-byte hashes exceed the 64-byte buffer
     EXPECT_FALSE(sigurdos::mesh::contactStoreSaveAll(&invalid, 1));
 
     StoredContact out{};
@@ -300,7 +300,7 @@ TEST_F(ContactStoreTest, InvalidRouteLengthIsRejectedWithoutReplacingLive) {
 
 TEST_F(ContactStoreTest, InvalidRouteLengthInVersionTwoRecordStopsLoad) {
     StoredContact invalid = makeRichContact(0x40, "Invalid");
-    invalid.out_path_len = sigurdos::mesh::SIGURDOS_CONTACT_PATH_LEN + 1;
+    invalid.out_path_len = 0xC1;  // hash-size mode 3 is reserved
     std::vector<uint8_t> raw;
     appendVersionedHeader(raw, 1, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
     appendRecord(raw, invalid);
@@ -308,6 +308,25 @@ TEST_F(ContactStoreTest, InvalidRouteLengthInVersionTwoRecordStopsLoad) {
 
     StoredContact out{};
     EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 0);
+}
+
+TEST_F(ContactStoreTest, EncodedMultiByteRoutesRoundTrip) {
+    StoredContact contacts[2] = {
+        makeRichContact(0x20, "TwoByteHashes"),
+        makeRichContact(0x60, "ThreeByteHashes"),
+    };
+    contacts[0].out_path_len = 0x60;  // 32 hashes * 2 bytes = 64 bytes
+    contacts[1].out_path_len = 0x95;  // 21 hashes * 3 bytes = 63 bytes
+
+    ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(contacts, 2));
+    StoredContact out[2]{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 2), 2);
+    EXPECT_EQ(out[0].out_path_len, 0x60);
+    EXPECT_EQ(out[1].out_path_len, 0x95);
+    EXPECT_EQ(std::memcmp(out[0].out_path, contacts[0].out_path,
+                          sizeof(out[0].out_path)), 0);
+    EXPECT_EQ(std::memcmp(out[1].out_path, contacts[1].out_path,
+                          sizeof(out[1].out_path)), 0);
 }
 
 TEST_F(ContactStoreTest, TruncatedFileKeepsCompleteRecordsBeforeEof) {

@@ -71,7 +71,8 @@ namespace mesh {
     bool SigurdMeshV2::sendTrace(int contact_idx, uint32_t tag) {
         ::ContactInfo c;
         if (!getContactByIdx((uint32_t)contact_idx, c)) return false;
-        if (c.out_path_len == OUT_PATH_UNKNOWN) return false;
+        if (c.out_path_len == OUT_PATH_UNKNOWN ||
+            !path::encodedLengthValid(c.out_path_len)) return false;
         _has_trace_result = false;
         ::mesh::Packet* pkt = createTrace(tag, 0, 0);
         if (!pkt) return false;
@@ -139,22 +140,30 @@ namespace mesh {
     }
 
     void SigurdMeshV2::onTraceRecv(::mesh::Packet* pkt, uint32_t tag, uint32_t auth_code, uint8_t flags, const uint8_t* path_snrs, const uint8_t* path_hashes, uint8_t path_len) {
-        // Fan out the full trace result to the phone app before clamping.
+        const uint8_t hash_size = (uint8_t)(1U << (flags & 0x03));
+        if (path_len > MAX_PATH_SIZE || path_len % hash_size != 0 ||
+            (path_len > 0 && (!path_snrs || !path_hashes))) return;
+        const uint8_t snr_count = path_len / hash_size;
+
+        // Fan out the full trace result to the phone app after validating the
+        // two independently sized arrays.
         int8_t final_snr_q = (int8_t)((pkt ? pkt->getSNR() : 0.0f) * 4.0f);
         sigurdos::mesh::mesh_v2_companion_trace_push(tag, auth_code, flags,
                                                      path_hashes, path_snrs,
                                                      path_len, final_snr_q);
         _last_trace_tag = tag;
-        if (path_len > MAX_PATH_SIZE) path_len = MAX_PATH_SIZE;
-        _last_trace_len = path_len;
-        memcpy(_last_trace_snrs, path_snrs, path_len);
-        memcpy(_last_trace_hashes, path_hashes, path_len);
+        _last_trace_len = snr_count;
+        _last_trace_hash_bytes = path_len;
+        if (snr_count > 0) memcpy(_last_trace_snrs, path_snrs, snr_count);
+        if (path_len > 0) memcpy(_last_trace_hashes, path_hashes, path_len);
         _has_trace_result = true;
     }
 
     void SigurdMeshV2::getTracePath(uint8_t* snrs_out, uint8_t* hashes_out) {
-        memcpy(snrs_out, _last_trace_snrs, _last_trace_len);
-        memcpy(hashes_out, _last_trace_hashes, _last_trace_len);
+        if (snrs_out && _last_trace_len > 0)
+            memcpy(snrs_out, _last_trace_snrs, _last_trace_len);
+        if (hashes_out && _last_trace_hash_bytes > 0)
+            memcpy(hashes_out, _last_trace_hashes, _last_trace_hash_bytes);
     }
 
     bool SigurdMeshV2::sendPingNearby() {
@@ -546,7 +555,8 @@ namespace mesh {
                                     is_new ? "ADVERT" : "ADVERT(UPDATE)");
 
         // ── Track inbound advert path ──────────────
-        if (path && ::mesh::Packet::isValidPathLen(path_len)) {
+        if (path && sigurdos::mesh::path::encodedLengthValid(path_len) &&
+            ::mesh::Packet::isValidPathLen(path_len)) {
             storeAdvertPath(contact.id.pub_key, contact.name, path_len, path);
         }
 
@@ -1335,7 +1345,9 @@ namespace mesh {
     bool SigurdMeshV2::sendGroupDataToChannel(int idx, const uint8_t* path, uint8_t path_len, uint16_t data_type, const uint8_t* data, int data_len) {
         if (idx < 0 || idx >= getChannelCount()) return false;
         if (data_len > 0 && !data) return false;
-        if (path_len != OUT_PATH_UNKNOWN && !::mesh::Packet::isValidPathLen(path_len)) return false;
+        if (path_len != OUT_PATH_UNKNOWN &&
+            (!sigurdos::mesh::path::encodedLengthValid(path_len) ||
+             !::mesh::Packet::isValidPathLen(path_len))) return false;
         if (path_len != OUT_PATH_UNKNOWN && !path) return false;
         ChannelDetails cd;
         if (!BaseChatMesh::getChannel(idx, cd)) return false;
@@ -1484,7 +1496,7 @@ namespace mesh {
         for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
             if (_advert_paths[i].recv_timestamp > 0
                 && strcmp(_advert_paths[i].name, name) == 0) {
-                return _advert_paths[i].path_len;
+                return path::hashCount(_advert_paths[i].encoded_path_len);
             }
         }
         return 0;

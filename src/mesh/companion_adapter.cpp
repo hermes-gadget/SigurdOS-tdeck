@@ -16,6 +16,7 @@
 #include "regions.h"
 #include "sigurd_mesh_v2.h"
 #include "advert_blob.h"
+#include "path_codec.h"
 #include "comms/companion_bridge.h"
 #include "comms/observed_ble_interface.h"
 #include "hal/tdeck_pins.h"
@@ -611,7 +612,9 @@ public:
         return true;
     }
     bool addOrUpdateContact(const CompanionContact& c) override {
-        if (!mesh_ptr()) return false;
+        if (!mesh_ptr() || !sigurdos::mesh::path::storedLengthValid(c.out_path_len)) {
+            return false;
+        }
         ::ContactInfo* existing = mesh_ptr()->lookupContactByPubKey((const uint8_t*)c.pub_key, 32);
         ::ContactInfo ci{};
         if (existing) ci = *existing;
@@ -924,18 +927,24 @@ public:
         mesh_ptr()->self_id.sign(sig_out, data, len);
         return (int)sigurdos::comms::SIGURDOS_COMPANION_SIGNATURE_SIZE;
     }
-    uint8_t getAdvertPath(const uint8_t* pub_key,
-                          uint8_t* path_out, uint8_t max_path,
-                          uint32_t* timestamp_out) const override {
-        if (!mesh_ptr() || !pub_key) return 0;
-        const auto* entry = mesh_ptr()->getAdvertPathByKey(pub_key);
-        if (!entry) return 0;
-        uint8_t plen = entry->path_len;
-        if (path_out && plen > 0 && max_path > 0) {
-            memcpy(path_out, entry->path, plen < max_path ? plen : max_path);
+    bool getAdvertPath(const uint8_t* pub_key,
+                       uint8_t* path_out, uint8_t max_path,
+                       uint8_t* encoded_len_out, uint8_t* bytes_copied_out,
+                       uint32_t* timestamp_out) const override {
+        if (!mesh_ptr() || !pub_key || !encoded_len_out || !bytes_copied_out) {
+            return false;
         }
+        const auto* entry = mesh_ptr()->getAdvertPathByKey(pub_key);
+        if (!entry || !sigurdos::mesh::path::encodedLengthValid(
+                          entry->encoded_path_len)) return false;
+        const size_t byte_count = sigurdos::mesh::path::byteCount(
+            entry->encoded_path_len);
+        if (byte_count > max_path || (byte_count > 0 && !path_out)) return false;
+        if (byte_count > 0) memcpy(path_out, entry->path, byte_count);
+        *encoded_len_out = entry->encoded_path_len;
+        *bytes_copied_out = (uint8_t)byte_count;
         if (timestamp_out) *timestamp_out = entry->recv_timestamp;
-        return plen;
+        return true;
     }
 
 private:

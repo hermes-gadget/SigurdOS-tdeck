@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Ben
 
 #include "contact_store.h"
+#include "path_codec.h"
 
 #include "hal/atomic_file.h"
 
@@ -106,8 +107,9 @@ struct ContactSaveCtx {
 
 static bool contactValid(const StoredContact& contact)
 {
-    return contact.out_path_len == SIGURDOS_CONTACT_PATH_UNKNOWN ||
-        contact.out_path_len <= SIGURDOS_CONTACT_PATH_LEN;
+    static_assert(SIGURDOS_CONTACT_PATH_LEN == path::MAX_ENCODED_PATH_BYTES,
+                  "contact and mesh path capacities must match");
+    return path::storedLengthValid(contact.out_path_len);
 }
 
 static bool writeContacts(sigurdos::storage::AtomicFileWriter& writer, void* raw)
