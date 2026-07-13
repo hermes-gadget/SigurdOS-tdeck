@@ -388,6 +388,34 @@ int contactStoreLoadAll(StoredContact* out, int max)
     return ctx.count;
 }
 
+bool contactCandidateValid(const char* name, const uint8_t* pub_key,
+                           uint8_t type)
+{
+    if (!name || !pub_key) return false;
+    const size_t name_len = strnlen(name, SIGURDOS_CONTACT_NAME_LEN);
+    if (name_len == 0 || name_len == SIGURDOS_CONTACT_NAME_LEN) return false;
+    for (size_t i = 0; i < name_len; ++i) {
+        const unsigned char c = (unsigned char)name[i];
+        if (c < 0x20 || c == 0x7F) return false;
+    }
+    if (type < 1 || type > 3) return false;
+    bool nonzero = false;
+    for (size_t i = 0; i < SIGURDOS_CONTACT_PUBKEY_LEN; ++i) {
+        nonzero = nonzero || pub_key[i] != 0;
+    }
+    return nonzero;
+}
+
+bool contactCandidateDuplicates(const char* name, const uint8_t* pub_key,
+                                const char* existing_name,
+                                const uint8_t* existing_pub_key)
+{
+    if (!name || !pub_key || !existing_name || !existing_pub_key) return false;
+    return std::strncmp(name, existing_name, SIGURDOS_CONTACT_NAME_LEN) == 0 ||
+           std::memcmp(pub_key, existing_pub_key,
+                       SIGURDOS_CONTACT_PUBKEY_LEN) == 0;
+}
+
 #if !defined(ESP32_PLATFORM)
 void contactStoreSetNativePath(const char* path)
 {

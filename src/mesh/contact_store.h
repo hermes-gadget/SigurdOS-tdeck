@@ -70,6 +70,13 @@ int  contactStoreLoad(ContactStoreWriteFn write, void* ctx);
 bool contactStoreSaveAll(const StoredContact* contacts, int count);
 int  contactStoreLoadAll(StoredContact* out, int max);
 
+// Canonical validation shared by manual and URI contact creation.
+bool contactCandidateValid(const char* name, const uint8_t* pub_key,
+                           uint8_t type);
+bool contactCandidateDuplicates(const char* name, const uint8_t* pub_key,
+                                const char* existing_name,
+                                const uint8_t* existing_pub_key);
+
 #if !defined(ESP32_PLATFORM)
 void contactStoreSetNativePath(const char* path);
 #endif

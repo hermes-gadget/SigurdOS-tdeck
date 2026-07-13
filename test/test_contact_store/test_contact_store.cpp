@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "mesh/contact_store.h"
+#include "mesh/contact_uri.h"
 #include "hal/atomic_file.h"
 #include "mesh/mesh_wrapper.h"
 
@@ -406,6 +407,59 @@ TEST(ContactSaveDebounce, FlushesOnlyWhenDirtyAndDue) {
 TEST(ContactSaveDebounce, HandlesMillisWrap) {
     EXPECT_TRUE(sigurdos::mesh::contacts_save_is_due(true, 0xFFFFFF00U,
                                                      0x00007600U));
+}
+
+TEST(ContactImportValidation, ParsesStrictQueryContact) {
+    sigurdos::mesh::ContactUriFields fields{};
+    ASSERT_TRUE(sigurdos::mesh::parseContactAddUri(
+        "meshcore://contact/add?name=Alice+Smith&public_key="
+        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        "&type=2", fields));
+    EXPECT_STREQ(fields.name, "Alice Smith");
+    EXPECT_EQ(fields.type, 2);
+}
+
+TEST(ContactImportValidation, RejectsMalformedAndUnsupportedType) {
+    sigurdos::mesh::ContactUriFields fields{};
+    EXPECT_FALSE(sigurdos::mesh::parseContactAddUri(
+        "meshcore://contact/add?name=Alice&public_key="
+        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        "&type=4", fields));
+    EXPECT_FALSE(sigurdos::mesh::parseContactAddUri(
+        "meshcore://contact/add?name=Alice%GG&public_key="
+        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        fields));
+}
+
+TEST(ContactImportValidation, RejectsEncodedControl) {
+    sigurdos::mesh::ContactUriFields fields{};
+    ASSERT_TRUE(sigurdos::mesh::parseContactAddUri(
+        "meshcore://contact/add?name=Alice%0AAdmin&public_key="
+        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        fields));
+    uint8_t key[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    key[0] = 1;
+    EXPECT_FALSE(sigurdos::mesh::contactCandidateValid(
+        fields.name, key, fields.type));
+}
+
+TEST(ContactImportValidation, RejectsZeroKey) {
+    uint8_t zero_key[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    EXPECT_FALSE(sigurdos::mesh::contactCandidateValid(
+        "Alice", zero_key, ADV_TYPE_CHAT));
+}
+
+TEST(ContactImportValidation, DetectsDuplicateNameOrFullKey) {
+    uint8_t key_a[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    uint8_t key_b[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    key_a[0] = 1;
+    key_b[0] = 2;
+    EXPECT_TRUE(sigurdos::mesh::contactCandidateDuplicates(
+        "Alice", key_a, "Alice", key_b));
+    EXPECT_TRUE(sigurdos::mesh::contactCandidateDuplicates(
+        "Alice", key_a, "Bob", key_a));
+    EXPECT_FALSE(sigurdos::mesh::contactCandidateDuplicates(
+        "Alice", key_a, "Bob", key_b));
 }
 
 } // namespace

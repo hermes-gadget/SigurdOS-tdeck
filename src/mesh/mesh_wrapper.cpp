@@ -14,6 +14,7 @@
 #include "cmd_response_queue.h"
 #include "durable_fanout.h"
 #include "contact_store.h"
+#include "contact_uri.h"
 #include "persistence_store.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
@@ -2214,6 +2215,24 @@ static int encodeBase64(const uint8_t* in, int inLen, char* out) {
     return o;
 }
 
+static bool addContactChecked(const char* name, const uint8_t* pub_key,
+                              uint8_t type) {
+    if (!g_mesh || !contactCandidateValid(name, pub_key, type)) return false;
+    for (int i = 0; i < g_mesh->getContactCount(); ++i) {
+        auto* existing = g_mesh->getContact(i);
+        if (existing && contactCandidateDuplicates(
+                name, pub_key, existing->name, existing->id.pub_key)) return false;
+    }
+    ::ContactInfo contact{};
+    strncpy(contact.name, name, sizeof(contact.name) - 1);
+    memcpy(contact.id.pub_key, pub_key, PUB_KEY_SIZE);
+    contact.type = type;
+    contact.out_path_len = OUT_PATH_UNKNOWN;
+    if (!g_mesh->addContact(contact)) return false;
+    saveContacts();
+    return true;
+}
+
 bool importContactByUri(const char* uri) {
     if (!uri || !g_mesh) return false;
 
@@ -2223,57 +2242,13 @@ bool importContactByUri(const char* uri) {
 
     // ── Query-parameter format: meshcore://contact/add?name=…&public_key=…&type=… ──
     if (strncmp(p, "contact/add?", 12) == 0) {
-        p += 12;
-
-        char name[32] = {0};
-        char pubkey_hex[65] = {0};
-        int type = 1;  // default to chat
-
-        while (*p) {
-            const char* key_start = p;
-            while (*p && *p != '=' && *p != '&') p++;
-            int key_len = (int)(p - key_start);
-            if (*p == '=') {
-                p++; // skip =
-                const char* val_start = p;
-                while (*p && *p != '&') p++;
-                int val_len = (int)(p - val_start);
-
-                if (key_len == 4 && strncmp(key_start, "name", 4) == 0) {
-                    int copy = val_len < (int)(sizeof(name) - 1)
-                        ? val_len : (int)(sizeof(name) - 1);
-                    memcpy(name, val_start, copy);
-                    name[copy] = '\0';
-                    urlDecode(name);
-                } else if (key_len == 10 && strncmp(key_start, "public_key", 10) == 0) {
-                    int copy = val_len < 64 ? val_len : 64;
-                    memcpy(pubkey_hex, val_start, copy);
-                    pubkey_hex[copy] = '\0';
-                } else if (key_len == 4 && strncmp(key_start, "type", 4) == 0) {
-                    char tbuf[4] = {0};
-                    int copy = val_len < 3 ? val_len : 3;
-                    memcpy(tbuf, val_start, copy);
-                    type = atoi(tbuf);
-                }
-            }
-            if (*p == '&') p++;
-        }
-
-        if (!name[0] || !pubkey_hex[0]) return false;
-
+        ContactUriFields fields{};
+        if (!parseContactAddUri(uri, fields)) return false;
         uint8_t pub_key[PUB_KEY_SIZE];
-        int n = SigurdMeshV2::hexToBytes(pubkey_hex, pub_key, sizeof(pub_key));
+        int n = SigurdMeshV2::hexToBytes(
+            fields.pubkey_hex, pub_key, sizeof(pub_key));
         if (n != PUB_KEY_SIZE) return false;
-
-        if (type < 1 || type > 4) type = 1; // default to chat
-
-        ::ContactInfo c{};
-        strncpy(c.name, name, sizeof(c.name) - 1);
-        c.name[sizeof(c.name) - 1] = '\0';
-        memcpy(c.id.pub_key, pub_key, PUB_KEY_SIZE);
-        c.type = (uint8_t)type;
-        c.out_path_len = OUT_PATH_UNKNOWN;
-        return g_mesh->addContact(c);
+        return addContactChecked(fields.name, pub_key, fields.type);
     }
 
     // ── channel/add query-parameter format ──
@@ -2307,31 +2282,13 @@ bool importContactByUri(const char* uri) {
 }
 
 bool addContactManual(const char* name, const char* pubkey_hex, uint8_t type) {
-    if (!g_mesh || !name || !name[0] || strlen(name) > 31 || !pubkey_hex ||
+    if (!g_mesh || !name || !pubkey_hex ||
         strlen(pubkey_hex) != PUB_KEY_SIZE * 2) return false;
-    if (type != ADV_TYPE_CHAT && type != ADV_TYPE_REPEATER && type != ADV_TYPE_ROOM) {
-        return false;
-    }
     uint8_t pub_key[PUB_KEY_SIZE];
     if (SigurdMeshV2::hexToBytes(pubkey_hex, pub_key, sizeof(pub_key)) != PUB_KEY_SIZE) {
         return false;
     }
-    bool nonzero = false;
-    for (uint8_t byte : pub_key) nonzero = nonzero || byte != 0;
-    if (!nonzero) return false;
-    for (int i = 0; i < g_mesh->getContactCount(); ++i) {
-        auto* existing = g_mesh->getContact(i);
-        if (existing && (strcmp(existing->name, name) == 0 ||
-            memcmp(existing->id.pub_key, pub_key, PUB_KEY_SIZE) == 0)) return false;
-    }
-    ::ContactInfo contact{};
-    strncpy(contact.name, name, sizeof(contact.name) - 1);
-    memcpy(contact.id.pub_key, pub_key, PUB_KEY_SIZE);
-    contact.type = type;
-    contact.out_path_len = OUT_PATH_UNKNOWN;
-    if (!g_mesh->addContact(contact)) return false;
-    saveContacts();
-    return true;
+    return addContactChecked(name, pub_key, type);
 }
 
 bool addChannelByUri(const char* uri) {
