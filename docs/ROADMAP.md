@@ -5,10 +5,10 @@ This roadmap is the current source of truth for bringing SigurdOS T-Deck to feat
 ## Current Baseline
 
 - Source audit baseline: `dev` branch (latest)
-- MeshCore submodule: `60ea4a91bf14363e837037a79ce1bff7fa37483f` (companion family ~v1.15.0 + patches)
+- MeshCore submodule: `516ba4ae` (room-server-v1.15.0-159-g516ba4ae) (companion family ~v1.15.0 + patches)
   - **Note:** volatile SHA pinning is intentionally removed here. The submodule and source tree evolve independently; the authoritative per-document pin lives in each document that depends on a specific snapshot (e.g. `COMPANION_SUPPORT.md` and `COMPANION_PARITY_ACTION_PLAN.md` have their own pinned references).
 - Target board: LilyGo T-Deck, ESP32-S3, SX1262, ST7789, GT911, I2C keyboard, trackball
-- Validation status: 2026-06-07 upstream-aligned release/BLE validation and CANADA-preset
+- Validation status: 2026-07-14 upstream-aligned release/BLE validation and CANADA-preset snapshot
   hardware smoke executed on `COM8`; `pio run -e SigurdOS_TDeck`,
   `pio run -e SigurdOS_TDeck_ble_validation`, and `pio test -e native_test -v`
   evidence is attached across roadmap/hardware docs; hardware interop, OTA, SD/map,
@@ -36,13 +36,13 @@ This audit records what is already present in the codebase so future roadmap wor
 
 ## Production-release Remainder
 
-As of the 2026-06-06 current-dev validation refresh, the next production release
+As of the 2026-07-14 current-dev validation refresh, the next production release
 is gated by the following work:
 
 1. Finish the release hardening pass: keep native/release/BLE builds green,
    maintain a no-new-local-warning budget, isolate third-party warnings, and
    close the remaining release/debug-policy items.
-2. Complete hardware validation that is still missing from the RC2 matrix: RF
+2. Complete hardware validation that is still missing from the current matrix: RF
    interop, repeater/room workflows, OTA positive and negative cases, SD/map
    behavior, sleep/wake/power, and multi-hour soak.
 3. Harden persistence and state sync: version schemas,
@@ -102,7 +102,7 @@ Goal: make the current release build boring, repeatable, and warning-accounted.
 Priority tasks:
 
 - Clean project warnings in `src/ui/theme.h`, `src/hal/github_ota.cpp`, `src/hal/prefs.cpp`, `src/ui/screens.cpp`, `src/ui/navigation.cpp`, and `src/ui/home_screen.cpp`.
-- 2026-06-06 release-validation work removed the current local warnings in
+- As of 2026-07-14, release-validation work removed the current local warnings in
   `src/hal/github_ota.cpp`, the release BLE validation stub, and the companion
   DM conversation-label path. The remaining warning work should keep using the
   release build as the source of truth.

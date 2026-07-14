@@ -1,5 +1,7 @@
 # SigurdOS T-Deck Repository Audit
 
+> **⚠️ HISTORICAL — point-in-time audit from 2026-07-10.** Many findings have been addressed since this was written. See closed issues and merged PRs for resolution status. This document is retained for reference.
+
 **Audit date:** 2026-07-10
 **Repository state:** branch `dev` @ `89ad92a`, firmware version `beta-0.1.43-RC5`
 **Auditor:** automated static + build analysis (no on-device flashing performed)

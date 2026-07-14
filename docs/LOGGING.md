@@ -5,6 +5,8 @@
 
 The logging system provides three lightweight, printf-style macros (`SIG_LOGE`, `SIG_LOGW`, `SIG_LOGD`) that wrap `Serial.printf()` with automatic severity prefixing and newline appending. The debug-level macro (`SIG_LOGD`) compiles out entirely in release builds, eliminating any runtime overhead for debug diagnostics in production firmware.
 
+**Companion-USB mode:** When `SIGURDOS_COMPANION_USB` is defined, **all three macros** compile out to no-ops — including `SIG_LOGE` and `SIG_LOGW`. In this mode serial output is dedicated to the companion protocol and must not be contaminated by console logging.
+
 ---
 
 ## Table of Contents
@@ -42,25 +44,37 @@ The logging system provides three lightweight, printf-style macros (`SIG_LOGE`, 
 All three macros are defined in a single header and share the same signature:
 
 ```cpp
-#include <Arduino.h>   // for Serial.printf
+#include <Arduino.h>        // for Serial.printf
+#include "debug_cfg.h"      // for SIGURDOS_DEBUG_ACTIVE
 
+// Companion-USB builds: all logging is silenced (serial is dedicated to the
+// companion protocol). Otherwise, error/warning are always compiled in, and
+// debug is gated by SIGURDOS_DEBUG_ACTIVE.
+#if defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
+#define SIG_LOGE(fmt, ...) do { } while (0)
+#define SIG_LOGW(fmt, ...) do { } while (0)
+#define SIG_LOGD(fmt, ...) do { } while (0)
+#else
 #define SIG_LOGE(fmt, ...) Serial.printf("[E] " fmt "\n", ##__VA_ARGS__)
 #define SIG_LOGW(fmt, ...) Serial.printf("[W] " fmt "\n", ##__VA_ARGS__)
 
-#if defined(SIGURDOS_DEBUG)
+#if SIGURDOS_DEBUG_ACTIVE
 #define SIG_LOGD(fmt, ...) Serial.printf("[D] " fmt "\n", ##__VA_ARGS__)
 #else
 #define SIG_LOGD(fmt, ...) do { } while (0)
 #endif
+#endif
 ```
+
+The active-flag `SIGURDOS_DEBUG_ACTIVE` is derived from `SIGURDOS_DEBUG` in `src/diagnostics/debug_cfg.h`: when `SIGURDOS_DEBUG=1` is passed via `-D`, `SIGURDOS_DEBUG_ACTIVE` evaluates to `1`; otherwise it is `0`. Per-feature debug flags (`SIGURDOS_DEBUG_MESH`, etc.) also default to `SIGURDOS_DEBUG_ACTIVE` but can be set independently.
 
 ### Severity Levels
 
 | Macro | Prefix | Severity | Purpose |
 |-------|--------|----------|---------|
-| `SIG_LOGE(fmt, ...)` | `[E]` | **Error** | Unrecoverable faults, hardware failures, configuration errors. Always compiled in. |
-| `SIG_LOGW(fmt, ...)` | `[W]` | **Warning** | Recoverable issues, unexpected states, degraded operation. Always compiled in. |
-| `SIG_LOGD(fmt, ...)` | `[D]` | **Debug** | Development diagnostics, verbose state dumps, trace logging. Compiles out unless `SIGURDOS_DEBUG` is defined. |
+| `SIG_LOGE(fmt, ...)` | `[E]` | **Error** | Unrecoverable faults, hardware failures, configuration errors. Compiled in unless `SIGURDOS_COMPANION_USB` is defined. |
+| `SIG_LOGW(fmt, ...)` | `[W]` | **Warning** | Recoverable issues, unexpected states, degraded operation. Compiled in unless `SIGURDOS_COMPANION_USB` is defined. |
+| `SIG_LOGD(fmt, ...)` | `[D]` | **Debug** | Development diagnostics, verbose state dumps, trace logging. Compiles out unless `SIGURDOS_DEBUG_ACTIVE` is true. |
 
 ### Format Conventions
 
@@ -99,20 +113,32 @@ Every macro invocation **always** appends a single `\n` to the output. This is a
 
 ---
 
-## Compile-time Gating (`SIGURDOS_DEBUG`)
+## Compile-time Gating (`SIGURDOS_DEBUG_ACTIVE`)
 
-`SIG_LOGD` is guarded by the preprocessor macro `SIGURDOS_DEBUG`:
+`SIG_LOGD` is guarded by the preprocessor value `SIGURDOS_DEBUG_ACTIVE`, which is derived from `SIGURDOS_DEBUG` in `src/diagnostics/debug_cfg.h`:
 
 ```cpp
-#if defined(SIGURDOS_DEBUG)
+// debug_cfg.h
+#if defined(SIGURDOS_DEBUG) && (SIGURDOS_DEBUG)
+#define SIGURDOS_DEBUG_ACTIVE 1
+#else
+#define SIGURDOS_DEBUG_ACTIVE 0
+#endif
+```
+
+```cpp
+// log.h
+#if SIGURDOS_DEBUG_ACTIVE
 #define SIG_LOGD(fmt, ...) Serial.printf("[D] " fmt "\n", ##__VA_ARGS__)
 #else
 #define SIG_LOGD(fmt, ...) do { } while (0)
 #endif
 ```
 
-- **Defined**: `SIG_LOGD` produces real serial output (debug/build-info builds).
-- **Not defined**: `SIG_LOGD` expands to a no-op — zero code size, zero execution time. The format string and arguments are **not evaluated**, so side-effecting expressions inside `SIG_LOGD` calls will not execute in release builds.
+- **`SIGURDOS_DEBUG_ACTIVE == 1`**: `SIG_LOGD` produces real serial output (debug/build-info builds).
+- **`SIGURDOS_DEBUG_ACTIVE == 0`**: `SIG_LOGD` expands to a no-op — zero code size, zero execution time. The format string and arguments are **not evaluated**, so side-effecting expressions inside `SIG_LOGD` calls will not execute in release builds.
+
+**Companion-USB exception:** When `SIGURDOS_COMPANION_USB` is defined, the entire logging block is replaced with no-ops — even `SIG_LOGE` and `SIG_LOGW`. This keeps the serial line clean for companion protocol traffic.
 
 ### Debug Build Environments
 
@@ -270,9 +296,9 @@ SIG_LOGW("warning\n");
 
 The macros depend on `Serial.printf` from `<Arduino.h>`. The `log.h` header includes `<Arduino.h>` itself, so any file that includes `log.h` is safe. However, if a source file uses the macros without including `log.h` (relying on a transitive include), a future refactor could break compilation. Always include `diagnostics/log.h` explicitly.
 
-### 5. `SIG_LOGE` / `SIG_LOGW` Are Always Compiled In
+### 5. `SIG_LOGE` / `SIG_LOGW` Are Compiled Out in Companion-USB Builds
 
-These two macros always produce serial output. On battery-powered devices with long uptimes, excessive warning/error logging can consume UART bandwidth and contribute to interrupt overhead. Use them judiciously — prefer `SIG_LOGD` for high-frequency or verbose diagnostics.
+When `SIGURDOS_COMPANION_USB` is defined, **all three macros** expand to no-ops. This is necessary because the serial line is dedicated to the companion protocol in that mode. If you need persistent error/warning logging in companion-USB builds, write to an alternative output (SD card, SPIFFS, or a dedicated UART).
 
 ### 6. No Timestamp, No Severity Filtering at Runtime
 
@@ -288,6 +314,6 @@ The `HardwareSerial` mock in `test/mocks/Arduino.h` captures all `printf` output
 
 | Macro | Prefix | Always compiled? | Use for |
 |-------|--------|-----------------|---------|
-| `SIG_LOGE(fmt, ...)` | `[E]` | ✅ Yes | Errors, unrecoverable faults |
-| `SIG_LOGW(fmt, ...)` | `[W]` | ✅ Yes | Warnings, recoverable issues |
-| `SIG_LOGD(fmt, ...)` | `[D]` | ❌ Only with `SIGURDOS_DEBUG` | Development diagnostics, verbose trace |
+| `SIG_LOGE(fmt, ...)` | `[E]` | ✅ Yes (unless companion-USB) | Errors, unrecoverable faults |
+| `SIG_LOGW(fmt, ...)` | `[W]` | ✅ Yes (unless companion-USB) | Warnings, recoverable issues |
+| `SIG_LOGD(fmt, ...)` | `[D]` | ❌ Only with `SIGURDOS_DEBUG_ACTIVE` | Development diagnostics, verbose trace |

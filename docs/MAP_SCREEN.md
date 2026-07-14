@@ -174,8 +174,9 @@ sigurdos_map_render()
 **Visible tile grid calculation:**
 - Each tile is 256×256 pixels
 - The display is 320×240 pixels
-- Grid spans: `1 + 320/256 + 1 = 3` across, `1 + 240/256 + 1 = 2` down (plus the center tile)
-- Total grid: 4 columns × 3 rows = up to **12 tiles** per render pass
+- Grid spans: `1 + 320/256 + 1 = 3` across, `1 + 240/256 + 1 = 2` down (plus a 1-tile margin on each side for panning)
+- The render loop iterates from `tx = -1` to `tiles_across` and `ty = -1` to `tiles_down`, scanning **5 columns × 4 rows = up to 20 tile positions** per render pass
+- Tiles that don't intersect the viewport (`sigurdos_map_tile_intersects_viewport`) are skipped; typically ~12 tiles are on-screen
 - At most **2 uncached SD read/decode attempts** occur in one render. Positive
   cache hits and active negative-cache hits do not spend the budget.
 

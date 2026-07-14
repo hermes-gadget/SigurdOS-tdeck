@@ -12,8 +12,8 @@ Use this shape (repeat the requirement object for every ID in the requirements i
 {
   "schema_version": 1,
   "commit": "0123456789abcdef0123456789abcdef01234567",
-  "tag": "beta-0.1.45",
-  "generated_at": "2026-07-13T18:00:00Z",
+  "tag": "beta-0.1.44-RC6",
+  "generated_at": "2026-07-14T18:00:00Z",
   "artifacts": {
     "firmware.bin": "<lowercase SHA-256>",
     "firmware-merged.bin": "<lowercase SHA-256>",
@@ -25,8 +25,8 @@ Use this shape (repeat the requirement object for every ID in the requirements i
       "id": "INT-BLE",
       "outcome": "pass",
       "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/0000",
-      "tested_at": "2026-07-13",
-      "firmware_version": "beta-0.1.45",
+      "tested_at": "2026-07-14",
+      "firmware_version": "beta-0.1.44-RC6",
       "peer_version": "official-client-version"
     }
   ]

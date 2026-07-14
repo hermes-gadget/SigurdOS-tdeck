@@ -257,11 +257,11 @@ The default Public channel PSK is `izOH6cXN6mrJ5e26oRXNcg==` (16 bytes after dec
 
 ### Channel Limits
 
-- **Maximum channels: 8** (`SLOP_MAX_CHANNELS`)
+- **Maximum channels: 8** (`MAX_GROUP_CHANNELS`, from `platformio.ini`)
 - **Minimum channel name length:** 2 characters (including `#`)
 - **Maximum channel name length:** 31 characters
 
-Channels are stored in a fixed-size `SlopChannel[8]` array. There is no eviction policy — if the channel list is full, `addChannel()` and `addHashtagChannel()` return `false`.
+Channels are stored in a fixed-size `ChannelDetails[8]` array (from BaseChatMesh). There is no eviction policy — if the channel list is full, `addChannel()` and `addHashtagChannel()` return `false`.
 
 ### Channel Hash Lookup
 

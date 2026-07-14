@@ -10,6 +10,8 @@ Standalone off-grid LoRa mesh messaging firmware for the **LilyGo T-Deck** (ESP3
 
 Built on the [MeshCore](https://github.com/meshcore-dev/MeshCore) mesh networking protocol. Core messaging interoperates with existing MeshCore repeaters, room servers, and companion radios; see the [companion command support matrix](docs/COMPANION_SUPPORT.md) for explicit protocol limits.
 
+Current firmware snapshot: `SIGURDOS_VERSION` in [`src/hal/tdeck_pins.h`](src/hal/tdeck_pins.h) is `beta-0.1.44-RC6`.
+
 Full credit to the MeshCore Dev team! I won't ever accept any money or donations for this project but if you wish to put your money to good use, and not the AI hivemind, then sponsor https://github.com/meshcore-dev/MeshCore
 
 ## Test Suite
@@ -85,6 +87,8 @@ pio run -e SigurdOS_TDeck
 | `test_ui_timing` | UI splash screen timing, transition elapsed checks |
 | `test_wifi_scan` | WiFi network scanning, connection management, AP-mode OTA |
 
+Representative modules are listed above; full `test/test_<name>/` coverage and per-file detail is maintained in [`test/README.md`](test/README.md).
+
 Full test documentation: [`test/README.md`](test/README.md)
 
 ## Hardware
@@ -106,7 +110,7 @@ SigurdOS-tdeck/
 ├── firmware/               ← Pre-built merged binaries (flash at 0x0)
 ├── lib/meshcore/           ← Git submodule: MeshCore protocol (routing, radio, encryption)
 ├── src/
-│   ├── main.cpp            ← Boot sequence (board → display → mesh → UI)
+│   ├── main.cpp            ← Boot sequence (board → peripheries + display → splash/prefs → mesh → UI)
 │   ├── lv_conf.h           ← LVGL v9 config (16-bit, partial render)
 │   ├── utils/
 │   │   └── utf8_util.h     ← UTF-8 string utilities (validation, truncation)
@@ -283,7 +287,7 @@ See [`firmware/README.md`](firmware/README.md) for details.
 
 ## Screenshots
 
-All screens from the SigurdOS T-Deck UI, captured from a device running the current firmware build (screenshots may lag behind the latest UI changes).
+Representative screenshots from a device running the current firmware build (screenshots may lag behind the latest UI changes).
 
 | Screen | Screenshot | Description |
 |--------|-----------|-------------|
@@ -305,6 +309,10 @@ All screens from the SigurdOS T-Deck UI, captured from a device running the curr
 | **NodeStats** | *No screenshot* | Node statistics display showing uptime, memory usage, packet counts, and mesh health. |
 | **Telemetry** | ![Telemetry](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/telemetry.png) | Environmental telemetry readouts (temperature, humidity, pressure) from sensor-equipped mesh nodes. |
 | **NodeStatus** | ![NodeStatus](https://raw.githubusercontent.com/hermes-gadget/SigurdOS-tdeck/dev/docs/screenshots/node-status.png) | Node status overview showing connection state, last heard, and signal quality indicators. |
+| **Bluetooth** | *No screenshot* | BLE pairing and companion-connection state (PIN display, enable toggle, last sync age). |
+| **Regions** | *No screenshot* | Region list, active-region chip, and `$` private-key region management. |
+| **Repeater Detail** | *No screenshot* | Repeater detail and command/status actions for paired infrastructure nodes. |
+| **Custom Radio Setup** | *No screenshot* | Advanced radio parameter profile editor and profile-restore controls. |
 
 ## License
 

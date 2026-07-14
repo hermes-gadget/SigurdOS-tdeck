@@ -1,7 +1,7 @@
 # SigurdOS T-Deck ↔ bmorcelli/Launcher Compatibility Analysis
 
-> **Analysis date:** 2026-06-17
-> **SigurdOS version:** beta-0.1.41 (`dev` branch)
+> **Analysis date:** 2026-06-17 (updated 2026-07-14)
+> **SigurdOS version:** beta-0.1.44-RC6 (`dev` branch)
 > **Launcher version:** v2.7.2 (analyzed from GitHub source)
 > **Methodology:** Source-only analysis — no changes made, no physical hardware tested
 

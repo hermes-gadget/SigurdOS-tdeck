@@ -2,6 +2,8 @@
 
 Measured on 2026-06-11 from `dev` commit `104eb29` with:
 
+> **⚠️ Snapshot date:** 2026-06-11. Sizes below are from that point-in-time build. Re-measure with `pio run -e SigurdOS_TDeck && python3 scripts/audit_launcher_artifact.py .pio/build/SigurdOS_TDeck/firmware-merged.bin` to get current figures.
+
 ```bash
 pio run -e SigurdOS_TDeck
 python3 scripts/audit_launcher_artifact.py .pio/build/SigurdOS_TDeck/firmware-merged.bin

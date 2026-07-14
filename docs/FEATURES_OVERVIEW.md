@@ -66,7 +66,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
 | **Mesh** | Full MeshCore protocol stack — routing, encryption, group channels, direct messages | `src/mesh/*`, `lib/meshcore/` |
 | **HAL** | All T-Deck peripherals — display, touch, keyboard, trackball, GPS, battery, SD, buzzer, LoRa | `src/hal/*` |
 | **Apps** | Offline map renderer with PNG tile decode and LRU PSRAM cache | `src/app/*` |
-| **Boot** | Sequenced startup: board → display → mesh → UI → peripherals | `src/main.cpp` |
+| **Boot** | Sequenced startup: board → input + display init → splash/prefs → mesh → UI restore | `src/main.cpp` |
 
 ---
 
@@ -169,7 +169,7 @@ is green while an official companion is connected. See
 **Sources:** [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`src/mesh/mesh_wrapper.h`](../src/mesh/mesh_wrapper.h), [`src/mesh/sigurd_mesh_v2.h`](../src/mesh/sigurd_mesh_v2.h), [`lib/meshcore/`](../lib/meshcore/)
 
 ### Screen Navigation
-- **Screen enum** with 26 screen IDs (Home, Chat, Contacts, Channels, Network, Heard, Map, Advertise, Settings, Trace, Terminal, Signal, RadioSetup, Repeaters, Onboarding, ContactDetail, SettingsRadio, SettingsGPS, SettingsDisplay, SettingsSystem, NodeStats, Telemetry, NodeStatus, WiFiNetworks, Bluetooth, Regions)
+- **Screen enum** with 28 screen IDs (Home, Chat, Contacts, Channels, Network, Heard, Map, Advertise, Settings, Trace, Terminal, Signal, RadioSetup, Repeaters, Onboarding, ContactDetail, SettingsRadio, SettingsGPS, SettingsDisplay, SettingsSystem, NodeStats, Telemetry, NodeStatus, WiFiNetworks, Bluetooth, Regions, RepeaterDetail, CustomRadioSetup)
 - **Slide transitions** — configurable `lv_scr_load_anim` with direction and duration
 - **Back stack** — linear stack (drops oldest when full, no wrapping), with `can_go_back()` and `go_back()`
 - **Universal back-swipe** — two-swipe commit pattern: first Left neutralises, second Left triggers back
@@ -415,7 +415,7 @@ A dedicated app-level feature bridging the display, SD card, and GPS systems.
 
 ## Test Suite
 
-While not a user-facing feature, the comprehensive native test suite (768 cases — 767 passing, 1 always-skipped — across 56 `test/test_<name>/` suites as of 2026-06-11) validates every subsystem: HAL drivers, mesh wrapper and protocol contracts, regions, companion BLE protocol, message/contact stores, navigation, layout, theme, telemetry, emoji fonts, OTA contracts, and the Launcher detection helper.
+While not a user-facing feature, the native test corpus currently tracks 551 `TEST(...)` cases across 85 `test/test_<name>/` suites (as of 2026-07-14) and validates HAL drivers, mesh wrapper and protocol contracts, regions, companion BLE protocol, message/contact stores, navigation, layout, theme, telemetry, emoji fonts, OTA contracts, and the Launcher detection helper.
 
 Run it with `pio test -e native_test`. See [`test/README.md`](../test/README.md) for the full per-suite listing and mock structure — per-module counts are not duplicated here because they change with nearly every PR.
 

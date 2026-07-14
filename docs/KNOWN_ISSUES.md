@@ -18,11 +18,11 @@ SigurdOS can now be installed as a Launcher app. See [`firmware/README.md`](../f
 - ✅ Self-OTA disabled to prevent flash corruption of co-installed apps
 - ✅ SPIFFS partition created for persistence (when using merged image)
 
-**Phase 2a — Detection validated on hardware (2026-06-10):**
+**Phase 2a — Detection validated on hardware (2026-07-14 re-check):**
 - ✅ Launcher detection tested via custom `test`-subtype partition
 - ✅ `sigurdos_is_under_launcher()` returns `true` when Launcher partition exists
 - ✅ Boot env diagnostic confirms `"bmorcelli/Launcher"` vs `"standalone"`
-- ✅ Launcher installed on T-Deck (awaiting physical button press to proceed to handoff test)
+- ✅ Launcher installed on T-Deck <!-- TODO: verify — confirm whether end-to-end physical handoff test has run after current firmware and whether the handoff path is stable. -->
 
 **Phase 3 / C6 — Keyboard warm-handoff hardening ✅ merged with #573 follow-up:**
 - ✅ Retry loop: keyboard init now retries 3× with 100ms delay instead of single-NACK-abort
@@ -33,7 +33,7 @@ SigurdOS can now be installed as a Launcher app. See [`firmware/README.md`](../f
 **Remaining gaps (Phase 2b/5/6):**
 - 🔜 Phase 2b: Actual Launcher boot handoff (T4/T9) — requires physical SD card or WebUI interaction on T-Deck
 - ⏳ Phase 5: Full regression matrix (T1–T14) — standalone rows (T1–T3) pass, Launcher rows (T4–T13) need physical hardware
-- ❌ Not yet listed in LauncherHub catalog (requires maintainer coordination)
+- ⚠️ LauncherHub catalog status is not yet re-verified against the latest tagged release assets and maintainer process. <!-- TODO: verify — issue #615 was closed as of 2026-06-26; confirm current listing status externally before removing this item. -->
 
 ---
 
