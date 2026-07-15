@@ -281,6 +281,7 @@ void loop()
             }
         }
     }
+    sigurdos::mesh::loop();
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
     sigurdos_test_controller_loop();
 #endif
