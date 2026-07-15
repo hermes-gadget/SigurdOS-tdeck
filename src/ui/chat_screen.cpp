@@ -37,6 +37,7 @@
 #include "chat_store_migration.h"
 #include "../fonts/emoji_font.h"
 #include <lvgl.h>
+#include <cstdint>
 #include <cstring>
 #include <cstdio>
 #include <esp_heap_caps.h>
@@ -96,8 +97,15 @@ static lv_obj_t* search_input        = nullptr;
 static lv_obj_t* ch_list            = nullptr;
 static lv_obj_t* ch_back_btn        = nullptr;
 static lv_obj_t* ch_add_btn         = nullptr;
+static lv_obj_t* g_chat_list_root       = nullptr;
+static uint32_t  g_chat_list_generation = 0;
 static int       ch_focus           = 0;   // 0=list, 1=back, 2=add
 static int       ch_list_selected   = 0;
+
+// Root identity and generation keep a delayed delete from an older messaging
+// screen from clearing widget pointers belonging to a newer screen.
+static lv_obj_t* g_messaging_root       = nullptr;
+static uint32_t  g_messaging_generation = 0;
 
 // ── Messaging-view layout ──────────────────────────────────
 using responsive::TOP_BAR_H;
@@ -819,6 +827,20 @@ static lv_obj_t* make_chat_list_screen()
 {
     lv_obj_t* s = lv_obj_create(nullptr);
     apply_dark_bg(s);
+
+    g_chat_list_root = s;
+    const uint32_t generation = ++g_chat_list_generation;
+    lv_obj_add_event_cb(s, [](lv_event_t* e) {
+        lv_obj_t* deleted_screen = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        const uint32_t deleted_generation = static_cast<uint32_t>(
+            reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+        if (deleted_screen != g_chat_list_root ||
+            deleted_generation != g_chat_list_generation) {
+            return;
+        }
+        g_chat_list_root = nullptr;
+        ch_list = ch_back_btn = ch_add_btn = nullptr;
+    }, LV_EVENT_DELETE, reinterpret_cast<void*>(static_cast<uintptr_t>(generation)));
 
     // Top bar
     lv_obj_t* top = lv_obj_create(s);
@@ -1884,6 +1906,9 @@ static void open_channel_messaging(int idx)
     apply_dark_bg(scr);
     disable_scroll(scr);
 
+    g_messaging_root = scr;
+    const uint32_t generation = ++g_messaging_generation;
+
     ch_list = nullptr;
 
     // When the messaging screen is auto-deleted (e.g. user navigates
@@ -1891,7 +1916,15 @@ static void open_channel_messaging(int idx)
     // so chat_screen_add_msg() doesn't dereference freed memory.
     // NOTE: ch_list is NOT nulled here — show_channel_list() may have
     // already set it to a new list before this delete callback fires.
-    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+        lv_obj_t* deleted_screen = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        const uint32_t deleted_generation = static_cast<uint32_t>(
+            reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+        if (deleted_screen != g_messaging_root ||
+            deleted_generation != g_messaging_generation) {
+            return;
+        }
+        g_messaging_root = nullptr;
         scr = top_bar = channel_ribbon = msg_list = input_bar = input_field = nullptr;
         chat_older_btn = chat_newer_btn = chat_no_results = nullptr;
         for (lv_obj_t*& bubble : chat_bubble_pool) bubble = nullptr;
@@ -1900,7 +1933,7 @@ static void open_channel_messaging(int idx)
         search_active = false;
         search_match_count = 0;
         search_current_match = -1;
-    }, LV_EVENT_DELETE, nullptr);
+    }, LV_EVENT_DELETE, reinterpret_cast<void*>(static_cast<uintptr_t>(generation)));
 
     // Reset search state
     search_active = false;
