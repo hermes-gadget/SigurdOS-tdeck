@@ -31,9 +31,6 @@
 #endif
 
 static sigurdos::TDeckBoard board;
-// HWCDC needs a scheduler/USB interrupt window before its first write. Keep the
-// wait bounded so the T-Deck still boots normally when no USB host is attached.
-static constexpr uint32_t USB_SERIAL_READY_TIMEOUT_MS = 1000;
 
 #if SIGURDOS_DEBUG_UI
 static void boot_log(const char* msg)
@@ -51,17 +48,17 @@ static void boot_status(const char* status)
     boot_log(status);
 }
 
+#include "esp_log.h"
+static const char* BOOT_TAG = "boot";
+
 void setup()
 {
+    esp_log_write(ESP_LOG_ERROR, BOOT_TAG, "SETUP ENTRY - BEFORE Serial.begin");
     Serial.begin(115200);
-    const uint32_t serial_wait_started = millis();
-    while (!Serial && millis() - serial_wait_started < USB_SERIAL_READY_TIMEOUT_MS) {
-        delay(10);
-    }
     const esp_reset_reason_t reset_reason = esp_reset_reason();
     sigurdos::hal::boot_watchdog_begin(reset_reason);
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
-    Serial.println("[boot] HELLO FROM REMOTE_TEST BUILD -v2");
+    esp_log_write(ESP_LOG_ERROR, BOOT_TAG, "HELLO FROM REMOTE_TEST BUILD -v2");
 #endif
     boot_log("serial OK");
 
