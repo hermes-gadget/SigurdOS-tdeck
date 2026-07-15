@@ -19,6 +19,7 @@
 //   inject <from> channel=<ch> <text>  Simulate incoming channel msg
 //   screen                        Show current screen name
 //   status                        Show device info (heap, psram, batt)
+//   stresschat [cycles]           Stress Chat/Home lifecycle (default 50)
 
 #include "test_controller.h"
 #include "hal/display.h"
@@ -62,6 +63,10 @@ static constexpr uint32_t CAPTURE_TOTAL_TIMEOUT_MS = 60000;
 static constexpr uint32_t TREE_TOTAL_TIMEOUT_MS = 30000;
 static constexpr size_t CAPTURE_DATA_BYTES_PER_LINE = 32;
 static constexpr uint8_t DIAGNOSTIC_LINES_PER_LOOP = 4;
+static constexpr uint16_t STRESS_CHAT_DEFAULT_CYCLES = 50;
+static constexpr uint16_t STRESS_CHAT_MAX_CYCLES = 1000;
+static constexpr uint16_t STRESS_CHAT_CHANNEL_INTERVAL = 10;
+static constexpr uint8_t STRESS_CHAT_SETTLE_PASSES = 3;
 
 // ── State ────────────────────────────────────────────────
 static bool     initialized = false;
@@ -142,6 +147,39 @@ struct EmojiGridState {
 
 static EmojiGridState emoji_grid = {};
 
+struct LvPoolState {
+    uint32_t total;
+    uint32_t free;
+    uint32_t largest;
+    uint8_t frag;
+};
+
+enum class StressChatPhase : uint8_t {
+    Idle,
+    SettleBaseline,
+    NavigateChat,
+    SettleChat,
+    NavigateHome,
+    SettleHome,
+    NavigateChannelChat,
+    SettleChannelList,
+    OpenChannel,
+    SettleChannel,
+    CloseChannel,
+    SettleChannelHome,
+};
+
+struct StressChatJob {
+    StressChatPhase phase;
+    uint16_t requested_cycles;
+    uint16_t completed_cycles;
+    uint8_t settle_passes;
+    LvPoolState baseline;
+    LvPoolState previous_home;
+};
+
+static StressChatJob stress_chat_job = {};
+
 static uint32_t stress_min_stack_words = 0xFFFFFFFFUL;
 static uint32_t stress_min_lvgl_free = 0xFFFFFFFFUL;
 static uint8_t stress_max_lvgl_used_pct = 0;
@@ -161,6 +199,44 @@ static void reset_stress_metrics() {
     stress_min_lvgl_free = 0xFFFFFFFFUL;
     stress_max_lvgl_used_pct = 0;
     sample_stress_metrics();
+}
+
+static LvPoolState read_lv_pool_state() {
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    return {
+        static_cast<uint32_t>(mon.total_size),
+        static_cast<uint32_t>(mon.free_size),
+        static_cast<uint32_t>(mon.free_biggest_size),
+        static_cast<uint8_t>(mon.frag_pct),
+    };
+}
+
+static bool lv_pool_degraded(const LvPoolState& reference, const LvPoolState& current) {
+    return current.total != reference.total || current.free < reference.free ||
+           current.largest < reference.largest || current.frag > reference.frag;
+}
+
+static void log_lv_pool_state(uint16_t cycle, const char* point,
+                              const LvPoolState& state) {
+    Serial.printf("[stresschat] cycle=%u point=%s total=%lu free=%lu largest=%lu frag=%u%%\n",
+                  static_cast<unsigned>(cycle), point,
+                  static_cast<unsigned long>(state.total),
+                  static_cast<unsigned long>(state.free),
+                  static_cast<unsigned long>(state.largest),
+                  static_cast<unsigned>(state.frag));
+}
+
+static void log_lv_pool_degradation(uint16_t cycle, const char* reference_name,
+                                    const LvPoolState& reference,
+                                    const LvPoolState& current) {
+    if (!lv_pool_degraded(reference, current)) return;
+    Serial.printf("[stresschat] DEGRADE cycle=%u vs=%s total=%ld free=%ld largest=%ld frag=%+d\n",
+                  static_cast<unsigned>(cycle), reference_name,
+                  static_cast<long>(current.total) - static_cast<long>(reference.total),
+                  static_cast<long>(current.free) - static_cast<long>(reference.free),
+                  static_cast<long>(current.largest) - static_cast<long>(reference.largest),
+                  static_cast<int>(current.frag) - static_cast<int>(reference.frag));
 }
 
 static void clear_diagnostic_line() {
@@ -295,6 +371,7 @@ static void print_help() {
 
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
+    Serial.println(F("║  stresschat [n] Chat/Home LVGL stress ║"));
     Serial.println(F("║  keydiag     Dump keyboard diagnostics║"));
     Serial.println(F("║  inputdiag   Dump touch/trackball diag║"));
     Serial.println(F("║  gpsdiag     Dump GPS UART/fix diag   ║"));
@@ -1790,6 +1867,177 @@ static void cmd_advert() {
     Serial.printf("[test] advert: %s\n", ok ? "sent" : "FAILED");
 }
 
+static void finish_stress_chat() {
+    const LvPoolState final_state = read_lv_pool_state();
+    log_lv_pool_state(stress_chat_job.completed_cycles, "final-home", final_state);
+    const bool failed = lv_pool_degraded(stress_chat_job.baseline, final_state);
+    if (failed) {
+        log_lv_pool_degradation(stress_chat_job.completed_cycles, "baseline",
+                                stress_chat_job.baseline, final_state);
+    }
+    Serial.printf("[stresschat] %s cycles=%u baseline_free=%lu final_free=%lu "
+                  "baseline_largest=%lu final_largest=%lu baseline_frag=%u final_frag=%u\n",
+                  failed ? "FAIL" : "PASS",
+                  static_cast<unsigned>(stress_chat_job.completed_cycles),
+                  static_cast<unsigned long>(stress_chat_job.baseline.free),
+                  static_cast<unsigned long>(final_state.free),
+                  static_cast<unsigned long>(stress_chat_job.baseline.largest),
+                  static_cast<unsigned long>(final_state.largest),
+                  static_cast<unsigned>(stress_chat_job.baseline.frag),
+                  static_cast<unsigned>(final_state.frag));
+    stress_chat_job = {};
+}
+
+static void cmd_stresschat(const char* arg) {
+    if (arg && strcmp(arg, "cancel") == 0) {
+        if (stress_chat_job.phase == StressChatPhase::Idle) {
+            Serial.println("[stresschat] no test is running");
+        } else {
+            Serial.printf("[stresschat] CANCELLED after %u cycles\n",
+                          static_cast<unsigned>(stress_chat_job.completed_cycles));
+            stress_chat_job = {};
+        }
+        return;
+    }
+    if (stress_chat_job.phase != StressChatPhase::Idle) {
+        Serial.println("[stresschat] already running (use 'stresschat cancel')");
+        return;
+    }
+    if (capture_job.phase != CapturePhase::Idle || tree_job.active || type_count > 0) {
+        Serial.println("[stresschat] busy: finish capture/tree/type work first");
+        return;
+    }
+
+    long cycles = STRESS_CHAT_DEFAULT_CYCLES;
+    if (arg) {
+        char* end = nullptr;
+        cycles = strtol(arg, &end, 10);
+        while (end && *end == ' ') ++end;
+        if (!end || *end != '\0' || cycles < 1 || cycles > STRESS_CHAT_MAX_CYCLES) {
+            Serial.printf("[stresschat] usage: stresschat [1..%u]\n",
+                          static_cast<unsigned>(STRESS_CHAT_MAX_CYCLES));
+            return;
+        }
+    }
+
+    stress_chat_job = {};
+    stress_chat_job.phase = StressChatPhase::SettleBaseline;
+    stress_chat_job.requested_cycles = static_cast<uint16_t>(cycles);
+    stress_chat_job.settle_passes = STRESS_CHAT_SETTLE_PASSES;
+    if (sigurdos::ui::current_screen() != sigurdos::ui::Screen::Home) {
+        sigurdos::ui::navigate_to(sigurdos::ui::Screen::Home);
+    }
+    Serial.printf("[stresschat] START cycles=%u channel_every=%u settle_passes=%u\n",
+                  static_cast<unsigned>(stress_chat_job.requested_cycles),
+                  static_cast<unsigned>(STRESS_CHAT_CHANNEL_INTERVAL),
+                  static_cast<unsigned>(STRESS_CHAT_SETTLE_PASSES));
+}
+
+static bool stress_chat_settled() {
+    // Process deferred screen deletion and normal LVGL timers without blocking
+    // the firmware loop or hiding the lifecycle race behind delay().
+    lv_timer_handler();
+    if (stress_chat_job.settle_passes > 1) {
+        --stress_chat_job.settle_passes;
+        return false;
+    }
+    stress_chat_job.settle_passes = STRESS_CHAT_SETTLE_PASSES;
+    return true;
+}
+
+static void service_stress_chat() {
+    if (stress_chat_job.phase == StressChatPhase::Idle) return;
+
+    switch (stress_chat_job.phase) {
+    case StressChatPhase::SettleBaseline:
+        if (!stress_chat_settled()) return;
+        stress_chat_job.baseline = read_lv_pool_state();
+        stress_chat_job.previous_home = stress_chat_job.baseline;
+        log_lv_pool_state(0, "baseline-home", stress_chat_job.baseline);
+        stress_chat_job.phase = StressChatPhase::NavigateChat;
+        break;
+    case StressChatPhase::NavigateChat:
+        sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
+        stress_chat_job.phase = StressChatPhase::SettleChat;
+        break;
+    case StressChatPhase::SettleChat:
+        if (!stress_chat_settled()) return;
+        stress_chat_job.phase = StressChatPhase::NavigateHome;
+        break;
+    case StressChatPhase::NavigateHome:
+        sigurdos::ui::go_back();
+        stress_chat_job.phase = StressChatPhase::SettleHome;
+        break;
+    case StressChatPhase::SettleHome: {
+        if (!stress_chat_settled()) return;
+        ++stress_chat_job.completed_cycles;
+        const LvPoolState current = read_lv_pool_state();
+        log_lv_pool_state(stress_chat_job.completed_cycles, "home", current);
+        log_lv_pool_degradation(stress_chat_job.completed_cycles, "baseline",
+                                stress_chat_job.baseline, current);
+        log_lv_pool_degradation(stress_chat_job.completed_cycles, "previous-home",
+                                stress_chat_job.previous_home, current);
+        stress_chat_job.previous_home = current;
+
+        if ((stress_chat_job.completed_cycles % STRESS_CHAT_CHANNEL_INTERVAL) == 0) {
+            stress_chat_job.phase = StressChatPhase::NavigateChannelChat;
+        } else if (stress_chat_job.completed_cycles >= stress_chat_job.requested_cycles) {
+            finish_stress_chat();
+        } else {
+            stress_chat_job.phase = StressChatPhase::NavigateChat;
+        }
+        break;
+    }
+    case StressChatPhase::NavigateChannelChat:
+        sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
+        stress_chat_job.phase = StressChatPhase::SettleChannelList;
+        break;
+    case StressChatPhase::SettleChannelList:
+        if (!stress_chat_settled()) return;
+        log_lv_pool_state(stress_chat_job.completed_cycles, "channel-before",
+                          read_lv_pool_state());
+        stress_chat_job.phase = StressChatPhase::OpenChannel;
+        break;
+    case StressChatPhase::OpenChannel:
+        // show_channel_list() resets selection to channel 0 (Public). Use the
+        // real chat input path so this exercises the production LVGL state.
+        sigurdos::ui::chat_screen_handle_trackball(SigurdOSTrackballEvent::Click);
+        stress_chat_job.phase = StressChatPhase::SettleChannel;
+        break;
+    case StressChatPhase::SettleChannel:
+        if (!stress_chat_settled()) return;
+        log_lv_pool_state(stress_chat_job.completed_cycles, "channel-after-open",
+                          read_lv_pool_state());
+        if (!sigurdos::ui::chat_screen_get_input_field()) {
+            Serial.println("[stresschat] FAIL channel 0 did not open");
+            stress_chat_job = {};
+            return;
+        }
+        stress_chat_job.phase = StressChatPhase::CloseChannel;
+        break;
+    case StressChatPhase::CloseChannel:
+        sigurdos::ui::go_back();
+        stress_chat_job.phase = StressChatPhase::SettleChannelHome;
+        break;
+    case StressChatPhase::SettleChannelHome: {
+        if (!stress_chat_settled()) return;
+        const LvPoolState current = read_lv_pool_state();
+        log_lv_pool_state(stress_chat_job.completed_cycles, "channel-after-close", current);
+        log_lv_pool_degradation(stress_chat_job.completed_cycles, "baseline",
+                                stress_chat_job.baseline, current);
+        stress_chat_job.previous_home = current;
+        if (stress_chat_job.completed_cycles >= stress_chat_job.requested_cycles) {
+            finish_stress_chat();
+        } else {
+            stress_chat_job.phase = StressChatPhase::NavigateChat;
+        }
+        break;
+    }
+    case StressChatPhase::Idle:
+        break;
+    }
+}
+
 // ── Command parsing ──────────────────────────────────────
 static bool dispatch(const char* line) {
     // Skip empty lines and comments
@@ -1935,6 +2183,8 @@ static bool dispatch(const char* line) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {
         cmd_status();
+    } else if (strcmp(cmd, "stresschat") == 0) {
+        cmd_stresschat(arg);
     } else if (strcmp(cmd, "keydiag") == 0 || strcmp(cmd, "kbddiag") == 0) {
         cmd_keydiag();
     } else if (strcmp(cmd, "inputdiag") == 0 || strcmp(cmd, "touchdiag") == 0 ||
@@ -2084,6 +2334,7 @@ void sigurdos_test_controller_init() {
     reset_tree_job();
     clear_emoji_grid_state();
     reset_stress_metrics();
+    stress_chat_job = {};
     initialized = true;
     cmd_pos = 0;
     cmd_buf[0] = '\0';
@@ -2102,6 +2353,7 @@ void sigurdos_test_controller_loop() {
 
     uint32_t now = millis();
     sample_stress_metrics();
+    service_stress_chat();
 
     // Long diagnostics own their current output line until it is fully sent,
     // preventing command echoes from splitting the capture/tree protocol.
