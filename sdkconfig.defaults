@@ -1,0 +1,3 @@
+# Keep a newly booted OTA image pending until SigurdOS completes its own
+# display/UI/storage/settings/main-loop health contract.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

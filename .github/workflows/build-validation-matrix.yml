@@ -1,0 +1,74 @@
+name: Build Validation Matrix
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Canonical and feature variants
+          - env: SigurdOS_TDeck
+          - env: SigurdOS_TDeck_ble_validation
+          - env: SigurdOS_TDeck_ble_agent
+          - env: SigurdOS_TDeck_meshv2
+          - env: SigurdOS_TDeck_trackball_debug
+          # Debug variants
+          - env: SigurdOS_TDeck_debug
+          - env: SigurdOS_TDeck_debug_869
+          - env: SigurdOS_TDeck_debug_display
+          - env: SigurdOS_TDeck_debug_mesh
+          - env: SigurdOS_TDeck_debug_ui
+          - env: SigurdOS_TDeck_debug_map
+          - env: SigurdOS_TDeck_debug_diag
+          # Telemetry and remote-test variants
+          - env: SigurdOS_TDeck_telemetry
+          - env: SigurdOS_TDeck_telemetry_diff
+          - env: SigurdOS_TDeck_remote_test
+          - env: SigurdOS_TDeck_remote_test_radio
+          - env: SigurdOS_TDeck_remote_test_radio_testfreq
+          - env: SigurdOS_TDeck_remote_test_radio_roomtest
+          - env: SigurdOS_TDeck_remote_test_radio_usca
+          - env: SigurdOS_TDeck_remote_test_radio_usca_rxonly
+          - env: SigurdOS_TDeck_remote_test_radio_meshv2
+          # Host-protocol and hardware-validation compile targets
+          - env: SigurdOS_TDeck_companion_usb
+          - env: SigurdOS_TDeck_gps_validation
+          - env: SigurdOS_TDeck_gps_validation_wifi
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11.13"
+      - name: Restore PlatformIO packages
+        uses: ./.github/actions/cache-platformio
+        with:
+          dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/platformio-packages.lock') }}
+      - name: Install PlatformIO
+        run: python -m pip install --require-hashes -r ci/requirements-platformio.txt
+      - name: Build ${{ matrix.env }}
+        env:
+          # Compile-only placeholders: no network or device interaction occurs in CI.
+          SIGURDOS_GPS_VALIDATION_WIFI_SSID: ci-compile-only
+          SIGURDOS_GPS_VALIDATION_WIFI_PASS: ci-not-a-secret
+          SIGURDOS_GPS_VALIDATION_WIFI_HOST: 192.0.2.1
+        run: pio run -e ${{ matrix.env }}
+      - name: Upload firmware artifacts for ${{ matrix.env }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: firmware-${{ matrix.env }}
+          path: .pio/build/${{ matrix.env }}/firmware*.bin
+          if-no-files-found: error

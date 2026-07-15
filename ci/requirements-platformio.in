@@ -1,0 +1,6 @@
+# Regenerate the hashed lock with:
+# uv pip compile ci/requirements-platformio.in \
+#   --output-file ci/requirements-platformio.txt \
+#   --generate-hashes --python-version 3.12
+platformio==6.1.19
+intelhex==2.3.0

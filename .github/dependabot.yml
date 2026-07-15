@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /ci
+    target-branch: dev
+    schedule:
+      interval: monthly
+    groups:
+      platformio-toolchain:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: monthly
+    groups:
+      reviewed-actions:
+        patterns:
+          - "*"

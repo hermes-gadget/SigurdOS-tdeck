@@ -1,0 +1,12 @@
+#
+# sdkconfig.debug — Custom SDK config for debug builds
+#
+# Enables ESP-IDF core dump to flash so crash backtraces
+# survive reboot. Merged into the build's sdkconfig via
+# board_build.sdkconfig_path in platformio.ini.
+#
+
+CONFIG_ESP_COREDUMP_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=16
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

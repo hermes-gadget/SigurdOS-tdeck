@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    {"id": "INT-BLE", "category": "interop", "description": "Official app matrix A-J over BLE", "hardware": true},
+    {"id": "INT-USB", "category": "interop", "description": "Official meshcore.js matrix over companion USB", "hardware": true},
+    {"id": "INT-GOLDEN", "category": "interop", "description": "Pinned stock companion golden-frame corpus passes", "hardware": false},
+    {"id": "SOAK-IDLE", "category": "soak", "description": "At least 10 minutes idle with privacy-safe heap report", "hardware": true},
+    {"id": "SOAK-ACTIVE", "category": "soak", "description": "At least 10 minutes active use with privacy-safe heap report", "hardware": true},
+    {"id": "OTA-UPGRADE", "category": "ota", "description": "Successful authenticated OTA preserves state", "hardware": true},
+    {"id": "OTA-NO-UPDATE", "category": "ota", "description": "No-new-release response leaves running image intact", "hardware": true},
+    {"id": "OTA-AUTH-FAIL", "category": "ota", "description": "Missing or rejected credentials fail safely", "hardware": true},
+    {"id": "OTA-DOWNLOAD-FAIL", "category": "ota", "description": "Network, TLS, or truncated download fails safely", "hardware": true},
+    {"id": "OTA-IMAGE-FAIL", "category": "ota", "description": "Invalid image or write failure keeps a bootable image", "hardware": true},
+    {"id": "LAUNCH-DETECT", "category": "launcher", "description": "Launcher environment is detected", "hardware": true},
+    {"id": "LAUNCH-HANDOFF", "category": "launcher", "description": "Exit/relaunch handoff returns to Launcher", "hardware": true},
+    {"id": "LAUNCH-OTA-GATE", "category": "launcher", "description": "Self-OTA is unavailable under Launcher", "hardware": true},
+    {"id": "LAUNCH-STATE", "category": "launcher", "description": "Settings and stores survive Launcher relaunch", "hardware": true},
+    {"id": "REL-ARTIFACTS", "category": "release", "description": "Web flasher, merged, app, and Launcher artifacts match manifest and hashes", "hardware": false},
+    {"id": "REL-WARNINGS", "category": "release", "description": "First-party warning delta gate passes", "hardware": false}
+  ]
+}

@@ -1,0 +1,600 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2025 Ben
+//
+// GitHub OTA — STA-mode WiFi, HTTPS download from GitHub releases,
+// selectable by branch (dev/main) with pre-release support, flash via
+// Arduino Update class.
+
+#include "github_ota.h"
+#include "github_ota_plan.h"
+#include "launcher_env.h"
+#include "ota_allocation_policy.h"
+#include "prefs.h"
+#include "wifi_ota.h"
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <Update.h>
+#include <SPIFFS.h>
+#include <esp_heap_caps.h>
+#include <cstring>
+#include <cstdlib>
+#include <new>
+
+namespace sigurdos {
+namespace github_ota {
+
+// ── Constants ───────────────────────────────────────────────────
+
+static const char* GITHUB_API_RELEASES =
+    "https://api.github.com/repos/hermes-gadget/SigurdOS-tdeck/releases?per_page=10";
+
+static const char* USER_AGENT = "SigurdOS-TDeck/1.0";
+
+// GitHub's TLS certificate chain roots through Sectigo Public Server
+// Authentication Root E46 → USERTrust ECC Certification Authority.
+// This PEM is the Sectigo Public Server Authentication Root E46.
+// Last updated: 2026-06 — if GitHub changes CA providers, update this cert.
+static const char* GITHUB_ROOT_CA =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIDRjCCAsugAwIBAgIQGp6v7G3o4ZtcGTFBto2Q3TAKBggqhkjOPQQDAzCBiDEL\n"
+    "MAkGA1UEBhMCVVMxEzARBgNVBAgTCk5ldyBKZXJzZXkxFDASBgNVBAcTC0plcnNl\n"
+    "eSBDaXR5MR4wHAYDVQQKExVUaGUgVVNFUlRSVVNUIE5ldHdvcmsxLjAsBgNVBAMT\n"
+    "JVVTRVJUcnVzdCBFQ0MgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkwHhcNMjEwMzIy\n"
+    "MDAwMDAwWhcNMzgwMTE4MjM1OTU5WjBfMQswCQYDVQQGEwJHQjEYMBYGA1UEChMP\n"
+    "U2VjdGlnbyBMaW1pdGVkMTYwNAYDVQQDEy1TZWN0aWdvIFB1YmxpYyBTZXJ2ZXIg\n"
+    "QXV0aGVudGljYXRpb24gUm9vdCBFNDYwdjAQBgcqhkjOPQIBBgUrgQQAIgNiAAR2\n"
+    "+pmpbiDt+dd34wc7qNs9Xzjoq1WmVk/WSOrsfy2qw7LFeeyZYX8QeccCWvkEN/U0\n"
+    "NSt3zn8gj1KjAIns1aeibVvjS5KToID1AZTc8GgHHs3u/iVStSBDHBv+6xnOQ6Oj\n"
+    "ggEgMIIBHDAfBgNVHSMEGDAWgBQ64QmG1M8ZwpZ2dEl23OA1xmNjmjAdBgNVHQ4E\n"
+    "FgQU0SLaTFnxS18mOKqd1u7rDcP7qWEwDgYDVR0PAQH/BAQDAgGGMA8GA1UdEwEB\n"
+    "/wQFMAMBAf8wHQYDVR0lBBYwFAYIKwYBBQUHAwEGCCsGAQUFBwMCMBEGA1UdIAQK\n"
+    "MAgwBgYEVR0gADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVz\n"
+    "dC5jb20vVVNFUlRydXN0RUNDQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwNQYI\n"
+    "KwYBBQUHAQEEKTAnMCUGCCsGAQUFBzABhhlodHRwOi8vb2NzcC51c2VydHJ1c3Qu\n"
+    "Y29tMAoGCCqGSM49BAMDA2kAMGYCMQCMCyBit99vX2ba6xEkDe+YO7vC0twjbkv9\n"
+    "PKpqGGuZ61JZryjFsp+DFpEclCVy4noCMQCwvZDXD/m2Ko1HA5Bkmz7YQOFAiNDD\n"
+    "49IWa2wdT7R3DtODaSXH/BiXv8fwB9su4tU=\n"
+    "-----END CERTIFICATE-----\n";
+
+static constexpr int WIFI_CONNECT_TIMEOUT_MS = 20000;   // 20s
+static constexpr int HTTP_TIMEOUT_MS        = 30000;    // 30s
+static constexpr size_t DOWNLOAD_CHUNK      = 4096;
+static constexpr size_t API_RESPONSE_MAX    = 32768;    // 32 KB for release list JSON
+
+// ── State ───────────────────────────────────────────────────────
+
+static bool                   s_active = false;
+static GitHubOTAStatus        s_status;
+static WiFiClientSecure*      s_client = nullptr;
+static HTTPClient*            s_http   = nullptr;
+static int                    s_http_code = 0;
+static int                    s_content_length = 0;
+static int                    s_downloaded = 0;
+static unsigned long          s_last_progress = 0;
+static unsigned long          s_connect_start = 0;
+static bool                   s_cancelled = false;
+
+// Current download URL (constructed from API or fallback)
+static char                   s_download_url[256] = "";
+static char                   s_resolved_tag[64] = "";
+static char                   s_resolved_target[16] = "";
+
+// API response buffer (heap-allocated during FetchingRelease)
+static char*                  s_api_buf = nullptr;
+static int                    s_api_buf_len = 0;
+
+static void* createOtaConnectionObject(void*, hal::OtaAllocationKind kind) {
+    switch (kind) {
+    case hal::OtaAllocationKind::ApiSecureClient:
+    case hal::OtaAllocationKind::DownloadSecureClient:
+        return new (std::nothrow) WiFiClientSecure();
+    case hal::OtaAllocationKind::ApiHttpClient:
+    case hal::OtaAllocationKind::DownloadHttpClient:
+        return new (std::nothrow) HTTPClient();
+    default:
+        return nullptr;
+    }
+}
+
+static void destroyOtaConnectionObject(void*, hal::OtaAllocationKind kind,
+                                       void* object) {
+    switch (kind) {
+    case hal::OtaAllocationKind::ApiSecureClient:
+    case hal::OtaAllocationKind::DownloadSecureClient:
+        delete static_cast<WiFiClientSecure*>(object);
+        break;
+    case hal::OtaAllocationKind::ApiHttpClient:
+    case hal::OtaAllocationKind::DownloadHttpClient:
+        delete static_cast<HTTPClient*>(object);
+        break;
+    default:
+        break;
+    }
+}
+
+static const hal::OtaAllocationOps OTA_CONNECTION_ALLOCATOR{
+    nullptr, createOtaConnectionObject, destroyOtaConnectionObject
+};
+
+// ── Helpers ─────────────────────────────────────────────────────
+
+static void setStatus(GitHubOTAState state, int pct = 0,
+                      const char* msg = "", const char* err = "") {
+    s_status.state = state;
+    s_status.progress_pct = pct;
+    if (msg) {
+        strncpy(s_status.status_msg, msg, sizeof(s_status.status_msg) - 1);
+        s_status.status_msg[sizeof(s_status.status_msg) - 1] = '\0';
+    }
+    if (err) {
+        strncpy(s_status.error_msg, err, sizeof(s_status.error_msg) - 1);
+        s_status.error_msg[sizeof(s_status.error_msg) - 1] = '\0';
+    }
+}
+
+static void cleanupConnection() {
+    if (s_http) {
+        s_http->end();
+        delete s_http;
+        s_http = nullptr;
+    }
+    if (s_client) {
+        s_client->stop();
+        delete s_client;
+        s_client = nullptr;
+    }
+}
+
+static void fail(const char* msg) {
+    Serial.printf("[gh-ota] FAIL: %s\n", msg);
+    setStatus(GitHubOTAState::Failed, 0, "Failed", msg);
+    cleanupConnection();
+    // Free API buffer if allocated
+    if (s_api_buf) {
+        free(s_api_buf);
+        s_api_buf = nullptr;
+        s_api_buf_len = 0;
+    }
+    WiFi.disconnect();
+    delay(10);
+    s_active = false;
+}
+
+static ApiBodyStatus readApiResponse(WiFiClient* stream, int content_length,
+                                     char* out, size_t out_size,
+                                     int* bytes_read) {
+    if (bytes_read) *bytes_read = 0;
+    if (!stream || !out || out_size < 2) return ApiBodyStatus::Incomplete;
+
+    const size_t payload_capacity = out_size - 1;
+    ApiBodyStatus initial = classifyApiResponseBody(
+        content_length, 0, payload_capacity, false);
+    if (initial == ApiBodyStatus::TooLarge) return initial;
+
+    size_t total = 0;
+    unsigned long last_data_at = millis();
+    while (total < payload_capacity) {
+        const int available = stream->available();
+        if (available > 0) {
+            size_t to_read = static_cast<size_t>(available);
+            const size_t remaining = payload_capacity - total;
+            if (to_read > remaining) to_read = remaining;
+            if (content_length >= 0) {
+                const size_t expected_remaining =
+                    static_cast<size_t>(content_length) - total;
+                if (to_read > expected_remaining) to_read = expected_remaining;
+            }
+            if (to_read == 0) break;
+
+            const int read = stream->readBytes(out + total, to_read);
+            if (read <= 0) break;
+            total += static_cast<size_t>(read);
+            last_data_at = millis();
+            if (content_length >= 0 &&
+                total == static_cast<size_t>(content_length)) {
+                break;
+            }
+            continue;
+        }
+
+        if (!stream->connected()) break;
+        if (millis() - last_data_at >= HTTP_TIMEOUT_MS) break;
+        delay(1);
+    }
+
+    out[total] = '\0';
+    if (bytes_read) *bytes_read = static_cast<int>(total);
+    return classifyApiResponseBody(content_length, total, payload_capacity,
+                                   !stream->connected());
+}
+
+// Release selection and URL construction live in github_ota_plan.cpp.
+
+// ── Public API ──────────────────────────────────────────────────
+
+bool startGitHubUpdate() {
+    if (s_active) return true;
+
+    if (sigurdos_is_under_launcher()) {
+        Serial.println("[gh-ota] REFUSED: GitHub OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
+        setStatus(GitHubOTAState::Failed, 0, "Failed",
+                  "Update SigurdOS through Launcher instead");
+        return false;
+    }
+
+    const NodePrefs& p = prefs_get();
+    if (!p.wifi_ssid[0]) {
+        Serial.println("[gh-ota] No WiFi SSID configured");
+        setStatus(GitHubOTAState::Failed, 0, "Failed",
+                  "No WiFi configured. Set SSID in Settings.");
+        return false;
+    }
+
+    s_active = true;
+    s_cancelled = false;
+    s_downloaded = 0;
+    s_http_code = 0;
+    s_content_length = 0;
+    s_connect_start = millis();
+    s_download_url[0] = '\0';
+    s_resolved_tag[0] = '\0';
+    s_resolved_target[0] = '\0';
+
+    Serial.printf("[gh-ota] Starting update: branch=%s allow_prerelease=%d\n",
+                  p.ota_branch, p.ota_allow_prerelease ? 1 : 0);
+
+    setStatus(GitHubOTAState::Connecting, 0, "Connecting to WiFi...");
+
+    if (!sigurdos::wifi_sta::isConnected()) {
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(p.wifi_ssid, p.wifi_password);
+    } else {
+        Serial.printf("[gh-ota] Reusing existing WiFi connection\n");
+    }
+
+    Serial.printf("[gh-ota] Connecting to WiFi: %s\n", p.wifi_ssid);
+    return true;
+}
+
+void loop() {
+    if (!s_active) return;
+    if (s_cancelled) {
+        fail("Cancelled");
+        return;
+    }
+
+    GitHubOTAState st = s_status.state;
+
+    // ── Phase 1: WiFi connect ───────────────────────────────────
+    if (st == GitHubOTAState::Connecting) {
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.printf("[gh-ota] WiFi connected. IP: %s\n",
+                          WiFi.localIP().toString().c_str());
+
+            // Check if we need to fetch release info from API
+            const NodePrefs& p = prefs_get();
+            if (!isSupportedReleaseChannel(p.ota_branch)) {
+                fail("Invalid OTA release channel");
+                return;
+            }
+            const bool needs_api = branchNeedsReleaseApi(
+                p.ota_branch, p.ota_allow_prerelease);
+
+            if (needs_api) {
+                setStatus(GitHubOTAState::FetchingRelease, 0,
+                          "Fetching release info...");
+                s_connect_start = millis();
+
+                // Allocate API response buffer from PSRAM
+                s_api_buf = (char*)heap_caps_malloc(API_RESPONSE_MAX,
+                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                if (!s_api_buf) {
+                    s_api_buf = (char*)malloc(API_RESPONSE_MAX);
+                }
+                if (!s_api_buf) {
+                    fail("Out of memory for API request");
+                    return;
+                }
+                s_api_buf_len = 0;
+                s_api_buf[0] = '\0';
+
+                // Start API request
+                hal::OtaHttpObjects api_objects;
+                if (!hal::allocate_ota_http_objects(
+                        OTA_CONNECTION_ALLOCATOR,
+                        hal::OtaAllocationKind::ApiSecureClient,
+                        hal::OtaAllocationKind::ApiHttpClient,
+                        &api_objects)) {
+                    fail("Out of memory for API connection");
+                    return;
+                }
+                s_client = static_cast<WiFiClientSecure*>(api_objects.client);
+                s_http = static_cast<HTTPClient*>(api_objects.http);
+                s_client->setCACert(GITHUB_ROOT_CA);
+
+                s_http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+                s_http->setTimeout(HTTP_TIMEOUT_MS);
+                s_http->setUserAgent(USER_AGENT);
+
+                Serial.printf("[gh-ota] GET %s\n", GITHUB_API_RELEASES);
+                if (!s_http->begin(*s_client, GITHUB_API_RELEASES)) {
+                    fail("HTTP begin failed for API");
+                    return;
+                }
+
+                s_http_code = s_http->GET();
+                if (s_http_code <= 0) {
+                    char error[64];
+                    snprintf(error, sizeof(error), "Release API request failed (%d)",
+                             s_http_code);
+                    fail(error);
+                    return;
+                } else if (s_http_code != HTTP_CODE_OK) {
+                    char error[64];
+                    snprintf(error, sizeof(error), "Release API HTTP %d", s_http_code);
+                    fail(error);
+                    return;
+                } else {
+                    // Read response body
+                    WiFiClient* stream = s_http->getStreamPtr();
+                    const int api_content_length = s_http->getSize();
+                    const ApiBodyStatus body_status = readApiResponse(
+                        stream, api_content_length, s_api_buf,
+                        API_RESPONSE_MAX, &s_api_buf_len);
+
+                    Serial.printf("[gh-ota] API response: %d/%d bytes\n",
+                                  s_api_buf_len, api_content_length);
+                    if (body_status == ApiBodyStatus::TooLarge) {
+                        fail("Release API response too large");
+                        return;
+                    }
+                    if (body_status != ApiBodyStatus::Complete) {
+                        fail("Incomplete release API response");
+                        return;
+                    }
+
+                    // Parse to find matching release
+                    char tag_name[64] = "";
+                    char target_name[16] = "";
+                    const ReleaseSelectionResult selection =
+                        selectReleaseTagResultFromJson(
+                            s_api_buf, p.ota_branch, p.ota_allow_prerelease,
+                            tag_name, sizeof(tag_name),
+                            target_name, sizeof(target_name));
+                    if (selection == ReleaseSelectionResult::Matched) {
+                        buildReleaseDownloadUrl(tag_name, s_download_url,
+                                                sizeof(s_download_url));
+                        strncpy(s_resolved_tag, tag_name,
+                                sizeof(s_resolved_tag) - 1);
+                        s_resolved_tag[sizeof(s_resolved_tag) - 1] = '\0';
+                        strncpy(s_resolved_target, target_name,
+                                sizeof(s_resolved_target) - 1);
+                        s_resolved_target[sizeof(s_resolved_target) - 1] = '\0';
+                        Serial.printf("[gh-ota] Download URL: %s\n", s_download_url);
+                    } else if (selection == ReleaseSelectionResult::NoMatch) {
+                        fail("No matching release for selected channel");
+                        return;
+                    } else {
+                        fail("Malformed release API response");
+                        return;
+                    }
+                }
+
+                // Clean up API HTTP resources
+                cleanupConnection();
+
+                // Free API buffer
+                if (s_api_buf) {
+                    free(s_api_buf);
+                    s_api_buf = nullptr;
+                    s_api_buf_len = 0;
+                }
+            }
+
+            if (!needs_api && s_download_url[0] == '\0' &&
+                releaseChannelAllowsFallback(p.ota_branch)) {
+                // The global fallback is valid only for an explicit "latest"
+                // selection that does not need API prerelease filtering.
+                copyFallbackDownloadUrl(s_download_url, sizeof(s_download_url));
+                strncpy(s_resolved_tag, "latest", sizeof(s_resolved_tag) - 1);
+                s_resolved_tag[sizeof(s_resolved_tag) - 1] = '\0';
+                strncpy(s_resolved_target, "latest",
+                        sizeof(s_resolved_target) - 1);
+                s_resolved_target[sizeof(s_resolved_target) - 1] = '\0';
+                Serial.printf("[gh-ota] Using fallback URL: %s\n", s_download_url);
+            }
+
+            // Start download phase
+            if (s_download_url[0] == '\0') {
+                fail("No download URL available");
+                return;
+            }
+
+            char resolved_status[80];
+            snprintf(resolved_status, sizeof(resolved_status),
+                     "Downloading [%.15s] %.44s...",
+                     s_resolved_target, s_resolved_tag);
+            setStatus(GitHubOTAState::Downloading, 0, resolved_status);
+
+            hal::OtaHttpObjects download_objects;
+            if (!hal::allocate_ota_http_objects(
+                    OTA_CONNECTION_ALLOCATOR,
+                    hal::OtaAllocationKind::DownloadSecureClient,
+                    hal::OtaAllocationKind::DownloadHttpClient,
+                    &download_objects)) {
+                fail("Out of memory for download connection");
+                return;
+            }
+            s_client = static_cast<WiFiClientSecure*>(download_objects.client);
+            s_http = static_cast<HTTPClient*>(download_objects.http);
+            s_client->setCACert(GITHUB_ROOT_CA);
+
+            s_http->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+            s_http->setTimeout(HTTP_TIMEOUT_MS);
+            s_http->setUserAgent(USER_AGENT);
+
+            Serial.printf("[gh-ota] Downloading from: %s\n", s_download_url);
+            if (!s_http->begin(*s_client, s_download_url)) {
+                fail("HTTP begin failed for download");
+                return;
+            }
+
+            s_http_code = s_http->GET();
+            if (s_http_code <= 0) {
+                fail("HTTP GET failed for download");
+                return;
+            }
+
+            Serial.printf("[gh-ota] Download HTTP %d\n", s_http_code);
+            if (s_http_code != HTTP_CODE_OK && s_http_code != HTTP_CODE_PARTIAL_CONTENT) {
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Download HTTP %d", s_http_code);
+                fail(buf);
+                return;
+            }
+
+            s_content_length = s_http->getSize();
+            Serial.printf("[gh-ota] Content-Length: %d\n", s_content_length);
+
+            if (s_content_length <= 0 || s_content_length > 6*1024*1024) {
+                fail("Invalid Content-Length");
+                return;
+            }
+
+            if (!Update.begin((size_t)s_content_length)) {
+                Serial.printf("[gh-ota] Update.begin failed: %s\n",
+                              Update.errorString());
+                fail("Flash init failed");
+                return;
+            }
+
+            s_downloaded = 0;
+            s_last_progress = millis();
+
+        } else if (WiFi.status() == WL_CONNECT_FAILED ||
+                   WiFi.status() == WL_NO_SSID_AVAIL) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "WiFi connect failed (status=%d)",
+                     (int)WiFi.status());
+            fail(buf);
+            return;
+        } else if (millis() - s_connect_start > WIFI_CONNECT_TIMEOUT_MS) {
+            fail("WiFi connect timeout");
+            return;
+        }
+        // Still connecting — wait
+        return;
+    }
+
+    // ── Phase 2: Fetch release info from API ────────────────────
+    // (This is now handled inline in the Connecting phase above, after
+    // WiFi connects. The FetchingRelease state is a transitional state
+    // shown in the UI only. We shouldn't normally get here in the loop,
+    // but if we do (e.g. after a deferred yield), just wait.)
+
+    // ── Phase 3: Download + write ───────────────────────────────
+    if (st == GitHubOTAState::Downloading || st == GitHubOTAState::Writing) {
+        if (!s_http || !s_http->connected()) {
+            if (s_downloaded >= s_content_length && s_content_length > 0) {
+                if (Update.end(true)) {
+                    Serial.printf("[gh-ota] Update OK — %d bytes written\n",
+                                  s_downloaded);
+                    setStatus(GitHubOTAState::Success, 100,
+                              "Update complete — rebooting...");
+                    SPIFFS.end();
+                    delay(500);
+                    ESP.restart();
+                } else {
+                    Serial.printf("[gh-ota] Update.end failed: %s\n",
+                                  Update.errorString());
+                    fail("Flash write failed");
+                }
+            } else {
+                if (s_downloaded > 0) {
+                    fail("Download truncated");
+                } else {
+                    fail("Connection lost");
+                }
+            }
+            return;
+        }
+
+        WiFiClient* stream = s_http->getStreamPtr();
+        if (!stream) {
+            fail("No stream");
+            return;
+        }
+
+        while (stream->available() && s_downloaded < s_content_length && !s_cancelled) {
+            size_t avail = (size_t)stream->available();
+            size_t to_read = avail;
+            if (to_read > DOWNLOAD_CHUNK) to_read = DOWNLOAD_CHUNK;
+
+            static uint8_t* buf = (uint8_t*)heap_caps_malloc(
+                DOWNLOAD_CHUNK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!buf) buf = (uint8_t*)heap_caps_malloc(
+                DOWNLOAD_CHUNK, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (!buf) { fail("Out of memory"); return; }
+            size_t read = stream->readBytes(buf, to_read);
+            if (read == 0) break;
+
+            size_t written = Update.write(buf, read);
+            if (written != read) {
+                Serial.printf("[gh-ota] Write mismatch: read=%u written=%u\n",
+                              (unsigned)read, (unsigned)written);
+                fail("Flash write error");
+                return;
+            }
+
+            s_downloaded += read;
+
+            unsigned long now = millis();
+            if (now - s_last_progress > 500) {
+                s_last_progress = now;
+                int pct = (s_content_length > 0)
+                    ? (int)(((long)s_downloaded * 100) / s_content_length)
+                    : 0;
+                char msg[64];
+                snprintf(msg, sizeof(msg), "[%.15s] %.24s %d%%",
+                         s_resolved_target, s_resolved_tag, pct);
+                setStatus(GitHubOTAState::Writing, pct, msg);
+                Serial.printf("[gh-ota] %s\n", msg);
+            }
+        }
+    }
+}
+
+bool isActive() {
+    return s_active;
+}
+
+const GitHubOTAStatus& getStatus() {
+    return s_status;
+}
+
+void cancel() {
+    if (!s_active) return;
+    s_cancelled = true;
+    Serial.println("[gh-ota] Cancel requested");
+    if (githubOtaFlashSessionActive(s_status.state)) {
+        Update.abort();
+    }
+    fail("Cancelled");
+}
+
+const char* getDownloadLabel() {
+    const NodePrefs& p = prefs_get();
+    if (p.ota_branch[0] == '\0' || strcmp(p.ota_branch, "latest") == 0) {
+        return "GitHub: latest release";
+    }
+    // Return a static string showing the channel
+    static char label[40];
+    snprintf(label, sizeof(label), "GitHub: %s%s",
+             p.ota_branch,
+             p.ota_allow_prerelease ? " (+pre)" : "");
+    return label;
+}
+
+}  // namespace github_ota
+}  // namespace sigurdos

@@ -1,0 +1,21 @@
+name: Restore PlatformIO packages
+description: Reuse immutable PlatformIO downloads across build and test jobs
+
+inputs:
+  dependency-hash:
+    description: Hash of every manifest and lock that controls PlatformIO resolution
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Restore PlatformIO package cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: |
+          ~/.platformio/.cache
+          ~/.platformio/packages
+          ~/.platformio/platforms
+        key: pio-${{ runner.os }}-${{ runner.arch }}-${{ inputs.dependency-hash }}
+        restore-keys: |
+          pio-${{ runner.os }}-${{ runner.arch }}-

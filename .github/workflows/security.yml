@@ -1,0 +1,95 @@
+name: Security Scanning
+
+"on":
+  push:
+    branches:
+      - dev
+  pull_request:
+    branches:
+      - dev
+  schedule:
+    - cron: '0 5 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: Dependency audit and inventories
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: scripts/official-meshcore-client-test/package-lock.json
+
+      - name: Install official client dependencies
+        working-directory: scripts/official-meshcore-client-test
+        run: npm ci
+
+      - name: Audit official client dependencies
+        working-directory: scripts/official-meshcore-client-test
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Generate npm CycloneDX SBOM
+        working-directory: scripts/official-meshcore-client-test
+        run: >-
+          npm sbom --sbom-format cyclonedx --omit=dev
+          > "${{ runner.temp }}/official-client-sbom.cdx.json"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Resolve PlatformIO dependencies
+        run: |
+          python -m pip install --upgrade platformio
+          pio pkg install -e SigurdOS_TDeck
+          pio pkg list -e SigurdOS_TDeck > "${{ runner.temp }}/platformio-dependencies.txt"
+
+      - name: Upload dependency inventories
+        uses: actions/upload-artifact@v7
+        with:
+          name: dependency-inventories
+          path: |
+            ${{ runner.temp }}/official-client-sbom.cdx.json
+            ${{ runner.temp }}/platformio-dependencies.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  codeql:
+    name: CodeQL C/C++ SAST
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:c-cpp

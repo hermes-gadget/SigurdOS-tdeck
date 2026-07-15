@@ -1,0 +1,12 @@
+---
+# SigurdOS T-Deck — formatting for NEW/CHANGED lines only (editor integration).
+# Do NOT run clang-format over the whole tree: a repo-wide reformat would
+# destroy git blame. See docs/CODEBASE_IMPROVEMENT_ROADMAP.md task T2.
+BasedOnStyle: Google
+IndentWidth: 2
+ColumnLimit: 100
+PointerAlignment: Left
+DerivePointerAlignment: false
+# Include order is load-bearing in HAL files (e.g. src/lv_conf.h macros,
+# display/touch init ordering) — never let the formatter reorder includes.
+SortIncludes: false

@@ -1,0 +1,343 @@
+name: Pull Request CI
+
+"on":
+  pull_request:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Native tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.11'
+
+      - name: Restore PlatformIO packages
+        uses: ./.github/actions/cache-platformio
+        with:
+          dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/platformio-packages.lock') }}
+
+      - name: Install PlatformIO
+        run: python -m pip install --require-hashes -r ci/requirements-platformio.txt
+
+      - name: Run native tests
+        run: pio test -e native_test -v
+
+      - name: Verify release evidence contracts
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+  build:
+    name: Firmware build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.11'
+
+      - name: Restore PlatformIO packages
+        uses: ./.github/actions/cache-platformio
+        with:
+          dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/platformio-packages.lock') }}
+
+      - name: Install PlatformIO
+        run: python -m pip install --require-hashes -r ci/requirements-platformio.txt intelhex
+
+      - name: Build firmware
+        run: |
+          set -o pipefail
+          pio run -e SigurdOS_TDeck 2>&1 | tee build.log
+
+      - name: Enforce first-party warning budget
+        run: >-
+          python scripts/check_first_party_warnings.py
+          --log build.log
+          --baseline ci/first_party_warnings.json
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Build debug firmware
+        run: pio run -e SigurdOS_TDeck_debug
+
+      - name: Build remote test firmware
+        run: pio run -e SigurdOS_TDeck_remote_test_radio
+
+      - name: Build USA/Canada remote radio firmware
+        run: pio run -e SigurdOS_TDeck_remote_test_radio_usca
+
+      - name: Build USA/Canada RX-only remote radio firmware
+        run: pio run -e SigurdOS_TDeck_remote_test_radio_usca_rxonly
+
+      - name: Build companion USB firmware
+        run: pio run -e SigurdOS_TDeck_companion_usb
+
+      - name: Build BLE agent firmware
+        run: pio run -e SigurdOS_TDeck_ble_agent
+
+      - name: Verify resolved PlatformIO graph
+        run: python scripts/platformio_lock.py --check
+
+      - name: Report firmware size
+        if: always()
+        run: |
+          if [ -f build.log ] && grep -qE '^(RAM|Flash):' build.log; then
+            {
+              echo '### Firmware size (SigurdOS_TDeck)'
+              echo '```'
+              grep -E '^(RAM|Flash):' build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  official-companion-client:
+    name: Official meshcore.js client package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: scripts/official-meshcore-client-test/package-lock.json
+
+      - name: Install official client test deps
+        working-directory: scripts/official-meshcore-client-test
+        run: npm ci
+
+      - name: Syntax-check matrix harness
+        working-directory: scripts/official-meshcore-client-test
+        run: node --check matrix.mjs
+
+      - name: Verify evidence privacy allowlist
+        working-directory: scripts/official-meshcore-client-test
+        run: npm run test:privacy
+
+      - name: Package self-test (no hardware)
+        working-directory: scripts/official-meshcore-client-test
+        run: |
+          # Hardware matrix is optional; without a serial device the harness
+          # must fail with connect exit code 2 (not crash / hang).
+          set +e
+          timeout 20s node matrix.mjs --port /dev/ttyUSB99 --label ci-no-device --timeout 2000
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "Expected connect failure without hardware: OK (exit 2)"
+            exit 0
+          fi
+          echo "Unexpected exit code without hardware: $code"
+          exit 1
+
+      - name: Summarize
+        run: |
+          {
+            echo '### Official meshcore.js client'
+            echo 'Package install + syntax check passed.'
+            echo 'Live USB matrix (Heltec / T-Deck companion_usb) remains a hardware gate — see scripts/official-meshcore-client-test/README.md'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  sanitize:
+    name: Native ASan + UBSan + LSan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.11'
+
+      - name: Restore PlatformIO packages
+        uses: ./.github/actions/cache-platformio
+        with:
+          dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/platformio-packages.lock') }}
+
+      - name: Install PlatformIO
+        run: python -m pip install --require-hashes -r ci/requirements-platformio.txt
+
+      - name: Run all sanitizer-capable native tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:check_initialization_order=1:halt_on_error=1
+          LSAN_OPTIONS: exitcode=23:print_suppressions=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: pio test -e native_sanitize -v
+
+  coverage:
+    name: Native production coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore PlatformIO packages
+        uses: ./.github/actions/cache-platformio
+        with:
+          dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/platformio-packages.lock') }}
+
+      - name: Install PlatformIO and coverage tooling
+        run: python -m pip install --upgrade platformio gcovr
+
+      - name: Run all coverage-capable native tests
+        run: pio test -e native_coverage -v
+
+      - name: Publish line and branch summary
+        run: |
+          gcovr \
+            --root . \
+            --filter '^src/' \
+            --exclude-throw-branches \
+            --txt coverage.txt \
+            --txt-summary \
+            --html-details coverage.html \
+            --json-summary coverage-summary.json \
+            | tee coverage-summary.txt
+          {
+            echo '### Native production coverage'
+            echo '```text'
+            sed -n '1,120p' coverage-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-production-coverage
+          path: |
+            coverage.txt
+            coverage.html
+            coverage.*.html
+            coverage-summary.txt
+            coverage-summary.json
+
+  lint:
+    name: Static analysis + logging policy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12.11'
+
+      - name: Restore PlatformIO packages
+        uses: ./.github/actions/cache-platformio
+        with:
+          dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/platformio-packages.lock') }}
+
+      - name: Install PlatformIO
+        run: python -m pip install --require-hashes -r ci/requirements-platformio.txt
+
+      - name: Static analysis (first-party high-severity gate)
+        # --suppress=*:*/.pio/* keeps third-party libdeps headers (e.g. the
+        # LovyanGFX #if cppcheck cannot evaluate) out of the first-party gate;
+        # --inline-suppr honours justified // cppcheck-suppress comments.
+        run: >-
+          pio check -e SigurdOS_TDeck
+          --skip-packages
+          --src-filters '+<src/>'
+          --severity high
+          --fail-on-defect high
+          --flags 'cppcheck: --inline-suppr --suppress=*:*/.pio/*'
+
+      - name: Logging policy grep
+        run: |
+          # Raw Serial.print* belongs in SIG_LOG* macros (src/diagnostics/log.h).
+          # Whitelist: diagnostics/test/validation modules by policy, plus files
+          # not yet migrated — shrink the second list per T9 migration PR.
+          allow_dirs='^src/(diagnostics|test|validation)/'
+          not_migrated='^src/(app/map_renderer|hal/display|hal/github_ota|hal/keyboard|hal/storage|hal/trackball|hal/wifi_ota|main|mesh/mesh_wrapper|mesh/sigurd_mesh_v2|ui/chat_screen|ui/home_screen|ui/screens/screen_channels|ui/screens/screen_contacts)\.cpp$'
+          violations=$(grep -rl "Serial\.print" src --include="*.cpp" | grep -Ev "$allow_dirs|$not_migrated" || true)
+          if [ -n "$violations" ]; then
+            echo "Raw Serial.print outside the logging whitelist — use SIG_LOG* from src/diagnostics/log.h:"
+            echo "$violations"
+            exit 1
+          fi
+          echo "Logging policy: OK"
+
+      - name: Release hygiene contracts
+        run: |
+          python scripts/check_release_contracts.py
+          python scripts/tests/test_release_contracts.py -v
+
+      - name: Doc reference check
+        run: |
+          # Verify src/... file paths cited in docs/*.md exist in this repo
+          # or in the MeshCore submodule (some docs cite submodule-relative
+          # paths). Excluded docs: planning docs citing not-yet-created files
+          # (CODEBASE_IMPROVEMENT_ROADMAP), docs describing external repos
+          # (LAUNCHER_ROADMAP, LauncherCompatibility — the latter describes
+          # bmorcelli/Launcher source files not in this repo), and docs
+          # already flagged OUT OF DATE (TELEMETRY_ARCHITECTURE) —
+          # re-include the last after its rewrite.
+          status=0
+          for doc in docs/*.md; do
+            case "$doc" in
+              docs/CODEBASE_IMPROVEMENT_ROADMAP.md|docs/LAUNCHER_ROADMAP.md|docs/TELEMETRY_ARCHITECTURE.md|docs/LauncherCompatibility.md) continue;;
+            esac
+            for ref in $(grep -ohE 'src/[A-Za-z0-9_/.-]+\.(cpp|h|c)' "$doc" | sort -u); do
+              case "$ref" in */.*) continue;; esac
+              if [ ! -f "$ref" ] && [ ! -f "lib/meshcore/$ref" ]; then
+                echo "::warning file=$doc::cites missing file $ref"
+                status=1
+              fi
+            done
+          done
+          [ "$status" -eq 0 ] && echo "Doc references: OK"
+          exit "$status"
+
+      - name: AGENTS.md / CLAUDE.md mirror check
+        run: |
+          # Both files must be byte-identical in their shared content sections
+          # (the first few lines differ — CLAUDE.md carries a mirror notice).
+          # Strip header lines that legitimately differ, then diff the rest.
+          awk 'NR>7' AGENTS.md > /tmp/agents_core.md
+          awk 'NR>9' CLAUDE.md > /tmp/claude_core.md
+          if ! diff -q /tmp/agents_core.md /tmp/claude_core.md > /dev/null; then
+            echo "::error::AGENTS.md and CLAUDE.md are out of sync — they must be true mirrors"
+            diff -u /tmp/agents_core.md /tmp/claude_core.md
+            exit 1
+          fi
+          echo "AGENTS.md ↔ CLAUDE.md mirror check: OK"
