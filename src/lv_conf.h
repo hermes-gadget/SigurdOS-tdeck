@@ -67,19 +67,23 @@
 // pool from PSRAM and drops the internal `work_mem_int` array completely.
 //
 // PSRAM fallback: if PSRAM is unavailable (faulty hardware, unpopulated chip),
-// we fall back to a smaller pool from internal DRAM so the firmware can still
-// boot and render the UI. The 48KB DRAM pool matches the original LVGL v8
-// default proven on this codebase — ample for a 320×240 UI with simple widgets.
+// we fall back to internal DRAM so the firmware can still boot and render the
+// UI when enough internal memory is available.
 //
 // Implementation: hal/lv_pool.cpp
 #define LV_USE_STDLIB_MALLOC      LV_STDLIB_BUILTIN
 #define LV_MEM_POOL_INCLUDE       <esp_heap_caps.h>
-#define LV_MEM_SIZE               (48 * 1024U)
+#define LV_MEM_SIZE               (128 * 1024U)
 
 #ifndef __ASSEMBLER__
 #ifdef __cplusplus
-extern "C"
+extern "C" {
 #endif
 void* sigurdos_lv_pool_alloc(unsigned long size);
+void sigurdos_lv_assert_handler(void);
+#ifdef __cplusplus
+}
+#endif
 #define LV_MEM_POOL_ALLOC(size)   sigurdos_lv_pool_alloc(size)
+#define LV_ASSERT_HANDLER         sigurdos_lv_assert_handler();
 #endif

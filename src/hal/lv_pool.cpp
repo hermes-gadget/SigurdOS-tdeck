@@ -29,6 +29,7 @@
 // mismatch.
 
 #include <cstddef>
+#include <Arduino.h>
 #include <esp_heap_caps.h>
 
 extern "C" void* sigurdos_lv_pool_alloc(size_t size)
@@ -37,4 +38,11 @@ extern "C" void* sigurdos_lv_pool_alloc(size_t size)
     if (p) return p;
     // PSRAM unavailable — fall back to internal DRAM
     return heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+extern "C" [[noreturn]] void sigurdos_lv_assert_handler(void)
+{
+    Serial.println("[E] LVGL assertion failed; halting");
+    Serial.flush();
+    while (true) delay(1000);
 }

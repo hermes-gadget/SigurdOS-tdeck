@@ -277,14 +277,22 @@ void loop()
         last_dump_ms = now;
 
         // === LIGHT periodic status (safe, non-blocking) ===
-        Serial.printf("[stat] t=%lu  heap=%u/%u  psram=%u  batt=%u%%  flush=%lu  feat=%02x\n",
+        lv_mem_monitor_t lv_mem;
+        lv_mem_monitor(&lv_mem);
+        Serial.printf("[stat] t=%lu  heap=%u/%u  psram=%u  batt=%u%%  flush=%lu  feat=%02x  "
+                      "lvgl=%u/%u largest=%u used=%u%% frag=%u%%\n",
                       (unsigned long)(now/1000),
                       (unsigned)ESP.getFreeHeap(),
                       (unsigned)ESP.getMinFreeHeap(),
                       (unsigned)ESP.getFreePsram(),
                       (unsigned)sigurdos_battery_pct(),
                       (unsigned long)0 /* flush count is local to display.cpp */,
-                      (unsigned)feat_to_mask());
+                      (unsigned)feat_to_mask(),
+                      (unsigned)lv_mem.free_size,
+                      (unsigned)lv_mem.total_size,
+                      (unsigned)lv_mem.free_biggest_size,
+                      (unsigned)lv_mem.used_pct,
+                      (unsigned)lv_mem.frag_pct);
 #if SIGURDOS_CRASH_RING
         {
             char ring_buf[64];
