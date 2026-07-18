@@ -632,7 +632,7 @@ uint32_t sigurdos_gps_time_sync_remaining_ms() {
     return elapsed >= gps_sync_timeout_ms ? 0 : gps_sync_timeout_ms - elapsed;
 }
 
-void sigurdos_gps_service(bool background_enabled, uint16_t background_interval_s) {
+void sigurdos_gps_service(bool background_enabled, uint32_t background_interval_s) {
     const uint32_t now = millis();
     if (gps_sync_status == SigurdOSGpsSyncStatus::Waiting &&
         (uint32_t)(now - gps_sync_started_ms) >= gps_sync_timeout_ms) {

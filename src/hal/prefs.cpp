@@ -116,7 +116,7 @@ bool prefs_load(NodePrefs& p) {
     p.auto_off_timeout = nvs.getUShort("auto_off", 30);
     p.chat_msg_cap  = nvs.getUShort("chat_cap", 200);
     p.flood_max_hops = nvs.getUChar("flood_mh", 0);
-    p.share_location = nvs.getBool("sh_loc", false);
+    p.advert_loc_policy = nvs.getUChar("sh_loc", 0);
     p.advert_location_valid = nvs.getBool("adv_loc", false);
     p.advert_lat = nvs.getInt("adv_lat", 0);
     p.advert_lon = nvs.getInt("adv_lon", 0);
@@ -130,11 +130,13 @@ bool prefs_load(NodePrefs& p) {
     p.theme_id = nvs.getUChar("theme", 0);
     p.path_hash_mode = nvs.getUChar("phash_mode", 0);
     if (p.path_hash_mode > 2) p.path_hash_mode = 0;  // clamp (mode 3 reserved)
-    p.multi_acks = nvs.getBool("multi_ack", false);
+    p.multi_acks = nvs.getUChar("multi_ack", 0);
     p.buzzer_quiet = nvs.getBool("buzz_q", false);
     p.gps_enabled = nvs.getBool("gps_en", false);
-    p.gps_interval = nvs.getUShort("gps_int", 5);
-    if (p.gps_interval < 5) p.gps_interval = 5; // migrate legacy every-loop/1s values
+    // NVS values are typed and the legacy gps_int key is uint16. Use a new
+    // uint32 key so existing installations migrate without a type mismatch.
+    p.gps_interval = nvs.getULong("gps_int32", nvs.getUShort("gps_int", 5));
+    if (p.gps_interval > 86400) p.gps_interval = 86400;
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
     p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
     p.client_repeat = nvs.getUChar("clirep", 0);

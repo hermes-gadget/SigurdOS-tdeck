@@ -96,6 +96,9 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp);
 bool messageStoreMarkConfirmationLost(const char* conversation, uint32_t timestamp);
 int  messageStoreMarkOrphanedPendingLost();
 bool messageStoreMarkCompanionSent(uint32_t store_id);
+// Number of undelivered incoming records discarded only when the bounded store
+// contains more unsent records than it can physically retain.
+uint32_t messageStoreCompanionBacklogDropCount();
 bool messageStoreGetById(uint32_t store_id, StoredMessage& out);
 bool messageStoreFindRecent(const char* conversation, const char* sender,
                             const char* text, uint32_t timestamp, bool is_self,

@@ -48,7 +48,7 @@ TEST(PrefsDefaultsTest, IdentityAndPrivacyDefaultsAreDeterministic) {
 
     EXPECT_STREQ("SigurdOS T-Deck", prefs.node_name);
     EXPECT_EQ('\0', prefs.node_name[sizeof(prefs.node_name) - 1]);
-    EXPECT_FALSE(prefs.share_location);
+    EXPECT_EQ(0, prefs.advert_loc_policy);
     EXPECT_FALSE(prefs.gps_enabled);
     EXPECT_EQ(5, prefs.gps_interval);
     EXPECT_EQ(0u, prefs.device_pin);
@@ -64,7 +64,7 @@ TEST(PrefsDefaultsTest, MeshBehaviorDefaultsMatchSafeCompanionSettings) {
     EXPECT_EQ(0x1E, prefs.autoadd_config);
     EXPECT_EQ(0, prefs.advert_interval_h);
     EXPECT_EQ(1, prefs.advert_type);
-    EXPECT_FALSE(prefs.multi_acks);
+    EXPECT_EQ(0, prefs.multi_acks);
     EXPECT_EQ(0, prefs.client_repeat);
     // Companion BLE is available immediately on first boot (PR #877).
     EXPECT_TRUE(prefs.ble_enabled);

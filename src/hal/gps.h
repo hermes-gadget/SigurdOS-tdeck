@@ -59,7 +59,7 @@ void sigurdos_gps_start_time_sync(uint32_t timeout_ms = 60000);
 void sigurdos_gps_cancel_time_sync();
 SigurdOSGpsSyncStatus sigurdos_gps_time_sync_status();
 uint32_t sigurdos_gps_time_sync_remaining_ms();
-void sigurdos_gps_service(bool background_enabled, uint16_t background_interval_s);
+void sigurdos_gps_service(bool background_enabled, uint32_t background_interval_s);
 // Returns one valid, not-yet-applied GPS UTC value. The caller must route it
 // through the system clock setter and mark it synced only after that succeeds.
 bool    sigurdos_gps_get_pending_time(SigurdOSGpsUtcTime* out);

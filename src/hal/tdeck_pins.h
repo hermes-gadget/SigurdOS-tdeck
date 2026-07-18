@@ -143,6 +143,9 @@ static constexpr uint64_t SIGURDOS_LORA_DIO1_WAKE_MASK =
 #ifndef LORA_TX_PWR
 #define LORA_TX_PWR      22
 #endif
+#ifndef MAX_LORA_TX_POWER
+#define MAX_LORA_TX_POWER LORA_TX_PWR
+#endif
 
 // ════════════════════════════════════════════════════════
 // MeshCore expects P_ prefix for radio pins.

@@ -1468,8 +1468,9 @@ bool sendAdvert() {
 
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
     bool has_fix = sigurdos_gps_has_fix();
-    bool use_live_location = has_fix && p.share_location;
-    bool use_manual_location = !use_live_location && p.share_location && p.advert_location_valid;
+    bool use_live_location = has_fix && p.advert_loc_policy != 0;
+    bool use_manual_location = !use_live_location && p.advert_loc_policy != 0 &&
+        p.advert_location_valid;
     last_advert_time = getCurrentTime();
     last_advert_used_gps = use_live_location;
 

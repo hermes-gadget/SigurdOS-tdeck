@@ -13,6 +13,12 @@ namespace sigurdos {
 namespace comms {
 
 static constexpr uint8_t SIGURDOS_COMPANION_FIRMWARE_VER_CODE = 12;
+#ifndef ENABLE_PRIVATE_KEY_IMPORT
+#define ENABLE_PRIVATE_KEY_IMPORT 1
+#endif
+#ifndef ENABLE_PRIVATE_KEY_EXPORT
+#define ENABLE_PRIVATE_KEY_EXPORT 1
+#endif
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_SIZE = 32;
 static constexpr size_t  SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE = 6;
 static constexpr size_t  SIGURDOS_COMPANION_PATH_SIZE = 64;
@@ -200,7 +206,7 @@ struct CompanionSelfInfo {
     int8_t max_tx_power_dbm;
     int32_t lat;
     int32_t lon;
-    bool multi_acks;
+    uint8_t multi_acks;
     uint8_t advert_loc_policy;
     uint8_t telemetry_modes;
     uint8_t manual_add_contacts;
@@ -248,7 +254,7 @@ struct CompanionPacketStats {
 };
 
 static constexpr size_t SIGURDOS_COMPANION_SIGNATURE_SIZE = 64;
-static constexpr size_t SIGURDOS_COMPANION_MAX_SIGN_DATA = 1024;
+static constexpr size_t SIGURDOS_COMPANION_MAX_SIGN_DATA = 8192;
 
 class CompanionBridgeHost {
 public:
@@ -386,6 +392,7 @@ public:
 
 class CompanionBridge {
 public:
+    ~CompanionBridge();
     void begin(BaseSerialInterface* serial, CompanionBridgeHost* host);
     void loop();
     bool handleFrame(const uint8_t* frame, size_t len);
@@ -443,7 +450,8 @@ private:
     void writeSentOrErr(const CompanionSendResult& r);
     void writeContactFrame(uint8_t code, const CompanionContact& contact);
     void writeNoMoreMessages();
-    bool offlineFrameExists(const uint8_t* frame, size_t len) const;
+    bool offlineFrameExists(uint32_t store_id, bool persistent,
+                            const uint8_t* frame, size_t len) const;
     bool addToOfflineQueue(uint32_t store_id, bool persistent,
                            const uint8_t* frame, size_t len);
     bool refillOfflineQueueFromStore(bool notify_waiting);
@@ -457,6 +465,8 @@ private:
     int findFreePendingBinary() const;
     void expirePendingBinary();
     void clearPendingBinary();
+    bool startSigning();
+    void resetSigning();
 
     struct PendingBinaryRequest {
         uint32_t tag = 0;
@@ -480,7 +490,7 @@ private:
     uint8_t _out_frame[MAX_FRAME_SIZE + 1];
 
     // CMD_SIGN_START/DATA/FINISH accumulate data here between frames.
-    uint8_t _sign_buf[SIGURDOS_COMPANION_MAX_SIGN_DATA];
+    uint8_t* _sign_buf = nullptr;
     size_t  _sign_len = 0;
     bool    _sign_active = false;
     bool    _was_connected = false;  // detect BLE disconnect to clear signing state (#712)

@@ -4,10 +4,12 @@
 #include "companion_bridge.h"
 #include "mesh/path_codec.h"
 
+#include <cstdlib>
 #include <cstring>
 
 #if defined(ESP32_PLATFORM)
 #include "hal/tdeck_pins.h"
+#include <esp_heap_caps.h>
 #endif
 
 namespace sigurdos {
@@ -51,18 +53,131 @@ static bool pathByteLen(uint8_t path_len, size_t* out_len)
     return true;
 }
 
+static size_t commandMinimumLength(uint8_t cmd)
+{
+    switch (cmd) {
+    case CMD_DEVICE_QUERY: return 2;
+    case CMD_APP_START: return 8;
+    case CMD_SEND_TXT_MSG: return 14;
+    case CMD_SEND_CHANNEL_TXT_MSG: return 7;
+    case CMD_SEND_CHANNEL_DATA: return 5;
+    case CMD_SET_DEVICE_TIME: return 5;
+    case CMD_SET_ADVERT_NAME: return 2;
+    case CMD_SET_ADVERT_LATLON: return 9;
+    case CMD_SET_RADIO_PARAMS: return 11;
+    case CMD_SET_RADIO_TX_POWER: return 2;
+    case CMD_SET_TUNING_PARAMS: return 9;
+    case CMD_GET_CHANNEL: return 2;
+    case CMD_SET_CHANNEL: return 2 + 32 + 16;
+    case CMD_SET_DEVICE_PIN: return 5;
+    case CMD_IMPORT_PRIVATE_KEY: return 65;
+    case CMD_SET_OTHER_PARAMS: return 2;
+    case CMD_SET_PATH_HASH_MODE: return 3;
+    case CMD_SET_AUTOADD_CONFIG: return 2;
+    case CMD_GET_CONTACT_BY_KEY:
+    case CMD_RESET_PATH:
+    case CMD_REMOVE_CONTACT:
+    case CMD_SHARE_CONTACT:
+    case CMD_HAS_CONNECTION:
+    case CMD_LOGOUT:
+        return 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE;
+    case CMD_ADD_UPDATE_CONTACT:
+        return 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE + 2 + 1 +
+               SIGURDOS_COMPANION_PATH_SIZE + 32 + 4;
+    case CMD_IMPORT_CONTACT: return 2 + 32 + 64 + 1;
+    case CMD_REBOOT: return 7;
+    case CMD_FACTORY_RESET: return 6;
+    case CMD_GET_STATS: return 2;
+    case CMD_SET_CUSTOM_VAR: return 4;
+    case CMD_GET_ADVERT_PATH:
+    case CMD_SEND_PATH_DISCOVERY_REQ:
+        return 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE;
+    case CMD_SET_FLOOD_SCOPE_KEY: return 2;
+    case CMD_SIGN_DATA: return 2;
+    case CMD_SEND_LOGIN:
+    case CMD_SEND_STATUS_REQ:
+        return 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE;
+    case CMD_SEND_TELEMETRY_REQ: return 4;
+    case CMD_SEND_BINARY_REQ:
+    case CMD_SEND_ANON_REQ:
+        return 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE;
+    case CMD_SEND_TRACE_PATH: return 11;
+    case CMD_SEND_RAW_DATA: return 6;
+    case CMD_SEND_CONTROL_DATA: return 2;
+    default:
+        break;
+    }
+
+    switch (cmd) {
+    case CMD_GET_CONTACTS:
+    case CMD_GET_DEVICE_TIME:
+    case CMD_SYNC_NEXT_MESSAGE:
+    case CMD_SEND_SELF_ADVERT:
+    case CMD_EXPORT_CONTACT:
+    case CMD_EXPORT_PRIVATE_KEY:
+    case CMD_GET_BATT_AND_STORAGE:
+    case CMD_GET_TUNING_PARAMS:
+    case CMD_GET_AUTOADD_CONFIG:
+    case CMD_GET_ALLOWED_REPEAT_FREQ:
+    case CMD_GET_CUSTOM_VARS:
+    case CMD_GET_DEFAULT_FLOOD_SCOPE:
+    case CMD_SET_DEFAULT_FLOOD_SCOPE:
+    case CMD_SIGN_START:
+    case CMD_SIGN_FINISH:
+    case CMD_SEND_RAW_PACKET:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 } // namespace
+
+CompanionBridge::~CompanionBridge()
+{
+    resetSigning();
+}
+
+bool CompanionBridge::startSigning()
+{
+    resetSigning();
+#if defined(ESP32_PLATFORM)
+    _sign_buf = static_cast<uint8_t*>(heap_caps_malloc(
+        SIGURDOS_COMPANION_MAX_SIGN_DATA, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!_sign_buf) {
+        _sign_buf = static_cast<uint8_t*>(heap_caps_malloc(
+            SIGURDOS_COMPANION_MAX_SIGN_DATA, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+#else
+    _sign_buf = static_cast<uint8_t*>(std::malloc(SIGURDOS_COMPANION_MAX_SIGN_DATA));
+#endif
+    _sign_active = _sign_buf != nullptr;
+    return _sign_active;
+}
+
+void CompanionBridge::resetSigning()
+{
+    if (_sign_buf) {
+#if defined(ESP32_PLATFORM)
+        heap_caps_free(_sign_buf);
+#else
+        std::free(_sign_buf);
+#endif
+    }
+    _sign_buf = nullptr;
+    _sign_len = 0;
+    _sign_active = false;
+}
 
 void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* host)
 {
+    resetSigning();
     _serial = serial;
     _host = host;
     _app_target_ver = 3;
     _last_sync_time = 0;
     _contact_iter = -1;
     _offline_len = 0;
-    _sign_active = false;
-    _sign_len = 0;
     _was_connected = false;
     clearPendingBinary();
 }
@@ -83,8 +198,7 @@ bool CompanionBridge::setEnabled(bool enabled)
     if (enabled) _serial->enable();
     else {
         _serial->disable();
-        _sign_active = false;
-        _sign_len = 0;
+        resetSigning();
         _was_connected = false;
         clearPendingBinary();
         if (_host) _host->cancelBinaryReqs();
@@ -138,8 +252,7 @@ void CompanionBridge::loop()
     // consume frames so a disconnect + reconnect + malicious FINISH
     // sees a clean slate.
     if (_was_connected && !_serial->isConnected()) {
-        _sign_active = false;
-        _sign_len = 0;
+        resetSigning();
         clearPendingBinary();
         _host->cancelBinaryReqs();
     }
@@ -217,10 +330,15 @@ void CompanionBridge::writeNoMoreMessages()
     if (_serial) _serial->writeFrame(&b, 1);
 }
 
-bool CompanionBridge::offlineFrameExists(const uint8_t* frame, size_t len) const
+bool CompanionBridge::offlineFrameExists(uint32_t store_id, bool persistent,
+                                         const uint8_t* frame, size_t len) const
 {
     if (!frame || len == 0 || len > MAX_FRAME_SIZE) return false;
     for (int i = 0; i < _offline_len; i++) {
+        if (persistent && _offline[i].persistent && _offline[i].store_id == store_id) {
+            return true;
+        }
+        if (persistent || _offline[i].persistent) continue;
         if (_offline[i].len == len &&
             std::memcmp(_offline[i].buf, frame, len) == 0) {
             return true;
@@ -234,13 +352,22 @@ bool CompanionBridge::addToOfflineQueue(uint32_t store_id, bool persistent,
 {
     if (!frame || len == 0 || len > MAX_FRAME_SIZE) return false;
     if (persistent && store_id == 0) return false;
-    if (offlineFrameExists(frame, len)) return false;
+    if (offlineFrameExists(store_id, persistent, frame, len)) return false;
     if (_offline_len >= OFFLINE_QUEUE_SIZE) {
-        // Persistent messages remain in the message store and will be picked
-        // up by the next page. Do not evict the oldest queued record and make
-        // the companion backlog jump ahead.
+        // Durable text retains strict oldest-first order. A volatile channel
+        // frame may replace only an older volatile frame.
         if (persistent) return false;
-        for (int i = 1; i < _offline_len; i++) _offline[i - 1] = _offline[i];
+        int volatile_index = -1;
+        for (int i = 0; i < _offline_len; ++i) {
+            if (!_offline[i].persistent) {
+                volatile_index = i;
+                break;
+            }
+        }
+        if (volatile_index < 0) return false;
+        for (int i = volatile_index + 1; i < _offline_len; ++i) {
+            _offline[i - 1] = _offline[i];
+        }
         _offline_len--;
     }
     _offline[_offline_len].store_id = store_id;
@@ -633,6 +760,11 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     _cmd_frame[len] = 0;
 
     const uint8_t cmd = _cmd_frame[0];
+    const size_t minimum_length = commandMinimumLength(cmd);
+    if (minimum_length != 0 && len < minimum_length) {
+        writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+        return true;
+    }
     if (cmd == CMD_DEVICE_QUERY && len >= 2) {
         _app_target_ver = _cmd_frame[1];
         int i = 0;
@@ -671,7 +803,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         i += 4;
         std::memcpy(&_out_frame[i], &si.lon, 4);
         i += 4;
-        _out_frame[i++] = si.multi_acks ? 1 : 0;
+        _out_frame[i++] = si.multi_acks;
         _out_frame[i++] = si.advert_loc_policy;
         _out_frame[i++] = si.telemetry_modes;
         _out_frame[i++] = si.manual_add_contacts;
@@ -721,10 +853,10 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             // Dequeue only after the transport accepts the complete frame.
             size_t written = _serial->writeFrame(_out_frame, out_len);
             if (written == (size_t)out_len) {
-                if (persistent) {
-                    sigurdos::mesh::messageStoreMarkCompanionSent(store_id);
+                if (!persistent ||
+                    sigurdos::mesh::messageStoreMarkCompanionSent(store_id)) {
+                    removeFirstOfflineFrame();
                 }
-                removeFirstOfflineFrame();
             }
         } else {
             writeNoMoreMessages();
@@ -829,7 +961,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     if (cmd == CMD_SET_DEVICE_TIME && len >= 5) {
         uint32_t secs = 0;
         std::memcpy(&secs, &_cmd_frame[1], 4);
-        if (_host->setCurrentTime(secs)) writeOKFrame();
+        if (secs >= _host->currentTime() && _host->setCurrentTime(secs)) writeOKFrame();
         else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
         return true;
     }
@@ -978,6 +1110,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     }
 
     if (cmd == CMD_EXPORT_PRIVATE_KEY) {
+#if ENABLE_PRIVATE_KEY_EXPORT
         uint8_t key[64];
         if (!_host->exportPrivateKey(key)) {
             writeDisabledFrame();
@@ -986,12 +1119,19 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         _out_frame[0] = RESP_CODE_PRIVATE_KEY;
         std::memcpy(&_out_frame[1], key, sizeof(key));
         _serial->writeFrame(_out_frame, 1 + sizeof(key));
+#else
+        writeDisabledFrame();
+#endif
         return true;
     }
 
     if (cmd == CMD_IMPORT_PRIVATE_KEY && len >= 65) {
+#if ENABLE_PRIVATE_KEY_IMPORT
         if (_host->importPrivateKey(&_cmd_frame[1])) writeOKFrame();
         else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+#else
+        writeDisabledFrame();
+#endif
         return true;
     }
 
@@ -1314,8 +1454,10 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 
     // ── Message signing ──────────────────────────────────────
     if (cmd == CMD_SIGN_START) {
-        _sign_active = true;
-        _sign_len = 0;
+        if (!startSigning()) {
+            writeErrFrame(ERR_CODE_TABLE_FULL);
+            return true;
+        }
         int i = 0;
         _out_frame[i++] = RESP_CODE_SIGN_START;
         _out_frame[i++] = 0;  // reserved
@@ -1344,8 +1486,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             return true;
         }
         int sig_len = _host->signData(_sign_buf, _sign_len, &_out_frame[1]);
-        _sign_active = false;
-        _sign_len = 0;
+        resetSigning();
         if (sig_len > 0) {
             _out_frame[0] = RESP_CODE_SIGNATURE;
             _serial->writeFrame(_out_frame, 1 + (size_t)sig_len);

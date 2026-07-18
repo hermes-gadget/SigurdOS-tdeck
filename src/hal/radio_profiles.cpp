@@ -24,6 +24,23 @@ static constexpr RadioProfile PROFILES[] = {
      869.618f, 62.5f, 8, 5, 22},
 };
 
+struct RepeatFrequencyRange {
+    uint32_t lower_khz;
+    uint32_t upper_khz;
+};
+
+// Keep the companion-radio compile-time policy and allow board variants to
+// replace it with one or more `{ lower_khz, upper_khz }` entries.
+#ifndef ALLOWED_REPEAT_FREQ_RANGE
+#define ALLOWED_REPEAT_FREQ_RANGE \
+    { 433000, 433000 },          \
+    { 869495, 869495 },          \
+    { 918000, 918000 }
+#endif
+static constexpr RepeatFrequencyRange REPEAT_FREQUENCY_RANGES[] = {
+    ALLOWED_REPEAT_FREQ_RANGE
+};
+
 static bool nearly_equal(float a, float b, float epsilon)
 {
     return std::fabs(a - b) <= epsilon;
@@ -121,6 +138,32 @@ bool radio_profile_repeat_frequency_khz(const NodePrefs& prefs,
 
     *frequency_khz = (uint32_t)std::lround(profile->freq_mhz * 1000.0f);
     return true;
+}
+
+size_t radio_profile_repeat_frequency_ranges(uint32_t* pairs, size_t max_pairs)
+{
+    if (!pairs || max_pairs == 0) return 0;
+    const size_t range_count = sizeof(REPEAT_FREQUENCY_RANGES) /
+                               sizeof(REPEAT_FREQUENCY_RANGES[0]);
+    const size_t count = range_count < max_pairs ? range_count : max_pairs;
+    for (size_t i = 0; i < count; ++i) {
+        pairs[i * 2] = REPEAT_FREQUENCY_RANGES[i].lower_khz;
+        pairs[i * 2 + 1] = REPEAT_FREQUENCY_RANGES[i].upper_khz;
+    }
+    return count;
+}
+
+bool radio_profile_repeat_frequency_allowed(uint32_t frequency_khz)
+{
+    for (size_t i = 0;
+         i < sizeof(REPEAT_FREQUENCY_RANGES) / sizeof(REPEAT_FREQUENCY_RANGES[0]);
+         ++i) {
+        if (frequency_khz >= REPEAT_FREQUENCY_RANGES[i].lower_khz &&
+            frequency_khz <= REPEAT_FREQUENCY_RANGES[i].upper_khz) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace sigurdos

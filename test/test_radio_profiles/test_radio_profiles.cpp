@@ -126,4 +126,23 @@ TEST(RadioProfilesTest, RepeatFrequencyRejectsProfileTupleDrift) {
         prefs, &frequency_khz));
 }
 
+TEST(RadioProfilesTest, CompanionRepeatRangesMatchCompileTimePolicy) {
+    uint32_t pairs[16]{};
+    const size_t count = sigurdos::radio_profile_repeat_frequency_ranges(pairs, 8);
+
+    ASSERT_EQ(count, 3u);
+    EXPECT_EQ(pairs[0], 433000u);
+    EXPECT_EQ(pairs[1], 433000u);
+    EXPECT_EQ(pairs[2], 869495u);
+    EXPECT_EQ(pairs[3], 869495u);
+    EXPECT_EQ(pairs[4], 918000u);
+    EXPECT_EQ(pairs[5], 918000u);
+}
+
+TEST(RadioProfilesTest, CompanionRepeatAcceptanceUsesAdvertisedFrequencyUnion) {
+    EXPECT_TRUE(sigurdos::radio_profile_repeat_frequency_allowed(433000));
+    EXPECT_TRUE(sigurdos::radio_profile_repeat_frequency_allowed(918000));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(869500));
+}
+
 } // namespace

@@ -35,10 +35,11 @@
 
 namespace {
 
-TEST(GPSDemandTest, BackgroundCadenceIsNeverEveryLoop) {
-    EXPECT_EQ(sigurdos_gps_normalize_interval(0), 5);
-    EXPECT_EQ(sigurdos_gps_normalize_interval(1), 5);
-    EXPECT_EQ(sigurdos_gps_effective_poll_ms(true, 0, false, false), 5000u);
+TEST(GPSDemandTest, BackgroundCadencePreservesCompanionIntervalPolicy) {
+    EXPECT_EQ(sigurdos_gps_normalize_interval(0), 0u);
+    EXPECT_EQ(sigurdos_gps_normalize_interval(1), 1u);
+    EXPECT_EQ(sigurdos_gps_normalize_interval(100000), 86400u);
+    EXPECT_EQ(sigurdos_gps_effective_poll_ms(true, 0, false, false), 0u);
     EXPECT_EQ(sigurdos_gps_effective_poll_ms(false, 5, false, false), 0u);
 }
 

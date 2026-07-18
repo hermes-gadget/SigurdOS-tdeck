@@ -227,8 +227,8 @@ public:
         strncpy(out.node_name, meshOwnName(), sizeof(out.node_name) - 1);
         out.advert_type = p.advert_type;
         out.tx_power_dbm = p.tx_power_dbm;
-        out.max_tx_power_dbm = 22;
-        if (p.share_location) {
+        out.max_tx_power_dbm = MAX_LORA_TX_POWER;
+        if (p.advert_loc_policy != 0) {
             if (sigurdos_gps_has_fix()) {
                 out.lat = (int32_t)(sigurdos_gps_latitude() * 1000000.0f);
                 out.lon = (int32_t)(sigurdos_gps_longitude() * 1000000.0f);
@@ -238,7 +238,7 @@ public:
             }
         }
         out.multi_acks = p.multi_acks;
-        out.advert_loc_policy = p.share_location ? 1 : 0;
+        out.advert_loc_policy = p.advert_loc_policy;
         out.telemetry_modes = p.telemetry_modes;
         out.manual_add_contacts = p.manual_add_contacts;
         out.freq_khz = (uint32_t)(p.freq * 1000.0f);
@@ -250,9 +250,6 @@ public:
     uint32_t currentTime() const override { return sigurdos::mesh::getCurrentTime(); }
     uint32_t monotonicMillis() const override { return millis(); }
     bool setCurrentTime(uint32_t epoch) override {
-        // Accept time from the companion client unconditionally.
-        // The official app/CLI sets time on every connect; rejecting
-        // because the device's onboard clock drifted ahead breaks sync.
         return sigurdos::mesh::setSystemTime(
             epoch, sigurdos::mesh::TimeSource::Companion);
     }
@@ -410,18 +407,27 @@ public:
     bool sendAdvert(bool flood) override {
         if (!meshRadioTxAllowed()) return false;
         if (flood) {
-            // Flood-scoped advert via existing broadcast path
-            return sigurdos::mesh::sendAdvert();
+            if (!mesh_ptr()) return false;
+            const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+            if (p.advert_loc_policy != 0 && sigurdos_gps_has_fix()) {
+                return mesh_ptr()->broadcastAdvertScoped(meshOwnName(),
+                    sigurdos_gps_latitude(), sigurdos_gps_longitude(), p.advert_type);
+            } else if (p.advert_loc_policy != 0 && p.advert_location_valid) {
+                return mesh_ptr()->broadcastAdvertScoped(meshOwnName(),
+                    (double)p.advert_lat / 1000000.0,
+                    (double)p.advert_lon / 1000000.0, p.advert_type);
+            }
+            return mesh_ptr()->broadcastAdvertScoped(meshOwnName(), p.advert_type);
         }
         // Zero-hop self advert — the upstream companion semantics
         if (!mesh_ptr()) return false;
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
         ::mesh::Packet* pkt;
-        if (p.share_location && sigurdos_gps_has_fix()) {
+        if (p.advert_loc_policy != 0 && sigurdos_gps_has_fix()) {
             pkt = mesh_ptr()->createSelfAdvert(meshOwnName(),
                 (double)sigurdos_gps_latitude(),
                 (double)sigurdos_gps_longitude());
-        } else if (p.share_location && p.advert_location_valid) {
+        } else if (p.advert_loc_policy != 0 && p.advert_location_valid) {
             pkt = mesh_ptr()->createSelfAdvert(meshOwnName(),
                 (double)p.advert_lat / 1000000.0,
                 (double)p.advert_lon / 1000000.0);
@@ -447,7 +453,7 @@ public:
         if (lat < -90000000 || lat > 90000000) return false;
         if (lon < -180000000 || lon > 180000000) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
-        p.share_location = true;
+        p.advert_loc_policy = 1;
         p.advert_location_valid = true;
         p.advert_lat = lat;
         p.advert_lon = lon;
@@ -461,10 +467,9 @@ public:
                         uint8_t cr,
                         uint8_t client_repeat) override {
         if (freq_khz < 150000 || freq_khz > 2500000) return false;
-        if (bw_hz < 7800 || bw_hz > 500000) return false;
+        if (bw_hz < 7000 || bw_hz > 500000) return false;
         if (sf < 5 || sf > 12) return false;
         if (cr < 5 || cr > 8) return false;
-        if (client_repeat > 1) return false;
 
         sigurdos::NodePrefs proposed = sigurdos::prefs_get();
         const int8_t tx_power =
@@ -489,11 +494,8 @@ public:
             sigurdos::radio_profile_set_custom(proposed);
         }
 
-        uint32_t repeat_freq_khz = 0;
         if (client_repeat != 0 &&
-            (!sigurdos::radio_profile_repeat_frequency_khz(proposed,
-                                                           &repeat_freq_khz) ||
-             repeat_freq_khz != freq_khz)) {
+            !sigurdos::radio_profile_repeat_frequency_allowed(freq_khz)) {
             return false;
         }
 
@@ -507,7 +509,7 @@ public:
     }
 
     bool setRadioTxPower(int8_t tx_power_dbm) override {
-        if (tx_power_dbm < -9 || tx_power_dbm > 22) return false;
+        if (tx_power_dbm < -9 || tx_power_dbm > MAX_LORA_TX_POWER) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
 
         const float freq = p.configured ? p.freq : LORA_FREQ;
@@ -573,8 +575,8 @@ public:
     void setOtherParams(const CompanionOtherParams& op) override {
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         if (op.telemetry_present) p.telemetry_modes = op.telemetry_modes;
-        if (op.loc_policy_present) p.share_location = (op.advert_loc_policy != 0);
-        if (op.multi_acks_present) p.multi_acks = (op.multi_acks != 0);
+        if (op.loc_policy_present) p.advert_loc_policy = op.advert_loc_policy;
+        if (op.multi_acks_present) p.multi_acks = op.multi_acks;
         p.manual_add_contacts = op.manual_add_contacts;
         sigurdos::prefs_set(p);
     }
@@ -597,7 +599,7 @@ public:
         p.autoadd_max_hops = max_hops;
         sigurdos::prefs_set(p);
     }
-    int8_t maxTxPowerDbm() const override { return 22; }
+    int8_t maxTxPowerDbm() const override { return MAX_LORA_TX_POWER; }
 
     // ── Contact CRUD / connection ────────────────────────────
     bool getContactByPubKey(const uint8_t* pub_key, CompanionContact& out) const override {
@@ -691,8 +693,9 @@ public:
     void coreStats(CompanionCoreStats& s) const override {
         s.batt_mv = sigurdos_battery_mv();
         s.uptime_secs = (uint32_t)(millis() / 1000);
-        s.err_flags = 0;
-        s.queue_len = 0;
+        s.err_flags = mesh_ptr() ? mesh_ptr()->companionErrorFlags() : 0;
+        const int queued = mesh_ptr() ? mesh_ptr()->companionOutboundQueueLength() : 0;
+        s.queue_len = (uint8_t)(queued > 255 ? 255 : queued);
     }
     void radioStats(CompanionRadioStats& s) const override {
         sigurdos::mesh::MeshRadioDriverStats d{};
@@ -717,15 +720,7 @@ public:
     size_t allowedRepeatFreqRanges(uint32_t* pairs, size_t max_pairs) const override {
         if (!pairs || max_pairs == 0) return 0;
 
-        uint32_t frequency_khz = 0;
-        if (!sigurdos::radio_profile_repeat_frequency_khz(
-                sigurdos::prefs_get(), &frequency_khz)) {
-            return 0;
-        }
-
-        pairs[0] = frequency_khz;
-        pairs[1] = frequency_khz;
-        return 1;
+        return sigurdos::radio_profile_repeat_frequency_ranges(pairs, max_pairs);
     }
 
     // ── Flood scope (companion regions) ──────────────────────
@@ -902,23 +897,24 @@ public:
     }
     int getCustomVars(char* out, size_t out_cap) const override {
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-        int n = snprintf(out, out_cap, "gps:%d,gps_interval:%d",
-                         p.gps_enabled ? 1 : 0, (int)p.gps_interval);
+        int n = snprintf(out, out_cap, "gps:%d,gps_interval:%lu",
+                         p.gps_enabled ? 1 : 0,
+                         (unsigned long)p.gps_interval);
         return (n > 0 && (size_t)n < out_cap) ? n : 0;
     }
     bool setCustomVar(const char* name, const char* value) override {
         if (!name || !value) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         if (strcmp(name, "gps") == 0) {
-            p.gps_enabled = (value[0] == '1');
-            sigurdos::prefs_set(p);
-            return true;
+            if ((value[0] != '0' && value[0] != '1') || value[1] != '\0') return false;
+            p.gps_enabled = value[0] == '1';
+            return sigurdos::prefs_set(p);
         } else if (strcmp(name, "gps_interval") == 0) {
-            int iv = atoi(value);
-            if (iv >= 0 && iv <= 86400) {
-                p.gps_interval = iv < 5 ? 5 : (uint16_t)iv;
-                sigurdos::prefs_set(p);
-                return true;
+            char* end = nullptr;
+            unsigned long iv = strtoul(value, &end, 10);
+            if (value[0] != '\0' && end && *end == '\0' && iv <= 86400UL) {
+                p.gps_interval = (uint32_t)iv;
+                return sigurdos::prefs_set(p);
             }
         }
         return false;

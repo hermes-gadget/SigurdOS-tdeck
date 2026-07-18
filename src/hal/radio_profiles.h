@@ -41,4 +41,9 @@ void radio_profile_set_custom(NodePrefs& prefs);
 bool radio_profile_repeat_frequency_khz(const NodePrefs& prefs,
                                         uint32_t* frequency_khz);
 
+// Companion client-repeat policy is the union of all compile-time product
+// profiles. Ranges are lower/upper kHz pairs; duplicate frequencies coalesce.
+size_t radio_profile_repeat_frequency_ranges(uint32_t* pairs, size_t max_pairs);
+bool radio_profile_repeat_frequency_allowed(uint32_t frequency_khz);
+
 } // namespace sigurdos

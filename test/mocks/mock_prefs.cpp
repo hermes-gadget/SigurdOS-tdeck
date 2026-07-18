@@ -31,7 +31,7 @@ const NodePrefs& prefs_get() {
 
 bool prefs_set(const NodePrefs& p) {
     g_prefs = p;
-    if (g_prefs.gps_interval < 5) g_prefs.gps_interval = 5;
+    if (g_prefs.gps_interval > 86400) g_prefs.gps_interval = 86400;
     return true;
 }
 

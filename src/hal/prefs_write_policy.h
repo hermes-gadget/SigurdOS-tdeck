@@ -62,7 +62,7 @@ inline bool prefsWriteAll(const NodePrefs& prefs, const PrefsNvsWriter& writer,
     if (!wrote("auto_off", writer.setU16(writer.context, "auto_off", prefs.auto_off_timeout))) return false;
     if (!wrote("chat_cap", writer.setU16(writer.context, "chat_cap", prefs.chat_msg_cap))) return false;
     if (!wrote("flood_mh", writer.setU8(writer.context, "flood_mh", prefs.flood_max_hops))) return false;
-    if (!wrote("sh_loc", writer.setU8(writer.context, "sh_loc", prefs.share_location ? 1 : 0))) return false;
+    if (!wrote("sh_loc", writer.setU8(writer.context, "sh_loc", prefs.advert_loc_policy))) return false;
     if (!wrote("adv_loc", writer.setU8(writer.context, "adv_loc", prefs.advert_location_valid ? 1 : 0))) return false;
     if (!wrote("adv_lat", writer.setI32(writer.context, "adv_lat", prefs.advert_lat))) return false;
     if (!wrote("adv_lon", writer.setI32(writer.context, "adv_lon", prefs.advert_lon))) return false;
@@ -75,10 +75,10 @@ inline bool prefsWriteAll(const NodePrefs& prefs, const PrefsNvsWriter& writer,
     if (!wrote("adv_type", writer.setU8(writer.context, "adv_type", prefs.advert_type))) return false;
     if (!wrote("theme", writer.setU8(writer.context, "theme", prefs.theme_id))) return false;
     if (!wrote("phash_mode", writer.setU8(writer.context, "phash_mode", prefs.path_hash_mode))) return false;
-    if (!wrote("multi_ack", writer.setU8(writer.context, "multi_ack", prefs.multi_acks ? 1 : 0))) return false;
+    if (!wrote("multi_ack", writer.setU8(writer.context, "multi_ack", prefs.multi_acks))) return false;
     if (!wrote("buzz_q", writer.setU8(writer.context, "buzz_q", prefs.buzzer_quiet ? 1 : 0))) return false;
     if (!wrote("gps_en", writer.setU8(writer.context, "gps_en", prefs.gps_enabled ? 1 : 0))) return false;
-    if (!wrote("gps_int", writer.setU16(writer.context, "gps_int", prefs.gps_interval))) return false;
+    if (!wrote("gps_int32", writer.setU32(writer.context, "gps_int32", prefs.gps_interval))) return false;
     if (!wrote("autoadd_cfg", writer.setU8(writer.context, "autoadd_cfg", prefs.autoadd_config))) return false;
     if (!wrote("autoadd_mh", writer.setU8(writer.context, "autoadd_mh", prefs.autoadd_max_hops))) return false;
     if (!wrote("clirep", writer.setU8(writer.context, "clirep", prefs.client_repeat))) return false;

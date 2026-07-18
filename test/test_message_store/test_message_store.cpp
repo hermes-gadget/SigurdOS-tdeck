@@ -175,6 +175,27 @@ TEST_F(MessageStoreTest, StoreRotatesToNewestRecords) {
     EXPECT_TRUE(out.front().companion_sent);
 }
 
+TEST_F(MessageStoreTest, CompactionPrefersOldUnsentIncomingOverNewSentHistory) {
+    auto unsent = makeMsg("DM: Alice", "Alice", "must deliver", 1, false, false);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(unsent));
+
+    for (uint32_t i = 2; i <= sigurdos::mesh::MESSAGE_STORE_MAX_RECORDS + 1; ++i) {
+        char text[24];
+        std::snprintf(text, sizeof(text), "sent%lu", (unsigned long)i);
+        auto sent = makeMsg("DM: Alice", "Alice", text, i, false, false);
+        sent.companion_sent = true;
+        ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(sent));
+    }
+
+    std::vector<sigurdos::mesh::StoredMessage> out(
+        sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS);
+    const int n = sigurdos::mesh::messageStoreLoadAll(out.data(), (int)out.size());
+    ASSERT_EQ(n, (int)sigurdos::mesh::MESSAGE_STORE_COMPACT_TO_RECORDS);
+    EXPECT_EQ(out.front().timestamp, 1u);
+    EXPECT_FALSE(out.front().companion_sent);
+    EXPECT_EQ(out.back().timestamp, sigurdos::mesh::MESSAGE_STORE_MAX_RECORDS + 1);
+}
+
 TEST_F(MessageStoreTest, DedupIdentityIncludesTextTypeAndSenderPrefix) {
     auto plain = makeMsg("DM: Alice", "Alice", "same", 42, false, false);
     auto cli = plain;

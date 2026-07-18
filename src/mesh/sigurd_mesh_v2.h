@@ -458,7 +458,12 @@ public:
         return (float)p.duty_cycle / 100.0f;
     }
     uint8_t getExtraAckTransmitCount() const override {
-        return sigurdos::prefs_get().multi_acks ? 1 : 0;
+        return sigurdos::prefs_get().multi_acks;
+    }
+
+    uint16_t companionErrorFlags() const { return _err_flags; }
+    int companionOutboundQueueLength() const {
+        return _mgr ? _mgr->getOutboundTotal() : 0;
     }
 
     // ── Repeater/room login session tracking (Phase 4.5) ──
@@ -690,6 +695,12 @@ public:
 
     void broadcastAdvert(const char* name, double lat, double lon,
                          uint8_t adv_type = ADV_TYPE_CHAT);
+
+    // App-requested flood adverts follow the companion scope. Autonomous
+    // discovery adverts above deliberately remain unscoped.
+    bool broadcastAdvertScoped(const char* name, uint8_t adv_type = ADV_TYPE_CHAT);
+    bool broadcastAdvertScoped(const char* name, double lat, double lon,
+                               uint8_t adv_type = ADV_TYPE_CHAT);
 
 
     float getPacketSNR() const;

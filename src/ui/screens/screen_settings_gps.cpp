@@ -297,7 +297,7 @@ void settings_gps_show()
     row++;
 
     // Share location toggle
-    snprintf(buf, sizeof(buf), "  Share location: %s", p.share_location ? "ON" : "OFF");
+    snprintf(buf, sizeof(buf), "  Share location: %s", p.advert_loc_policy ? "ON" : "OFF");
     lv_obj_t* btn_share = lv_list_add_btn(list, LV_SYMBOL_GPS, buf);
     lv_obj_set_style_bg_color(btn_share, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_bg_opa(btn_share, LV_OPA_COVER, 0);
@@ -305,10 +305,10 @@ void settings_gps_show()
     lv_obj_add_event_cb(btn_share, [](lv_event_t* e) {
         lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
         sigurdos::NodePrefs np = sigurdos::prefs_get();
-        np.share_location = !np.share_location;
+        np.advert_loc_policy = np.advert_loc_policy ? 0 : 1;
         sigurdos::prefs_set(np);
         char row_buf[64];
-        snprintf(row_buf, sizeof(row_buf), "  Share location: %s", np.share_location ? "ON" : "OFF");
+        snprintf(row_buf, sizeof(row_buf), "  Share location: %s", np.advert_loc_policy ? "ON" : "OFF");
         lv_obj_t* lbl = lv_obj_get_child(target, 1);
         if (lbl && lv_obj_check_type(lbl, &lv_label_class)) {
             lv_label_set_text(lbl, row_buf);

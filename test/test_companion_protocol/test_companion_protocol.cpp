@@ -85,6 +85,8 @@ public:
     size_t allowed_repeat_range_count = 0;
     uint32_t now = 1234;
     uint32_t now_ms = 0;
+    uint8_t self_multi_acks = 0;
+    uint8_t self_advert_loc_policy = 0;
 
     uint8_t path_hash_mode = 0;
     bool advert_path_found = false;
@@ -114,6 +116,8 @@ public:
         out.bw_hz = 62500;
         out.sf = 8;
         out.cr = 5;
+        out.multi_acks = self_multi_acks;
+        out.advert_loc_policy = self_advert_loc_policy;
     }
 
     uint32_t currentTime() const override { return now; }
@@ -584,6 +588,57 @@ TEST_F(CompanionProtocolTest, DeviceQueryReportsConfiguredPathHashMode) {
     EXPECT_EQ(out[81], 2);
 }
 
+TEST_F(CompanionProtocolTest, DeviceTimeRejectsBackwardUpdates) {
+    host.now = 2000;
+    uint8_t frame[5] = {sigurdos::comms::CMD_SET_DEVICE_TIME};
+    uint32_t requested = 1999;
+    std::memcpy(&frame[1], &requested, sizeof(requested));
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    EXPECT_EQ(host.now, 2000u);
+    EXPECT_EQ(serial.writes[0], (std::vector<uint8_t>{
+        sigurdos::comms::RESP_CODE_ERR, sigurdos::comms::ERR_CODE_ILLEGAL_ARG}));
+
+    serial.writes.clear();
+    requested = 2001;
+    std::memcpy(&frame[1], &requested, sizeof(requested));
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    EXPECT_EQ(host.now, 2001u);
+    EXPECT_EQ(serial.writes[0],
+              (std::vector<uint8_t>{sigurdos::comms::RESP_CODE_OK}));
+}
+
+TEST_F(CompanionProtocolTest, UndersizedKnownCommandsReturnIllegalArgument) {
+    namespace cc = sigurdos::comms;
+    const uint8_t commands[] = {
+        cc::CMD_DEVICE_QUERY, cc::CMD_APP_START, cc::CMD_SEND_TXT_MSG,
+        cc::CMD_SEND_CHANNEL_TXT_MSG, cc::CMD_SEND_CHANNEL_DATA,
+        cc::CMD_SET_DEVICE_TIME, cc::CMD_SET_ADVERT_NAME,
+        cc::CMD_SET_ADVERT_LATLON, cc::CMD_SET_RADIO_PARAMS,
+        cc::CMD_SET_RADIO_TX_POWER, cc::CMD_SET_TUNING_PARAMS,
+        cc::CMD_GET_CHANNEL, cc::CMD_SET_CHANNEL, cc::CMD_SET_DEVICE_PIN,
+        cc::CMD_IMPORT_PRIVATE_KEY, cc::CMD_SET_OTHER_PARAMS,
+        cc::CMD_SET_PATH_HASH_MODE, cc::CMD_SET_AUTOADD_CONFIG,
+        cc::CMD_GET_CONTACT_BY_KEY, cc::CMD_RESET_PATH, cc::CMD_REMOVE_CONTACT,
+        cc::CMD_SHARE_CONTACT, cc::CMD_HAS_CONNECTION, cc::CMD_LOGOUT,
+        cc::CMD_ADD_UPDATE_CONTACT, cc::CMD_IMPORT_CONTACT, cc::CMD_REBOOT,
+        cc::CMD_FACTORY_RESET, cc::CMD_GET_STATS, cc::CMD_SET_CUSTOM_VAR,
+        cc::CMD_GET_ADVERT_PATH, cc::CMD_SEND_PATH_DISCOVERY_REQ,
+        cc::CMD_SET_FLOOD_SCOPE_KEY, cc::CMD_SIGN_DATA, cc::CMD_SEND_LOGIN,
+        cc::CMD_SEND_STATUS_REQ, cc::CMD_SEND_TELEMETRY_REQ,
+        cc::CMD_SEND_BINARY_REQ, cc::CMD_SEND_ANON_REQ, cc::CMD_SEND_TRACE_PATH,
+        cc::CMD_SEND_RAW_DATA, cc::CMD_SEND_CONTROL_DATA,
+    };
+
+    for (uint8_t command : commands) {
+        serial.writes.clear();
+        ASSERT_TRUE(bridge.handleFrame(&command, 1)) << "command " << (int)command;
+        ASSERT_EQ(serial.writes.size(), 1U) << "command " << (int)command;
+        EXPECT_EQ(serial.writes[0], (std::vector<uint8_t>{
+            cc::RESP_CODE_ERR, cc::ERR_CODE_ILLEGAL_ARG})) << "command " << (int)command;
+    }
+}
+
 TEST_F(CompanionProtocolTest, SetPathHashModeAcceptsValidModes) {
     for (uint8_t mode = 0; mode <= 2; mode++) {
         serial.writes.clear();
@@ -616,6 +671,18 @@ TEST_F(CompanionProtocolTest, AppStartReturnsSelfInfo) {
     EXPECT_EQ(out[2], 22);
     EXPECT_EQ(out[4], 0);
     EXPECT_EQ(out[35], 31);
+}
+
+TEST_F(CompanionProtocolTest, AppStartPreservesMultiAckCountAndLocationPolicy) {
+    host.self_multi_acks = 7;
+    host.self_advert_loc_policy = 3;
+    uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    ASSERT_EQ(serial.writes.size(), 1U);
+    ASSERT_GT(serial.writes[0].size(), 45U);
+    EXPECT_EQ(serial.writes[0][44], 7);
+    EXPECT_EQ(serial.writes[0][45], 3);
 }
 
 TEST_F(CompanionProtocolTest, AppStartSeedsPersistedMessagesForSync) {
@@ -783,7 +850,7 @@ TEST_F(CompanionProtocolTest, FailedWriteKeepsOfflineFrameForRetry) {
     std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
     std::strncpy(msg.text, "retry me", sizeof(msg.text) - 1);
     msg.timestamp = 77;
-    msg.store_id = 42;
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg, &msg.store_id));
     ASSERT_TRUE(bridge.enqueueMessage(msg));
     ASSERT_EQ(serial.writes.size(), 1U); // waiting tickle
 
@@ -798,6 +865,52 @@ TEST_F(CompanionProtocolTest, FailedWriteKeepsOfflineFrameForRetry) {
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
     ASSERT_EQ(serial.writes.size(), 3U);
     EXPECT_EQ(serial.writes[2][0], sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
+}
+
+TEST_F(CompanionProtocolTest, DistinctStoreIdsDoNotDeduplicateIdenticalFrames) {
+    sigurdos::mesh::StoredMessage first{};
+    std::strncpy(first.conversation, "DM: Alice", sizeof(first.conversation) - 1);
+    std::strncpy(first.sender, "Alice", sizeof(first.sender) - 1);
+    std::strncpy(first.text, "same bytes", sizeof(first.text) - 1);
+    first.timestamp = 77;
+    first.store_id = 101;
+    auto second = first;
+    second.store_id = 102;
+
+    EXPECT_TRUE(bridge.enqueueMessage(first));
+    EXPECT_TRUE(bridge.enqueueMessage(second));
+}
+
+TEST_F(CompanionProtocolTest, VolatileChannelDataCannotEvictDurableBacklog) {
+    for (uint32_t i = 1; i <= 16; ++i) {
+        sigurdos::mesh::StoredMessage msg{};
+        std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+        std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+        std::snprintf(msg.text, sizeof(msg.text), "durable-%lu", (unsigned long)i);
+        msg.timestamp = i;
+        msg.store_id = i;
+        ASSERT_TRUE(bridge.enqueueMessage(msg));
+    }
+    const uint8_t payload[] = {0xAA};
+    EXPECT_FALSE(bridge.enqueueChannelData(0, 0, 0xFF, 1, payload, sizeof(payload)));
+}
+
+TEST_F(CompanionProtocolTest, MarkFailureRetainsDeliveredFrameForRetry) {
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "mark retry", sizeof(msg.text) - 1);
+    msg.timestamp = 79;
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg, &msg.store_id));
+    ASSERT_TRUE(bridge.enqueueMessage(msg));
+    serial.writes.clear();
+
+    ASSERT_EQ(std::remove(store_path), 0);  // force mark-by-ID failure
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(serial.writes.size(), 2U);
+    EXPECT_EQ(serial.writes[0], serial.writes[1]);
 }
 
 TEST_F(CompanionProtocolTest, DisconnectDuringDrainKeepsFrameForReconnect) {
@@ -1359,6 +1472,27 @@ TEST_F(CompanionProtocolTest, SignDataBeforeStartFails) {
     ASSERT_TRUE(bridge.handleFrame(data, sizeof(data)));
     EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
     EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_BAD_STATE);
+}
+
+TEST_F(CompanionProtocolTest, SignFlowAcceptsAdvertisedEightKiBCapacity) {
+    const uint8_t start[] = {cc::CMD_SIGN_START};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    serial.writes.clear();
+
+    std::vector<uint8_t> data(129, 0x5A);
+    data[0] = cc::CMD_SIGN_DATA;
+    for (size_t offset = 0; offset < cc::SIGURDOS_COMPANION_MAX_SIGN_DATA;
+         offset += data.size() - 1) {
+        ASSERT_TRUE(bridge.handleFrame(data.data(), data.size()));
+        ASSERT_EQ(serial.writes.back(), (std::vector<uint8_t>{cc::RESP_CODE_OK}));
+    }
+
+    serial.writes.clear();
+    const uint8_t finish[] = {cc::CMD_SIGN_FINISH};
+    ASSERT_TRUE(bridge.handleFrame(finish, sizeof(finish)));
+    EXPECT_EQ(host.sign_len_seen, cc::SIGURDOS_COMPANION_MAX_SIGN_DATA);
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0].size(), 1U + cc::SIGURDOS_COMPANION_SIGNATURE_SIZE);
 }
 
 TEST_F(CompanionProtocolTest, SendLoginReturnsSent) {

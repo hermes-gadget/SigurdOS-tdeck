@@ -116,14 +116,30 @@ TEST_F(PrefsTest, KeyboardLayoutRoundTripsThroughPrefs) {
     EXPECT_EQ(9, loaded.kbd_layout);
 }
 
-TEST_F(PrefsTest, GpsIntervalIsNormalizedWhenUpdatedAtRuntime) {
+TEST_F(PrefsTest, GpsIntervalPreservesZeroWhenUpdatedAtRuntime) {
     sigurdos::NodePrefs prefs;
     prefs.set_defaults();
     prefs.gps_interval = 0;
 
     ASSERT_TRUE(sigurdos::prefs_set(prefs));
 
-    EXPECT_EQ(5, sigurdos::prefs_get().gps_interval);
+    EXPECT_EQ(0u, sigurdos::prefs_get().gps_interval);
+}
+
+TEST_F(PrefsTest, CompanionPolicyWidthsRoundTripWithoutTruncation) {
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.gps_interval = 86400;
+    saved.multi_acks = 7;
+    saved.advert_loc_policy = 3;
+
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_EQ(86400u, loaded.gps_interval);
+    EXPECT_EQ(7, loaded.multi_acks);
+    EXPECT_EQ(3, loaded.advert_loc_policy);
 }
 
 TEST(BlePrefsMigrationTest, FreshInstallUsesDiscoverableDefault) {

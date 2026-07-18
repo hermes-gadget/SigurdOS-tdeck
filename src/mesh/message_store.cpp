@@ -28,6 +28,7 @@ static constexpr const char* STORE_PATH = "/companion_msgs";
 
 static constexpr uint32_t MESSAGE_STORE_RECOVERY_MAX_RECORDS =
     MESSAGE_STORE_MAX_RECORDS + 1;
+static uint32_t g_companion_backlog_drop_count = 0;
 
 #if !defined(ESP32_PLATFORM)
 static char g_native_path[160] = "/tmp/sigurdos_companion_msgs.bin";
@@ -583,61 +584,6 @@ static bool writeStore(sigurdos::storage::AtomicFileWriter& writer, void* raw)
     return true;
 }
 
-struct CompactWriteCtx {
-    uint32_t first_index;
-    uint32_t count;
-    uint32_t next_id;
-};
-
-static bool writeCompactedStore(sigurdos::storage::AtomicFileWriter& writer, void* raw)
-{
-    CompactWriteCtx* ctx = static_cast<CompactWriteCtx*>(raw);
-    if (!ctx || ctx->next_id == 0 || ctx->count > MESSAGE_STORE_MAX_RECORDS) {
-        return false;
-    }
-    const uint32_t magic = detail::MESSAGE_STORE_MAGIC;
-    const uint8_t version = detail::MESSAGE_STORE_VERSION;
-    if (writer.write(&magic, sizeof(magic)) != sizeof(magic) ||
-        writer.write(&version, 1) != 1 ||
-        writer.write(&ctx->count, sizeof(ctx->count)) != sizeof(ctx->count) ||
-        writer.write(&ctx->next_id, sizeof(ctx->next_id)) != sizeof(ctx->next_id)) {
-        return false;
-    }
-
-    const size_t offset = detail::MESSAGE_STORE_HEADER_SIZE +
-        (size_t)ctx->first_index * detail::MESSAGE_STORE_RECORD_SIZE;
-#if defined(ESP32_PLATFORM)
-    File source = SPIFFS.open(STORE_PATH, "r");
-    if (!source || !source.seek(offset, SeekSet)) {
-        if (source) source.close();
-        return false;
-    }
-#else
-    FILE* source = std::fopen(g_native_path, "rb");
-    if (!source || std::fseek(source, (long)offset, SEEK_SET) != 0) {
-        if (source) std::fclose(source);
-        return false;
-    }
-#endif
-
-    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
-    bool ok = true;
-    for (uint32_t i = 0; ok && i < ctx->count; ++i) {
-#if defined(ESP32_PLATFORM)
-        ok = source.read(record, sizeof(record)) == sizeof(record);
-#else
-        ok = std::fread(record, 1, sizeof(record), source) == sizeof(record);
-#endif
-        if (ok) ok = writer.write(record, sizeof(record)) == sizeof(record);
-    }
-#if defined(ESP32_PLATFORM)
-    source.close();
-#else
-    std::fclose(source);
-#endif
-    return ok;
-}
-
 static bool validateStore(sigurdos::storage::AtomicFileReader& reader, void*)
 {
     if (reader.size() < detail::MESSAGE_STORE_HEADER_SIZE || !reader.seek(0)) return false;
@@ -946,9 +892,44 @@ static bool compactStoreToRecent(uint32_t max_records)
     uint32_t next_id = 0;
     if (!readHeader(&count, &next_id)) return false;
     if (count <= max_records) return true;
-    CompactWriteCtx ctx{count - max_records, max_records, next_id};
-    return sigurdos::storage::atomicFileReplace(
-        storePath(), writeCompactedStore, &ctx, validateStore, nullptr);
+
+    StoredMessage* messages = allocateMessages(count);
+    if (!messages || !readCompleteRecords(
+            messages, count, detail::MESSAGE_STORE_HEADER_SIZE)) {
+        freeMessages(messages);
+        return false;
+    }
+
+    uint32_t unsent = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!messages[i].is_self && !messages[i].companion_sent) ++unsent;
+    }
+    const uint32_t unsent_to_drop = unsent > max_records ? unsent - max_records : 0;
+    const uint32_t unsent_to_keep = unsent - unsent_to_drop;
+    const uint32_t other_slots = max_records - unsent_to_keep;
+    const uint32_t others = count - unsent;
+    const uint32_t others_to_drop = others > other_slots ? others - other_slots : 0;
+
+    uint32_t skipped_unsent = 0;
+    uint32_t skipped_others = 0;
+    uint32_t kept = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const bool protect = !messages[i].is_self && !messages[i].companion_sent;
+        if (protect && skipped_unsent < unsent_to_drop) {
+            ++skipped_unsent;
+            continue;
+        }
+        if (!protect && skipped_others < others_to_drop) {
+            ++skipped_others;
+            continue;
+        }
+        messages[kept++] = messages[i];
+    }
+
+    const bool ok = atomicReplaceStore(messages, kept, next_id);
+    freeMessages(messages);
+    if (ok) g_companion_backlog_drop_count += unsent_to_drop;
+    return ok;
 }
 
 } // namespace
@@ -1206,6 +1187,11 @@ bool messageStoreMarkCompanionSent(uint32_t store_id)
     std::fclose(file);
 #endif
     return false;
+}
+
+uint32_t messageStoreCompanionBacklogDropCount()
+{
+    return g_companion_backlog_drop_count;
 }
 
 bool messageStoreGetById(uint32_t store_id, StoredMessage& out)

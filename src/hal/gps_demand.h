@@ -5,18 +5,18 @@
 
 #include <cstdint>
 
-inline uint16_t sigurdos_gps_normalize_interval(uint16_t seconds)
+inline uint32_t sigurdos_gps_normalize_interval(uint32_t seconds)
 {
-    return seconds < 5 ? 5 : seconds;
+    return seconds > 86400 ? 86400 : seconds;
 }
 
 inline uint32_t sigurdos_gps_effective_poll_ms(bool background_enabled,
-                                               uint16_t background_seconds,
+                                               uint32_t background_seconds,
                                                bool high_rate, bool one_shot_sync)
 {
     if (high_rate || one_shot_sync) return 200;
     return background_enabled
-        ? (uint32_t)sigurdos_gps_normalize_interval(background_seconds) * 1000u
+        ? sigurdos_gps_normalize_interval(background_seconds) * 1000u
         : 0;
 }
 

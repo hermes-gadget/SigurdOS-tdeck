@@ -26,7 +26,7 @@ struct NodePrefs {
     uint16_t auto_off_timeout;  // seconds, auto-off timeout (0=off, default 30)
     uint16_t chat_msg_cap;      // Per-channel in-memory message history cap
     uint8_t  flood_max_hops;    // 0=no limit, otherwise max flood hops for contact auto-add
-    bool     share_location;    // include GPS coordinates in adverts
+    uint8_t  advert_loc_policy; // ADVERT_LOC_* policy; nonzero currently shares location
     bool     advert_location_valid; // true when companion app supplied fixed-point lat/lon
     int32_t  advert_lat;        // fixed-point degrees * 1e6, companion advert fallback
     int32_t  advert_lon;        // fixed-point degrees * 1e6, companion advert fallback
@@ -38,12 +38,12 @@ struct NodePrefs {
     uint16_t advert_interval_h;      // 0=disabled, 24/72/168=hours between adverts (one per period)
     uint8_t  advert_type;            // ADV_TYPE_CHAT(1)/REPEATER(2)/ROOM(3)/SENSOR(4)
     bool     gps_enabled;            // GPS polling enabled
-    uint16_t gps_interval;           // background GPS read interval in seconds (minimum 5)
+    uint32_t gps_interval;           // background GPS read interval in seconds (0..86400)
     uint8_t  autoadd_config;         // bitmask: bit1=chat, bit2=repeater, bit3=room, bit4=sensor
     uint8_t  autoadd_max_hops;       // 0=no limit, max flood hops for auto-add
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
     uint8_t  path_hash_mode;          // 0=1-byte, 1=2-byte, 2=3-byte path hash for originated adverts/messages
-    bool     multi_acks;              // send extra redundant ACK transmissions for lossy links
+    uint8_t  multi_acks;              // extra redundant ACK transmissions for lossy links
     bool     buzzer_quiet;            // mute message-arrival buzzer
     uint8_t  client_repeat;           // 0=no forwarding, !=0=opportunistic relay (client-repeat mode)
     bool     ble_enabled;             // BLE companion advertising enabled in BLE build
@@ -76,7 +76,7 @@ struct NodePrefs {
         auto_off_timeout = 30;
         chat_msg_cap = 200;
         flood_max_hops = 0;  // 0 = no limit
-        share_location = false;  // location OFF by default (privacy-first)
+        advert_loc_policy = 0;   // location OFF by default (privacy-first)
         advert_location_valid = false;
         advert_lat = 0;
         advert_lon = 0;
@@ -93,7 +93,7 @@ struct NodePrefs {
         autoadd_max_hops = 0;         // 0 = no limit
         theme_id = 0;                 // default theme
         path_hash_mode = 0;           // default: 1-byte path hash (backward compatible with pre-1.14 repeaters)
-        multi_acks = false;           // default: send minimum ACKs
+        multi_acks = 0;               // default: send minimum ACKs
         buzzer_quiet = false;         // default: buzzer enabled
         client_repeat = 0;            // default: no forwarding
         ble_enabled = true;           // default: BLE companion on
