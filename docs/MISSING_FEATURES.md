@@ -179,7 +179,7 @@ struct SigurdRegion {
 
 > **✅ IMPLEMENTED** — Phase 0 persistence and Phases 1–3 of the companion bridge are complete and active in standard firmware builds. The implementation includes the `CompanionBridge`, `ObservedSerialBLEInterface`, non-destructive offline sync backed by the SPIFFS message store, mesh/UI fan-out, Bluetooth UI and settings, and native protocol/store coverage. The detailed plan below is preserved as historical reference.
 >
-> **Remaining upstream differences:** `CMD_SEND_RAW_PACKET` (65) is deliberately refused as a packet-injection policy. The 32-byte-secret form of `CMD_SET_CHANNEL` is also rejected; the stock 16-byte-secret form is supported. `CMD_SEND_BINARY_REQ` (50) and `CMD_SEND_ANON_REQ` (57) are implemented, including matched `PUSH_CODE_BINARY_RESPONSE` delivery. All 17 PUSH identifiers are defined, although `PUSH_CODE_LOG_RX_DATA` is not emitted.
+> **Remaining upstream differences:** `CMD_SEND_RAW_PACKET` (65) is deliberately refused as a packet-injection policy. The 32-byte-secret form of `CMD_SET_CHANNEL` is rejected by both SigurdOS and the audited upstream; the stock 16-byte-secret form is supported. `CMD_SEND_BINARY_REQ` (50) and `CMD_SEND_ANON_REQ` (57) are implemented, including matched `PUSH_CODE_BINARY_RESPONSE` delivery. All 17 PUSH identifiers are defined; `PUSH_CODE_LOG_RX_DATA` is intentionally privacy-disabled.
 
 **Goal:** let the T-Deck pair with and serve the **official MeshCore phone app** (Android/iOS) over Bluetooth LE, speaking the same companion frame protocol as a stock companion radio. The phone becomes a full client of the T-Deck's radio — sync contacts, read/send DMs and channel messages, configure the radio — *alongside* the built-in LVGL UI.
 
@@ -251,15 +251,15 @@ BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queu
 
 ### Build & resource considerations (call these out in the PR)
 
-- **Flash:** the Arduino-ESP32 Bluedroid BLE stack adds ~0.7–1.3 MB. The board uses `default_16MB.csv` (app partition ~6.5 MB) — fits, but verify headroom after linking.
-- **RAM / coexistence:** Bluedroid lives in **internal DRAM**, not PSRAM. SigurdOS already has **WiFi OTA** (`hal/wifi_ota.cpp`, `github_ota`). BLE **and** WiFi up simultaneously is tight on the ESP32-S3. Mitigations: bring BLE up on demand (`enable()`/`disable()`), don't run OTA and BLE at once, and/or evaluate **NimBLE** (much smaller) — but note the lib's `SerialBLEInterface` is **Bluedroid** (`BLEDevice.h`); a NimBLE path means a new interface impl.
-- **New build env, off by default:** add `[env:SigurdOS_TDeck_ble]` with `-D SIGURDOS_COMPANION_BLE=1` (and a `BLE_PIN_CODE`-style enable) so the heavy stack only links where wanted, until validated. Ensure the ESP-IDF BT/BLE sdkconfig is enabled (Arduino default includes it, but it's dead-stripped if unreferenced).
+- **Flash / DRAM:** BLE is enabled in the normal `SigurdOS_TDeck` build. The 2026-07-18 release link used 128,944/327,680 bytes of internal RAM (39.4%) and 2,622,217/6,553,600 bytes of application flash (40.0%), leaving 198,736 bytes of internal RAM and 3,931,383 bytes of application flash.
+- **PSRAM / coexistence:** Bluedroid lives in **internal DRAM**, while the signing accumulator, display, and map caches can use PSRAM. The 8 KiB signing accumulator is allocated from PSRAM first and only during an active transaction. Runtime PSRAM headroom is workload-dependent and still needs BLE-plus-map hardware evidence. SigurdOS also has **WiFi OTA** (`hal/wifi_ota.cpp`, `github_ota`); avoid OTA and BLE-heavy use at the same time.
+- **Normal build, on by default:** `[env:SigurdOS_TDeck]` defines `SIGURDOS_COMPANION_BLE=1`, and fresh preferences enable BLE advertising. Users can disable it at runtime. The USB companion environment remains a mutually exclusive build variant.
 - **Power:** the 2.4 GHz radio is independent of the SX1262 SPI bus (no bus conflict), but adds draw — flag battery impact and respect the auto-off/sleep paths.
 
 ### PIN / pairing / security
 
 - Use the independently generated `NodePrefs.ble_pin` as the BLE pairing PIN. MITM bonding ⇒ one-time PIN prompt on the phone. The four-digit `device_pin` protects device-admin actions and is not reused for BLE pairing.
-- **A paired phone gets full device access**, including `CMD_EXPORT_PRIVATE_KEY` (exports the node's Ed25519 private key) and `CMD_IMPORT_PRIVATE_KEY`. This matches the official app's backup/restore, and is gated by PIN pairing — but it is sensitive. Decide policy: support it (interop) with a UI indicator when BLE is connected, and consider a toggle to disable private-key export.
+- **A paired phone gets full device access**, including `CMD_EXPORT_PRIVATE_KEY` (exports the node's Ed25519 private key) and `CMD_IMPORT_PRIVATE_KEY`. This matches the official app's backup/restore and is gated by PIN pairing. Builds can independently disable these operations with `ENABLE_PRIVATE_KEY_EXPORT=0` and `ENABLE_PRIVATE_KEY_IMPORT=0`.
 
 ### Phased implementation
 
@@ -273,7 +273,7 @@ documented exceptions above, not unfinished implementation phases.
 
 ### File-by-file plan
 
-1. **`platformio.ini`** — new `[env:SigurdOS_TDeck_ble]` (extends the release env) with `-D SIGURDOS_COMPANION_BLE=1` + BLE name/PIN defines; confirm partition headroom; ensure BT/BLE enabled. **S**
+1. **`platformio.ini`** — **implemented in the normal release environment:** `SIGURDOS_COMPANION_BLE=1`, BLE name/PIN support, and measured partition headroom. **S**
 2. **`src/mesh/message_store.{h,cpp}` (new — Phase 0)** — append-only SPIFFS chat log (per-conversation, size-capped/rotated), dedup-keyed on (conversation, sender prefix, `sender_timestamp`); load into the chat UI on boot. Becomes the shared store the chat UI **and** the BLE sync layer read; the offline queue is a non-destructive mirror of it. **M**
 3. **`src/comms/companion_bridge.{h,cpp}` (new)** — owns the `SerialBLEInterface` + a `SigurdMeshV2&`; ports `handleCmdFrame`, `writeOKFrame`/`writeErrFrame`/`writeContactRespFrame`, the offline queue, and the contacts/sync iterators. Driven by `loop()`. **L**
 4. **`src/mesh/sigurd_mesh_v2.h`** — add an event-listener hook (message/advert/ack/path-updated) so the **persistent log, the UI, and the bridge** all receive the same mesh events (the fan-out point for R1/R2); bump `contact.lastmod` + `saveContacts()` on local contact changes for R3; expose any `BaseChatMesh` accessors the bridge needs. **M**
