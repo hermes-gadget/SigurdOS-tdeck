@@ -251,7 +251,7 @@ BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queu
 
 ### Build & resource considerations (call these out in the PR)
 
-- **Flash / DRAM:** BLE is enabled in the normal `SigurdOS_TDeck` build. The 2026-07-18 release link used 128,944/327,680 bytes of internal RAM (39.4%) and 2,622,217/6,553,600 bytes of application flash (40.0%), leaving 198,736 bytes of internal RAM and 3,931,383 bytes of application flash.
+- **Flash / DRAM:** BLE is enabled in the normal `SigurdOS_TDeck` build. The 2026-07-18 release link used 128,944/327,680 bytes of internal RAM (39.4%) and 2,621,781/6,553,600 bytes of application flash (40.0%), leaving 198,736 bytes of internal RAM and 3,931,819 bytes of application flash.
 - **PSRAM / coexistence:** Bluedroid lives in **internal DRAM**, while the signing accumulator, display, and map caches can use PSRAM. The 8 KiB signing accumulator is allocated from PSRAM first and only during an active transaction. Runtime PSRAM headroom is workload-dependent and still needs BLE-plus-map hardware evidence. SigurdOS also has **WiFi OTA** (`hal/wifi_ota.cpp`, `github_ota`); avoid OTA and BLE-heavy use at the same time.
 - **Normal build, on by default:** `[env:SigurdOS_TDeck]` defines `SIGURDOS_COMPANION_BLE=1`, and fresh preferences enable BLE advertising. Users can disable it at runtime. The USB companion environment remains a mutually exclusive build variant.
 - **Power:** the 2.4 GHz radio is independent of the SX1262 SPI bus (no bus conflict), but adds draw — flag battery impact and respect the auto-off/sleep paths.
