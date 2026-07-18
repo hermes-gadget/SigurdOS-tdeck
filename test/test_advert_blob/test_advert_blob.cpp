@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 #include "mesh/advert_blob.h"
 #include <cstring>
+#include <string>
+#include <vector>
 
 using namespace sigurdos::mesh;
 
@@ -48,4 +50,46 @@ TEST(AdvertBlob, RejectsInvalidPathArgumentsAndSmallOutput)
     EXPECT_FALSE(makeAdvertBlobPath(key, 0, path, sizeof(path)));
     EXPECT_FALSE(makeAdvertBlobPath(key, 8, nullptr, sizeof(path)));
     EXPECT_FALSE(makeAdvertBlobPath(key, 8, path, sizeof(path) - 1));
+}
+
+namespace {
+
+struct FakeBlobFileSystem {
+    std::vector<std::string> existing;
+    std::vector<std::string> removed;
+    bool fail_legacy = false;
+
+    bool exists(const char* path) const {
+        for (const std::string& item : existing) {
+            if (item == path) return true;
+        }
+        return false;
+    }
+
+    bool remove(const char* path) {
+        removed.emplace_back(path);
+        return !fail_legacy || removed.back() != "/blob_00010203";
+    }
+};
+
+}  // namespace
+
+TEST(AdvertBlob, DeletesCurrentAndLegacyPathsForKey)
+{
+    const uint8_t key[32] = {0, 1, 2, 3, 4, 5, 6, 7};
+    FakeBlobFileSystem fs{
+        {"/blob_0001020304050607", "/blob_00010203"}, {}, false};
+
+    EXPECT_TRUE(deleteBlobByKey(fs, key, sizeof(key)));
+    ASSERT_EQ(fs.removed.size(), 2U);
+    EXPECT_EQ(fs.removed[0], "/blob_0001020304050607");
+    EXPECT_EQ(fs.removed[1], "/blob_00010203");
+}
+
+TEST(AdvertBlob, ReportsBlobRemovalFailure)
+{
+    const uint8_t key[32] = {0, 1, 2, 3, 4, 5, 6, 7};
+    FakeBlobFileSystem fs{{"/blob_00010203"}, {}, true};
+
+    EXPECT_FALSE(deleteBlobByKey(fs, key, sizeof(key)));
 }

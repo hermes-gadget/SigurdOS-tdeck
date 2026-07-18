@@ -60,6 +60,11 @@ void mesh_v2_group_data_push(uint8_t channel_index,
 // stays free of MeshCore types); the adapter casts it back.
 void mesh_v2_companion_advert_push(const void* contact_info, bool is_new);
 void mesh_v2_companion_path_push(const uint8_t* pub_key);
+void mesh_v2_companion_path_discovery_push(const uint8_t* pub_key_prefix,
+                                            const uint8_t* in_path,
+                                            uint8_t in_path_len,
+                                            const uint8_t* out_path,
+                                            uint8_t out_path_len);
 void mesh_v2_companion_contact_deleted_push(const uint8_t* pub_key);
 void mesh_v2_companion_contacts_full_push();
 void mesh_v2_companion_login_push(const uint8_t* pub_key, bool success,

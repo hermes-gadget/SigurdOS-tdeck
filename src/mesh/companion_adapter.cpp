@@ -634,9 +634,7 @@ public:
     }
     bool removeContactByPubKey(const uint8_t* pub_key) override {
         if (!mesh_ptr() || !pub_key) return false;
-        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
-        if (!c) return false;
-        bool ok = mesh_ptr()->BaseChatMesh::removeContact(*c);
+        bool ok = mesh_ptr()->removeContactByPubKey(pub_key);
         if (ok) sigurdos::mesh::saveContacts();
         return ok;
     }
@@ -877,12 +875,13 @@ public:
         if (!mesh_ptr() || !pub_key) return r;
         ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;
-        uint32_t tag = mesh_ptr()->sendPathDiscovery(c->name);
+        uint32_t est_timeout = 0;
+        uint32_t tag = mesh_ptr()->sendPathDiscovery(c->name, &est_timeout);
         if (tag == 0) return r;
         r.ok = true;
         r.sent_flood = true;
         r.expected_ack = tag;
-        r.est_timeout = 0;
+        r.est_timeout = est_timeout;
         return r;
     }
     void selfTelemetry(uint8_t* out, size_t* out_len) const override {
@@ -1006,6 +1005,17 @@ void sigurdos::mesh::mesh_v2_companion_path_push(const uint8_t* pub_key)
     CompanionContact cc{};
     memcpy(cc.pub_key, pub_key, sizeof(cc.pub_key));
     g_companion_bridge_ptr->pushPathUpdated(cc);
+}
+
+void sigurdos::mesh::mesh_v2_companion_path_discovery_push(
+    const uint8_t* pub_key_prefix,
+    const uint8_t* in_path, uint8_t in_path_len,
+    const uint8_t* out_path, uint8_t out_path_len)
+{
+    if (g_companion_bridge_ptr) {
+        g_companion_bridge_ptr->pushPathDiscoveryResponse(
+            pub_key_prefix, in_path, in_path_len, out_path, out_path_len);
+    }
 }
 
 void sigurdos::mesh::mesh_v2_companion_contact_deleted_push(const uint8_t* pub_key)

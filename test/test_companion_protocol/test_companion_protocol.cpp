@@ -99,6 +99,10 @@ public:
     int set_ble_pin_calls = 0;
     uint32_t last_ble_pin = 0;
     bool set_ble_pin_result = true;
+    bool path_discovery_called = false;
+    uint8_t path_discovery_key[32] = {};
+    sigurdos::comms::CompanionSendResult path_discovery_result{
+        false, false, 0, 0};
 
     uint32_t blePin() const override { return 123456; }
     uint8_t clientRepeat() const override { return 0; }
@@ -421,8 +425,11 @@ public:
         std::memset(sig_out, 0xAB, 64);
         return 64;
     }
-    sigurdos::comms::CompanionSendResult sendPathDiscovery(const uint8_t*) override {
-        return {false, false, 0, 0};  // not found by default
+    sigurdos::comms::CompanionSendResult sendPathDiscovery(
+        const uint8_t* pub_key) override {
+        path_discovery_called = true;
+        std::memcpy(path_discovery_key, pub_key, sizeof(path_discovery_key));
+        return path_discovery_result;
     }
     bool getAdvertPath(const uint8_t*, uint8_t* path_out, size_t path_capacity,
                        uint8_t* descriptor_out, size_t* path_bytes_out,
@@ -1557,6 +1564,42 @@ TEST_F(CompanionProtocolTest, AdvertPathMissingEntryReturnsNotFound) {
               (std::vector<uint8_t>{cc::RESP_CODE_ERR, cc::ERR_CODE_NOT_FOUND}));
 }
 
+TEST_F(CompanionProtocolTest, PathDiscoveryCommandUsesFullKeyAndReturnsSent) {
+    host.path_discovery_result = {true, true, 0x12345678U, 4321U};
+    std::vector<uint8_t> frame(2 + cc::SIGURDOS_COMPANION_PUB_KEY_SIZE, 0);
+    frame[0] = cc::CMD_SEND_PATH_DISCOVERY_REQ;
+    for (size_t i = 0; i < cc::SIGURDOS_COMPANION_PUB_KEY_SIZE; ++i) {
+        frame[2 + i] = static_cast<uint8_t>(0x80 + i);
+    }
+
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    ASSERT_TRUE(host.path_discovery_called);
+    EXPECT_EQ(std::memcmp(host.path_discovery_key, &frame[2],
+                          sizeof(host.path_discovery_key)), 0);
+    ASSERT_EQ(serial.writes.size(), 1U);
+    ASSERT_EQ(serial.writes[0].size(), 10U);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_SENT);
+    EXPECT_EQ(serial.writes[0][1], 1);
+    uint32_t tag = 0;
+    uint32_t timeout = 0;
+    std::memcpy(&tag, &serial.writes[0][2], sizeof(tag));
+    std::memcpy(&timeout, &serial.writes[0][6], sizeof(timeout));
+    EXPECT_EQ(tag, 0x12345678U);
+    EXPECT_EQ(timeout, 4321U);
+}
+
+TEST_F(CompanionProtocolTest, PathDiscoveryCommandRejectsNonzeroReservedByte) {
+    std::vector<uint8_t> frame(2 + cc::SIGURDOS_COMPANION_PUB_KEY_SIZE, 0);
+    frame[0] = cc::CMD_SEND_PATH_DISCOVERY_REQ;
+    frame[1] = 1;
+
+    ASSERT_TRUE(bridge.handleFrame(frame.data(), frame.size()));
+    EXPECT_FALSE(host.path_discovery_called);
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_UNSUPPORTED_CMD);
+}
+
 TEST_F(CompanionProtocolTest, CustomVarsUseOfficialNameValueWireFormat) {
     host.custom_vars = "gps:1,gps_interval:30";
     uint8_t get_frame[] = {cc::CMD_GET_CUSTOM_VARS};
@@ -1898,6 +1941,35 @@ TEST_F(CompanionProtocolTest, PushPathDeletedFull) {
     EXPECT_TRUE(bridge.pushContactsFull());
     ASSERT_EQ(serial.writes[0].size(), 1u);
     EXPECT_EQ(serial.writes[0][0], cc::PUSH_CODE_CONTACTS_FULL);
+}
+
+TEST_F(CompanionProtocolTest, PushPathDiscoveryResponseMatchesGoldenLayout) {
+    const uint8_t prefix[6] = {1, 2, 3, 4, 5, 6};
+    const uint8_t inbound[2] = {0xA1, 0xA2};
+    const uint8_t outbound[3] = {0xB1, 0xB2, 0xB3};
+
+    ASSERT_TRUE(bridge.pushPathDiscoveryResponse(
+        prefix, inbound, 2, outbound, 3));
+
+    const std::vector<uint8_t> expected = {
+        cc::PUSH_CODE_PATH_DISCOVERY_RESPONSE, 0,
+        1, 2, 3, 4, 5, 6,
+        3, 0xB1, 0xB2, 0xB3,
+        2, 0xA1, 0xA2
+    };
+    ASSERT_EQ(serial.writes.size(), 1U);
+    EXPECT_EQ(serial.writes[0], expected);
+}
+
+TEST_F(CompanionProtocolTest, PathDiscoveryPushRejectsInvalidPaths) {
+    const uint8_t prefix[6] = {};
+    const uint8_t path[1] = {};
+
+    EXPECT_FALSE(bridge.pushPathDiscoveryResponse(
+        prefix, path, 0xC1, path, 1));
+    EXPECT_FALSE(bridge.pushPathDiscoveryResponse(
+        prefix, nullptr, 1, path, 1));
+    EXPECT_TRUE(serial.writes.empty());
 }
 
 TEST_F(CompanionProtocolTest, PushLoginStatusTelemetryTrace) {

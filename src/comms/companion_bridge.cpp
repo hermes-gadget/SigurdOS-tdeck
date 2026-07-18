@@ -469,6 +469,43 @@ bool CompanionBridge::pushPathUpdated(const CompanionContact& contact)
     return true;
 }
 
+bool CompanionBridge::pushPathDiscoveryResponse(
+    const uint8_t* pubkey_prefix,
+    const uint8_t* in_path, uint8_t in_path_len,
+    const uint8_t* out_path, uint8_t out_path_len)
+{
+    if (!isConnected() || !pubkey_prefix ||
+        !sigurdos::mesh::path::encodedLengthValid(in_path_len) ||
+        !sigurdos::mesh::path::encodedLengthValid(out_path_len)) {
+        return false;
+    }
+
+    const size_t in_bytes = sigurdos::mesh::path::byteCount(in_path_len);
+    const size_t out_bytes = sigurdos::mesh::path::byteCount(out_path_len);
+    if ((in_bytes > 0 && !in_path) || (out_bytes > 0 && !out_path) ||
+        10 + in_bytes + out_bytes > MAX_FRAME_SIZE) {
+        return false;
+    }
+
+    int i = 0;
+    _out_frame[i++] = PUSH_CODE_PATH_DISCOVERY_RESPONSE;
+    _out_frame[i++] = 0;  // reserved
+    std::memcpy(&_out_frame[i], pubkey_prefix,
+                SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
+    i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
+    _out_frame[i++] = out_path_len;
+    if (out_bytes > 0) {
+        std::memcpy(&_out_frame[i], out_path, out_bytes);
+        i += (int)out_bytes;
+    }
+    _out_frame[i++] = in_path_len;
+    if (in_bytes > 0) {
+        std::memcpy(&_out_frame[i], in_path, in_bytes);
+        i += (int)in_bytes;
+    }
+    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+}
+
 bool CompanionBridge::pushContactDeleted(const uint8_t* pub_key)
 {
     if (!isConnected() || !pub_key) return false;
@@ -1249,7 +1286,8 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         return true;
     }
 
-    if (cmd == CMD_SEND_PATH_DISCOVERY_REQ && len >= 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE) {
+    if (cmd == CMD_SEND_PATH_DISCOVERY_REQ &&
+        len >= 2 + SIGURDOS_COMPANION_PUB_KEY_SIZE && _cmd_frame[1] == 0) {
         // Initiate path discovery for a contact — sends a flood telemetry request
         // Results arrive later via onContactPathRecv and are pushed as
         // PUSH_CODE_PATH_DISCOVERY_RESPONSE.

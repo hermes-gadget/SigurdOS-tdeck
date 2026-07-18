@@ -6,6 +6,7 @@
 #include "sigurd_mesh_v2.h"
 #include "companion_message_policy.h"
 #include "advert_blob.h"
+#include "path_discovery.h"
 #include "control_parser.h"
 #include "login_response.h"
 #include "utils/utf8_util.h"
@@ -592,6 +593,7 @@ namespace mesh {
     }
 
     void SigurdMeshV2::onContactOverwrite(const uint8_t* pub_key) {
+        deleteBlobByKey(SPIFFS, pub_key, PUB_KEY_SIZE);
         sigurdos::mesh::mesh_v2_companion_contact_deleted_push(pub_key);
     }
 
@@ -923,18 +925,50 @@ namespace mesh {
         // Path updates mutate the contact table with no UI event site;
         // schedule a debounced save so the route survives a power cut.
         sigurdos::mesh::markContactsDirty();
-        // If we had a pending discovery for this contact, mark it complete
-        for (int i = 0; i < MAX_DISCOVERY_PENDING; i++) {
-            if (_discovery_pending[i].in_use &&
-                strcmp(_discovery_pending[i].dest_name, contact.name) == 0) {
-                _discovery_pending[i].completed = true;
+    }
+
+    bool SigurdMeshV2::onContactPathRecv(::ContactInfo& contact,
+                                         uint8_t* in_path, uint8_t in_path_len,
+                                         uint8_t* out_path, uint8_t out_path_len,
+                                         uint8_t extra_type, uint8_t* extra,
+                                         uint8_t extra_len) {
+        if (extra_type == PAYLOAD_TYPE_RESPONSE && extra && extra_len > 4) {
+            uint32_t tag = 0;
+            memcpy(&tag, extra, sizeof(tag));
+            for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
+                DiscoveryPending& pending = _discovery_pending[i];
+                if (!pending.in_use || pending.tag != tag) continue;
+
+                pending.completed = true;
+                if (::mesh::Packet::isValidPathLen(in_path_len) &&
+                    ::mesh::Packet::isValidPathLen(out_path_len)) {
+                    sigurdos::mesh::mesh_v2_companion_path_discovery_push(
+                        contact.id.pub_key, in_path, in_path_len,
+                        out_path, out_path_len);
+                }
+                return false;  // Discovery responses must not create a reciprocal path.
+            }
+        }
+
+        return BaseChatMesh::onContactPathRecv(contact, in_path, in_path_len,
+                                               out_path, out_path_len,
+                                               extra_type, extra, extra_len);
+    }
+
+    uint32_t SigurdMeshV2::sendPathDiscovery(const char* name,
+                                              uint32_t* est_timeout_out) {
+        if (!name || !name[0]) return 0;
+        if (est_timeout_out) *est_timeout_out = 0;
+
+        int pending_slot = -1;
+        for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
+            if (!_discovery_pending[i].in_use || _discovery_pending[i].completed) {
+                pending_slot = i;
                 break;
             }
         }
-    }
+        if (pending_slot < 0) return 0;
 
-    uint32_t SigurdMeshV2::sendPathDiscovery(const char* name) {
-        if (!name || !name[0]) return 0;
         int n = getNumContacts();
         ::ContactInfo tmp;
         for (int i = 0; i < n; i++) {
@@ -949,8 +983,12 @@ namespace mesh {
                 if (saved_len <= 32 && saved_len != OUT_PATH_UNKNOWN)
                     memcpy(saved_path, c->out_path, saved_len);
                 c->out_path_len = OUT_PATH_UNKNOWN;
-                // Send minimal discovery request
-                uint8_t req_data[5] = {0x04, 0x00, 0x00, 0x00, 0x00};
+                // Path discovery is a flooded telemetry request for BASE data.
+                // The random suffix keeps otherwise identical packet hashes unique.
+                uint8_t random_bytes[4] = {};
+                getRNG()->random(random_bytes, sizeof(random_bytes));
+                uint8_t req_data[PATH_DISCOVERY_REQUEST_LEN] = {};
+                buildPathDiscoveryRequest(req_data, random_bytes);
                 int r = BaseChatMesh::sendRequest(*c, req_data, sizeof(req_data), tag, est_timeout);
                 // Restore original path ONLY if it wasn't legitimately updated during send
                 if (c->out_path_len == OUT_PATH_UNKNOWN) {
@@ -959,18 +997,15 @@ namespace mesh {
                         memcpy(c->out_path, saved_path, saved_len);
                 }
                 if (r != MSG_SEND_FAILED) {
-                    for (int j = 0; j < MAX_DISCOVERY_PENDING; j++) {
-                        if (!_discovery_pending[j].in_use) {
-                            _discovery_pending[j].tag = tag;
-                            strncpy(_discovery_pending[j].dest_name, name,
-                                    sizeof(_discovery_pending[j].dest_name) - 1);
-                            _discovery_pending[j].dest_name[sizeof(_discovery_pending[j].dest_name) - 1] = '\0';
-                            _discovery_pending[j].in_use = true;
-                            _discovery_pending[j].completed = false;
-                            _discovery_pending[j].started_at_ms = _ms->getMillis();
-                            return tag;
-                        }
-                    }
+                    DiscoveryPending& pending = _discovery_pending[pending_slot];
+                    pending.tag = tag;
+                    strncpy(pending.dest_name, name, sizeof(pending.dest_name) - 1);
+                    pending.dest_name[sizeof(pending.dest_name) - 1] = '\0';
+                    pending.in_use = true;
+                    pending.completed = false;
+                    pending.started_at_ms = _ms->getMillis();
+                    if (est_timeout_out) *est_timeout_out = est_timeout;
+                    return tag;
                 }
                 return 0;
             }
@@ -1041,7 +1076,9 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::shouldAutoAddContactType(uint8_t type) const {
-        return type == ADV_TYPE_CHAT || type == ADV_TYPE_ROOM || type == ADV_TYPE_REPEATER || type == ADV_TYPE_NONE;
+        const sigurdos::NodePrefs prefs = sigurdos::prefs_get();
+        return shouldAutoAddType(prefs.manual_add_contacts,
+                                 prefs.autoadd_config, type);
     }
 
     int SigurdMeshV2::addLoginEntry(const char* name, uint32_t estimated_timeout_ms) {
@@ -1213,7 +1250,19 @@ namespace mesh {
     bool SigurdMeshV2::removeContact(int idx) {
         ::ContactInfo tmp;
         if (!getContactByIdx((uint32_t)idx, tmp)) return false;
-        return BaseChatMesh::removeContact(tmp);
+        return removeContactByPubKey(tmp.id.pub_key);
+    }
+
+    bool SigurdMeshV2::removeContactByPubKey(const uint8_t* pub_key) {
+        if (!pub_key) return false;
+        ::ContactInfo* contact = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+        if (!contact) return false;
+
+        uint8_t key[PUB_KEY_SIZE] = {};
+        memcpy(key, pub_key, sizeof(key));
+        if (!BaseChatMesh::removeContact(*contact)) return false;
+        deleteBlobByKey(SPIFFS, key, sizeof(key));
+        return true;
     }
 
     bool SigurdMeshV2::resetPathTo(int idx) {

@@ -409,6 +409,9 @@ public:
     // A heard advert / contact update → app. is_new picks NEW_ADVERT vs ADVERT.
     bool pushAdvert(const CompanionContact& contact, bool is_new);
     bool pushPathUpdated(const CompanionContact& contact);
+    bool pushPathDiscoveryResponse(const uint8_t* pubkey_prefix,
+                                   const uint8_t* in_path, uint8_t in_path_len,
+                                   const uint8_t* out_path, uint8_t out_path_len);
     bool pushContactDeleted(const uint8_t* pub_key);
     bool pushContactsFull();
     bool pushLoginResult(const uint8_t* pubkey_prefix, bool success,

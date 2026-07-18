@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 namespace sigurdos::mesh {
 
@@ -49,6 +50,29 @@ inline bool makeAdvertBlobPath(const uint8_t* key, int key_len,
         pos += 2;
     }
     return true;
+}
+
+// Remove both the current eight-byte-key filename and the legacy four-byte
+// filename. The filesystem is templated so the path/removal policy stays
+// native-testable without coupling this header to SPIFFS.
+template <typename FileSystem>
+bool deleteBlobByKey(FileSystem& fs, const uint8_t* key, int key_len)
+{
+    char current_path[48] = {};
+    if (!makeAdvertBlobPath(key, key_len, current_path, sizeof(current_path))) {
+        return false;
+    }
+
+    bool removed = true;
+    if (fs.exists(current_path) && !fs.remove(current_path)) removed = false;
+
+    char legacy_path[48] = {};
+    if (makeAdvertBlobPath(key, key_len, legacy_path, sizeof(legacy_path), true) &&
+        std::strcmp(current_path, legacy_path) != 0 &&
+        fs.exists(legacy_path) && !fs.remove(legacy_path)) {
+        removed = false;
+    }
+    return removed;
 }
 
 static_assert(SIGURDOS_ADVERT_BLOB_MAX_LEN <= MAX_TRANS_UNIT,
