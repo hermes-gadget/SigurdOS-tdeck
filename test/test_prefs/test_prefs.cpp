@@ -103,6 +103,23 @@ TEST_F(PrefsTest, PathHashModeRoundTripsThroughPrefsSaveAndLoad) {
     EXPECT_EQ(1, loaded.path_hash_mode);
 }
 
+TEST_F(PrefsTest, AirtimeFactorAndMultiAckCountRoundTripThroughPrefs) {
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.airtime_factor = 9.0f;
+    saved.duty_cycle = 10;
+    saved.multi_acks = 3;
+
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_FLOAT_EQ(loaded.airtime_factor, 9.0f);
+    EXPECT_EQ(loaded.duty_cycle, 10);
+    EXPECT_EQ(loaded.multi_acks, 3);
+}
+
 TEST_F(PrefsTest, KeyboardLayoutRoundTripsThroughPrefs) {
     sigurdos::NodePrefs saved;
     saved.set_defaults();
@@ -219,7 +236,7 @@ TEST(PrefsWritePolicyTest, EveryNvsSetFailureIsReturnedWithoutCommit) {
     sigurdos::detail::PrefsWriteFailure failure;
     ASSERT_TRUE(sigurdos::detail::prefsWriteAll(
         prefs, successful.ops(), sigurdos::detail::BlePrefsWriteMode::Write, &failure));
-    ASSERT_EQ(47, successful.write_calls);
+    ASSERT_EQ(48, successful.write_calls);
     ASSERT_EQ(3, successful.ble_write_calls);
     ASSERT_EQ(1, successful.commit_calls);
 
@@ -246,7 +263,7 @@ TEST(PrefsWritePolicyTest, CommitFailureIsReturned) {
 
     EXPECT_FALSE(sigurdos::detail::prefsWriteAll(
         prefs, failing.ops(), sigurdos::detail::BlePrefsWriteMode::Write, &failure));
-    EXPECT_EQ(47, failing.write_calls);
+    EXPECT_EQ(48, failing.write_calls);
     EXPECT_EQ(1, failing.commit_calls);
     EXPECT_STREQ("commit", failure.key);
     EXPECT_EQ(failing.error, failure.error);
@@ -261,7 +278,7 @@ TEST(PrefsWritePolicyTest, PreserveModeLeavesCrossVariantBleKeysUntouched) {
 
     EXPECT_TRUE(sigurdos::detail::prefsWriteAll(
         prefs, writer.ops(), sigurdos::detail::BlePrefsWriteMode::Preserve));
-    EXPECT_EQ(44, writer.write_calls);
+    EXPECT_EQ(45, writer.write_calls);
     EXPECT_EQ(0, writer.ble_write_calls);
     EXPECT_EQ(1, writer.commit_calls);
 }

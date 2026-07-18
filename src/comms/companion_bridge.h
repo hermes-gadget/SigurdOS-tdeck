@@ -200,7 +200,7 @@ struct CompanionSelfInfo {
     int8_t max_tx_power_dbm;
     int32_t lat;
     int32_t lon;
-    bool multi_acks;
+    uint8_t multi_acks;
     uint8_t advert_loc_policy;
     uint8_t telemetry_modes;
     uint8_t manual_add_contacts;

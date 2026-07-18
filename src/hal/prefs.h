@@ -33,6 +33,7 @@ struct NodePrefs {
     float    rx_delay_base;        // 0-20.0, RX delay base factor for collision avoidance
     float    tx_delay_factor;      // 0-2.0, TX flood retransmit delay multiplier
     float    direct_tx_delay_factor; // 0-2.0, TX direct retransmit delay multiplier
+    float    airtime_factor;         // MeshCore airtime budget factor (0 = unlimited)
     bool     rx_boosted_gain;        // enable SX1262 boosted RX sensitivity mode
     uint8_t  duty_cycle;             // 0-100, duty cycle budget percent (0 = disabled)
     uint16_t advert_interval_h;      // 0=disabled, 24/72/168=hours between adverts (one per period)
@@ -43,7 +44,7 @@ struct NodePrefs {
     uint8_t  autoadd_max_hops;       // 0=no limit, max flood hops for auto-add
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
     uint8_t  path_hash_mode;          // 0=1-byte, 1=2-byte, 2=3-byte path hash for originated adverts/messages
-    bool     multi_acks;              // send extra redundant ACK transmissions for lossy links
+    uint8_t  multi_acks;              // number of extra ACK transmissions for lossy links
     bool     buzzer_quiet;            // mute message-arrival buzzer
     uint8_t  client_repeat;           // 0=no forwarding, !=0=opportunistic relay (client-repeat mode)
     bool     ble_enabled;             // BLE companion advertising enabled in BLE build
@@ -83,6 +84,7 @@ struct NodePrefs {
         rx_delay_base = 10.0f;      // default RX delay base (matching MeshCore companion default)
         tx_delay_factor = 1.0f;     // default TX flood delay factor
         direct_tx_delay_factor = 1.0f; // default TX direct delay factor
+        airtime_factor = 0.0f;       // default: unlimited airtime policy
         rx_boosted_gain = false;      // default: normal sensitivity mode
         duty_cycle = 0;               // 0 = disabled
         advert_interval_h = 0;        // 0 = disabled
@@ -93,7 +95,7 @@ struct NodePrefs {
         autoadd_max_hops = 0;         // 0 = no limit
         theme_id = 0;                 // default theme
         path_hash_mode = 0;           // default: 1-byte path hash (backward compatible with pre-1.14 repeaters)
-        multi_acks = false;           // default: send minimum ACKs
+        multi_acks = 0;               // default: send minimum ACKs
         buzzer_quiet = false;         // default: buzzer enabled
         client_repeat = 0;            // default: no forwarding
         ble_enabled = true;           // default: BLE companion on

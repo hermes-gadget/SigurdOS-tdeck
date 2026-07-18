@@ -11,6 +11,7 @@
 #include "utils/utf8_util.h"
 #include "channel_validation.h"
 #include "channel_slot_policy.h"
+#include "telemetry_response_policy.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -776,28 +777,19 @@ namespace mesh {
     }
 
     uint8_t SigurdMeshV2::onContactRequest(const ::ContactInfo& contact, uint32_t sender_timestamp, const uint8_t* data, uint8_t len, uint8_t* reply) {
-        // Telemetry request: send battery voltage (and GPS if available)
+        // C-14/A-12/E-04: reflect the RF tag and enforce the packed base,
+        // location, and environment permission modes independently.
         if (len >= 1 && data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
-            uint8_t pos = 0;
-
-            // Battery voltage as CayenneLPP analog input (channel 1, 0.01V resolution)
-            uint16_t mv = sigurdos_battery_mv();
-            uint16_t val = mv / 10;  // mV → decivolts (0.01V)
-            reply[pos++] = 0x01;          // channel 1
-            reply[pos++] = LPP_ANALOG_INPUT; // analog input type
-            reply[pos++] = (val >> 8) & 0xFF;
-            reply[pos++] = val & 0xFF;
-
-            // Optional: GPS position if fix available
-            if (sigurdos_gps_has_fix() && pos + 11 <= 64) {
-                LPPWriter lpp(reply + pos, 64 - pos);
-                lpp.writeGPS(2, sigurdos_gps_latitude(),
-                             sigurdos_gps_longitude(),
-                             sigurdos_gps_altitude_m());
-                pos += lpp.length();
-            }
-
-            return pos;
+            const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
+            const uint8_t inverse_mask = len >= 2 ? data[1] : 0;
+            const uint8_t permissions = telemetry_policy::resolvePermissions(
+                prefs.telemetry_modes, contact.flags, inverse_mask);
+            const telemetry_policy::GpsSample gps{
+                sigurdos_gps_has_fix(), sigurdos_gps_latitude(),
+                sigurdos_gps_longitude(), sigurdos_gps_altitude_m()};
+            return static_cast<uint8_t>(telemetry_policy::buildResponse(
+                reply, 64, sender_timestamp, permissions,
+                sigurdos_battery_mv(), gps));
         }
         return 0;  // unknown request type
     }
@@ -1041,7 +1033,9 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::shouldAutoAddContactType(uint8_t type) const {
-        return type == ADV_TYPE_CHAT || type == ADV_TYPE_ROOM || type == ADV_TYPE_REPEATER || type == ADV_TYPE_NONE;
+        const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
+        return auto_add_policy::typeAllowed(
+            prefs.manual_add_contacts, prefs.autoadd_config, type);
     }
 
     int SigurdMeshV2::addLoginEntry(const char* name, uint32_t estimated_timeout_ms) {

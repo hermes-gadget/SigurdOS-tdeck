@@ -398,8 +398,6 @@ void settings_radio_show()
                 if (np.duty_cycle == VALS[i]) { idx = i; break; }
             }
             idx = (idx + 1) % N;
-            np.duty_cycle = VALS[idx];
-            sigurdos::prefs_set(np);
             sigurdos::mesh::setDutyCycle(VALS[idx]);
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Duty cycle: %s", LABELS[idx]);

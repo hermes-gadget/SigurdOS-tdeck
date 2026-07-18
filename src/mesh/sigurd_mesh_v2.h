@@ -17,6 +17,9 @@
 #include "pending_ack_policy.h"
 #include "login_session.h"
 #include "path_codec.h"
+#include "airtime_policy.h"
+#include "auto_add_policy.h"
+#include "radio_timing_policy.h"
 #include "hal/prefs.h"
 #include "regions.h"
 #include "hal/tdeck_board.h"
@@ -442,23 +445,55 @@ public:
     bool allowPacketForward(const ::mesh::Packet* packet) override;
 
 
-    bool isAutoAddEnabled() const override { return true; }
+    bool isAutoAddEnabled() const override {
+        // A-11: the companion manual-add mode must control advert ingestion.
+        return auto_add_policy::enabled(sigurdos::prefs_get().manual_add_contacts);
+    }
     bool shouldAutoAddContactType(uint8_t type) const override;
 
-    bool shouldOverwriteWhenFull() const override { return true; }
+    bool shouldOverwriteWhenFull() const override {
+        return auto_add_policy::overwriteWhenFull(sigurdos::prefs_get().autoadd_config);
+    }
     uint8_t getAutoAddMaxHops() const override {
-        return sigurdos::prefs_get().flood_max_hops;
+        return sigurdos::prefs_get().autoadd_max_hops;
     }
     void onContactsFull() override {
         sigurdos::mesh::mesh_v2_companion_contacts_full_push();
     }
     float getAirtimeBudgetFactor() const override {
-        sigurdos::NodePrefs p = sigurdos::prefs_get();
-        if (p.duty_cycle == 0) return -1.0f;
-        return (float)p.duty_cycle / 100.0f;
+        // C-01/E-01: Dispatcher expects factor=(100-p)/p, not a percentage.
+        return sigurdos::prefs_get().airtime_factor;
+    }
+    int calcRxDelay(float score, uint32_t air_time) const override {
+        // C-02: consume the configurable collision-avoidance base.
+        const float base = sigurdos::prefs_get().rx_delay_base;
+        return radio_timing_policy::rxDelay(base, score, air_time);
+    }
+    uint32_t getRetransmitDelay(const ::mesh::Packet* packet) override {
+        // C-03: use companion timing plus the local flood-delay multiplier.
+        if (!packet) return 0;
+        const float factor = sigurdos::prefs_get().tx_delay_factor;
+        if (factor <= 0.0f) return 0;
+        const uint32_t upper = radio_timing_policy::retransmitUpperBound(
+            _radio->getEstAirtimeFor(
+                packet->getPathByteLen() + packet->payload_len + 2),
+            factor, 0.5f);
+        return upper == 0 ? 0 : getRNG()->nextInt(0, upper);
+    }
+    uint32_t getDirectRetransmitDelay(const ::mesh::Packet* packet) override {
+        // C-04: direct retries need randomized collision delay too.
+        if (!packet) return 0;
+        const float factor = sigurdos::prefs_get().direct_tx_delay_factor;
+        if (factor <= 0.0f) return 0;
+        const uint32_t upper = radio_timing_policy::retransmitUpperBound(
+            _radio->getEstAirtimeFor(
+                packet->getPathByteLen() + packet->payload_len + 2),
+            factor, 0.2f);
+        return upper == 0 ? 0 : getRNG()->nextInt(0, upper);
     }
     uint8_t getExtraAckTransmitCount() const override {
-        return sigurdos::prefs_get().multi_acks ? 1 : 0;
+        // A-11/C-05/E-02: preserve the configured retransmission count.
+        return sigurdos::prefs_get().multi_acks;
     }
 
     // ── Repeater/room login session tracking (Phase 4.5) ──
@@ -556,7 +591,7 @@ public:
 
     void setDutyCycle(uint8_t percent) {
         sigurdos::NodePrefs p = sigurdos::prefs_get();
-        p.duty_cycle = percent;
+        airtime_policy::setDutyCyclePercent(p.airtime_factor, p.duty_cycle, percent);
         sigurdos::prefs_set(p);
     }
 

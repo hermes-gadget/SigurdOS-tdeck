@@ -246,18 +246,18 @@ public:
         return tx_power_dbm >= 2 && tx_power_dbm <= 22;
     }
     void tuningParams(uint32_t& rx_delay_base_x1000,
-                      uint32_t& tx_delay_factor_x1000) const override {
+                      uint32_t& airtime_factor_x1000) const override {
         rx_delay_base_x1000 = tuning_rx_delay_base_x1000;
-        tx_delay_factor_x1000 = tuning_tx_delay_factor_x1000;
+        airtime_factor_x1000 = tuning_tx_delay_factor_x1000;
     }
     bool setTuningParams(uint32_t rx_delay_base_x1000,
-                         uint32_t tx_delay_factor_x1000) override {
+                         uint32_t airtime_factor_x1000) override {
         set_tuning_params_called = true;
         tuning_rx_delay_base_x1000 = rx_delay_base_x1000;
-        tuning_tx_delay_factor_x1000 = tx_delay_factor_x1000;
+        tuning_tx_delay_factor_x1000 = airtime_factor_x1000;
         last_rx_base = rx_delay_base_x1000;
-        last_airtime = tx_delay_factor_x1000;
-        return rx_delay_base_x1000 <= 20000 && tx_delay_factor_x1000 <= 2000;
+        last_airtime = airtime_factor_x1000;
+        return rx_delay_base_x1000 <= 20000 && airtime_factor_x1000 <= 99000;
     }
     bool setBlePin(uint32_t pin) override {
         set_ble_pin_calls++;
@@ -960,6 +960,25 @@ TEST_F(CompanionProtocolTest, TuningParamsRoundTrip) {
     std::memcpy(&got_af, &out[5], 4);
     EXPECT_EQ(got_rx, 1500u);
     EXPECT_EQ(got_af, 1200u);
+}
+
+TEST_F(CompanionProtocolTest, OtherParamsPreservePackedModesAndMultiAckCount) {
+    const uint8_t frame[] = {
+        cc::CMD_SET_OTHER_PARAMS,
+        1,     // manual-add mode
+        0x26,  // env=2, loc=1, base=2
+        1,     // advert location policy
+        3,     // extra ACK count (must not collapse to bool)
+    };
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+    EXPECT_EQ(host.last_other.manual_add_contacts, 1);
+    EXPECT_TRUE(host.last_other.telemetry_present);
+    EXPECT_EQ(host.last_other.telemetry_modes, 0x26);
+    EXPECT_TRUE(host.last_other.multi_acks_present);
+    EXPECT_EQ(host.last_other.multi_acks, 3);
 }
 
 TEST_F(CompanionProtocolTest, AutoAddConfigRoundTrip) {

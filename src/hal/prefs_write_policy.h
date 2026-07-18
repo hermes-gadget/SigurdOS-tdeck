@@ -69,13 +69,14 @@ inline bool prefsWriteAll(const NodePrefs& prefs, const PrefsNvsWriter& writer,
     if (!wrote("rx_del", writer.setBlob(writer.context, "rx_del", &prefs.rx_delay_base, sizeof(prefs.rx_delay_base)))) return false;
     if (!wrote("tx_del", writer.setBlob(writer.context, "tx_del", &prefs.tx_delay_factor, sizeof(prefs.tx_delay_factor)))) return false;
     if (!wrote("dir_tx", writer.setBlob(writer.context, "dir_tx", &prefs.direct_tx_delay_factor, sizeof(prefs.direct_tx_delay_factor)))) return false;
+    if (!wrote("air_fact", writer.setBlob(writer.context, "air_fact", &prefs.airtime_factor, sizeof(prefs.airtime_factor)))) return false;
     if (!wrote("rx_boost", writer.setU8(writer.context, "rx_boost", prefs.rx_boosted_gain ? 1 : 0))) return false;
     if (!wrote("duty_cyc", writer.setU8(writer.context, "duty_cyc", prefs.duty_cycle))) return false;
     if (!wrote("adv_dur", writer.setU16(writer.context, "adv_dur", prefs.advert_interval_h))) return false;
     if (!wrote("adv_type", writer.setU8(writer.context, "adv_type", prefs.advert_type))) return false;
     if (!wrote("theme", writer.setU8(writer.context, "theme", prefs.theme_id))) return false;
     if (!wrote("phash_mode", writer.setU8(writer.context, "phash_mode", prefs.path_hash_mode))) return false;
-    if (!wrote("multi_ack", writer.setU8(writer.context, "multi_ack", prefs.multi_acks ? 1 : 0))) return false;
+    if (!wrote("multi_ack", writer.setU8(writer.context, "multi_ack", prefs.multi_acks))) return false;
     if (!wrote("buzz_q", writer.setU8(writer.context, "buzz_q", prefs.buzzer_quiet ? 1 : 0))) return false;
     if (!wrote("gps_en", writer.setU8(writer.context, "gps_en", prefs.gps_enabled ? 1 : 0))) return false;
     if (!wrote("gps_int", writer.setU16(writer.context, "gps_int", prefs.gps_interval))) return false;

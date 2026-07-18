@@ -41,6 +41,7 @@ TEST(PrefsDefaultsTest, RadioDefaultsStayNonTransmittingUntilConfigured) {
     EXPECT_EQ(0, prefs.cr);
     EXPECT_EQ(0, prefs.tx_power_dbm);
     EXPECT_EQ(0, prefs.duty_cycle);
+    EXPECT_FLOAT_EQ(0.0f, prefs.airtime_factor);
 }
 
 TEST(PrefsDefaultsTest, IdentityAndPrivacyDefaultsAreDeterministic) {
@@ -64,7 +65,7 @@ TEST(PrefsDefaultsTest, MeshBehaviorDefaultsMatchSafeCompanionSettings) {
     EXPECT_EQ(0x1E, prefs.autoadd_config);
     EXPECT_EQ(0, prefs.advert_interval_h);
     EXPECT_EQ(1, prefs.advert_type);
-    EXPECT_FALSE(prefs.multi_acks);
+    EXPECT_EQ(0, prefs.multi_acks);
     EXPECT_EQ(0, prefs.client_repeat);
     // Companion BLE is available immediately on first boot (PR #877).
     EXPECT_TRUE(prefs.ble_enabled);

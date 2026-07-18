@@ -4,9 +4,11 @@
 #include "prefs.h"
 #include "gps_demand.h"
 #include "prefs_write_policy.h"
+#include "mesh/airtime_policy.h"
 #include "diagnostics/log.h"
 #include <Preferences.h>
 #include <nvs.h>
+#include <cmath>
 
 namespace sigurdos {
 
@@ -123,6 +125,15 @@ bool prefs_load(NodePrefs& p) {
     p.rx_delay_base  = nvs.getFloat("rx_del", 10.0f);
     p.tx_delay_factor = nvs.getFloat("tx_del", 1.0f);
     p.direct_tx_delay_factor = nvs.getFloat("dir_tx", 1.0f);
+    // E-01: migrate the former duty-cycle-only representation once, while
+    // preserving the upstream companion airtime-factor semantic thereafter.
+    p.airtime_factor = nvs.isKey("air_fact")
+        ? nvs.getFloat("air_fact", 0.0f)
+        : mesh::airtime_policy::dutyCyclePercentToFactor(
+              nvs.getUChar("duty_cyc", 0));
+    if (!std::isfinite(p.airtime_factor) || p.airtime_factor < 0.0f) {
+        p.airtime_factor = 0.0f;
+    }
     p.rx_boosted_gain = nvs.getBool("rx_boost", false);
     p.duty_cycle = nvs.getUChar("duty_cyc", 0);
     p.advert_interval_h = nvs.getUShort("adv_dur", 0);
@@ -130,7 +141,7 @@ bool prefs_load(NodePrefs& p) {
     p.theme_id = nvs.getUChar("theme", 0);
     p.path_hash_mode = nvs.getUChar("phash_mode", 0);
     if (p.path_hash_mode > 2) p.path_hash_mode = 0;  // clamp (mode 3 reserved)
-    p.multi_acks = nvs.getBool("multi_ack", false);
+    p.multi_acks = nvs.getUChar("multi_ack", 0);
     p.buzzer_quiet = nvs.getBool("buzz_q", false);
     p.gps_enabled = nvs.getBool("gps_en", false);
     p.gps_interval = nvs.getUShort("gps_int", 5);

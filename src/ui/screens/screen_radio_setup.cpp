@@ -26,6 +26,7 @@
 #include "../../hal/prefs.h"
 #include "../../hal/radio_profiles.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../mesh/airtime_policy.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -703,7 +704,8 @@ void radio_setup_screen_show()
         np.rx_boosted_gain = s_rx_gain;
         np.multi_acks     = s_multi_ack;
         np.buzzer_quiet   = s_buzzer_quiet;
-        np.duty_cycle   = s_duty_cycle;
+        sigurdos::mesh::airtime_policy::setDutyCyclePercent(
+            np.airtime_factor, np.duty_cycle, s_duty_cycle);
         np.path_hash_mode = s_path_hash_mode;
         np.configured   = true;
         if (current_matches_profile(s_selected_profile)) {
@@ -711,7 +713,8 @@ void radio_setup_screen_show()
             np.rx_boosted_gain = s_rx_gain;
             np.multi_acks     = s_multi_ack;
             np.buzzer_quiet   = s_buzzer_quiet;
-            np.duty_cycle   = s_duty_cycle;
+            sigurdos::mesh::airtime_policy::setDutyCyclePercent(
+                np.airtime_factor, np.duty_cycle, s_duty_cycle);
             np.path_hash_mode = s_path_hash_mode;
         } else {
             const auto* matched = sigurdos::radio_profile_match(
@@ -721,7 +724,8 @@ void radio_setup_screen_show()
                 np.rx_boosted_gain = s_rx_gain;
                 np.multi_acks     = s_multi_ack;
                 np.buzzer_quiet   = s_buzzer_quiet;
-                np.duty_cycle   = s_duty_cycle;
+                sigurdos::mesh::airtime_policy::setDutyCyclePercent(
+                    np.airtime_factor, np.duty_cycle, s_duty_cycle);
                 np.path_hash_mode = s_path_hash_mode;
             } else {
                 sigurdos::radio_profile_set_custom(np);

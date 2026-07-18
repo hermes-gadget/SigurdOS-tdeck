@@ -19,6 +19,8 @@
 #include "sigurd_mesh_v2.h"
 #include "advert_blob.h"
 #include "path_codec.h"
+#include "airtime_policy.h"
+#include "telemetry_response_policy.h"
 #include "comms/companion_bridge.h"
 #include "comms/observed_ble_interface.h"
 #include "hal/tdeck_pins.h"
@@ -525,19 +527,22 @@ public:
     }
 
     void tuningParams(uint32_t& rx_delay_base_x1000,
-                      uint32_t& tx_delay_factor_x1000) const override {
+                      uint32_t& airtime_factor_x1000) const override {
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         rx_delay_base_x1000 = prefFloatToX1000(p.rx_delay_base);
-        tx_delay_factor_x1000 = prefFloatToX1000(p.tx_delay_factor);
+        airtime_factor_x1000 = prefFloatToX1000(p.airtime_factor);
     }
 
     bool setTuningParams(uint32_t rx_delay_base_x1000,
-                         uint32_t tx_delay_factor_x1000) override {
+                         uint32_t airtime_factor_x1000) override {
         if (rx_delay_base_x1000 > 20000) return false;
-        if (tx_delay_factor_x1000 > 2000) return false;
+        if (airtime_factor_x1000 > 99000) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         p.rx_delay_base = (float)rx_delay_base_x1000 / 1000.0f;
-        p.tx_delay_factor = (float)tx_delay_factor_x1000 / 1000.0f;
+        // CMD_SET_TUNING_PARAMS/C-01/E-01: field 2 is airtime_factor.
+        p.airtime_factor = (float)airtime_factor_x1000 / 1000.0f;
+        p.duty_cycle = sigurdos::mesh::airtime_policy::factorToDutyCyclePercent(
+            p.airtime_factor);
         sigurdos::prefs_set(p);
         return true;
     }
@@ -574,7 +579,8 @@ public:
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         if (op.telemetry_present) p.telemetry_modes = op.telemetry_modes;
         if (op.loc_policy_present) p.share_location = (op.advert_loc_policy != 0);
-        if (op.multi_acks_present) p.multi_acks = (op.multi_acks != 0);
+        // A-11: this is a retransmission count, not a boolean.
+        if (op.multi_acks_present) p.multi_acks = op.multi_acks;
         p.manual_add_contacts = op.manual_add_contacts;
         sigurdos::prefs_set(p);
     }
@@ -886,19 +892,17 @@ public:
         return r;
     }
     void selfTelemetry(uint8_t* out, size_t* out_len) const override {
-        // Build a minimal CayenneLPP-compatible telemetry blob.
-        // Format: [channel=2, type=2 (analog), value=uint16 LE * 100]
-        // This encodes battery voltage in hundredths of a volt.
         if (!out || !out_len) return;
-        uint16_t batt_mv = batteryMilliVolts();
-        if (batt_mv == 0) { *out_len = 0; return; }
-        // CayenneLPP analog output: battery voltage in 0.01V units
-        uint16_t val = (uint16_t)(batt_mv / 10);  // mV → 0.01V
-        out[0] = 2;        // channel 2 (battery)
-        out[1] = 2;        // type 2 = analog output (signed 0.01 units)
-        out[2] = (uint8_t)(val >> 8);
-        out[3] = (uint8_t)(val & 0xFF);
-        *out_len = 4;
+        // A-12: self queries are local and may include all fitted sensors.
+        const sigurdos::mesh::telemetry_policy::GpsSample gps{
+            sigurdos_gps_has_fix(), sigurdos_gps_latitude(),
+            sigurdos_gps_longitude(), sigurdos_gps_altitude_m()};
+        *out_len = sigurdos::mesh::telemetry_policy::appendPayload(
+            out, MAX_FRAME_SIZE,
+            sigurdos::mesh::telemetry_policy::PERM_BASE |
+                sigurdos::mesh::telemetry_policy::PERM_LOCATION |
+                sigurdos::mesh::telemetry_policy::PERM_ENVIRONMENT,
+            batteryMilliVolts(), gps);
     }
     int getCustomVars(char* out, size_t out_cap) const override {
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
