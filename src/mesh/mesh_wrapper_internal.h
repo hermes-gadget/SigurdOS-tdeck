@@ -42,12 +42,19 @@ struct MeshRadioDriverStats {
 };
 void meshRadioDriverStats(MeshRadioDriverStats& out);
 
-// Persist the current self identity (companion private-key import).
-void meshSaveSelfIdentity();
-
 // Persist a candidate private key before activating it in the running mesh.
 // On failure the current identity, contacts, and login sessions are unchanged.
 bool meshImportSelfIdentity(const uint8_t* private_key);
+
+// Reset bridge state derived from the previous identity after a successful
+// replacement. The import response itself remains deliverable.
+void companionAdapterIdentityChanged();
+
+// Transactionally replace the persisted default flood scope and activate it.
+bool meshConfigureDefaultFloodScope(const char* name, const uint8_t* key16);
+
+// Re-apply the persisted default after clearing a transient app override.
+bool meshRestoreDefaultFloodScope();
 
 // Append a self-sent message to the persistent message store.
 uint32_t meshStoreOutgoingMessage(const char* conversation, const char* text,

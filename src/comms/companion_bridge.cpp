@@ -434,6 +434,21 @@ bool CompanionBridge::notifySendConfirmed(uint32_t ack, uint32_t trip_time_ms)
     return _serial->writeFrame(frame, i) == (size_t)i;
 }
 
+void CompanionBridge::onIdentityChanged()
+{
+    // Any iterator/request/signing state may contain contact or signature
+    // material associated with the previous private key. Keep the transport
+    // connected so the import command can return OK, but force subsequent
+    // operations to start from a clean bridge session.
+    _contact_iter = -1;
+    _iter_filter_since = 0;
+    _most_recent_lastmod = 0;
+    _offline_len = 0;
+    _sign_active = false;
+    _sign_len = 0;
+    clearPendingBinary();
+}
+
 void CompanionBridge::writeSentOrErr(const CompanionSendResult& r)
 {
     if (!r.ok) {
@@ -978,6 +993,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     }
 
     if (cmd == CMD_EXPORT_PRIVATE_KEY) {
+#if SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT
         uint8_t key[64];
         if (!_host->exportPrivateKey(key)) {
             writeDisabledFrame();
@@ -986,12 +1002,19 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         _out_frame[0] = RESP_CODE_PRIVATE_KEY;
         std::memcpy(&_out_frame[1], key, sizeof(key));
         _serial->writeFrame(_out_frame, 1 + sizeof(key));
+#else
+        writeDisabledFrame();
+#endif
         return true;
     }
 
     if (cmd == CMD_IMPORT_PRIVATE_KEY && len >= 65) {
+#if SIGURDOS_ENABLE_PRIVATE_KEY_IMPORT
         if (_host->importPrivateKey(&_cmd_frame[1])) writeOKFrame();
         else writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+#else
+        writeDisabledFrame();
+#endif
         return true;
     }
 

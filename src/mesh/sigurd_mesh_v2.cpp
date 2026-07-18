@@ -16,6 +16,7 @@
 #include <cstdio>
 #include "mesh_wrapper.h"
 #include "hal/prefs.h"
+#include "hal/atomic_file.h"
 #include "hal/battery.h"
 #include "hal/gps.h"
 #include "hal/tdeck_board.h"
@@ -23,6 +24,29 @@
 
 namespace sigurdos {
 namespace mesh {
+
+    namespace {
+    struct AdvertBlobWriteContext {
+        const uint8_t* data;
+        size_t length;
+    };
+
+    bool writeAdvertBlob(sigurdos::storage::AtomicFileWriter& writer, void* raw) {
+        auto* ctx = static_cast<AdvertBlobWriteContext*>(raw);
+        return ctx && writer.write(ctx->data, ctx->length) == ctx->length;
+    }
+
+    bool validateAdvertBlob(sigurdos::storage::AtomicFileReader& reader, void* raw) {
+        auto* ctx = static_cast<AdvertBlobWriteContext*>(raw);
+        if (!ctx || reader.size() != ctx->length ||
+            !advertBlobLengthValid(ctx->length)) {
+            return false;
+        }
+        uint8_t check[SIGURDOS_ADVERT_BLOB_MAX_LEN];
+        return reader.read(check, ctx->length) == ctx->length &&
+               memcmp(check, ctx->data, ctx->length) == 0;
+    }
+    }  // namespace
 
     void SigurdMeshV2::pushSignalHistory(int rssi, float snr) {
         uint32_t now = 0;
@@ -592,6 +616,7 @@ namespace mesh {
     }
 
     void SigurdMeshV2::onContactOverwrite(const uint8_t* pub_key) {
+        deleteBlobByKey(pub_key, PUB_KEY_SIZE);
         sigurdos::mesh::mesh_v2_companion_contact_deleted_push(pub_key);
     }
 
@@ -1008,12 +1033,9 @@ namespace mesh {
             !makeAdvertBlobPath(key, key_len, path, sizeof(path))) {
             return false;
         }
-        File f = SPIFFS.open(path, "w");
-        if (!f) return false;
-        const size_t written = f.write(src_buf, (size_t)len);
-        f.close();
-        if (written != (size_t)len) {
-            SPIFFS.remove(path);
+        AdvertBlobWriteContext ctx{src_buf, (size_t)len};
+        if (!sigurdos::storage::atomicFileReplace(
+                path, writeAdvertBlob, &ctx, validateAdvertBlob, &ctx)) {
             return false;
         }
 
@@ -1021,6 +1043,28 @@ namespace mesh {
         if (makeAdvertBlobPath(key, key_len, legacy_path, sizeof(legacy_path), true) &&
             strcmp(path, legacy_path) != 0 && SPIFFS.exists(legacy_path)) {
             SPIFFS.remove(legacy_path);
+        }
+        return true;
+    }
+
+    bool SigurdMeshV2::deleteBlobByKey(const uint8_t key[], int key_len) {
+        char path[48];
+        char legacy_path[48];
+        if (!makeAdvertBlobPath(key, key_len, path, sizeof(path)) ||
+            !makeAdvertBlobPath(key, key_len, legacy_path,
+                                sizeof(legacy_path), true)) {
+            return false;
+        }
+        char temp_path[64];
+        if (sigurdos::storage::atomicFileTempPath(
+                path, temp_path, sizeof(temp_path)) && SPIFFS.exists(temp_path) &&
+            !SPIFFS.remove(temp_path)) {
+            return false;
+        }
+        if (SPIFFS.exists(path) && !SPIFFS.remove(path)) return false;
+        if (strcmp(path, legacy_path) != 0 && SPIFFS.exists(legacy_path) &&
+            !SPIFFS.remove(legacy_path)) {
+            return false;
         }
         return true;
     }
@@ -1034,9 +1078,8 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::allowPacketForward(const ::mesh::Packet* packet) {
+        (void)packet;
         if (sigurdos::prefs_get().client_repeat == 0) return false;
-        // Deny forward if packet matches a region with DENY_FLOOD flag
-        if (sigurdos::mesh::regionDeniesFlood(const_cast<::mesh::Packet*>(packet))) return false;
         return true;
     }
 
@@ -1213,7 +1256,19 @@ namespace mesh {
     bool SigurdMeshV2::removeContact(int idx) {
         ::ContactInfo tmp;
         if (!getContactByIdx((uint32_t)idx, tmp)) return false;
-        return BaseChatMesh::removeContact(tmp);
+        uint8_t blob[SIGURDOS_ADVERT_BLOB_MAX_LEN];
+        const int blob_len = getBlobByKey(tmp.id.pub_key, PUB_KEY_SIZE, blob);
+        if (!BaseChatMesh::removeContact(tmp)) return false;
+
+        if (!deleteBlobByKey(tmp.id.pub_key, PUB_KEY_SIZE) || !saveContacts()) {
+            const bool contact_restored = BaseChatMesh::addContact(tmp);
+            const bool blob_restored = blob_len <= 0 || putBlobByKey(
+                tmp.id.pub_key, PUB_KEY_SIZE, blob, blob_len);
+            if (contact_restored) saveContacts();
+            (void)blob_restored;
+            return false;
+        }
+        return true;
     }
 
     bool SigurdMeshV2::resetPathTo(int idx) {
@@ -1559,7 +1614,7 @@ namespace mesh {
     void SigurdMeshV2::setActiveScope(const uint8_t* key16) {
         if (key16) {
             memcpy(_active_scope.key, key16, 16);
-            _send_unscoped = false;
+            _scope_override_unscoped = false;
         } else {
             clearActiveScope();
         }

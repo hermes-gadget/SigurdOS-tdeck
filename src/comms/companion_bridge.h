@@ -248,7 +248,15 @@ struct CompanionPacketStats {
 };
 
 static constexpr size_t SIGURDOS_COMPANION_SIGNATURE_SIZE = 64;
-static constexpr size_t SIGURDOS_COMPANION_MAX_SIGN_DATA = 1024;
+static constexpr size_t SIGURDOS_COMPANION_MAX_SIGN_DATA = 8192;
+
+#ifndef SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT
+#define SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT 1
+#endif
+
+#ifndef SIGURDOS_ENABLE_PRIVATE_KEY_IMPORT
+#define SIGURDOS_ENABLE_PRIVATE_KEY_IMPORT 1
+#endif
 
 class CompanionBridgeHost {
 public:
@@ -404,6 +412,7 @@ public:
                             const uint8_t* payload,
                             size_t payload_len);
     bool notifySendConfirmed(uint32_t ack, uint32_t trip_time_ms);
+    void onIdentityChanged();
 
     // ── Async / live event pushes (called from the mesh fan-out) ──
     // A heard advert / contact update → app. is_new picks NEW_ADVERT vs ADVERT.

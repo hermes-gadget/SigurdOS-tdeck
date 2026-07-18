@@ -26,6 +26,7 @@
 #include "hal/wifi_ota.h"
 #include "sigurd_mesh_v2.h"
 #include "regions.h"
+#include "scope_key_hex.h"
 #include "utils/utf8_util.h"
 #include "../diagnostics/debug_cfg.h"
 #include <helpers/sensors/LPPDataHelpers.h>
@@ -313,8 +314,24 @@ void sigurdos::mesh::meshRadioDriverStats(sigurdos::mesh::MeshRadioDriverStats& 
     out.packets_recv_errors = radio_driver ? radio_driver->getPacketsRecvErrors() : 0;
 }
 
-void sigurdos::mesh::meshSaveSelfIdentity() {
-    if (g_mesh) saveIdentity(g_mesh->self_id);
+bool sigurdos::mesh::meshImportSelfIdentity(const uint8_t* private_key) {
+    if (!g_mesh || !private_key ||
+        !::mesh::LocalIdentity::validatePrivateKey(private_key)) {
+        return false;
+    }
+
+    ::mesh::LocalIdentity candidate;
+    candidate.readFrom(private_key, PRV_KEY_SIZE);
+
+    // Commit the durable identity first. Until this succeeds, no live mesh,
+    // login, contact, or bridge state is changed.
+    if (!saveIdentity(candidate)) return false;
+
+    g_mesh->invalidateAllLoginSessions();
+    g_mesh->self_id = candidate;
+    reloadContactsAfterIdentityChange();
+    companionAdapterIdentityChanged();
+    return true;
 }
 
 uint32_t sigurdos::mesh::meshStoreOutgoingMessage(const char* conversation, const char* text,
@@ -1652,7 +1669,13 @@ void loadChannels() {
 }
 
 bool saveState() {
-    return !g_mesh || saveIdentity(g_mesh->self_id);
+    const bool settings_saved = sigurdos::prefs_save(sigurdos::prefs_get());
+    const bool channels_saved = saveChannels();
+    const bool identity_saved = !g_mesh || saveIdentity(g_mesh->self_id);
+    const bool contacts_saved = saveContacts();
+    const bool regions_saved = !regionsPersistenceDirty() || regionsSave();
+    return settings_saved && channels_saved && identity_saved &&
+           contacts_saved && regions_saved;
 }
 
 // ── Contact persistence ─────────────────────────
@@ -1758,16 +1781,9 @@ void shutdown()
             // Settings are normally committed on every change. Re-commit the
             // cached snapshot here so the orderly shutdown has a checked NVS
             // checkpoint alongside the mesh's SPIFFS-backed state.
-            const bool settings_saved = sigurdos::prefs_save(sigurdos::prefs_get());
-            const bool channels_saved = saveChannels();
-            const bool identity_saved = saveState();
-            const bool contacts_saved = saveContacts();
-            const bool saved = settings_saved && channels_saved &&
-                               identity_saved && contacts_saved;
+            const bool saved = saveState();
             if (!saved) {
-                Serial.printf(
-                    "[power] persistence failed: prefs=%d channels=%d identity=%d contacts=%d\n",
-                    settings_saved, channels_saved, identity_saved, contacts_saved);
+                Serial.println("[power] coordinated persistence checkpoint failed");
             }
             // The stores close/commit synchronously; retain a short settling
             // interval before changing peripheral power domains.
@@ -2164,13 +2180,7 @@ bool importIdentity(const char* hex_privkey) {
     uint8_t buf[PRV_KEY_SIZE];
     int n = SigurdMeshV2::hexToBytes(hex_privkey, buf, sizeof(buf));
     if (n != PRV_KEY_SIZE) return false;
-    // Validate the private key using MeshCore's validation (ECDH check)
-    if (!::mesh::LocalIdentity::validatePrivateKey(buf)) return false;
-    // Re-key the node — readFrom with PRV_KEY_SIZE will derive pub_key from prv_key
-    g_mesh->self_id.readFrom(buf, PRV_KEY_SIZE);
-    // Persist the new identity to SPIFFS
-    saveIdentity(g_mesh->self_id);
-    return true;
+    return meshImportSelfIdentity(buf);
 }
 
 // ── URI import helpers ────────────────────────
@@ -2420,32 +2430,108 @@ bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz)
 // Core implementations are in regions.cpp.
 // mesh_wrapper provides g_mesh-dependent extras.
 
-bool setActiveRegion(const char* name) {
-    // Update NodePrefs + cache (via regions module)
-    sigurdos::mesh::setActiveRegionName(name);
+static bool applyScopeToMesh(const char* name) {
+    if (!g_mesh) return true;
+    if (!name || !name[0]) {
+        g_mesh->clearActiveScope();
+        return true;
+    }
+    ::RegionEntry* region = sigurdos::mesh::findRegion(name);
+    RegionMap* map = sigurdos::mesh::getRegionMap();
+    if (!region || !map) return false;
+    TransportKey keys[1];
+    if (map->getTransportKeysFor(*region, keys, 1) != 1 || keys[0].isNull()) {
+        return false;
+    }
+    g_mesh->setActiveScope(keys[0].key);
+    return true;
+}
 
-    // Propagate the TransportKey to the mesh instance
-    if (g_mesh) {
-        if (name && name[0]) {
-            ::RegionEntry* r = sigurdos::mesh::findRegion(name);
-            if (r) {
-                RegionMap* map = sigurdos::mesh::getRegionMap();
-                if (map) {
-                    TransportKey keys[1];
-                    int nk = map->getTransportKeysFor(*r, keys, 1);
-                    if (nk > 0) {
-                        g_mesh->setActiveScope(keys[0].key);
-                        return true;
-                    }
-                }
+bool meshRestoreDefaultFloodScope() {
+    return applyScopeToMesh(sigurdos::mesh::getDefaultScopeName());
+}
+
+bool meshConfigureDefaultFloodScope(const char* name, const uint8_t* key16) {
+    const char* normalized = name ? name : "";
+    const sigurdos::NodePrefs previous_prefs = sigurdos::prefs_get();
+    if (strlen(normalized) >= sizeof(previous_prefs.active_region)) {
+        return false;
+    }
+
+    char previous_default[31]{};
+    const char* old_default = sigurdos::mesh::getDefaultScopeName();
+    if (old_default) {
+        strncpy(previous_default, old_default, sizeof(previous_default) - 1);
+    }
+
+    if (!normalized[0]) {
+        if (!sigurdos::mesh::setDefaultScope(nullptr) ||
+            !sigurdos::mesh::setActiveRegionNameWithKey("", nullptr)) {
+            sigurdos::prefs_set(previous_prefs);
+            sigurdos::mesh::setDefaultScope(previous_default);
+            applyScopeToMesh(previous_default);
+            return false;
+        }
+        return applyScopeToMesh(nullptr);
+    }
+
+    ::RegionEntry* region = sigurdos::mesh::findRegion(normalized);
+    const bool created = region == nullptr;
+    uint8_t previous_key[16]{};
+    const bool had_previous_key = !created && normalized[0] == '$' &&
+        sigurdos::mesh::getPrivateRegionKey(normalized, previous_key);
+
+    if (normalized[0] == '$') {
+        if (created) {
+            if (!key16) return false;
+            region = sigurdos::mesh::addPrivateRegion(normalized, key16);
+        } else if (key16 && !sigurdos::mesh::setPrivateRegionKey(normalized, key16)) {
+            return false;
+        }
+    } else {
+        if (created) region = sigurdos::mesh::addRegion(normalized);
+        if (region && key16) {
+            RegionMap* map = sigurdos::mesh::getRegionMap();
+            TransportKey canonical{};
+            if (!map || map->getTransportKeysFor(*region, &canonical, 1) != 1 ||
+                memcmp(canonical.key, key16, sizeof(canonical.key)) != 0) {
+                if (created) sigurdos::mesh::removeRegion(normalized);
+                return false;
             }
-            // Region name saved but key not in store — clear scope
-            g_mesh->clearActiveScope();
-        } else {
-            g_mesh->clearActiveScope();
         }
     }
-    return true;
+    if (!region) return false;
+
+    char key_hex[33]{};
+    const char* persisted_key = nullptr;
+    if (normalized[0] == '$') {
+        uint8_t resolved[16];
+        if (key16) memcpy(resolved, key16, sizeof(resolved));
+        else if (!sigurdos::mesh::getPrivateRegionKey(normalized, resolved)) return false;
+        scopeKeyHexEncode(resolved, key_hex);
+        persisted_key = key_hex;
+    }
+
+    if (sigurdos::mesh::setDefaultScope(normalized) &&
+        sigurdos::mesh::setActiveRegionNameWithKey(normalized, persisted_key) &&
+        applyScopeToMesh(normalized)) {
+        return true;
+    }
+
+    // Best-effort rollback leaves the previously committed default active.
+    sigurdos::prefs_set(previous_prefs);
+    sigurdos::mesh::setDefaultScope(previous_default);
+    if (created) {
+        sigurdos::mesh::removeRegion(normalized);
+    } else if (had_previous_key) {
+        sigurdos::mesh::setPrivateRegionKey(normalized, previous_key);
+    }
+    applyScopeToMesh(previous_default);
+    return false;
+}
+
+bool setActiveRegion(const char* name) {
+    return meshConfigureDefaultFloodScope(name, nullptr);
 }
 
 void setSendUnscopedOnce(bool v) {

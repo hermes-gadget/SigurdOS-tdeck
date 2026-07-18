@@ -3,6 +3,7 @@
 
 #include "regions.h"
 #include "persistence_store.h"
+#include "scope_key_hex.h"
 #include "../hal/prefs.h"
 #include <SPIFFS.h>
 #include <cstring>
@@ -77,13 +78,37 @@ bool regionsLoad() {
         regionsSave();
     }
 
-    // Restore active scope from NodePrefs
+    // RegionMap's default is the canonical persisted scope. Migrate the older
+    // active_region-only model once, then keep the compatibility preference in
+    // lockstep with the canonical name.
     NodePrefs np = prefs_get();
-    if (np.active_region[0]) {
-        strncpy(g_active_name, np.active_region, sizeof(g_active_name) - 1);
+    ::RegionEntry* canonical = g_region_map->getDefaultRegion();
+    if (!canonical && np.active_region[0]) {
+        canonical = g_region_map->findByName(np.active_region);
+        if (canonical) {
+            g_region_map->setDefaultRegion(canonical);
+            regionsSave();
+        }
+    }
+
+    if (canonical) {
+        strncpy(g_active_name, canonical->name, sizeof(g_active_name) - 1);
         g_active_name[sizeof(g_active_name) - 1] = '\0';
     } else {
         g_active_name[0] = '\0';
+    }
+
+    if (canonical && canonical->name[0] == '$' &&
+        strlen(np.default_scope_key_hex) == SCOPE_KEY_HEX_LEN) {
+        uint8_t key[16];
+        scopeKeyHexDecode(np.default_scope_key_hex, key);
+        installPrivateRegionKey(*canonical, key);
+    }
+
+    if (strcmp(np.active_region, g_active_name) != 0) {
+        strncpy(np.active_region, g_active_name, sizeof(np.active_region) - 1);
+        np.active_region[sizeof(np.active_region) - 1] = '\0';
+        prefs_set(np);
     }
 
     return ok;
@@ -317,15 +342,8 @@ bool setDefaultScope(const char* name) {
         g_region_map->setDefaultRegion(def);
     }
 
-    // Persist and discard an app-supplied key if it belonged to a different
-    // default name. Companion SET writes the replacement key immediately.
-    if (!regionsSave()) return false;
-    if (changed) {
-        NodePrefs prefs = prefs_get();
-        prefs.default_scope_key_hex[0] = '\0';
-        if (!prefs_set(prefs)) return false;
-    }
-    return true;
+    (void)changed;
+    return regionsSave();
 }
 
 // ── Active send scope ───────────────────────────────────

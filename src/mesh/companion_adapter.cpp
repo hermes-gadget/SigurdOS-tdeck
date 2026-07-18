@@ -46,7 +46,6 @@ using sigurdos::mesh::meshRtcTimeUnique;
 using sigurdos::mesh::meshRadioTxAllowed;
 using sigurdos::mesh::meshQueuePushOutgoing;
 using sigurdos::mesh::meshStoreOutgoingMessage;
-using sigurdos::mesh::meshSaveSelfIdentity;
 using sigurdos::mesh::formatDmConversation;
 
 // Local shorthand for the wrapper-owned mesh instance (was the file-scope
@@ -554,20 +553,7 @@ public:
     }
 
     bool importPrivateKey(const uint8_t* key64) override {
-        if (!mesh_ptr() || !key64) return false;
-        if (!::mesh::LocalIdentity::validatePrivateKey(key64)) return false;
-        // Stop keep-alives before replacing the identity or contact table.
-        // Clearing only the UI login entries leaves BaseChatMesh connection
-        // slots alive with secrets derived from the previous identity.
-        mesh_ptr()->invalidateAllLoginSessions();
-        mesh_ptr()->self_id.readFrom(key64, PRV_KEY_SIZE);
-        meshSaveSelfIdentity();
-        // Invalidate ECDH shared secrets derived from the old identity and
-        // reload persisted contacts with the new identity (matches upstream
-        // MyMesh::CMD_IMPORT_PRIVATE_KEY — resetContacts + loadContacts).
-        mesh_ptr()->resetAllContacts();
-        sigurdos::mesh::loadContacts();
-        return true;
+        return sigurdos::mesh::meshImportSelfIdentity(key64);
     }
 
     void setOtherParams(const CompanionOtherParams& op) override {
@@ -636,9 +622,14 @@ public:
         if (!mesh_ptr() || !pub_key) return false;
         ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return false;
-        bool ok = mesh_ptr()->BaseChatMesh::removeContact(*c);
-        if (ok) sigurdos::mesh::saveContacts();
-        return ok;
+        for (int i = 0; i < mesh_ptr()->getNumContacts(); ++i) {
+            ::ContactInfo candidate;
+            if (mesh_ptr()->getContactByIdx((uint32_t)i, candidate) &&
+                memcmp(candidate.id.pub_key, pub_key, PUB_KEY_SIZE) == 0) {
+                return mesh_ptr()->removeContact(i);
+            }
+        }
+        return false;
     }
     bool resetPathByPubKey(const uint8_t* pub_key) override {
         if (!mesh_ptr() || !pub_key) return false;
@@ -677,8 +668,6 @@ public:
     // ── System ───────────────────────────────────────────────
     void reboot() override {
         sigurdos::mesh::saveState();
-        sigurdos::mesh::saveContacts();
-        sigurdos::mesh::saveChannels();
         delay(200);
         ESP.restart();
     }
@@ -730,7 +719,7 @@ public:
 
     // ── Flood scope (companion regions) ──────────────────────
     bool getDefaultFloodScope(char* name_out, uint8_t* key_out) const override {
-        const char* active = sigurdos::mesh::getActiveRegion();
+        const char* active = sigurdos::mesh::getDefaultScopeName();
         if (!active || !active[0]) return false;
 
         RegionEntry* r = sigurdos::mesh::findRegion(active);
@@ -745,49 +734,24 @@ public:
 
         if (name_out) { memset(name_out, 0, 31); strncpy(name_out, r->name, 30); }
         if (key_out) {
-            // Check if a persisted private key exists (for $private scopes)
-            const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-            if (p.default_scope_key_hex[0] != '\0' && active[0] == '$') {
-                sigurdos::mesh::scopeKeyHexDecode(p.default_scope_key_hex, key_out);
-            } else {
-                memcpy(key_out, keys[0].key, 16);
-            }
+            memcpy(key_out, keys[0].key, 16);
         }
         return true;
     }
     bool setDefaultFloodScope(const char* name, const uint8_t* key) override {
-        if (!name || !name[0]) {
-            return sigurdos::mesh::setActiveRegion("");
-        }
-
-        // Ensure the region exists in RegionMap
-        RegionEntry* r = sigurdos::mesh::findRegion(name);
-        if (!r) {
-            r = sigurdos::mesh::addRegion(name);
-        }
-        if (!r) return false;
-
-        // If a key was provided for a $private region, persist it in NVS
-        // so it survives reboot. The companion app provides it again on connect.
-        if (key && name[0] == '$') {
-            sigurdos::NodePrefs p = sigurdos::prefs_get();
-            sigurdos::mesh::scopeKeyHexEncode(key, p.default_scope_key_hex);
-            if (!sigurdos::prefs_set(p)) return false;
-        } else if (key) {
-            // Public or #hashtag key — clear any persisted $private key
-            sigurdos::NodePrefs p = sigurdos::prefs_get();
-            p.default_scope_key_hex[0] = '\0';
-            if (!sigurdos::prefs_set(p)) return false;
-        }
-
-        return sigurdos::mesh::setActiveRegion(name);
+        return sigurdos::mesh::meshConfigureDefaultFloodScope(name, key);
     }
     bool setFloodScopeOverride(const uint8_t* key, bool unscoped) override {
         if (!mesh_ptr()) return false;
-        if (unscoped) mesh_ptr()->clearActiveScope();
-        else if (key) mesh_ptr()->setActiveScope(key);
-        else mesh_ptr()->clearActiveScope();
-        return true;
+        if (unscoped) {
+            mesh_ptr()->setScopeOverrideUnscoped(true);
+            return true;
+        }
+        if (key) {
+            mesh_ptr()->setActiveScope(key);
+            return true;
+        }
+        return sigurdos::mesh::meshRestoreDefaultFloodScope();
     }
 
     // ── Async requests ───────────────────────────────────────
@@ -1081,6 +1045,13 @@ void sigurdos::mesh::mesh_v2_notify_send_confirmed(uint32_t ack, uint32_t trip_t
     // report an ACK (it is created lazily on the first incoming/companion path).
     if (g_companion_bridge_ptr) {
         g_companion_bridge_ptr->notifySendConfirmed(ack, trip_time_ms);
+    }
+}
+
+void sigurdos::mesh::companionAdapterIdentityChanged()
+{
+    if (g_companion_bridge_ptr) {
+        g_companion_bridge_ptr->onIdentityChanged();
     }
 }
 

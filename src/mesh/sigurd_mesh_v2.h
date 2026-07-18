@@ -433,6 +433,8 @@ public:
     bool putBlobByKey(const uint8_t key[], int key_len,
                        const uint8_t src_buf[], int len) override;
 
+    bool deleteBlobByKey(const uint8_t key[], int key_len);
+
     int exportContactBounded(const ::ContactInfo& contact,
                              uint8_t* out, size_t out_cap);
 
@@ -768,12 +770,16 @@ public:
     /// Clear the active flood scope — all floods become unscoped.
     void clearActiveScope() {
         memset(_active_scope.key, 0, sizeof(_active_scope.key));
-        _send_unscoped = false;
+        _scope_override_unscoped = false;
+    }
+
+    void setScopeOverrideUnscoped(bool value) {
+        _scope_override_unscoped = value;
     }
 
     /// Temporarily send the next flood unscoped (resets after one use).
     void setSendUnscopedOnce(bool v) {
-        _send_unscoped = v;
+        _send_unscoped_once = v;
     }
 
     /// Returns true if no active scope is set.
@@ -794,8 +800,9 @@ private:
         // Multibyte support: originate with the configured path hash size
         // (mode 0/1/2 → 1/2/3 bytes), matching the MeshCore companion firmware.
         uint8_t hash_size = pathHashSize();
-        if (_send_unscoped || _active_scope.isNull()) {
-            _send_unscoped = false;  // one-shot: reset after use
+        if (_scope_override_unscoped || _send_unscoped_once ||
+            _active_scope.isNull()) {
+            _send_unscoped_once = false;
             sendFlood(pkt, delay_millis, hash_size);
             return;
         }
@@ -814,7 +821,8 @@ private:
     }
 
     TransportKey _active_scope;
-    bool _send_unscoped = false;
+    bool _scope_override_unscoped = false;
+    bool _send_unscoped_once = false;
 };
 
 } // namespace mesh

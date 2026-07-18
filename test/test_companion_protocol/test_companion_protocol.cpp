@@ -1354,6 +1354,23 @@ TEST_F(CompanionProtocolTest, SignFlow) {
     EXPECT_EQ(host.sign_len_seen, 4);
 }
 
+TEST_F(CompanionProtocolTest, IdentityChangeClearsSigningSession) {
+    uint8_t start[1] = { cc::CMD_SIGN_START };
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+
+    serial.writes.clear();
+    uint8_t data[2] = { cc::CMD_SIGN_DATA, 'x' };
+    ASSERT_TRUE(bridge.handleFrame(data, sizeof(data)));
+
+    bridge.onIdentityChanged();
+    serial.writes.clear();
+    uint8_t finish[1] = { cc::CMD_SIGN_FINISH };
+    ASSERT_TRUE(bridge.handleFrame(finish, sizeof(finish)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_BAD_STATE);
+}
+
 TEST_F(CompanionProtocolTest, SignDataBeforeStartFails) {
     uint8_t data[3] = { cc::CMD_SIGN_DATA, 'x', 'y' };
     ASSERT_TRUE(bridge.handleFrame(data, sizeof(data)));

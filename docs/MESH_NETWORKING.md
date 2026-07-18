@@ -635,7 +635,9 @@ one-time upgrade migration.
 
 ### saveState()
 
-`saves State()` (`mesh_wrapper.cpp:602`) is a convenience function that persists the identity key to SPIFFS. Called periodically and on critical events to ensure the node's identity is preserved.
+`saveState()` is the coordinated persistence checkpoint. It commits preferences,
+channels, identity, contacts, and any dirty region map state, and reports failure
+if any store does not commit.
 
 ---
 
