@@ -52,8 +52,8 @@ listener. Transport selection remains compile-time, matching the single-client
 upstream architecture.
 
 The 2026-07-18 release build used 128,944 of 327,680 bytes of internal RAM
-(39.4%) and 2,622,217 of 6,553,600 bytes of application flash (40.0%). That
-leaves 198,736 bytes of internal RAM and 3,931,383 bytes of application flash.
+(39.4%) and 2,621,781 of 6,553,600 bytes of application flash (40.0%). That
+leaves 198,736 bytes of internal RAM and 3,931,819 bytes of application flash.
 The 8 KiB signing accumulator is allocated from PSRAM first, with internal RAM
 as a fallback, and exists only during an active signing transaction. Runtime
 PSRAM headroom is workload-dependent because the display and map caches also

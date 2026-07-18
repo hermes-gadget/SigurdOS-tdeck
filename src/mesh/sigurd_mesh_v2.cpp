@@ -1538,27 +1538,6 @@ namespace mesh {
         if (pkt) sendFlood(pkt, 0, pathHashSize());
     }
 
-    bool SigurdMeshV2::broadcastAdvertScoped(const char* name, uint8_t adv_type) {
-        AdvertDataBuilder builder(adv_type, name);
-        uint8_t app[MAX_ADVERT_DATA_SIZE];
-        uint8_t app_len = builder.encodeTo(app);
-        ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
-        if (!pkt) return false;
-        sendScopedImpl(pkt, 0);
-        return true;
-    }
-
-    bool SigurdMeshV2::broadcastAdvertScoped(const char* name, double lat, double lon,
-                                             uint8_t adv_type) {
-        AdvertDataBuilder builder(adv_type, name, lat, lon);
-        uint8_t app[MAX_ADVERT_DATA_SIZE];
-        uint8_t app_len = builder.encodeTo(app);
-        ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
-        if (!pkt) return false;
-        sendScopedImpl(pkt, 0);
-        return true;
-    }
-
     float SigurdMeshV2::getPacketSNR() const {
         return _radio ? _radio->getLastSNR() : 0.0f;
     }

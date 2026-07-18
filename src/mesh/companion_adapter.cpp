@@ -407,17 +407,8 @@ public:
     bool sendAdvert(bool flood) override {
         if (!meshRadioTxAllowed()) return false;
         if (flood) {
-            if (!mesh_ptr()) return false;
-            const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-            if (p.advert_loc_policy != 0 && sigurdos_gps_has_fix()) {
-                return mesh_ptr()->broadcastAdvertScoped(meshOwnName(),
-                    sigurdos_gps_latitude(), sigurdos_gps_longitude(), p.advert_type);
-            } else if (p.advert_loc_policy != 0 && p.advert_location_valid) {
-                return mesh_ptr()->broadcastAdvertScoped(meshOwnName(),
-                    (double)p.advert_lat / 1000000.0,
-                    (double)p.advert_lon / 1000000.0, p.advert_type);
-            }
-            return mesh_ptr()->broadcastAdvertScoped(meshOwnName(), p.advert_type);
+            // Flood-scoped advert via existing broadcast path
+            return sigurdos::mesh::sendAdvert();
         }
         // Zero-hop self advert — the upstream companion semantics
         if (!mesh_ptr()) return false;

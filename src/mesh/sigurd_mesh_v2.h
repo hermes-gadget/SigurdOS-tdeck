@@ -696,13 +696,6 @@ public:
     void broadcastAdvert(const char* name, double lat, double lon,
                          uint8_t adv_type = ADV_TYPE_CHAT);
 
-    // App-requested flood adverts follow the companion scope. Autonomous
-    // discovery adverts above deliberately remain unscoped.
-    bool broadcastAdvertScoped(const char* name, uint8_t adv_type = ADV_TYPE_CHAT);
-    bool broadcastAdvertScoped(const char* name, double lat, double lon,
-                               uint8_t adv_type = ADV_TYPE_CHAT);
-
-
     float getPacketSNR() const;
 
 
