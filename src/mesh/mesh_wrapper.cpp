@@ -1164,21 +1164,27 @@ class ScopedFloodScope {
 public:
     ScopedFloodScope(mesh_impl_t* mesh, const uint8_t* key16) : _mesh(mesh) {
         if (!_mesh) return;
-        _had_prev = _mesh->copyActiveScope(_prev);
-        if (key16) _mesh->setActiveScope(key16);
-        else       _mesh->clearActiveScope();
+        _previous_mode = _mesh->floodScopeOverrideMode();
+        _mesh->copyFloodScopeOverride(_previous_key);
+        _mesh->setFloodScopeOverride(key16, key16 == nullptr);
     }
 
     ~ScopedFloodScope() {
         if (!_mesh) return;
-        if (_had_prev) _mesh->setActiveScope(_prev);
-        else           _mesh->clearActiveScope();
+        if (_previous_mode == FloodScopeState::OverrideMode::Scoped) {
+            _mesh->setFloodScopeOverride(_previous_key, false);
+        } else if (_previous_mode == FloodScopeState::OverrideMode::Unscoped) {
+            _mesh->setFloodScopeOverride(nullptr, true);
+        } else {
+            _mesh->setFloodScopeOverride(nullptr, false);
+        }
     }
 
 private:
     mesh_impl_t* _mesh = nullptr;
-    uint8_t _prev[16]{};
-    bool _had_prev = false;
+    uint8_t _previous_key[16]{};
+    FloodScopeState::OverrideMode _previous_mode =
+        FloodScopeState::OverrideMode::Default;
 };
 
 uint32_t sendMessage(const char* dest, const char* text) {
@@ -1456,7 +1462,7 @@ float getSignalHistorySNR(int idx) {
     return g_mesh ? g_mesh->getSignalHistorySNR(idx) : 0;
 }
 
-bool sendAdvert() {
+bool sendAdvert(bool apply_default_scope) {
     // Rate limit: reject calls within 10 seconds of the last successful advert.
     // The UI also enforces this via button cooldown, but programmatic
     // callers (e.g. Terminal's `advert` command) bypass that layer.
@@ -1481,14 +1487,14 @@ bool sendAdvert() {
     if (use_live_location) {
         g_mesh->broadcastAdvert(own_name,
             sigurdos_gps_latitude(), sigurdos_gps_longitude(),
-            p.advert_type);
+            p.advert_type, apply_default_scope);
     } else if (use_manual_location) {
         g_mesh->broadcastAdvert(own_name,
             (float)p.advert_lat / 1000000.0f,
             (float)p.advert_lon / 1000000.0f,
-            p.advert_type);
+            p.advert_type, apply_default_scope);
     } else {
-        g_mesh->broadcastAdvert(own_name, p.advert_type);
+        g_mesh->broadcastAdvert(own_name, p.advert_type, apply_default_scope);
     }
 
     last_advert_success = true;
@@ -2422,7 +2428,7 @@ bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz)
 
 bool setActiveRegion(const char* name) {
     // Update NodePrefs + cache (via regions module)
-    sigurdos::mesh::setActiveRegionName(name);
+    if (!sigurdos::mesh::setActiveRegionName(name)) return false;
 
     // Propagate the TransportKey to the mesh instance
     if (g_mesh) {

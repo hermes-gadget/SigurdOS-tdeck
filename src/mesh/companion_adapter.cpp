@@ -410,8 +410,9 @@ public:
     bool sendAdvert(bool flood) override {
         if (!meshRadioTxAllowed()) return false;
         if (flood) {
-            // Flood-scoped advert via existing broadcast path
-            return sigurdos::mesh::sendAdvert();
+            // Companion-requested flood adverts use the configured default
+            // scope. Autonomous discovery adverts remain wildcard/unscoped.
+            return sigurdos::mesh::sendAdvert(true);
         }
         // Zero-hop self advert — the upstream companion semantics
         if (!mesh_ptr()) return false;
@@ -757,36 +758,60 @@ public:
     }
     bool setDefaultFloodScope(const char* name, const uint8_t* key) override {
         if (!name || !name[0]) {
-            return sigurdos::mesh::setActiveRegion("");
+            if (!sigurdos::mesh::setActiveRegionNameWithKey("", nullptr)) {
+                return false;
+            }
+            if (mesh_ptr()) mesh_ptr()->clearActiveScope();
+            return true;
         }
 
-        // Ensure the region exists in RegionMap
         RegionEntry* r = sigurdos::mesh::findRegion(name);
-        if (!r) {
-            r = sigurdos::mesh::addRegion(name);
+        if (name[0] == '$') {
+            if (!key) return false;
+
+            uint8_t previous_key[16]{};
+            const bool existed = r != nullptr;
+            const bool had_previous_key = existed &&
+                sigurdos::mesh::getPrivateRegionKey(name, previous_key);
+
+            if (!r) {
+                r = sigurdos::mesh::addPrivateRegion(name, key);
+            } else if (!sigurdos::mesh::installPrivateRegionKey(*r, key)) {
+                return false;
+            }
+            if (!r) return false;
+
+            char key_hex[33];
+            sigurdos::mesh::scopeKeyHexEncode(key, key_hex);
+            if (!sigurdos::mesh::setActiveRegionNameWithKey(name, key_hex)) {
+                if (!existed) {
+                    sigurdos::mesh::removeRegion(name);
+                } else if (had_previous_key) {
+                    sigurdos::mesh::installPrivateRegionKey(*r, previous_key);
+                } else {
+                    sigurdos::mesh::removePrivateRegionKey(*r);
+                }
+                return false;
+            }
+            if (mesh_ptr()) mesh_ptr()->setActiveScope(key);
+            return true;
         }
+
+        if (!r) r = sigurdos::mesh::addRegion(name);
         if (!r) return false;
-
-        // If a key was provided for a $private region, persist it in NVS
-        // so it survives reboot. The companion app provides it again on connect.
-        if (key && name[0] == '$') {
-            sigurdos::NodePrefs p = sigurdos::prefs_get();
-            sigurdos::mesh::scopeKeyHexEncode(key, p.default_scope_key_hex);
-            if (!sigurdos::prefs_set(p)) return false;
-        } else if (key) {
-            // Public or #hashtag key — clear any persisted $private key
-            sigurdos::NodePrefs p = sigurdos::prefs_get();
-            p.default_scope_key_hex[0] = '\0';
-            if (!sigurdos::prefs_set(p)) return false;
+        RegionMap* map = sigurdos::mesh::getRegionMap();
+        TransportKey keys[1];
+        const int count = map ? map->getTransportKeysFor(*r, keys, 1) : 0;
+        if (count <= 0 ||
+            !sigurdos::mesh::setActiveRegionNameWithKey(name, nullptr)) {
+            return false;
         }
-
-        return sigurdos::mesh::setActiveRegion(name);
+        if (mesh_ptr()) mesh_ptr()->setActiveScope(keys[0].key);
+        return true;
     }
     bool setFloodScopeOverride(const uint8_t* key, bool unscoped) override {
         if (!mesh_ptr()) return false;
-        if (unscoped) mesh_ptr()->clearActiveScope();
-        else if (key) mesh_ptr()->setActiveScope(key);
-        else mesh_ptr()->clearActiveScope();
+        mesh_ptr()->setFloodScopeOverride(key, unscoped);
         return true;
     }
 

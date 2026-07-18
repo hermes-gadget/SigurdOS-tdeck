@@ -11,6 +11,8 @@
 #include <helpers/esp32/SerialBLEInterface.h>
 #include "ble_frame_queue.h"
 #include "ble_init_gate.h"
+#include "ble_task_mutex.h"
+#include "ble_auth_watchdog.h"
 
 namespace sigurdos {
 namespace comms {
@@ -28,6 +30,7 @@ struct BleSerialObserverStats {
     uint32_t mtu_change_count = 0;
     uint32_t auth_success_count = 0;
     uint32_t auth_failure_count = 0;
+    uint32_t auth_timeout_count = 0;
     uint32_t ble_write_count = 0;
     uint32_t ble_write_drop_count = 0;
     uint32_t rx_frame_count = 0;
@@ -45,11 +48,12 @@ public:
     void begin(const char* prefix, char* name, uint32_t pin_code);
     void enable() override;
     void disable() override;
+    bool isEnabled() const override;
     bool isConnected() const override;
     size_t writeFrame(const uint8_t src[], size_t len) override;
     size_t checkRecvFrame(uint8_t dest[]) override;
 
-    BleSerialObserverStats stats() const { return _stats; }
+    BleSerialObserverStats stats() const;
 
 protected:
     uint32_t onPassKeyRequest() override;
@@ -72,6 +76,9 @@ private:
     char _configured_prefix[16]{};
     char _configured_name[32]{};
     uint32_t _configured_pin = 0;
+    mutable BleTaskMutex _task_mutex;
+    BleAuthWatchdog _auth_watchdog;
+    BLEServer* _connected_server = nullptr;
 
     // NET-002 (#813): the base class receive queue is written from the
     // Bluedroid host task (onWrite) and drained from the app loop task

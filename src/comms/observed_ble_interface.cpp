@@ -12,7 +12,7 @@ namespace comms {
 
 void ObservedSerialBLEInterface::refreshConnectionState()
 {
-    _stats.enabled = isEnabled();
+    _stats.enabled = SerialBLEInterface::isEnabled();
     _stats.connected = SerialBLEInterface::isConnected();
     _stats.advertising_expected = _stats.enabled && !_stats.connected;
 }
@@ -20,6 +20,7 @@ void ObservedSerialBLEInterface::refreshConnectionState()
 void ObservedSerialBLEInterface::configure(const char* prefix, const char* name,
                                            uint32_t pin_code)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     if (_init_gate.initialized()) return;
     if (!prefix) prefix = "";
     if (!name) name = "";
@@ -36,6 +37,7 @@ void ObservedSerialBLEInterface::configure(const char* prefix, const char* name,
 
 bool ObservedSerialBLEInterface::initializeConfigured()
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     return _init_gate.ensureInitialized([this] {
         char mutable_name[sizeof(_configured_name)]{};
         std::memcpy(mutable_name, _configured_name, sizeof(mutable_name));
@@ -51,12 +53,14 @@ bool ObservedSerialBLEInterface::initializeConfigured()
 
 void ObservedSerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     configure(prefix, name, pin_code);
     initializeConfigured();
 }
 
 void ObservedSerialBLEInterface::enable()
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     if (!initializeConfigured()) return;
     SerialBLEInterface::enable();  // also clears the (now unused) base buffers
     _rx_queue.clear();
@@ -66,6 +70,8 @@ void ObservedSerialBLEInterface::enable()
 
 void ObservedSerialBLEInterface::disable()
 {
+    BleTaskMutex::Guard guard(_task_mutex);
+    _auth_watchdog.cancel();
     if (!_init_gate.initialized()) {
         _rx_queue.clear();
         _stats.disable_count++;
@@ -80,11 +86,25 @@ void ObservedSerialBLEInterface::disable()
 
 bool ObservedSerialBLEInterface::isConnected() const
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     return _init_gate.initialized() && SerialBLEInterface::isConnected();
+}
+
+bool ObservedSerialBLEInterface::isEnabled() const
+{
+    BleTaskMutex::Guard guard(_task_mutex);
+    return _init_gate.initialized() && SerialBLEInterface::isEnabled();
+}
+
+BleSerialObserverStats ObservedSerialBLEInterface::stats() const
+{
+    BleTaskMutex::Guard guard(_task_mutex);
+    return _stats;
 }
 
 size_t ObservedSerialBLEInterface::writeFrame(const uint8_t src[], size_t len)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     if (!_init_gate.initialized()) return 0;
     size_t written = SerialBLEInterface::writeFrame(src, len);
     if (written > 0) {
@@ -99,11 +119,17 @@ size_t ObservedSerialBLEInterface::writeFrame(const uint8_t src[], size_t len)
 
 size_t ObservedSerialBLEInterface::checkRecvFrame(uint8_t dest[])
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     if (!_init_gate.initialized()) return 0;
     // Drives the base transmit queue and connection housekeeping. The base
     // receive queue stays empty (onWrite no longer feeds it), so any frame
     // returned here comes from _rx_queue.
     size_t len = SerialBLEInterface::checkRecvFrame(dest);
+    uint16_t expired_conn_id = 0;
+    if (_auth_watchdog.takeExpired(millis(), expired_conn_id)) {
+        _stats.auth_timeout_count++;
+        if (_connected_server) _connected_server->disconnect(expired_conn_id);
+    }
     if (len == 0) {
         len = _rx_queue.pop(dest);
     }
@@ -122,26 +148,32 @@ size_t ObservedSerialBLEInterface::checkRecvFrame(uint8_t dest[])
 
 uint32_t ObservedSerialBLEInterface::onPassKeyRequest()
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     return SerialBLEInterface::onPassKeyRequest();
 }
 
 void ObservedSerialBLEInterface::onPassKeyNotify(uint32_t pass_key)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     SerialBLEInterface::onPassKeyNotify(pass_key);
 }
 
 bool ObservedSerialBLEInterface::onConfirmPIN(uint32_t pass_key)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     return SerialBLEInterface::onConfirmPIN(pass_key);
 }
 
 bool ObservedSerialBLEInterface::onSecurityRequest()
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     return SerialBLEInterface::onSecurityRequest();
 }
 
 void ObservedSerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
+    _auth_watchdog.cancel();
     if (cmpl.success) {
         _stats.auth_success_count++;
     } else {
@@ -153,6 +185,8 @@ void ObservedSerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cm
 
 void ObservedSerialBLEInterface::onConnect(BLEServer* server)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
+    _connected_server = server;
     SerialBLEInterface::onConnect(server);
     refreshConnectionState();
 }
@@ -160,9 +194,12 @@ void ObservedSerialBLEInterface::onConnect(BLEServer* server)
 void ObservedSerialBLEInterface::onConnect(BLEServer* server,
                                            esp_ble_gatts_cb_param_t* param)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
+    _connected_server = server;
     _stats.connect_count++;
     if (param) {
         _stats.last_conn_id = param->connect.conn_id;
+        _auth_watchdog.arm(param->connect.conn_id, millis());
     }
     SerialBLEInterface::onConnect(server, param);
     refreshConnectionState();
@@ -171,6 +208,7 @@ void ObservedSerialBLEInterface::onConnect(BLEServer* server,
 void ObservedSerialBLEInterface::onMtuChanged(BLEServer* server,
                                               esp_ble_gatts_cb_param_t* param)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     _stats.mtu_change_count++;
     if (server && param) {
         _stats.last_conn_id = param->mtu.conn_id;
@@ -182,17 +220,21 @@ void ObservedSerialBLEInterface::onMtuChanged(BLEServer* server,
 
 void ObservedSerialBLEInterface::onDisconnect(BLEServer* server)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     _stats.disconnect_count++;
+    _auth_watchdog.cancel();
     SerialBLEInterface::onDisconnect(server);
     // Pending frames belong to the dead connection; the base class drops its
     // own buffers on the disconnect transition, mirror that for _rx_queue.
     _rx_queue.clear();
+    _connected_server = nullptr;
     refreshConnectionState();
 }
 
 void ObservedSerialBLEInterface::onWrite(BLECharacteristic* characteristic,
                                          esp_ble_gatts_cb_param_t* param)
 {
+    BleTaskMutex::Guard guard(_task_mutex);
     (void)param;
     // NET-002 (#813): deliberately NOT forwarded to the base class. Its
     // receive queue is written here on the Bluedroid host task and drained

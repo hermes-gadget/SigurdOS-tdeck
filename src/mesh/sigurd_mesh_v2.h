@@ -15,6 +15,7 @@
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
 #include "pending_ack_policy.h"
+#include "flood_scope_state.h"
 #include "login_session.h"
 #include "path_codec.h"
 #include "hal/prefs.h"
@@ -686,10 +687,12 @@ public:
 
 
     // ── Flood advert ────────────────────────────
-    void broadcastAdvert(const char* name, uint8_t adv_type = ADV_TYPE_CHAT);
+    void broadcastAdvert(const char* name, uint8_t adv_type = ADV_TYPE_CHAT,
+                         bool apply_default_scope = false);
 
     void broadcastAdvert(const char* name, double lat, double lon,
-                         uint8_t adv_type = ADV_TYPE_CHAT);
+                         uint8_t adv_type = ADV_TYPE_CHAT,
+                         bool apply_default_scope = false);
 
 
     float getPacketSNR() const;
@@ -760,32 +763,44 @@ protected:
     }
 
 public:
-    /// Set active flood scope from a 16-byte TransportKey.
-    /// Pass nullptr to clear (unscoped floods).
+    /// Set the default flood scope from a 16-byte TransportKey.
+    /// Pass nullptr to clear the default without changing an override.
     void setActiveScope(const uint8_t* key16);
 
+    /// Apply/reset the persistent companion session override. A null key with
+    /// unscoped=false restores the default scope.
+    void setFloodScopeOverride(const uint8_t* key16, bool unscoped) {
+        _flood_scope.setOverride(key16, unscoped);
+    }
 
-    /// Clear the active flood scope — all floods become unscoped.
+
+    /// Clear the default flood scope without changing a companion override.
     void clearActiveScope() {
-        memset(_active_scope.key, 0, sizeof(_active_scope.key));
-        _send_unscoped = false;
+        _flood_scope.setDefault(nullptr);
     }
 
     /// Temporarily send the next flood unscoped (resets after one use).
     void setSendUnscopedOnce(bool v) {
-        _send_unscoped = v;
+        _flood_scope.setUnscopedOnce(v);
     }
 
-    /// Returns true if no active scope is set.
+    /// Returns true if no default scope is set.
     bool isActiveScopeNull() const {
-        return _active_scope.isNull();
+        uint8_t key[16];
+        return !_flood_scope.copyDefault(key);
     }
 
-    /// Copy the active flood-scope key. Returns false if no scope is set.
+    /// Copy the default flood-scope key. Returns false if no default is set.
     bool copyActiveScope(uint8_t* key16) const {
-        if (!key16 || _active_scope.isNull()) return false;
-        memcpy(key16, _active_scope.key, sizeof(_active_scope.key));
-        return true;
+        return _flood_scope.copyDefault(key16);
+    }
+
+    FloodScopeState::OverrideMode floodScopeOverrideMode() const {
+        return _flood_scope.overrideMode();
+    }
+
+    bool copyFloodScopeOverride(uint8_t* key16) const {
+        return _flood_scope.copyOverride(key16);
     }
 
 private:
@@ -794,13 +809,15 @@ private:
         // Multibyte support: originate with the configured path hash size
         // (mode 0/1/2 → 1/2/3 bytes), matching the MeshCore companion firmware.
         uint8_t hash_size = pathHashSize();
-        if (_send_unscoped || _active_scope.isNull()) {
-            _send_unscoped = false;  // one-shot: reset after use
+        uint8_t key[16];
+        if (!_flood_scope.takeEffective(key)) {
             sendFlood(pkt, delay_millis, hash_size);
             return;
         }
+        TransportKey scope;
+        memcpy(scope.key, key, sizeof(scope.key));
         uint16_t codes[2];
-        codes[0] = _active_scope.calcTransportCode(pkt);
+        codes[0] = scope.calcTransportCode(pkt);
         codes[1] = 0;  // home/return region — REVISIT upstream
         sendFlood(pkt, codes, delay_millis, hash_size);
     }
@@ -813,8 +830,20 @@ private:
         return mode + 1;
     }
 
-    TransportKey _active_scope;
-    bool _send_unscoped = false;
+    void sendAdvertImpl(::mesh::Packet* pkt, bool apply_default_scope) {
+        if (!pkt) return;
+        uint8_t key[16];
+        if (!apply_default_scope || !_flood_scope.copyDefault(key)) {
+            sendFlood(pkt, 0, pathHashSize());
+            return;
+        }
+        TransportKey scope;
+        memcpy(scope.key, key, sizeof(scope.key));
+        uint16_t codes[2] = {scope.calcTransportCode(pkt), 0};
+        sendFlood(pkt, codes, 0, pathHashSize());
+    }
+
+    FloodScopeState _flood_scope;
 };
 
 } // namespace mesh

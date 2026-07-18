@@ -1508,23 +1508,22 @@ namespace mesh {
         return o;
     }
 
-    void SigurdMeshV2::broadcastAdvert(const char* name, uint8_t adv_type) {
+    void SigurdMeshV2::broadcastAdvert(const char* name, uint8_t adv_type,
+                                       bool apply_default_scope) {
         AdvertDataBuilder builder(adv_type, name);
         uint8_t app[MAX_ADVERT_DATA_SIZE];
         uint8_t app_len = builder.encodeTo(app);
         ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
-        // Adverts are discovery traffic and deliberately bypass the active
-        // message scope so region-aware and legacy repeaters can hear them.
-        if (pkt) sendFlood(pkt, 0, pathHashSize());
+        sendAdvertImpl(pkt, apply_default_scope);
     }
 
-    void SigurdMeshV2::broadcastAdvert(const char* name, double lat, double lon, uint8_t adv_type) {
+    void SigurdMeshV2::broadcastAdvert(const char* name, double lat, double lon,
+                                       uint8_t adv_type, bool apply_default_scope) {
         AdvertDataBuilder builder(adv_type, name, lat, lon);
         uint8_t app[MAX_ADVERT_DATA_SIZE];
         uint8_t app_len = builder.encodeTo(app);
         ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
-        // Keep location adverts unscoped for the same discovery guarantee.
-        if (pkt) sendFlood(pkt, 0, pathHashSize());
+        sendAdvertImpl(pkt, apply_default_scope);
     }
 
     float SigurdMeshV2::getPacketSNR() const {
@@ -1557,12 +1556,7 @@ namespace mesh {
     }
 
     void SigurdMeshV2::setActiveScope(const uint8_t* key16) {
-        if (key16) {
-            memcpy(_active_scope.key, key16, 16);
-            _send_unscoped = false;
-        } else {
-            clearActiveScope();
-        }
+        _flood_scope.setDefault(key16);
     }
 
 } // namespace mesh

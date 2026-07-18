@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 #include "comms/ble_frame_queue.h"
 #include "comms/ble_init_gate.h"
+#include "comms/ble_auth_watchdog.h"
+#include "comms/ble_task_mutex.h"
 
 #include <atomic>
 #include <cstring>
@@ -14,11 +16,51 @@ namespace {
 
 using sigurdos::comms::BleFrameQueue;
 using sigurdos::comms::BleInitGate;
+using sigurdos::comms::BleAuthWatchdog;
+using sigurdos::comms::BleTaskMutex;
 
 constexpr size_t MAX_LEN = 176;   // MAX_FRAME_SIZE on target
 constexpr size_t CAPACITY = 4;    // FRAME_QUEUE_SIZE on target
 
 using Queue = BleFrameQueue<MAX_LEN, CAPACITY>;
+
+TEST(BleAuthWatchdog, ExpiresOnceAndHandlesMillisWrap)
+{
+    BleAuthWatchdog watchdog(100);
+    uint16_t conn_id = 0;
+    watchdog.arm(42, 0xFFFFFFF0u);
+    EXPECT_FALSE(watchdog.takeExpired(0x00000020u, conn_id));
+    EXPECT_TRUE(watchdog.takeExpired(0x00000054u, conn_id));
+    EXPECT_EQ(conn_id, 42);
+    EXPECT_FALSE(watchdog.takeExpired(0x00000080u, conn_id));
+}
+
+TEST(BleAuthWatchdog, CancelPreventsExpiry)
+{
+    BleAuthWatchdog watchdog(10);
+    uint16_t conn_id = 0;
+    watchdog.arm(7, 100);
+    watchdog.cancel();
+    EXPECT_FALSE(watchdog.takeExpired(1000, conn_id));
+}
+
+TEST(BleTaskMutex, SerializesCrossTaskAccessAndAllowsRecursion)
+{
+    BleTaskMutex mutex;
+    int value = 0;
+    std::vector<std::thread> workers;
+    for (int worker = 0; worker < 4; ++worker) {
+        workers.emplace_back([&] {
+            for (int i = 0; i < 1000; ++i) {
+                BleTaskMutex::Guard outer(mutex);
+                BleTaskMutex::Guard inner(mutex);
+                ++value;
+            }
+        });
+    }
+    for (auto& worker : workers) worker.join();
+    EXPECT_EQ(value, 4000);
+}
 
 TEST(BleInitGate, ConfigurationDoesNotInitializeController)
 {

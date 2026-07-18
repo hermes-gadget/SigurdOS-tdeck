@@ -86,7 +86,7 @@ int getNoiseFloor() { return mock_noise; }
 int getLastRSSI()   { return mock_rssi; }
 float getLastSNR()  { return mock_snr; }
 
-bool sendAdvert() { return false; }
+bool sendAdvert(bool) { return false; }
 bool saveState() { return true; }
 
 bool companionBleAvailable() { return false; }

@@ -153,7 +153,7 @@ uint32_t getNumRecvFlood();
 uint32_t getNumRecvDirect();
 void resetPacketStats();
 
-bool sendAdvert();
+bool sendAdvert(bool apply_default_scope = false);
 uint32_t getLastAdvertTime();
 bool     getLastAdvertSuccess();
 bool     getLastAdvertUsedGps();
