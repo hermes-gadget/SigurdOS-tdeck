@@ -313,14 +313,14 @@ bool CompanionBridge::buildMessageFrame(const sigurdos::mesh::StoredMessage& msg
         i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
         out[i++] = msg.path_len;
         out[i++] = msg.txt_type;
-        // Signed-plain messages carry a 4-byte sender prefix between the
-        // txt_type and the timestamp (exactly as upstream MyMesh queues).
+        std::memcpy(&out[i], &msg.timestamp, 4);
+        i += 4;
+        // Signed-plain messages carry a 4-byte sender prefix after the
+        // timestamp (exactly as upstream MyMesh queues).
         if (msg.txt_type == COMPANION_TXT_SIGNED_PLAIN && msg.extra_len >= 4) {
             std::memcpy(&out[i], msg.extra, 4);
             i += 4;
         }
-        std::memcpy(&out[i], &msg.timestamp, 4);
-        i += 4;
     }
 
     size_t tlen = boundedTextLen(msg.text, sigurdos::mesh::SIGURDOS_MSG_TEXT_LEN - 1);
@@ -487,21 +487,23 @@ bool CompanionBridge::pushContactsFull()
 }
 
 bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success,
-                                      uint8_t permission, bool is_admin)
+                                      uint8_t permission, uint32_t tag,
+                                      uint8_t acl_permissions, uint8_t firmware_level,
+                                      bool legacy_success)
 {
     if (!_serial || !pubkey_prefix) return false;
     int i = 0;
     _out_frame[i++] = success ? PUSH_CODE_LOGIN_SUCCESS : PUSH_CODE_LOGIN_FAIL;
-    _out_frame[i++] = success ? (is_admin ? 1 : permission) : 0;
+    _out_frame[i++] = success ? permission : 0;
     std::memcpy(&_out_frame[i], pubkey_prefix, SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE);
     i += SIGURDOS_COMPANION_PUB_KEY_PREFIX_SIZE;
-    // Extended fields: server timestamp tag (4 bytes), ACL (4 bytes), firmware level (1 byte)
-    // These are always appended when the login succeeds — official clients detect them by frame length.
-    if (success) {
-        uint32_t zero = 0;
-        std::memcpy(&_out_frame[i], &zero, 4);  i += 4;  // server tag (0 = local login)
-        std::memcpy(&_out_frame[i], &zero, 4);  i += 4;  // ACL bitmask (0 = no ACL)
-        _out_frame[i++] = SIGURDOS_COMPANION_FIRMWARE_VER_CODE;  // firmware protocol level
+    // Current success fields come directly from the server response. Legacy
+    // success and all failure frames end after the public-key prefix.
+    if (success && !legacy_success) {
+        std::memcpy(&_out_frame[i], &tag, 4);
+        i += 4;
+        _out_frame[i++] = acl_permissions;
+        _out_frame[i++] = firmware_level;
     }
     return _serial->writeFrame(_out_frame, i) == (size_t)i;
 }

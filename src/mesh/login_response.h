@@ -21,6 +21,7 @@ struct Parsed {
     uint16_t keep_alive_secs = 0;
     uint8_t permission = 0;
     uint8_t acl_permissions = 0;
+    uint8_t firmware_level = 0;
     uint8_t failure_code = 0;
 };
 
@@ -44,6 +45,7 @@ inline Parsed parse(const uint8_t* data, uint8_t len)
         result.keep_alive_secs = (uint16_t)data[5] * 16U;
         result.permission = data[6];
         result.acl_permissions = len >= 8 ? data[7] : 0;
+        result.firmware_level = len >= 13 ? data[12] : 0;
     } else {
         result.format = Format::CurrentFailure;
         result.failure_code = data[4];

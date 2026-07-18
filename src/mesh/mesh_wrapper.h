@@ -63,7 +63,9 @@ void mesh_v2_companion_path_push(const uint8_t* pub_key);
 void mesh_v2_companion_contact_deleted_push(const uint8_t* pub_key);
 void mesh_v2_companion_contacts_full_push();
 void mesh_v2_companion_login_push(const uint8_t* pub_key, bool success,
-                                  uint8_t permission, bool is_admin);
+                                  uint8_t permission, uint32_t tag,
+                                  uint8_t acl_permissions, uint8_t firmware_level,
+                                  bool legacy_success = false);
 void mesh_v2_companion_status_push(const uint8_t* pub_key, const uint8_t* blob, size_t len);
 void mesh_v2_companion_telemetry_push(const uint8_t* pub_key, const uint8_t* blob, size_t len);
 void mesh_v2_companion_binary_push(uint32_t tag, const uint8_t* blob, size_t len);

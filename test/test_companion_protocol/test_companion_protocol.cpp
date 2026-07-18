@@ -1902,13 +1902,27 @@ TEST_F(CompanionProtocolTest, PushPathDeletedFull) {
 
 TEST_F(CompanionProtocolTest, PushLoginStatusTelemetryTrace) {
     uint8_t prefix[6] = { 1, 2, 3, 4, 5, 6 };
-    EXPECT_TRUE(bridge.pushLoginResult(prefix, true, 3, false));
-    EXPECT_EQ(serial.writes[0][0], cc::PUSH_CODE_LOGIN_SUCCESS);
-    EXPECT_EQ(serial.writes[0][1], 3);
+    EXPECT_TRUE(bridge.pushLoginResult(prefix, true, 3, 0x12345678u, 0xA5, 13));
+    const std::vector<uint8_t> expected_login = {
+        cc::PUSH_CODE_LOGIN_SUCCESS, 3, 1, 2, 3, 4, 5, 6,
+        0x78, 0x56, 0x34, 0x12, 0xA5, 13,
+    };
+    EXPECT_EQ(serial.writes[0], expected_login);
 
     serial.writes.clear();
-    EXPECT_TRUE(bridge.pushLoginResult(prefix, false, 0, false));
-    EXPECT_EQ(serial.writes[0][0], cc::PUSH_CODE_LOGIN_FAIL);
+    EXPECT_TRUE(bridge.pushLoginResult(prefix, false, 0, 0, 0, 0));
+    const std::vector<uint8_t> expected_failure = {
+        cc::PUSH_CODE_LOGIN_FAIL, 0, 1, 2, 3, 4, 5, 6,
+    };
+    EXPECT_EQ(serial.writes[0], expected_failure);
+
+    serial.writes.clear();
+    EXPECT_TRUE(bridge.pushLoginResult(prefix, true, 0, 0, 0, 0,
+                                       /*legacy_success=*/true));
+    const std::vector<uint8_t> expected_legacy = {
+        cc::PUSH_CODE_LOGIN_SUCCESS, 0, 1, 2, 3, 4, 5, 6,
+    };
+    EXPECT_EQ(serial.writes[0], expected_legacy);
 
     serial.writes.clear();
     uint8_t blob[3] = { 0xDE, 0xAD, 0xBE };
@@ -2363,14 +2377,14 @@ TEST_F(CompanionProtocolTest, SyncDrainMarksPerRecordNotAll) {
 
 // ── Frame metadata ─────────────────────────────────────────────
 
-TEST_F(CompanionProtocolTest, SignedMessageFrameIncludesExtraBytes) {
-    // Regression: signed messages should include the 4-byte sender prefix extra
-    // between txt_type and timestamp in the DM V3 frame.
+TEST_F(CompanionProtocolTest, SignedMessageV3FrameMatchesGoldenBytes) {
     sigurdos::mesh::StoredMessage msg{};
     std::strncpy(msg.conversation, "DM: Carol", sizeof(msg.conversation) - 1);
     std::strncpy(msg.sender, "Carol", sizeof(msg.sender) - 1);
     std::strncpy(msg.text, "secret", sizeof(msg.text) - 1);
     msg.timestamp = 0x01020304u;
+    msg.snr_quarters = -8;
+    msg.path_len = 0xFF;
     msg.txt_type = 2;  // COMPANION_TXT_SIGNED_PLAIN
     msg.extra_len = 4;
     msg.extra[0] = 0xAA; msg.extra[1] = 0xBB; msg.extra[2] = 0xCC; msg.extra[3] = 0xDD;
@@ -2381,18 +2395,46 @@ TEST_F(CompanionProtocolTest, SignedMessageFrameIncludesExtraBytes) {
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
     ASSERT_GE(serial.writes.size(), 2u);
     const auto& out = serial.writes[1];
-    ASSERT_GE(out.size(), 20u);
-    EXPECT_EQ(out[0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
-    // [1] snr, [2] res1, [3] res2, [4..9] sender_prefix, [10] path_len,
-    // [11] txt_type (should be 2), [12..15] extra 4 bytes, [16..19] timestamp
-    EXPECT_EQ(out[11], 2u);         // COMPANION_TXT_SIGNED_PLAIN
-    EXPECT_EQ(out[12], 0xAA);       // extra[0]
-    EXPECT_EQ(out[13], 0xBB);       // extra[1]
-    EXPECT_EQ(out[14], 0xCC);       // extra[2]
-    EXPECT_EQ(out[15], 0xDD);       // extra[3]
-    uint32_t ts = 0;
-    std::memcpy(&ts, &out[16], 4);
-    EXPECT_EQ(ts, 0x01020304u);
+    const std::vector<uint8_t> expected = {
+        sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3,
+        0xF8, 0, 0, 0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xFF, 2,
+        0x04, 0x03, 0x02, 0x01, 0xAA, 0xBB, 0xCC, 0xDD,
+        's', 'e', 'c', 'r', 'e', 't',
+    };
+    EXPECT_EQ(out, expected);
+}
+
+TEST_F(CompanionProtocolTest, PersistedSignedMessageV2ReplayMatchesGoldenBytes) {
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Carol", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Carol", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "secret", sizeof(msg.text) - 1);
+    msg.timestamp = 0x01020304u;
+    msg.path_len = 0xFF;
+    msg.txt_type = 2;
+    msg.extra_len = 4;
+    msg.extra[0] = 0xAA;
+    msg.extra[1] = 0xBB;
+    msg.extra[2] = 0xCC;
+    msg.extra[3] = 0xDD;
+    for (int i = 0; i < 6; i++) msg.sender_prefix[i] = (uint8_t)(0xE0 + i);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+
+    const uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 2};
+    ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
+    serial.writes.clear();
+    const uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(serial.writes.size(), 3u);
+    const std::vector<uint8_t> expected = {
+        sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV,
+        0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xFF, 2,
+        0x04, 0x03, 0x02, 0x01, 0xAA, 0xBB, 0xCC, 0xDD,
+        's', 'e', 'c', 'r', 'e', 't',
+    };
+    EXPECT_EQ(serial.writes[2], expected);
 }
 
 TEST_F(CompanionProtocolTest, CliDataFrameEmitsCorrectTxtType) {

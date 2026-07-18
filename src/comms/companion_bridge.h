@@ -412,7 +412,9 @@ public:
     bool pushContactDeleted(const uint8_t* pub_key);
     bool pushContactsFull();
     bool pushLoginResult(const uint8_t* pubkey_prefix, bool success,
-                         uint8_t permission, bool is_admin);
+                         uint8_t permission, uint32_t tag,
+                         uint8_t acl_permissions, uint8_t firmware_level,
+                         bool legacy_success = false);
     bool pushStatusResponse(const uint8_t* pubkey_prefix,
                             const uint8_t* blob, size_t blob_len);
     bool pushTelemetryResponse(const uint8_t* pubkey_prefix,

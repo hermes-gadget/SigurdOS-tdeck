@@ -835,7 +835,8 @@ namespace mesh {
                 _login_entries[login_idx].status = keep_alive_ok ? LOGIN_OK : LOGIN_DROPPED;
 
                 sigurdos::mesh::mesh_v2_companion_login_push(
-                    contact.id.pub_key, keep_alive_ok, perm, /*is_admin=*/false);
+                    contact.id.pub_key, keep_alive_ok, perm, tag, acl,
+                    response.firmware_level);
 
 #if SIGURDOS_DEBUG_MESH
                 Serial.printf("[mesh] Login OK for %s (perm=%d, acl=%d, ka=%us)\n",
@@ -849,7 +850,8 @@ namespace mesh {
                 _login_entries[login_idx].acl_permissions = 0;
                 _login_entries[login_idx].keep_alive_active = false;
                 sigurdos::mesh::mesh_v2_companion_login_push(
-                    contact.id.pub_key, true, 0, /*is_admin=*/false);
+                    contact.id.pub_key, true, 0, 0, 0, 0,
+                    /*legacy_success=*/true);
 #if SIGURDOS_DEBUG_MESH
                 Serial.printf("[mesh] Login OK (legacy) for %s\n", contact.name);
 #endif
@@ -859,7 +861,7 @@ namespace mesh {
                 _login_entries[login_idx].status = LOGIN_FAILED;
                 _login_entries[login_idx].keep_alive_active = false;
                 sigurdos::mesh::mesh_v2_companion_login_push(
-                    contact.id.pub_key, false, 0, false);
+                    contact.id.pub_key, false, 0, 0, 0, 0);
 #if SIGURDOS_DEBUG_MESH
                 Serial.printf("[mesh] Login FAILED for %s (reason=%d)\n",
                               contact.name, response.failure_code);
@@ -1129,7 +1131,7 @@ namespace mesh {
             }
             if (contact) {
                 sigurdos::mesh::mesh_v2_companion_login_push(
-                    contact->id.pub_key, false, 0, false);
+                    contact->id.pub_key, false, 0, 0, 0, 0);
             }
         }
     }
@@ -1158,7 +1160,7 @@ namespace mesh {
             if (idx >= 0) {
                 _login_entries[idx].status = LOGIN_FAILED;
                 sigurdos::mesh::mesh_v2_companion_login_push(
-                    contact.id.pub_key, false, 0, false);
+                    contact.id.pub_key, false, 0, 0, 0, 0);
             }
         }
     }

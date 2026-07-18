@@ -109,9 +109,10 @@ TEST(MeshContractTest, CurrentLoginBaseResponseDoesNotRequireAcl) {
     EXPECT_EQ(parsed.keep_alive_secs, 32);
     EXPECT_EQ(parsed.permission, 3);
     EXPECT_EQ(parsed.acl_permissions, 0);
+    EXPECT_EQ(parsed.firmware_level, 0);
 }
 
-TEST(MeshContractTest, CurrentLoginParsesOptionalAclAndIgnoresLaterFields) {
+TEST(MeshContractTest, CurrentLoginParsesOptionalAclAndFirmwareLevel) {
     const uint8_t response[13] = {
         1, 2, 3, 4, 0, 4, 2, 0xA5, 9, 8, 7, 6, 11,
     };
@@ -122,6 +123,7 @@ TEST(MeshContractTest, CurrentLoginParsesOptionalAclAndIgnoresLaterFields) {
     EXPECT_EQ(parsed.keep_alive_secs, 64);
     EXPECT_EQ(parsed.permission, 2);
     EXPECT_EQ(parsed.acl_permissions, 0xA5);
+    EXPECT_EQ(parsed.firmware_level, 11);
 }
 
 TEST(MeshContractTest, LoginFailureRequiresCurrentBaseFields) {
