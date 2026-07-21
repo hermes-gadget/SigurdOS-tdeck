@@ -99,6 +99,13 @@ Pull requests are merged via `gh pr merge --squash --delete-branch`. Squash merg
 
 For any non-trivial change (anything beyond a typo, comment, or obvious one-line fix), the PR must be tested on actual hardware by a maintainer before merging. Do not merge AI agent or contributor PRs with substantive changes until hardware-tested. Small fixes can be merged on code review alone.
 
+Before using a device, follow the authoritative
+[`docs/HARDWARE_TESTING.md`](docs/HARDWARE_TESTING.md) six-phase protocol. Use
+[`scripts/hw_test/CHECKLIST.md`](scripts/hw_test/CHECKLIST.md) to record the
+commit, merged-image hash, fixture, commands, screenshots, feature-specific
+coverage, and soak result. Hardware evidence must identify the exact build and
+must distinguish physical interaction/RF proof from test-controller injection.
+
 ### Pull Request Guidelines
 
 - **One feature / fix = one PR.** Smaller PRs are reviewed faster.
@@ -124,14 +131,24 @@ Fixes #ISSUE_NUMBER
 
 Testing method: [Remote test / Physical hardware test / Both]
 
+Environment: [e.g. SigurdOS_TDeck_remote_test_radio]
+Device/gateway/port: [e.g. T-Deck v1.1 / hermes-pi / /dev/ttyACM0]
+Merged image SHA-256: [hash]
+RF parameters: [frequency/SF/BW/CR/power, or not used]
+Evidence: [logs, screenshots, soak results, or explicit not-run reason]
+
 <!--
 Remote test = SigurdOS_TDeck_remote_test build env, serial-controlled simulation
-Physical hardware test = flashed to real T-Deck, verified by human
+Physical hardware test = flashed to a real T-Deck with observable device evidence
 -->
 
 ## Checklist
 - [ ] `pio test -e native_test -v` passes
 - [ ] `pio run -e SigurdOS_TDeck` builds
+- [ ] `pio run -e SigurdOS_TDeck_remote_test_radio` builds
+- [ ] `docs/HARDWARE_TESTING.md` protocol completed for affected phases, or hardware testing is explicitly not applicable
+- [ ] Home, Settings, and every changed screen were captured and visually inspected when firmware/UI changed
+- [ ] Feature-specific physical/RF/persistence coverage and any test gaps are stated
 - [ ] No new warnings or errors
 - [ ] docs/KNOWN_ISSUES.md updated (if applicable)
 ```
@@ -211,26 +228,17 @@ New screens or features should include at least basic integration tests (navigat
 
 ### Hardware Testing
 
-For hardware-validated PR testing, flash the debug build and check serial output:
+[`docs/HARDWARE_TESTING.md`](docs/HARDWARE_TESTING.md) is the single source of
+truth for on-device validation. Its canonical sequence is native tests, release
+and remote-radio builds, smoke, full UI navigation, feature-specific checks,
+and a pre-release soak. It also defines the Raspberry Pi gateway flow, serial
+command dialects, screenshot capture requirements, recovery steps, and pass/fail
+thresholds.
 
-```bash
-# Build debug firmware
-pio run -e SigurdOS_TDeck_debug
-
-# Flash to device (via USB or remote gateway)
-# Local: pio run -e SigurdOS_TDeck_debug -t upload
-# Remote: scp .bin to gateway, flash via esptool
-
-# Capture boot log (adjust port as needed)
-# Local: pio device monitor -b 115200 --port <port>
-# Remote: ssh <gateway> "stty -F <port> 115200 raw -echo && timeout 15 cat <port>" > /tmp/boot-log.txt
-```
-
-Verify in the boot log:
-- No `FATAL` or `CRASH` or `PANIC` errors
-- All `[boot] step N:` messages appear in sequence
-- `[mesh] SigurdMeshV2 initialized` confirms radio init
-- `[boot] === SigurdOS T-Deck ready ===` at the end
+At minimum, a firmware-affecting PR must be built and flashed from its merged
+image, reach a clean boot, navigate to Home and Settings, capture and visually
+inspect both screens, and exercise the changed feature. Documentation-only and
+native-test-only PRs may state that hardware testing is not applicable.
 
 ## Design Guide
 

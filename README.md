@@ -91,6 +91,10 @@ Representative modules are listed above; full `test/test_<name>/` coverage and p
 
 Full test documentation: [`test/README.md`](test/README.md)
 
+Before flashing or running on-device validation, follow the standardized
+[`Hardware Testing Protocol`](docs/HARDWARE_TESTING.md) and its
+[`copy-paste checklist`](scripts/hw_test/CHECKLIST.md).
+
 ## Hardware
 
 | Component | Detail |
