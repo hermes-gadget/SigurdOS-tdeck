@@ -308,6 +308,22 @@ The macros are simple text pre-processor expansions — they do not add timestam
 
 The `HardwareSerial` mock in `test/mocks/Arduino.h` captures all `printf` output into a `std::string` buffer. This is sufficient for asserting output content, but it does not simulate UART buffer overruns, interrupt timing, or hardware flow control. Integration testing on real hardware is recommended for timing-sensitive logging scenarios.
 
+### 8. ESP32-S3 USB CDC Backport
+
+T-Deck builds define `ARDUINO_USB_MODE=1` and
+`ARDUINO_USB_CDC_ON_BOOT=1`, so the Arduino `Serial` object is the ESP32-S3
+USB Serial/JTAG `HWCDC` backend. Arduino-ESP32 2.0.17 contains a cross-core TX
+interrupt race that can fragment output or permanently stall sustained writes.
+
+All T-Deck environments run `scripts/arduino_hwcdc_fix.py`, which applies the
+fix from
+[Espressif arduino-esp32 PR #12606](https://github.com/espressif/arduino-esp32/pull/12606)
+to a build-local copy of `HWCDC.cpp`. The script verifies the original and
+patched source hashes and
+does not modify PlatformIO's shared framework package. Remove this backport
+when the pinned framework includes the upstream fix, updating the associated
+contract test at `scripts/tests/test_arduino_hwcdc_patch.py` in the same PR.
+
 ---
 
 ## Summary

@@ -84,6 +84,7 @@ else:
     from .hw_soak import SoakConfig, SoakRunner
 
 STATUS_RE = re.compile(r"\[test\]\s+heap=(\d+)\s+psram=(\d+)")
+STATUS_RESPONSE_MARKER = "lvmem_used_pct="
 GETRF_RE = re.compile(
     r"freq=([0-9.]+)\s+SF=(\d+)\s+BW=([0-9.]+)\s+CR=(\d+)\s+TX=(-?\d+)",
     re.IGNORECASE,
@@ -345,7 +346,9 @@ def run_smoke(
             response = connection.send_command(
                 "status",
                 timeout_s=5,
-                expected=("[test] heap=",),
+                # Wait beyond every field consumed by STATUS_RE.  USB CDC may
+                # split one Serial.printf call across multiple packets.
+                expected=(STATUS_RESPONSE_MARKER,),
             )
             status_response.append(response.output)
             passed = STATUS_RE.search(response.output) is not None
@@ -428,7 +431,7 @@ def run_ui(
             response = connection.send_command(
                 "status",
                 timeout_s=5,
-                expected=("[test] heap=",),
+                expected=(STATUS_RESPONSE_MARKER,),
             )
             _sample_status(report, response.output, time.monotonic() - phase_started)
         if iteration == 1:
