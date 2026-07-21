@@ -67,6 +67,16 @@ inline bool sigurdos_test_controller_capture_size_allowed(uint32_t width,
     return total <= SIGURDOS_TEST_CAPTURE_MAX_BYTES;
 }
 
+inline bool sigurdos_test_controller_timeout_elapsed(uint32_t now,
+                                                      uint32_t started,
+                                                      uint32_t timeout) {
+    // A command can record its start after the cooperative loop sampled `now`.
+    // Treat that small negative delta as not elapsed, while retaining normal
+    // uint32_t millis() wrap handling for positive intervals under 2^31 ms.
+    const int32_t elapsed = static_cast<int32_t>(now - started);
+    return elapsed >= 0 && static_cast<uint32_t>(elapsed) > timeout;
+}
+
 struct SigurdOSTestRfParams {
     float freq;
     uint8_t sf;

@@ -59,7 +59,9 @@ static constexpr size_t   CMD_BUF_SIZE = 256;
 static constexpr size_t   TYPE_BUF_SIZE = 256;   // max codepoints in type queue
 static constexpr size_t   TYPE_CHUNK_DELAY = 120; // ms between injected codepoints, must give LVGL time to consume
 static constexpr uint32_t DIAGNOSTIC_STALL_TIMEOUT_MS = 5000;
-static constexpr uint32_t CAPTURE_TOTAL_TIMEOUT_MS = 60000;
+// Radio-enabled debug builds can take roughly two minutes to stream a full
+// RGB565 frame while keeping the cooperative mesh/UI loop responsive.
+static constexpr uint32_t CAPTURE_TOTAL_TIMEOUT_MS = 150000;
 static constexpr uint32_t TREE_TOTAL_TIMEOUT_MS = 30000;
 static constexpr size_t CAPTURE_DATA_BYTES_PER_LINE = 32;
 static constexpr uint8_t DIAGNOSTIC_LINES_PER_LOOP = 4;
@@ -1112,12 +1114,13 @@ static void cmd_capture(const char* arg) {
 
 static void service_capture(uint32_t now) {
     if (capture_job.phase == CapturePhase::Idle) return;
-    if (static_cast<uint32_t>(now - capture_job.started_ms) > CAPTURE_TOTAL_TIMEOUT_MS) {
+    if (sigurdos_test_controller_timeout_elapsed(
+            now, capture_job.started_ms, CAPTURE_TOTAL_TIMEOUT_MS)) {
         abort_capture("deadline exceeded", Serial.availableForWrite() > 0);
         return;
     }
-    if (static_cast<uint32_t>(now - capture_job.last_progress_ms) >
-        DIAGNOSTIC_STALL_TIMEOUT_MS) {
+    if (sigurdos_test_controller_timeout_elapsed(
+            now, capture_job.last_progress_ms, DIAGNOSTIC_STALL_TIMEOUT_MS)) {
         abort_capture("serial stalled", Serial.availableForWrite() > 0);
         return;
     }
@@ -1294,12 +1297,13 @@ static void cmd_tree(const char* arg) {
 
 static void service_tree(uint32_t now) {
     if (!tree_job.active) return;
-    if (static_cast<uint32_t>(now - tree_job.started_ms) > TREE_TOTAL_TIMEOUT_MS) {
+    if (sigurdos_test_controller_timeout_elapsed(
+            now, tree_job.started_ms, TREE_TOTAL_TIMEOUT_MS)) {
         abort_tree("deadline exceeded", Serial.availableForWrite() > 0);
         return;
     }
-    if (static_cast<uint32_t>(now - tree_job.last_progress_ms) >
-        DIAGNOSTIC_STALL_TIMEOUT_MS) {
+    if (sigurdos_test_controller_timeout_elapsed(
+            now, tree_job.last_progress_ms, DIAGNOSTIC_STALL_TIMEOUT_MS)) {
         abort_tree("serial stalled", Serial.availableForWrite() > 0);
         return;
     }

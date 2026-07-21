@@ -202,6 +202,15 @@ TEST(TestControllerBoundsTest, CaptureAcceptsOnlyBoundedRgb565Frames) {
     EXPECT_FALSE(sigurdos_test_controller_capture_size_allowed(320, 240, 644));
 }
 
+TEST(TestControllerBoundsTest, DiagnosticTimeoutIgnoresStaleLoopTimestamp) {
+    EXPECT_FALSE(sigurdos_test_controller_timeout_elapsed(999, 1000, 60'000));
+    EXPECT_FALSE(sigurdos_test_controller_timeout_elapsed(61'000, 1000, 60'000));
+    EXPECT_TRUE(sigurdos_test_controller_timeout_elapsed(61'001, 1000, 60'000));
+
+    // A real millis() wrap remains a small positive elapsed interval.
+    EXPECT_TRUE(sigurdos_test_controller_timeout_elapsed(0x20, 0xFFFFFFF0, 47));
+}
+
 // getrf does not use the parser — it reads prefs directly and prints via Serial.
 // Dispatch/Serial smoke tests require the full controller linked on hardware.
 
