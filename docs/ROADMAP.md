@@ -5,8 +5,10 @@ This roadmap is the current source of truth for bringing SigurdOS T-Deck to feat
 ## Current Baseline
 
 - Source audit baseline: `dev` branch (latest)
-- MeshCore submodule: `516ba4ae` (room-server-v1.15.0-159-g516ba4ae) (companion family ~v1.15.0 + patches)
-  - **Note:** volatile SHA pinning is intentionally removed here. The submodule and source tree evolve independently; the authoritative per-document pin lives in each document that depends on a specific snapshot (e.g. `COMPANION_SUPPORT.md` and `COMPANION_PARITY_ACTION_PLAN.md` have their own pinned references).
+- MeshCore dependency: the repository gitlink is the authoritative build pin.
+  Reviewed companion-protocol snapshots live in
+  `test/fixtures/companion_golden_frames.json`; the update and public-upstream
+  comparison policy is documented in `RELEASE_EVIDENCE.md`.
 - Target board: LilyGo T-Deck, ESP32-S3, SX1262, ST7789, GT911, I2C keyboard, trackball
 - Validation status: 2026-07-14 upstream-aligned release/BLE validation and CANADA-preset snapshot
   hardware smoke executed on `COM8`; `pio run -e SigurdOS_TDeck`,

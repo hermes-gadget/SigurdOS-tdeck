@@ -784,6 +784,84 @@ TEST_F(CompanionProtocolTest, SyncRefillsUntilCompletePersistentBacklogDrains) {
     for (const auto& msg : stored) EXPECT_TRUE(msg.companion_sent);
 }
 
+TEST_F(CompanionProtocolTest,
+       DeterministicStatefulSyncPreservesOrderAcrossRetriesAndReconnects) {
+    constexpr uint32_t backlog_size = 64;
+    for (uint32_t i = 0; i < backlog_size; ++i) {
+        sigurdos::mesh::StoredMessage msg{};
+        std::strncpy(msg.conversation, "DM: Alice",
+                     sizeof(msg.conversation) - 1);
+        std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+        std::snprintf(msg.text, sizeof(msg.text), "sequence-%lu",
+                      (unsigned long)i);
+        msg.timestamp = 5000 + i;
+        for (int p = 0; p < 6; ++p) {
+            msg.sender_prefix[p] = (uint8_t)(0xA0 + p);
+        }
+        ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+    }
+
+    const uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+
+    uint32_t sequence = 0x5EED1234u;
+    uint32_t retry_count = 0;
+    uint32_t reconnect_count = 0;
+    uint32_t restart_count = 0;
+    for (uint32_t expected = 0; expected < backlog_size; ++expected) {
+        // Fixed-seed scheduling makes this repeatable while exercising
+        // interactions between page refill, repeated APP_START, failed writes,
+        // and transport disconnects instead of testing each event in isolation.
+        sequence = sequence * 1664525u + 1013904223u;
+
+        if (sequence & 0x01u) {
+            ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+            ++restart_count;
+        }
+        if (sequence & 0x02u) {
+            const size_t before = serial.writes.size();
+            serial.fail_writes = 1;
+            ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+            EXPECT_EQ(serial.writes.size(), before);
+            ++retry_count;
+        }
+        if (sequence & 0x04u) {
+            const size_t before = serial.writes.size();
+            serial.connected = false;
+            ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+            EXPECT_EQ(serial.writes.size(), before);
+            serial.connected = true;
+            ++reconnect_count;
+        }
+
+        const size_t before = serial.writes.size();
+        ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+        ASSERT_EQ(serial.writes.size(), before + 1);
+        const auto& frame = serial.writes.back();
+        ASSERT_GE(frame.size(), 16U);
+        EXPECT_EQ(frame[0],
+                  sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+        uint32_t timestamp = 0;
+        std::memcpy(&timestamp, &frame[12], sizeof(timestamp));
+        EXPECT_EQ(timestamp, 5000u + expected);
+    }
+
+    EXPECT_GT(retry_count, 0U);
+    EXPECT_GT(reconnect_count, 0U);
+    EXPECT_GT(restart_count, 0U);
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_FALSE(serial.writes.empty());
+    EXPECT_EQ(serial.writes.back()[0],
+              sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
+
+    std::vector<sigurdos::mesh::StoredMessage> stored(backlog_size);
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(
+                  stored.data(), static_cast<int>(stored.size())),
+              static_cast<int>(backlog_size));
+    for (const auto& msg : stored) EXPECT_TRUE(msg.companion_sent);
+}
+
 TEST_F(CompanionProtocolTest, AppStartDoesNotEchoSelfSentMessages) {
     // A message the device sent itself (is_self) must never be mirrored back to
     // the app: the app already has the ones it sent, and the protocol has no

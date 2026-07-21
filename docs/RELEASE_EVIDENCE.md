@@ -90,6 +90,46 @@ hermes-gadget/SigurdOS-tdeck`. These publisher signatures do not enable ESP32-S3
 secure boot or device-side signed OTA verification; those require a separate
 device-key provisioning and rollback policy.
 
+## Dependency pin policy
+
+Every build dependency must resolve without local Git configuration:
+
+- `lib/meshcore` is an exact gitlink. Its object must be publicly fetchable
+  from the URL committed in `.gitmodules`; a maintainer-owned read-only mirror
+  is acceptable, but `insteadOf` rules, unpublished fork objects, and deleted
+  branches are not.
+- PlatformIO application libraries use exact registry versions or immutable
+  upstream commit archives. Branch names, version ranges, and mutable release
+  downloads are not accepted as build pins.
+- `ci/platformio-packages.lock` records the resolved package graph. A dependency
+  PR reviews the declared pin, resolved graph, license/security inventory,
+  affected firmware builds, and native tests together.
+
+Normal build/test jobs key the shared immutable-download cache from the complete
+declared and resolved dependency inputs. The dependency-refresh job is the one
+exception: it restores a pre-update bootstrap cache before changing the selected
+pin, then regenerates `ci/platformio-packages.lock`; the resulting PR is built
+and tested by normal CI using the new complete hash.
+The security inventory job also bypasses the package cache intentionally so its
+scheduled dependency resolution observes the current registries and audit data;
+it does not produce release build artifacts.
+
+Before merging a gitlink change, initialize it in a clean clone rather than
+relying on objects already present in a developer checkout:
+
+```bash
+clean_root="$(mktemp -d)"
+git clone --recurse-submodules \
+  https://github.com/hermes-gadget/SigurdOS-tdeck.git \
+  "$clean_root/SigurdOS-tdeck"
+git -C "$clean_root/SigurdOS-tdeck/lib/meshcore" rev-parse HEAD
+```
+
+The printed SHA must equal the superproject gitlink. Then run the companion
+verification below and the affected build matrix. A submodule update is not a
+hash-only maintenance change: reconcile local MeshCore patches and contact,
+path, room-connection, transport-key, and persistence behaviour explicitly.
+
 ## Companion interop and golden frames
 
 Run the official USB client matrix as documented in `scripts/official-meshcore-client-test/README.md` and the BLE scenarios in `docs/COMPANION_BLE_TEST_ENV.md`. Record firmware versions, date, pass/fail per case, and links to sanitized output. Do not record device IDs, public keys, contact names, message contents, credentials, or private keys.
@@ -100,7 +140,38 @@ The checked-in golden corpus is tied to the exact MeshCore submodule commit and 
 python3 scripts/verify_companion_golden_frames.py
 ```
 
-When the submodule changes, review stock protocol constants and frame layouts before updating both the digest and corpus. A hash-only update is not review.
+The corpus also records a full public-upstream commit, its stock source digest,
+and a canonical digest of all numeric `CMD_*`, `RESP_*`, `PUSH_*`, and
+`ERR_*` values. To review a newly fetched public-upstream candidate:
+
+```bash
+git -C lib/meshcore fetch https://github.com/meshcore-dev/MeshCore.git main
+python3 scripts/verify_companion_golden_frames.py \
+  --candidate-ref FETCH_HEAD --json
+```
+
+The command resolves and prints the candidate's immutable full SHA. It fails if
+the candidate changes any numeric protocol code and additionally verifies the
+recorded source digest when the candidate is the reviewed-upstream commit.
+New or changed frame layouts still require source-diff review and corresponding
+golden/native assertions; numeric-code compatibility alone is not a layout
+claim.
+
+When either the submodule or reviewed-upstream baseline changes, review stock
+protocol constants and frame layouts before updating the commit, source digest,
+protocol digest, and corpus. A hash-only update is not review. Run both the
+pinned and candidate commands plus:
+
+```bash
+pio test -e native_test -f test_companion_protocol -v
+pio test -e native_sanitize -f test_companion_protocol -v
+```
+
+The protocol module includes deterministic stateful offline-sync coverage that
+combines repeated app starts, bounded-page refill, write rejection, disconnect,
+reconnect, retry, ordering, and durable delivered markers. This is the required
+property/sequence gate for dependency refreshes; focused tests remain required
+for any newly introduced state machine.
 
 ## Privacy-safe soak reports
 

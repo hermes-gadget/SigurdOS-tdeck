@@ -6,7 +6,10 @@ signing, and configuration. Recognition of a command identifier does not imply
 that its operation is supported.
 
 This matrix describes the pinned MeshCore protocol at submodule commit
-`60ea4a91bf14363e837037a79ce1bff7fa37483f`.
+`3e62b51667973ea61d0467cbe828309e011321ba`. Its numeric companion
+command/response/PUSH/error contract also matches reviewed public-upstream
+commit `a3a1aa5e3be34b42d8ac8c2cc244d30af6cdd71e`; the reproducible verification
+procedure is in [`RELEASE_EVIDENCE.md`](RELEASE_EVIDENCE.md#companion-interop-and-golden-frames).
 
 | Command family | Status | Notes |
 |---|---|---|
@@ -70,6 +73,20 @@ trusts physical access to the cable and host; the four-digit device PIN does
 not authenticate that protocol. Factory reset and identity commands inherit
 the selected transport's boundary. See [Security model](SECURITY_MODEL.md) for
 bond revocation, reset, private-key, and physical-access assumptions.
+
+| PlatformIO environment | Companion transport | Intended use |
+|---|---|---|
+| `SigurdOS_TDeck` | BLE NUS, enabled by default | Normal release firmware; users may disable advertising at runtime |
+| `SigurdOS_TDeck_ble_validation` | BLE NUS + validation instrumentation | Compile/memory validation of the production BLE path |
+| `SigurdOS_TDeck_ble_agent` | BLE NUS + radio + remote test telemetry | Automated advertising and pairing diagnostics on hardware |
+| `SigurdOS_TDeck_companion_usb` | USB CDC binary framing; BLE compiled out | Host protocol matrix and wired companion operation; core debug level is forced to 0 |
+
+Build a variant with `pio run -e <environment>`. The USB companion build owns
+the CDC byte stream, so it cannot simultaneously expose the text remote-test
+controller or general serial console; Arduino/ESP-IDF debug output is suppressed
+to keep binary frames uncorrupted. Use `firmware-merged.bin` for a direct flash.
+Hardware commands and host tooling are documented in
+[`COMPANION_BLE_TEST_ENV.md`](COMPANION_BLE_TEST_ENV.md).
 
 `client_repeat` matches stock companion behavior: when disabled the handheld
 does not forward packets; when enabled it forwards without applying

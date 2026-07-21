@@ -98,6 +98,7 @@ class PlatformIODebugConfigTests(unittest.TestCase):
         macros = [macro_name(flag) for flag in flags]
         self.assertEqual(macros.count("SIGURDOS_COMPANION_BLE"), 1)
         self.assertIn("-DSIGURDOS_COMPANION_BLE=0", flags)
+        self.assertIn("-DCORE_DEBUG_LEVEL=0", flags)
 
 
 if __name__ == "__main__":
