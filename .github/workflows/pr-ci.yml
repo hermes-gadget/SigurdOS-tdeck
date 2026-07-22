@@ -237,7 +237,9 @@ jobs:
         run: python -m pip install --require-hashes -r ci/requirements-coverage.txt
 
       - name: Run all coverage-capable native tests
-        run: pio test -e native_coverage -v
+        run: |
+          python3 scripts/check_native_coverage_inventory.py
+          pio test -e native_coverage -v
 
       - name: Publish line and branch summary
         run: |
@@ -245,6 +247,8 @@ jobs:
             --root . \
             --filter '^src/' \
             --exclude-throw-branches \
+            --fail-under-line 90 \
+            --fail-under-branch 70 \
             --txt coverage.txt \
             --txt-summary \
             --html-details coverage.html \
