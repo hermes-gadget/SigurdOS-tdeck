@@ -17,7 +17,7 @@ The logging system provides three lightweight, printf-style macros (`SIG_LOGE`, 
   - [Format Conventions](#format-conventions)
   - [Newline Behaviour](#newline-behaviour)
   - [Macro Expansion Examples](#macro-expansion-examples)
-- [Compile-time Gating (`SIGURDOS_DEBUG`)](#compile-time-gating-sigurdos_debug)
+- [Compile-time Gating (`SIGURDOS_DEBUG_ACTIVE`)](#compile-time-gating-sigurdos_debug_active)
   - [Debug Build Environments](#debug-build-environments)
 - [Migration Guide (from raw `Serial.printf`)](#migration-guide-from-raw-serialprintf)
   - [Migration Checklist](#migration-checklist)

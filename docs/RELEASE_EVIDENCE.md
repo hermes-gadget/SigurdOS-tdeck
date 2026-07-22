@@ -16,22 +16,24 @@ attestation adds the exact tagged commit, the SHA-256 of the checked-in source
 evidence, and hashes of every release artifact. CI validates those hashes against
 the actual bytes immediately before upload. Keeping commit and artifact hashes
 out of the checked-in schema avoids an impossible self-reference: editing a
-tracked evidence file changes the commit it would claim to identify.
+tracked evidence file changes the commit it would claim to identify. These
+SHA-256 values prove byte consistency, not publisher identity: **checksums are
+not signatures**. See [Security model](SECURITY_MODEL.md#firmware-update-trust).
 
 Use this shape (repeat the requirement object for every ID in the requirements inventory):
 
 ```json
 {
   "schema_version": 2,
-  "tag": "beta-0.1.44-RC6",
+  "tag": "<current-tag>",
   "generated_at": "2026-07-14T18:00:00Z",
   "requirements": [
     {
       "id": "INT-BLE",
       "outcome": "pass",
-      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/0000",
+      "evidence_url": "<reviewed-evidence-url>",
       "tested_at": "2026-07-14",
-      "firmware_version": "beta-0.1.44-RC6",
+      "firmware_version": "<current-tag>",
       "peer_version": "official-client-version"
     }
   ]
@@ -101,6 +103,16 @@ Test the final release artifact and record evidence for:
 - missing and rejected credentials;
 - offline, TLS, HTTP error, and truncated download paths;
 - invalid image or write failure, followed by a clean reboot into a known-good image.
+- an image with a lower security epoch, rejected before activation;
+- the current and alternate maintained TLS roots, plus an expired/untrusted
+  chain and the documented offline recovery path;
+- an explicit firmware-signature result. Until device-side signature checking
+  exists, record this as a known gap; a passing checksum is not a substitute.
+
+Companion security evidence also covers BLE bond revocation and verifies that
+factory reset prevents an old bond from silently reconnecting. USB evidence
+must label the connected host as trusted because companion USB has no protocol
+authentication. See [Security model](SECURITY_MODEL.md#release-evidence).
 
 Use versioned release URLs. A negative test passes only when the error is bounded, the UI remains usable or reboots intentionally, and a bootable image is retained.
 

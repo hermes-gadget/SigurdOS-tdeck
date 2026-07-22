@@ -18,7 +18,7 @@ This matrix describes the pinned MeshCore protocol at submodule commit
 | Radio, tuning, flood scope, and custom variables | Supported | Subject to T-Deck radio-region and TX-safety gates |
 | Binary and anonymous peer requests (`CMD_SEND_BINARY_REQ`, `CMD_SEND_ANON_REQ`) | Supported | Requests are sent through `BaseChatMesh`; matching replies emit `PUSH_CODE_BINARY_RESPONSE`. Anonymous requests may use transient contacts |
 | Status, telemetry, and trace | Supported | Standard request/response and async push flows |
-| Identity import/export and signing | Supported | Signing accepts up to 8192 bytes. Builds can set `SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT=0` and/or `SIGURDOS_ENABLE_PRIVATE_KEY_IMPORT=0`; disabled commands return the protocol's disabled response. Factory reset remains guarded by the authenticated protocol contract |
+| Identity import/export and signing | Supported | Signing accepts up to 8192 bytes. Builds can set `SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT=0` and/or `SIGURDOS_ENABLE_PRIVATE_KEY_IMPORT=0`; disabled commands return the protocol's disabled response. BLE administration relies on bonding; companion USB has no protocol authentication |
 | `CMD_SEND_RAW_PACKET` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD`; arbitrary packet injection is not exposed |
 
 Of the 58 defined command IDs, `CMD_SEND_RAW_PACKET` is the only command that is
@@ -59,6 +59,12 @@ reset. A failed durable write leaves the running identity unchanged.
 BLE is a single-client, compile-time-selected companion transport; BLE and USB
 are not served simultaneously and there is no runtime transport switch. BLE
 re-advertises after disconnect.
+
+BLE bonds authorize an administrative companion. USB companion mode instead
+trusts physical access to the cable and host; the four-digit device PIN does
+not authenticate that protocol. Factory reset and identity commands inherit
+the selected transport's boundary. See [Security model](SECURITY_MODEL.md) for
+bond revocation, reset, private-key, and physical-access assumptions.
 
 `client_repeat` matches stock companion behavior: when disabled the handheld
 does not forward packets; when enabled it forwards without applying

@@ -94,13 +94,13 @@ When `NodePrefs::configured == false`, the RF summary row shows `Radio: NOT CONF
 
 ## GPS / Location (`screen_settings_gps.cpp`)
 
-|| Row | Action / persistence |
+| Row | Action / persistence |
 |-----|----------------------|
-|| `GPS: Fix acquired / No fix` | Read-only status from `sigurdos_gps_has_fix()` |
-|| `GPS: ON/OFF` | Enables/disables the GPS module (`NodePrefs::gps_enabled`) |
-|| `GPS interval` | Poll-interval preset |
-|| `Sync time from GPS` | Temporarily requests foreground GPS cadence (200 ms) for up to 60 seconds. A valid dated fix updates the system RTC and MeshCore time. Does not enable background GPS. |
-|| `Share location: ON/OFF` | Include coordinates in adverts (`NodePrefs::share_location`) |
+| `GPS: Fix acquired / No fix` | Read-only status from `sigurdos_gps_has_fix()` |
+| `GPS: ON/OFF` | Enables/disables the GPS module (`NodePrefs::gps_enabled`) |
+| `GPS interval` | Poll-interval preset |
+| `Sync time from GPS` | Temporarily requests foreground GPS cadence (200 ms) for up to 60 seconds. A valid dated fix updates the system RTC and MeshCore time. Does not enable background GPS. |
+| `Share location: ON/OFF` | Include coordinates in adverts (`NodePrefs::advert_loc_policy`) |
 
 ---
 

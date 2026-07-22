@@ -56,7 +56,7 @@
 | 43  | GPS TX              | UART      | Serial1 TX                          |
 | 44  | GPS RX              | UART      | Serial1 RX                          |
 | 45  | LoRa DIO1           | GPIO      | Radio interrupt while awake (not RTC-capable) |
-|| 46  | Buzzer              | GPIO      | Active-high buzzer output            |
+| 46  | Buzzer              | GPIO      | Active-high buzzer output            |
 
 ---
 

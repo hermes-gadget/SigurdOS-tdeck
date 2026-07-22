@@ -1,15 +1,18 @@
-# SigurdOS T-Deck ↔ bmorcelli/Launcher Compatibility Analysis
+# SigurdOS T-Deck ↔ bmorcelli/Launcher Compatibility
 
 > **Analysis date:** 2026-06-17 (updated 2026-07-14)
 > **SigurdOS version:** beta-0.1.44-RC6 (`dev` branch)
 > **Launcher version:** v2.7.2 (analyzed from GitHub source)
-> **Methodology:** Source-only analysis — no changes made, no physical hardware tested
+> **Methodology:** The detailed analysis below is a dated historical source
+> review. Use the current status table, not the historical risk language, for
+> present implementation state. Physical validation remains separately marked.
 
 ---
 
 ## Table of Contents
 
-- [Executive Summary](#executive-summary)
+- [Current status](#current-status)
+- [Historical source-only analysis](#historical-source-only-analysis)
 - [1. Pin Map Comparison](#1-pin-map-comparison)
 - [2. Partition Table Compatibility](#2-partition-table-compatibility)
 - [3. Boot Flow & Warm-Handoff Analysis](#3-boot-flow--warm-handoff-analysis)
@@ -23,7 +26,23 @@
 
 ---
 
-## Executive Summary
+## Current status
+
+| Capability | Implemented | Hardware-verified | External / remaining evidence |
+|---|---|---|---|
+| Launcher environment detection | Yes | Native false-positive coverage only | Recheck against future Launcher partition layouts |
+| Launcher-named merged artifact and install docs | Yes | Not recorded | Direct URL/SD install evidence remains |
+| Self-OTA gate while under Launcher | Yes | Not recorded | Release matrix T7 remains |
+| Keyboard warm-handoff hardening | Yes; bounded I2C retry and explicit `0x04` ASCII key-mode reset | No | Bench issue #610; production never sends raw-mode command `0x03` |
+| LauncherHub listing | Not in this repository | No | Externally blocked by #615 |
+| Reboot-to-Launcher action | No | No | Hardware/API investigation #616 |
+
+The only production keyboard contract is ASCII key mode. Statements below that
+describe a planned switch to raw mode are retired historical analysis.
+
+---
+
+## Historical source-only analysis
 
 **SigurdOS is structurally installable by Launcher, but has several incompatibilities that would prevent a reliable experience.** The core issues are:
 
@@ -179,7 +198,7 @@ From `boards/lilygo-t-deck/interface.cpp::_setup_gpio()`:
 |-----------|---------------------|------------------------------|------|
 | **I2C bus** (18/8) | Initialized, running | Wire.begin(18,8) → fresh init | **LOW** — Wire.begin() reinitializes |
 | **GPIO 10** | HIGH (peripherals powered) | HIGH | **NONE** — same state |
-| **C3 Keyboard MCU** (0x55) | Running, in **ASCII key mode** (Launcher never touches mode commands) | Expects to probe + switch to raw mode via I2C cmd `0x03` | **MEDIUM-HIGH** — see below |
+| **C3 Keyboard MCU** (0x55) | Running, in **ASCII key mode** (Launcher never touches mode commands) | Probes with bounded retry and explicitly sends `0x04` to remain in ASCII key mode | **LOW-MEDIUM** pending hardware evidence |
 | **GT911 Touch** (0x5D) | Initialized via `TouchDrvGT911`, configured | Probes 0x5D first, falls back to 0x14; re-reads + re-writes config (186 bytes) | **LOW-MEDIUM** — SigurdOS's config rewrite should be idempotent |
 | **ST7789 Display** | Initialized via `Ard_eSPI` (Arduino_GFX), rotation=1, 320x240, inversion=true | LovyanGFX full init including software reset (SWRESET 0x01) | **LOW** — soft reset recovers panel |
 | **SX1262 LoRa** | **CS driven HIGH**, never initialized | Hard-reset via GPIO 17 during `mesh::init()` | **LOW** — full re-init |
@@ -188,17 +207,14 @@ From `boards/lilygo-t-deck/interface.cpp::_setup_gpio()`:
 
 ### The Critical Warm-Handoff Problem
 
-**C3 Keyboard MCU:** The keyboard is a separate ESP32-C3 that continues running across the `ESP.restart()`. Launcher leaves it in default **ASCII key mode** (single-byte reads — Launcher never sends the raw mode command `0x03`). SigurdOS's keyboard init (`sigurdos_keyboard_init`) probes 0x55, then sends:
-1. `Wire.write(0x04)` — switch to key mode (redundant, already in key mode)
-2. Reads brightness commands (0x01, 0x02)
-3. `Wire.write(0x03)` — switch to **raw matrix mode**
+**C3 Keyboard MCU:** The keyboard is a separate ESP32-C3 that continues running across the `ESP.restart()`. Launcher leaves it in default **ASCII key mode**. SigurdOS probes 0x55 with bounded retry, sends `0x04` to establish that same key mode, and configures brightness. Production deliberately never sends the unsupported raw-matrix command `0x03`.
 
 The problem: the C3 MCU may not respond to the I2C probe immediately after the S3 reset because:
 - The C3 was in the middle of a keyboard scan cycle
 - GPIO 10 power rail might have glitched during S3 reset
 - The C3 firmware may have stale I2C state
 
-**SigurdOS already has warm-handoff hardening (C6):** bounded retry with 3×100ms delays + explicit mode reset. However, the keyboard init has a hard failure path: if the probe fails after all retries, `sigurdos_keyboard_init()` returns `false` and the keyboard is permanently unavailable.
+**SigurdOS already has warm-handoff hardening (C6):** bounded retry with 3×100ms delays plus an explicit ASCII key-mode reset. However, the keyboard init has a hard failure path: if the probe fails after all retries, `sigurdos_keyboard_init()` returns `false` and the keyboard is unavailable for that boot.
 
 **The user-reported breakage** ("keyboard doesn't work, many things break") has never been root-caused on physical hardware. This requires bench debugging with a logic analyzer on the I2C lines (pins 18/8) and GPIO 10 during the handoff.
 
@@ -240,15 +256,15 @@ The problem: the C3 MCU may not respond to the I2C probe immediately after the S
 
 | Aspect | SigurdOS | Launcher |
 |--------|----------|----------|
-| Protocol | Switches C3 to **raw matrix mode** (0x03) | Uses C3's default **ASCII key mode** (0x04) |
+| Protocol | Explicitly selects **ASCII key mode** (0x04); raw mode (0x03) is unsupported | Uses C3's default **ASCII key mode** (0x04) |
 | Polling rate | 5 ms intervals | ~190 ms intervals (via main loop timing) |
-| Key map | 5×7 raw matrix with Sym/Alt/Mic/Shift layers | Single ASCII byte from C3 |
+| Key map | Single ASCII byte from C3 plus host-side character picker | Single ASCII byte from C3 |
 | Special chars | Built-in extended character picker (ä, é, ñ, etc.) | C3's own ASCII mapping only |
 | Init retries | 3 retries with 100ms delays | 500ms initial delay, no retries |
 
 **What could break:**
 1. **Timing:** The C3 may still be processing a scan cycle when SigurdOS's init probe arrives. SigurdOS's 3×100ms retry helps but the C3's I2C response time isn't bounded.
-2. **Mode transition:** Switching from key mode to raw mode requires the C3 to flush its key buffer.
+2. **Mode establishment:** The explicit `0x04` command must complete after the warm handoff.
 3. **Backlight:** Both write to the same LEDC channel — last write wins.
 
 ### Trackball — Polling vs ISR
@@ -388,9 +404,11 @@ Switching from standalone → Launcher (or vice versa) causes NVS to reset becau
 
 This is a **one-time event** — not a recurring problem. Documented in `docs/LAUNCHER.md` as RC4.
 
-#### 6. Keyboard left in wrong mode
+#### 6. Keyboard mode after handoff
 
-Launcher uses ASCII key mode; SigurdOS switches to raw matrix mode. If the C3 firmware has bugs in the mode-switch path, raw mode might not work. SigurdOS's explicit mode reset (cmd `0x04` then `0x03`) should handle this — confirmed by other firmwares that use the same approach.
+Launcher and SigurdOS both use ASCII key mode. SigurdOS explicitly sends
+`0x04` during initialization and never sends raw-mode command `0x03`; the
+remaining question is warm-handoff timing, not a mode transition.
 
 ### LOW RISK — Unlikely to Break
 
@@ -473,7 +491,7 @@ SigurdOS is **architecturally compatible** with bmorcelli/Launcher — the pin m
 - `src/hal/tdeck_board.h` — TDeckBoard class (peripheral power, I2C, battery, sleep)
 - `src/hal/display.cpp` — LovyanGFX ST7789 init, LVGL flush callback, auto-off timer
 - `src/hal/touch.cpp` — GT911 raw I2C driver with dual-address probe
-- `src/hal/keyboard.cpp` — ESP32-C3 keyboard driver with raw matrix mode
+- `src/hal/keyboard.cpp` — ESP32-C3 keyboard driver using ASCII key mode
 - `src/hal/trackball.cpp` — 5-direction trackball polling with debounce
 - `src/hal/sdcard.cpp` — SD card via shared SPI singleton
 - `src/hal/spi_shared.cpp` — Shared SPI bus singleton (SPI2_HOST / FSPI)

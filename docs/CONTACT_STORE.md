@@ -46,7 +46,7 @@ static constexpr size_t SIGURDOS_CONTACT_NAME_LEN    = 32;
 static constexpr size_t SIGURDOS_CONTACT_PATH_LEN    = 64;
 
 struct StoredContact {
-    uint8_t pub_key[SIGURDOS_CONTACT_PUBKEY_LEN];  // 32-byte X25519 public key
+    uint8_t pub_key[SIGURDOS_CONTACT_PUBKEY_LEN];  // 32-byte Ed25519 identity public key
     char    name[SIGURDOS_CONTACT_NAME_LEN];         // 32-byte display name (null-terminated)
     uint8_t type;                                     // contact type (see ContactInfo::Type)
     uint8_t flags;                                    // complete MeshCore flags byte
@@ -59,8 +59,10 @@ struct StoredContact {
 };
 ```
 
-The derived ECDH shared secret and its validity flag are deliberately absent.
-They depend on the local identity and are recomputed lazily after loading.
+The stored key is the contact's Ed25519 identity/signing public key. MeshCore
+converts/uses the appropriate key material when deriving the ECDH shared
+secret. That derived secret and its validity flag are deliberately absent from
+disk; they depend on the local identity and are recomputed lazily after load.
 
 The maximum number of contacts (`MAX_CONTACTS`, defined for the T-Deck build) is **350**.
 
@@ -90,7 +92,7 @@ Offset  Size  Field             Description
 ```
 Offset  Size  Field         Description
 ------  ----  ------------- -------------------------------
-  0     32    pub_key        X25519 public key (raw bytes)
+  0     32    pub_key        Ed25519 identity public key (raw bytes)
  32     32    name           Display name (bytes, zero-padded)
  64      1    type           Contact type (uint8_t)
  65      1    flags          Complete MeshCore flags byte

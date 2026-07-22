@@ -66,7 +66,7 @@ This document catalogs every feature in the firmware — the 12-grid home screen
 | **Mesh** | Full MeshCore protocol stack — routing, encryption, group channels, direct messages | `src/mesh/*`, `lib/meshcore/` |
 | **HAL** | All T-Deck peripherals — display, touch, keyboard, trackball, GPS, battery, SD, buzzer, LoRa | `src/hal/*` |
 | **Apps** | Offline map renderer with PNG tile decode and LRU PSRAM cache | `src/app/*` |
-| **Boot** | Sequenced startup: board → input + display init → splash/prefs → mesh → UI restore | `src/main.cpp` |
+| **Boot** | Display-first startup with live splash status and deferred input initialization | [`docs/HARDWARE.md` Appendix A](HARDWARE.md#appendix-a--boot-sequence) |
 
 ---
 
@@ -118,7 +118,7 @@ Serial-like terminal screen for diagnostics and utility commands. Includes `help
 
 ### 11. SETUP
 First-boot onboarding wizard. Guides the user through node name, radio configuration, and channel setup before first use. Saves prefs and reboots when complete.
-**Sources:** [`src/ui/onboarding_screen.cpp`](../src/ui/onboarding_screen.cpp), [`src/ui/onboarding_screen.h`](../src/ui/onboarding_screen.h), [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md#onboarding)
+**Sources:** [`src/ui/onboarding_screen.cpp`](../src/ui/onboarding_screen.cpp), [`src/ui/onboarding_screen.h`](../src/ui/onboarding_screen.h)
 
 ### 12. SIGNAL
 Signal diagnostics screen showing current RSSI, noise floor, SNR, and signal quality metrics. Visual bar chart representation.
@@ -145,10 +145,10 @@ is green while an official companion is connected. See
 - **Lost-frame handling** — when the full double buffer cannot be swapped in time (mesh activity, GPS polling), LVGL falls back to partial rendering of dirty areas only; no visible tearing because LVGL's internal dirty-region tracking still produces correct output, but frame rate drops until the bottleneck clears
 - **Auto-off** backlight timeout (30s default) with wake on touch/keyboard input
 - **Programmable brightness** via PWM (0–255)
-- **Screen capture** via serial hex dump (`lv_snapshot_take_to_draw_buf`)
+- **Screen capture** via serial hex dump (`lv_snapshot_take_to_draw_buf`) only when `SIGURDOS_SERIAL_DEBUG_COMMANDS_ACTIVE` is enabled at compile time
 - **Tick-starvation fix** — periodic `lv_timer_handler()` inside mesh loop (20ms guard) keeps UI responsive
 - **Boot splash with live status** — `boot_status()` updates a status label on the splash screen during boot sequence (PR #625), showing progress such as "Mounting storage...", "Starting radio..."
-**Sources:** [`src/hal/display.cpp`](../src/hal/display.cpp), [`src/hal/display.h`](../src/hal/display.h), [`src/lv_conf.h`](../src/lv_conf.h), [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md#ui-performance)
+**Sources:** [`src/hal/display.cpp`](../src/hal/display.cpp), [`src/hal/display.h`](../src/hal/display.h), [`src/lv_conf.h`](../src/lv_conf.h)
 
 ### Mesh Networking
 - **Full MeshCore protocol** — interoperable with any MeshCore node
@@ -254,10 +254,10 @@ is green while an official companion is connected. See
 **Sources:** [`src/mesh/contact_store.cpp`](../src/mesh/contact_store.cpp), [`src/mesh/contact_store.h`](../src/mesh/contact_store.h), [`src/mesh/persistence_store.cpp`](../src/mesh/persistence_store.cpp), [`src/mesh/persistence_store.h`](../src/mesh/persistence_store.h)
 
 ### Web Flasher Support
-- **Pre-built binaries** in `webflasher/` — bootloader, partitions, boot_app0, firmware, merged full image, and the Launcher-named copy
+- **Generated release binaries** — bootloader, partitions, boot_app0, firmware, merged full image, and the Launcher-named copy are produced during a release build; they are not checked into a clean source checkout
 - **Manifest JSON** — versioned metadata (version, git SHA, SHA-256 checksums, offsets) for the `flasher.sigurdos.dev` custom firmware installer
 - **4-partition flash layout** — bootloader (0x0000), partitions (0x8000), boot_app0 (0xe000), firmware (0x10000)
-**Sources:** [`webflasher/manifest.json`](../webflasher/manifest.json), [`firmware/README.md`](../firmware/README.md), [`webflasher/`](../webflasher/)
+**Sources:** [`firmware/README.md`](../firmware/README.md) documents the generated artifact directory and manifest
 
 ### OTA Firmware Update
 - **AP upload OTA** — Settings → System → "OTA Update" starts a `SigurdOS-OTA` WiFi AP and upload page at `192.168.4.1`.
@@ -310,7 +310,7 @@ is green while an official companion is connected. See
 - **Resolution:** 320×240 (landscape via rotation 1)
 - **Color:** 16-bit RGB565; full double buffers in PSRAM with single/full and partial fallbacks
 - **Backlight:** PWM via GPIO 42, auto-off timeout, programmable brightness
-- **Framebuffer capture** for debugging and screenshots (PSRAM full-buffer mode)
+- **Framebuffer capture** for debugging and screenshots (PSRAM full-buffer mode, compile-time gated by `SIGURDOS_SERIAL_DEBUG_COMMANDS_ACTIVE`)
 - **Coexistence** with LoRa + SD on same SPI bus (different CS lines)
 **Sources:** [`src/hal/display.cpp`](../src/hal/display.cpp), [`src/hal/display.h`](../src/hal/display.h), [`src/hal/tdeck_pins.h`](../src/hal/tdeck_pins.h)
 
@@ -383,7 +383,7 @@ is green while an official companion is connected. See
 **Sources:** [`src/hal/tdeck_pins.h`](../src/hal/tdeck_pins.h), [`src/mesh/mesh_wrapper.cpp`](../src/mesh/mesh_wrapper.cpp), [`lib/meshcore/`](../lib/meshcore/)
 
 ### Buzzer
-- **Pin:** GPIO 46 (active low)
+- **Pin:** GPIO 46 (active high)
 - **Non-blocking pattern playback** — notification patterns (short/double beep) are stepped by `buzzer_loop()` from the main loop instead of blocking delays
 - **Quiet mode** — buzzer can be silenced via preferences
 **Sources:** [`src/hal/buzzer.cpp`](../src/hal/buzzer.cpp), [`src/hal/buzzer.h`](../src/hal/buzzer.h)
@@ -415,7 +415,11 @@ A dedicated app-level feature bridging the display, SD card, and GPS systems.
 
 ## Test Suite
 
-While not a user-facing feature, the native test corpus currently tracks 551 `TEST(...)` cases across 85 `test/test_<name>/` suites (as of 2026-07-14) and validates HAL drivers, mesh wrapper and protocol contracts, regions, companion BLE protocol, message/contact stores, navigation, layout, theme, telemetry, emoji fonts, OTA contracts, and the Launcher detection helper.
+While not a user-facing feature, the native test corpus validates HAL drivers,
+mesh wrapper and protocol contracts, regions, companion BLE protocol,
+message/contact stores, navigation, layout, theme, telemetry, emoji fonts, OTA
+contracts, and the Launcher detection helper. Counts are intentionally omitted
+because the test inventory changes with almost every PR.
 
 Run it with `pio test -e native_test`. See [`test/README.md`](../test/README.md) for the full per-suite listing and mock structure — per-module counts are not duplicated here because they change with nearly every PR.
 

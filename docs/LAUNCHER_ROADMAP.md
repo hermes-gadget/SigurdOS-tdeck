@@ -1,6 +1,9 @@
 # Launcher Compatibility Roadmap
 
-**Status:** All code-level items (C1–C7, O3) are implemented and merged. LauncherHub listing (O1) and return-to-Launcher (O2) remain external/hardware-gated. This roadmap is in maintenance-only mode — no further code changes are expected.
+**Status:** Maintenance record. C1–C7 and O3 are implemented; that does not
+mean they are hardware-verified. LauncherHub listing (O1) is externally blocked,
+return-to-Launcher (O2) is hardware/API gated, and warm handoff still needs
+bench evidence.
 **Tracking issues:** [#567](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/567), [#610](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/610), [#612](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/612), [#614](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/614), [#615](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/615), [#616](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/616)
 **External project:** [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) (analyzed at v2.7.2, June 2026)
 **Related:** `docs/KNOWN_ISSUES.md` → "SigurdOS Launcher compatibility", `docs/MISSING_FEATURES.md` → "Launcher compatibility — M"
@@ -49,7 +52,7 @@ All code-level items (C1–C7, O3, O4) are implemented and merged. Only external
 | C3 — Runtime Launcher detection | ✅ Complete | PR #609 (merged) added the `otadata @ 0xD000` confirmation signal and native false-positive tests. |
 | C4 — Gate self-OTA under Launcher | ✅ Complete | WiFi OTA, GitHub OTA, and Settings System refuse self-OTA under Launcher with an "update through Launcher" explanation. |
 | C5 — Boot-time persistence diagnostic | ✅ Complete | `src/main.cpp` prints a Launcher-specific app-only install warning when SPIFFS mount fails under Launcher. |
-| C6 — Warm-handoff keyboard hardening | ✅ Complete | Keyboard init now uses bounded probe retry and explicit C3 mode reset; further warm-handoff work must be driven by physical hardware evidence. |
+| C6 — Warm-handoff keyboard hardening | ✅ Implemented / ⚠️ not hardware-verified | Keyboard init uses bounded probe retry and explicitly selects `0x04` ASCII key mode. Raw command `0x03` is never sent in production. Further work must be driven by physical evidence. |
 | C7 — Migration note | ✅ Complete | `firmware/README.md`, `docs/KNOWN_ISSUES.md`, and `docs/MISSING_FEATURES.md` document Launcher support caveats and mode-switch reset behavior. |
 | O1 — LauncherHub catalog listing | ⏳ Blocked (external) | Issue #615 tracks the external maintainer/catalog process; direct URL and SD/WebUI install remain the documented path until LauncherHub listing is accepted. |
 | O2 — Reboot to Launcher Settings entry | ⏳ Blocked (hardware) | Issue #616 tracks the required bench validation of return-to-Launcher semantics and whether a stock-framework app can safely write Launcher `otadata`; do not implement speculatively. |
@@ -129,7 +132,7 @@ Handoff is `ESP.restart()` — a **software reset**. The ESP32-S3's own GPIO mat
 | Self-OTA #1: WiFi AP + web upload page using Arduino `Update`; header comment explicitly states "Depends on OTA partition table (`board_build.partitions = default_16MB.csv`)" | `src/hal/wifi_ota.h`, `src/hal/wifi_ota.cpp` |
 | Self-OTA #2: GitHub release selection followed by a versioned `…/releases/download/<tag>/firmware.bin` download flashed via `Update` | `src/hal/github_ota.cpp:318-399`, `src/hal/github_ota_plan.h` |
 | Full hardware ownership at boot: peripheral power GPIO 10, shared SPI singleton (display CS 12 / LoRa CS 9 / SD CS 39), I2C bus (keyboard 0x55, GT911 0x5D), trackball GPIOs, GPS UART 43/44, USB CDC serial | `src/hal/tdeck_board.h`, `src/hal/spi_shared.cpp`, `src/hal/keyboard.cpp`, `src/hal/touch.cpp`, `src/hal/gps.cpp`; pinout in `src/hal/tdeck_pins.h` and `CLAUDE.md` |
-| Keyboard driver switches the C3 keyboard MCU into **raw matrix mode** (I2C cmd `0x03`) after probing 0x55 | `src/hal/keyboard.cpp:31-76` (protocol), `src/hal/keyboard.cpp:353-399` (init) |
+| Keyboard driver probes with bounded retry and explicitly selects **ASCII key mode** (I2C cmd `0x04`); production never sends raw-mode `0x03` | `src/hal/keyboard.cpp` |
 | Touch driver probes GT911 at 0x5D **and falls back to 0x14** | `src/hal/touch.cpp:31-41` |
 | Map tiles live on **SD card** (PNG via lodepng, PSRAM cache) — not SPIFFS | `src/app/map_renderer.*`, `src/hal/sdcard.*` |
 | Radio TX is gated behind `configured == true` (first-boot onboarding) | `CLAUDE.md` gotcha "Radio first boot"; `src/hal/prefs.*` |
@@ -165,14 +168,17 @@ Both OTA paths use Arduino `Update`, which targets `esp_ota_get_next_update_part
 
 | Peripheral | Cold boot (standalone) | After Launcher handoff (SW reset) |
 |---|---|---|
-| ESP32-C3 keyboard MCU (0x55) | Cold-boots in default ASCII key mode while S3 boots; our init then switches it to raw mode | Already running; mode/state depends on what ran before; GPIO-10 power rail may or may not have dropped while the S3 was in reset (rail behavior during SW reset is unverified) |
+| ESP32-C3 keyboard MCU (0x55) | Cold-boots in ASCII key mode; our init explicitly reselects that mode | Already running in ASCII mode; response timing and GPIO-10 rail behavior remain unverified |
 | GT911 touch (0x5D) | Latches I2C addr 0x5D at its power-on | Not reset by S3 SW reset; retains config Launcher's `TouchDrvGT911` wrote; address re-latch only happens if the power rail actually drops. Our driver probes 0x5D then 0x14 (`src/hal/touch.cpp:31-41`), which mitigates the classic GT911 address-flip |
 | ST7789 display | Full power-on init | No reset line on T-Deck (Launcher sets `TFT_RST=GFX_NOT_DEFINED`; we re-init via LovyanGFX including soft reset) — retains Launcher's panel config until our init completes |
 | SX1262 LoRa | Power-on default, we hard-reset via RST 17 during radio init | Launcher never touches it beyond CS-high; our init hard-resets it — should be equivalent |
 | SD card | Power-on default | Retains SPI state; re-init via CMD0 normally recovers it |
 | NVS/SPIFFS | Our partitions | Launcher's partitions (see RC4/RC5) |
 
-The C3 keyboard and the GPIO-10 power-rail timing are the prime suspects (our keyboard init probes 0x55 and aborts permanently on NACK — `sigurdos_keyboard_init`, `src/hal/keyboard.cpp:353-366`; the `CLAUDE.md` gotcha "Wire.endTransmission — NACK on keyboard init means keyboard MCU is dead" bakes in the cold-boot assumption). **The exact mechanism is unverified.** Per `CLAUDE.md`, remote-test mode cannot validate physical-layer input issues; this requires bench debugging on real hardware (Phase 5).
+The C3 keyboard and GPIO-10 power-rail timing remain the prime suspects. The
+driver now retries the probe before declaring the keyboard unavailable for that
+boot. **The exact mechanism is unverified.** Remote-test mode cannot validate
+this physical layer; it requires bench debugging on real hardware.
 
 **At risk:** keyboard input (primary input method), possibly touch; anything else the user report covered ("many other things").
 
@@ -214,19 +220,13 @@ Standalone SPIFFS: `0xC90000`, 3.4 MB. Under Launcher (merged-bin install): crea
 
 ---
 
-## Required Changes
+## Implemented change record
 
-Everything here is additive; standalone behavior is untouched. Items marked **[docs]** need no code.
-
-| # | Change | Addresses | How standalone behavior is preserved |
-|---|---|---|---|
-| C1 | **Publish a Launcher-install artifact** in releases: a copy of the merged image named `SigurdOS-tdeck-launcher.bin` (same bytes as `firmware-merged.bin`; the name gives Launcher users an unambiguous file and a sane installed-app name "SigurdOS-tdeck-launch…"). Add it to `.github/workflows/build-release.yml` release files. | RC1, RC6 | Pure addition — existing artifacts unchanged |
-| C2 | **Document the Launcher install path** in `firmware/README.md`: install via Launcher SD/WebUI/URL using the merged image only; explicitly warn that `firmware.bin` (app-only) loses persistence under Launcher, and that flashing `firmware-merged.bin` at 0x0 with esptool *replaces* Launcher. | RC1, RC6 | **[docs]** |
-| C3 | **Runtime Launcher detection** (new tiny HAL helper, e.g. `src/hal/launcher_env.cpp/h`): report "running under Launcher" when a `test`-subtype app partition exists (Launcher's resident slot — never present in `default_16MB.csv`), with the otadata offset (0xD000 vs 0xE000) as a confirming signal. Standalone tables can never trip this. | RC2 | Detection only; returns `false` on every standalone device |
-| C4 | **Gate self-OTA on C3's detection**: when under Launcher, `wifi_ota` / `github_ota` refuse to start and the Settings UI explains "Update SigurdOS through Launcher instead." | RC2 | Code path only reachable when detection fires; standalone OTA untouched. This is the one behavior change *under Launcher*, and it prevents flash corruption of co-installed firmware |
-| C5 | **Boot-time persistence diagnostics**: when SPIFFS mount fails *and* Launcher is detected, log (and optionally surface in onboarding) "installed app-only — reinstall from the merged/Launcher image for persistence" instead of the generic warning at `src/main.cpp:51-52`. | RC1 | Message-only change, additional branch on detection |
-| C6 | **Warm-handoff hardening after bench root-cause** (Phase 5): expected scope is keyboard-init retry/timing (e.g., re-probe 0x55 with a bounded retry window instead of single-NACK-abort in `sigurdos_keyboard_init`) and explicit C3 mode reset (`0x04` key mode, then `0x03` raw) — both no-ops on a healthy cold boot. Final scope depends on what the bench work finds; do **not** implement speculatively. | RC3 | Retries/mode-set are idempotent on cold boot; validated by the existing `test_keyboard` native suite plus physical test |
-| C7 | **Migration note** in docs (`firmware/README.md` + `docs/KNOWN_ISSUES.md` update): switching standalone ↔ Launcher resets NVS prefs and SPIFFS identity; back up/re-onboard expectations spelled out. | RC4, RC5 | **[docs]** |
+C1–C7 are complete in source. The authoritative state and remaining evidence
+are in [Implementation Progress](#implementation-progress); the former future
+implementation instructions were removed to avoid implying that merged work
+still needs to be written. Production keyboard support remains ASCII key mode
+only (`0x04`); raw matrix mode (`0x03`) is intentionally unsupported.
 
 ## Optional Improvements
 
@@ -303,13 +303,11 @@ Hardware notes: T4/T9 specifically exercise the physical input layer and **must*
 
 ---
 
-## CI / Build / Release Changes
+## Build and release state
 
-1. `.github/workflows/build-release.yml`: after the existing build step, copy `.pio/build/SigurdOS_TDeck/firmware-merged.bin` to `SigurdOS-tdeck-launcher.bin` and add it to `files:` in the release step (3-line change). No new build env required (unless O4 is adopted).
-2. `scripts/merge_bin.py`: optionally emit the extra copy + a `launcher` entry in `webflasher/manifest.json` artifacts (keeps local builds consistent with CI). Not required for CI-only artifacts.
-3. `firmware/README.md`: new "Install via Launcher" section (C2) + migration caveats (C7).
-4. No changes to `pr-ci.yml`; native tests cover new helpers automatically once added under `test/test_<name>/`.
-5. When C3–C6 land, remove/replace the "SigurdOS doesn't work under bmorcelli/Launcher" section of `docs/KNOWN_ISSUES.md` and flip the `docs/MISSING_FEATURES.md` entry, per the Known Issue Detection checklist in `CLAUDE.md`.
+The release workflow and local merge script already emit the Launcher-named
+artifact, the install guide documents migration, and native tests cover runtime
+detection. Remaining work is evidence collection, not implementation.
 
 ## Release / Catalog Integration Steps
 
@@ -344,45 +342,12 @@ Hardware notes: T4/T9 specifically exercise the physical input layer and **must*
 | Q6 | Is 1 MB SPIFFS truly sufficient at `MAX_CONTACTS=350` plus channels and message stores? | Measure SPIFFS usage on a long-running standalone node (`SPIFFS.usedBytes()` via debug dump), compare against 0x100000 |
 | Q7 | The tracked `webflasher/manifest.json` currently records a local 8 MB test env (`SigurdOS_TDeck_remote_test_radio_roomtest_8mb`, `partitions/partitions_8MB.csv`) that doesn't exist in tracked `platformio.ini` — regenerate from a clean `SigurdOS_TDeck` build at next release so published metadata matches the canonical 16 MB layout | One `pio run -e SigurdOS_TDeck` + commit during the next release |
 
-## Phased Implementation Plan
+## Remaining evidence plan
 
-### Phase 0 — Baseline research and reproducible builds *(this document)*
-- ✅ Launcher v2.7.2 source analysis (install paths, partitioner, boot chain, T-Deck port, catalog API)
-- ✅ SigurdOS build/partition/artifact/runtime audit with file citations
-- Reproduce a clean release build (`pio run -e SigurdOS_TDeck`) and confirm `firmware-merged.bin` layout matches `scripts/merge_bin.py` expectations (also resolves Q7)
-- **Exit:** this roadmap merged; bench T-Deck reserved for Launcher experiments (a device that may be repeatedly reflashed)
-
-### Phase 1 — Artifact and partition audit (hardware-free)
-- Byte-level check of `firmware-merged.bin`: partition-table signature at 0x8000, app entry subtype/offset, SPIFFS entry as Launcher's parser will read them (script: walk 0x20-byte entries exactly like `updateFromSD` does)
-- Dry-run Launcher's layout math for our app size against `custom_16Mb.csv` starting state
-- **Exit:** written confirmation that the merged artifact is a valid Launcher install source, or a fix list for `scripts/merge_bin.py`
-
-### Phase 2 — Boot/flash compatibility (first hardware contact)
-- Flash Launcher on the bench T-Deck; install `firmware-merged.bin` from SD; capture full serial logs
-- Go/no-go on: image verify, partition creation, first boot reaching the UI, IDF-skew concerns
-- Run T9 power-cycle loop for boot-chain stability
-- **Exit:** SigurdOS boots under Launcher; remaining failures enumerated with logs (feeds Phase 5)
-
-### Phase 3 — Board and hardware mapping
-- Resolve Q1/Q2 (bench instrumentation of I2C, GPIO 10, keyboard probe)
-- Characterize GT911, ST7789, SD, SX1262 state after handoff vs. cold boot
-- **Exit:** RC3 root cause documented; C6 scope finalized (or declared unnecessary)
-
-### Phase 4 — Launcher packaging/catalog support (code + CI)
-- C1 (release artifact), C2/C7 (docs), C3 (detection helper + native tests), C4 (self-OTA gate), C5 (diagnostics), C6 (as scoped by Phase 3)
-- Each as a separate small PR against `dev`, with `pio test -e native_test` green and hardware-testing declarations per `CONTRIBUTING.md`
-- **Exit:** all required changes merged; `docs/KNOWN_ISSUES.md` entry replaced with current status
-
-### Phase 5 — Runtime regression testing
-- Execute the full testing matrix T1–T14 (standalone rows first — they are the non-negotiable regression gate; then Launcher rows)
-- Soak: 24 h mesh operation under Launcher install (identity stability, saveState cycle, heap)
-- **Exit:** matrix recorded in the PR(s)/release notes; standalone rows byte-for-byte behavior-identical to baseline
-
-### Phase 6 — Release integration and maintainer handoff *(catalog info gathered)*
-- Tagged release including the Launcher artifact; release-notes section for Launcher users
-- LauncherHub submission (Q5): **API researched (2026-06-10).** LauncherHub at `api.launcherhub.net` has 16 T-Deck firmwares; format is `{fid, name, author, star}`. **Submission requires opening an issue on [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) or contacting the maintainer via Discord** — the catalog is curated (no self-service API). Our release assets are ready: `SigurdOS-tdeck-launcher.bin` with range-request support at the versioned `…/releases/download/<tag>/SigurdOS-tdeck-launcher.bin` asset.
-- Update this document to "supported" status with the validated Launcher version range; hand off the re-verification checklist (risk table) to the release process
-- **Exit:** Launcher install path documented, released, and reproducible by users without maintainer involvement
+Run testing-matrix rows T1–T14, with T4/T9 covering keyboard and peripheral
+warm handoff on hardware. Record direct-URL/SD installation evidence and pursue
+the externally curated LauncherHub listing. Re-run the source compatibility
+review when claiming support for a newer Launcher version.
 
 ---
 

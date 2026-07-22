@@ -4,7 +4,7 @@
 
 # SigurdOS T-Deck
 
-**Status: Beta testing** — several users have flashed successfully. See [Known Issues](#known-issues) below.
+**Status: Beta testing** — several users have flashed successfully. See [Known Issues](docs/KNOWN_ISSUES.md).
 
 Standalone off-grid LoRa mesh messaging firmware for the **LilyGo T-Deck** (ESP32-S3 + SX1262 + ST7789 240×320 TFT touchscreen + physical QWERTY keyboard).
 

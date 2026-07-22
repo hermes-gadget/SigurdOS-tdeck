@@ -53,7 +53,10 @@ Initiator                    Responder(s)
     │  ── collection window ──── │  3 seconds (PING_WINDOW_MS)
 ```
 
-**Tag matching:** Each ping generates a unique tag (`now ^ (intptr_t)this`) to prevent stale or cross-session PONGs from being accepted. The tag is formatted as an 8-digit hex string and embedded in both the PING and PONG payloads.
+**Tag matching:** Each ping generates a predictable correlation tag
+(`now ^ (intptr_t)this`). Matching rejects unrelated or late replies, but it is
+not authentication and does not prevent a nearby sender from spoofing a PONG.
+The tag is formatted as an 8-digit hex string and embedded in both payloads.
 
 ### Key Constants (from `sigurd_mesh_v2.h`)
 
@@ -91,7 +94,7 @@ Returned by `getPingResult(i)` for `i` in `[0, getPingResultCount())`.
 
 When `pingIsActive()` is false and `pingOnCooldown()` is false, the top area shows a styled **"Ping Nearby"** button (`ACCENT` cyan, 100×22px, zero-radius). Tapping it:
 
-1. Calls `sigurdos::mesh::sendPingNearby()` — sends the PING with a unique tag
+1. Calls `sigurdos::mesh::sendPingNearby()` — sends the PING with a correlation tag
 2. Recreates the screen via `finder_screen_show()` — transitions to listening state
 
 ### Listening / Active State
@@ -187,11 +190,16 @@ The ping button's event handler calls `finder_screen_show()` again to rebuild th
 |----------|-----------|
 | **Multiple pings back-to-back** | Blocked by 30s cooldown. `sendPingNearby()` returns `false` if `now - _ping_last_at < 30000`. |
 | **Stale PONG after window** | Rejected — if `now_ms > _ping_sent_at + PING_WINDOW_MS`, the PONG is silently dropped. |
-| **PONG with wrong tag** | Rejected — tag comparison fails, the PONG is dropped. This prevents cross-session contamination. |
+| **PONG with wrong tag** | Rejected — tag comparison fails. A matching tag correlates a response only; PONGs are unauthenticated and spoofable. |
 | **32+ responders** | Only the first 32 are recorded (`PING_RESULTS_MAX`). Later PONGs are silently dropped. |
 | **Duplicate PONGs** | Not explicitly deduplicated — the same node sending multiple replies creates duplicate entries. |
 | **Node renames before ponging** | The `onControlDataRecv` handler reads the name directly from the PONG payload (`remaining` → `rssi_start`), so the name is self-reported at response time. |
 | **Self-ping prevention** | Handled by the mesh stack — `sendZeroHop` does not echo back to the sender. |
+
+All PONG fields shown by Finder, including name and responder-reported RSSI,
+are **untrusted self-reported data**. Do not use them as identity or proximity
+proof; a contact's cryptographic identity is established through the mesh
+identity/contact flow, not Ping Nearby.
 
 ---
 
