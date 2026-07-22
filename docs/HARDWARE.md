@@ -467,11 +467,15 @@ pct = ((mv - 3000) * 100) / (4200 - 3000);
 2. Buffer NMEA characters in 128-byte line buffer
 3. On `\n` delimiter, validate checksum and dispatch parser
 
-### Demand-driven polling
+### Demand-driven acquisition and publication
 
-- Background GPS is off by default. When enabled, the minimum polling interval is
-  5 seconds; legacy 0-second and 1-second preferences are migrated to 5 seconds.
-- Opening Map temporarily requests a 200 ms foreground cadence and releases it
+- GPS UART acquisition is serviced on every application-loop pass after the
+  UART has been initialized; this prevents the 256-byte receive buffer from
+  overflowing between position updates.
+- Background GPS is off by default. When enabled, the minimum published-fix
+  interval is 5 seconds; legacy 0-second and 1-second preferences are migrated
+  to 5 seconds.
+- Opening Map temporarily requests a 200 ms fix-publication cadence and releases it
   when the screen closes without changing the saved GPS preference.
 - Settings → GPS → Sync time from GPS temporarily requests the same foreground
   cadence for up to 60 seconds. A valid dated fix updates both the system RTC and

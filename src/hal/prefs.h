@@ -40,7 +40,7 @@ struct NodePrefs {
     uint16_t advert_interval_h;      // 0=disabled, 24/72/168=hours between adverts (one per period)
     uint8_t  advert_type;            // ADV_TYPE_CHAT(1)/REPEATER(2)/ROOM(3)/SENSOR(4)
     bool     gps_enabled;            // GPS polling enabled
-    uint32_t gps_interval;           // background GPS read interval in seconds (0..86400)
+    uint32_t gps_interval;           // background fix publication interval (seconds, 0..86400)
     uint8_t  autoadd_config;         // bitmask: bit1=chat, bit2=repeater, bit3=room, bit4=sensor
     uint8_t  autoadd_max_hops;       // 0=no limit, max flood hops for auto-add
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
@@ -92,7 +92,7 @@ struct NodePrefs {
         advert_interval_h = 0;        // 0 = disabled
         advert_type = 1;              // 1 = ADV_TYPE_CHAT (default: chat companion)
         gps_enabled = false;          // GPS off by default (privacy, battery)
-        gps_interval = 5;             // battery-friendly background cadence
+        gps_interval = 5;             // background position update cadence
         autoadd_config = 0x1E;        // auto-add: chat|repeater|room|sensor (bits 1-4), no overwrite (bit 0)
         autoadd_max_hops = 0;         // 0 = no limit
         theme_id = 0;                 // default theme

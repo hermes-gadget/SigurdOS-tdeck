@@ -266,7 +266,6 @@ void loop()
 #endif
     // Low-battery auto-shutdown (matches MeshCore pattern)
     static uint32_t last_batt_check = 0;
-    static uint32_t last_gps_poll = 0;
     if (millis() - last_batt_check > 30000) {  // every 30s
         last_batt_check = millis();
         if (board.isBatteryCritical()) {
@@ -292,10 +291,11 @@ void loop()
     {   // Persisted background cadence plus explicit map/time-sync demand.
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();
         sigurdos_gps_service(gp.gps_enabled, gp.gps_interval);
-        if (gp.gps_enabled) {
+        const bool gps_time_requested = gp.gps_enabled ||
+            sigurdos_gps_time_sync_status() == SigurdOSGpsSyncStatus::Waiting;
+        if (gps_time_requested) {
             sigurdos::app::serviceGpsClock(
-                true, millis(), gp.gps_interval, last_gps_poll,
-                [] { sigurdos_gps_loop(); },
+                true,
                 [](SigurdOSGpsUtcTime* out) { return sigurdos_gps_get_pending_time(out); },
                 [](int year, int month, int day, int hour, int minute) {
                     return sigurdos::mesh::makeEpoch(year, month, day, hour, minute);

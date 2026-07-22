@@ -8,23 +8,11 @@
 
 namespace sigurdos::app {
 
-inline bool gpsPollDue(uint32_t now, uint32_t last_poll, uint32_t interval_seconds) {
-  if (interval_seconds == 0 || interval_seconds > UINT32_MAX / 1000U) return false;
-  return static_cast<uint32_t>(now - last_poll) >= interval_seconds * 1000U;
-}
-
-template <typename LoopFn, typename PendingFn, typename EpochFn,
-          typename SetClockFn, typename MarkFn>
-bool serviceGpsClock(bool enabled, uint32_t now, uint32_t interval_seconds,
-                     uint32_t& last_poll, LoopFn gps_loop,
-                     PendingFn get_pending, EpochFn make_epoch,
+template <typename PendingFn, typename EpochFn, typename SetClockFn,
+          typename MarkFn>
+bool serviceGpsClock(bool requested, PendingFn get_pending, EpochFn make_epoch,
                      SetClockFn set_clock, MarkFn mark_synced) {
-  if (!enabled) return false;
-
-  if (gpsPollDue(now, last_poll, interval_seconds)) {
-    last_poll = now;
-    gps_loop();
-  }
+  if (!requested) return false;
 
   SigurdOSGpsUtcTime utc{};
   if (!get_pending(&utc)) return false;

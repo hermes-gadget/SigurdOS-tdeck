@@ -39,16 +39,16 @@ TEST(GPSDemandTest, BackgroundCadencePreservesCompanionIntervalPolicy) {
     EXPECT_EQ(sigurdos_gps_normalize_interval(0), 0u);
     EXPECT_EQ(sigurdos_gps_normalize_interval(1), 1u);
     EXPECT_EQ(sigurdos_gps_normalize_interval(100000), 86400u);
-    EXPECT_EQ(sigurdos_gps_effective_poll_ms(true, 0, false, false), 0u);
-    EXPECT_EQ(sigurdos_gps_effective_poll_ms(false, 5, false, false), 0u);
+    EXPECT_EQ(sigurdos_gps_effective_publish_ms(true, 0, false, false), 0u);
+    EXPECT_EQ(sigurdos_gps_effective_publish_ms(false, 5, false, false), 0u);
 }
 
 TEST(GPSDemandTest, ForegroundDemandOverridesBackgroundSetting) {
-    EXPECT_EQ(sigurdos_gps_effective_poll_ms(false, 60, true, false), 200u);
-    EXPECT_EQ(sigurdos_gps_effective_poll_ms(false, 60, false, true), 200u);
-    EXPECT_TRUE(sigurdos_gps_poll_due(100, 0, 200));
-    EXPECT_FALSE(sigurdos_gps_poll_due(299, 100, 200));
-    EXPECT_TRUE(sigurdos_gps_poll_due(300, 100, 200));
+    EXPECT_EQ(sigurdos_gps_effective_publish_ms(false, 60, true, false), 200u);
+    EXPECT_EQ(sigurdos_gps_effective_publish_ms(false, 60, false, true), 200u);
+    EXPECT_TRUE(sigurdos_gps_publish_due(100, 0, 200));
+    EXPECT_FALSE(sigurdos_gps_publish_due(299, 100, 200));
+    EXPECT_TRUE(sigurdos_gps_publish_due(300, 100, 200));
 }
 
 TEST(GPSDemandTest, OneShotSyncTimesOutWithoutEnablingBackgroundGps) {
@@ -446,6 +446,33 @@ TEST_F(GPSIntegrationTest, FixExpiresWithoutInputAcrossMillisWrap) {
     arduino_mock::current_millis += 15001u;
 
     EXPECT_FALSE(sigurdos_gps_has_fix());
+}
+
+TEST_F(GPSIntegrationTest, ServiceDrainsMoreThanUartCapacityBetweenPublications) {
+    arduino_mock::current_millis = 100;
+    sigurdos_gps_service(true, 5);
+
+    const char* sentence =
+        "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\n";
+    std::string burst;
+    for (int i = 0; i < 5; ++i) burst += sentence;
+    ASSERT_GT(burst.size(), 256u);
+    ASSERT_LT(burst.size(), 512u);
+
+    Serial1.mock_queue_rx(burst.c_str());
+    arduino_mock::current_millis = 200;
+    sigurdos_gps_service(true, 5);
+
+    EXPECT_EQ(sigurdos_gps_chars_processed(), burst.size());
+    EXPECT_EQ(sigurdos_gps_sentences_received(), 5u);
+    EXPECT_EQ(sigurdos_gps_valid_sentences(), 5u);
+    EXPECT_FALSE(sigurdos_gps_has_fix())
+        << "published snapshot must remain stable before its interval";
+
+    arduino_mock::current_millis = 5100;
+    sigurdos_gps_service(true, 5);
+    EXPECT_TRUE(sigurdos_gps_has_fix());
+    EXPECT_NEAR(sigurdos_gps_latitude(), 48.1173f, 0.01f);
 }
 
 TEST_F(GPSIntegrationTest, InitUsesLilyGoGpsShieldUartContract) {

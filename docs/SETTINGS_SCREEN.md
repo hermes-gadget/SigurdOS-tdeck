@@ -98,7 +98,7 @@ When `NodePrefs::configured == false`, the RF summary row shows `Radio: NOT CONF
 |-----|----------------------|
 | `GPS: Fix acquired / No fix` | Read-only status from `sigurdos_gps_has_fix()` |
 | `GPS: ON/OFF` | Enables/disables the GPS module (`NodePrefs::gps_enabled`) |
-| `GPS interval` | Poll-interval preset |
+| `GPS interval` | Published position-update interval; UART acquisition remains continuous while initialized |
 | `Sync time from GPS` | Temporarily requests foreground GPS cadence (200 ms) for up to 60 seconds. A valid dated fix updates the system RTC and MeshCore time. Does not enable background GPS. |
 | `Share location: ON/OFF` | Include coordinates in adverts (`NodePrefs::advert_loc_policy`) |
 
