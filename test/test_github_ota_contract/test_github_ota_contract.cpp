@@ -56,6 +56,10 @@ TEST(GitHubOTAContractTest, StatusBuffersKeepUiSafeCapacities) {
     EXPECT_EQ(sizeof(GitHubOTAStatus::error_msg), 128u);
 }
 
+TEST(GitHubOTAContractTest, TransportTrustSupportsPlannedRootRotation) {
+    EXPECT_EQ(sigurdos::github_ota::GITHUB_OTA_TRUST_ANCHOR_COUNT, 2U);
+}
+
 TEST(GitHubOTAContractTest, PublicApiSignaturesStayStable) {
     using bool_fn = bool (*)();
     using void_fn = void (*)();

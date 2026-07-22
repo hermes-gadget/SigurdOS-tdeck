@@ -9,6 +9,7 @@
 #include "github_ota_plan.h"
 #include "launcher_env.h"
 #include "ota_allocation_policy.h"
+#include "ota_security_epoch.h"
 #include "prefs.h"
 #include "wifi_ota.h"
 #include <WiFi.h>
@@ -17,6 +18,7 @@
 #include <Update.h>
 #include <SPIFFS.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
 #include <cstring>
 #include <cstdlib>
 #include <new>
@@ -31,10 +33,9 @@ static const char* GITHUB_API_RELEASES =
 
 static const char* USER_AGENT = "SigurdOS-TDeck/1.0";
 
-// GitHub's TLS certificate chain roots through Sectigo Public Server
-// Authentication Root E46 → USERTrust ECC Certification Authority.
-// This PEM is the Sectigo Public Server Authentication Root E46.
-// Last updated: 2026-06 — if GitHub changes CA providers, update this cert.
+// Constrained rotation set: GitHub's current Sectigo chain plus DigiCert Global
+// Root G2 as an independently operated transition anchor. This is transport
+// authentication; the image security epoch below is a separate boundary.
 static const char* GITHUB_ROOT_CA =
     "-----BEGIN CERTIFICATE-----\n"
     "MIIDRjCCAsugAwIBAgIQGp6v7G3o4ZtcGTFBto2Q3TAKBggqhkjOPQQDAzCBiDEL\n"
@@ -55,6 +56,28 @@ static const char* GITHUB_ROOT_CA =
     "Y29tMAoGCCqGSM49BAMDA2kAMGYCMQCMCyBit99vX2ba6xEkDe+YO7vC0twjbkv9\n"
     "PKpqGGuZ61JZryjFsp+DFpEclCVy4noCMQCwvZDXD/m2Ko1HA5Bkmz7YQOFAiNDD\n"
     "49IWa2wdT7R3DtODaSXH/BiXv8fwB9su4tU=\n"
+    "-----END CERTIFICATE-----\n"
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIDjjCCAnagAwIBAgIQAzrx5qcRqaC7KGSxHQn65TANBgkqhkiG9w0BAQsFADBh\n"
+    "MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3\n"
+    "d3cuZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBH\n"
+    "MjAeFw0xMzA4MDExMjAwMDBaFw0zODAxMTUxMjAwMDBaMGExCzAJBgNVBAYTAlVT\n"
+    "MRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5j\n"
+    "b20xIDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IEcyMIIBIjANBgkqhkiG\n"
+    "9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuzfNNNx7a8myaJCtSnX/RrohCgiN9RlUyfuI\n"
+    "2/Ou8jqJkTx65qsGGmvPrC3oXgkkRLpimn7Wo6h+4FR1IAWsULecYxpsMNzaHxmx\n"
+    "1x7e/dfgy5SDN67sH0NO3Xss0r0upS/kqbitOtSZpLYl6ZtrAGCSYP9PIUkY92eQ\n"
+    "q2EGnI/yuum06ZIya7XzV+hdG82MHauVBJVJ8zUtluNJbd134/tJS7SsVQepj5Wz\n"
+    "tCO7TG1F8PapspUwtP1MVYwnSlcUfIKdzXOS0xZKBgyMUNGPHgm+F6HmIcr9g+UQ\n"
+    "vIOlCsRnKPZzFBQ9RnbDhxSJITRNrw9FDKZJobq7nMWxM4MphQIDAQABo0IwQDAP\n"
+    "BgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBhjAdBgNVHQ4EFgQUTiJUIBiV\n"
+    "5uNu5g/6+rkS7QYXjzkwDQYJKoZIhvcNAQELBQADggEBAGBnKJRvDkhj6zHd6mcY\n"
+    "1Yl9PMWLSn/pvtsrF9+wX3N3KjITOYFnQoQj8kVnNeyIv/iPsGEMNKSuIEyExtv4\n"
+    "NeF22d+mQrvHRAiGfzZ0JFrabA0UWTW98kndth/Jsw1HKj2ZL7tcu7XUIOGZX1NG\n"
+    "Fdtom/DzMNU+MeKNhJ7jitralj41E6Vf8PlwUHBHQRFXGU7Aj64GxJUTFy8bJZ91\n"
+    "8rGOmaFvE7FBcf6IKshPECBV1/MUReXgRPTqh5Uykw7+U0b6LJ3/iyK5S9kJRaTe\n"
+    "pLiaWN0bfVKfjllDiIGknibVb63dDcY3fe0Dkhvld1927jyNxF1WW6LZZm6zNTfl\n"
+    "MrY=\n"
     "-----END CERTIFICATE-----\n";
 
 static constexpr int WIFI_CONNECT_TIMEOUT_MS = 20000;   // 20s
@@ -71,9 +94,17 @@ static HTTPClient*            s_http   = nullptr;
 static int                    s_http_code = 0;
 static int                    s_content_length = 0;
 static int                    s_downloaded = 0;
+static bool                   s_epoch_checked = false;
 static unsigned long          s_last_progress = 0;
 static unsigned long          s_connect_start = 0;
 static bool                   s_cancelled = false;
+
+static uint32_t currentSecurityEpoch() {
+    uint32_t epoch = SIGURDOS_SECURITY_EPOCH;
+    const esp_app_desc_t* running = esp_ota_get_app_description();
+    if (running && running->secure_version > epoch) epoch = running->secure_version;
+    return epoch;
+}
 
 // Current download URL (constructed from API or fallback)
 static char                   s_download_url[256] = "";
@@ -234,6 +265,7 @@ bool startGitHubUpdate() {
     s_active = true;
     s_cancelled = false;
     s_downloaded = 0;
+    s_epoch_checked = false;
     s_http_code = 0;
     s_content_length = 0;
     s_connect_start = millis();
@@ -470,6 +502,7 @@ void loop() {
             }
 
             s_downloaded = 0;
+            s_epoch_checked = false;
             s_last_progress = millis();
 
         } else if (WiFi.status() == WL_CONNECT_FAILED ||
@@ -528,6 +561,7 @@ void loop() {
 
         while (stream->available() && s_downloaded < s_content_length && !s_cancelled) {
             size_t avail = (size_t)stream->available();
+            if (!s_epoch_checked && avail < hal::SIGURDOS_OTA_EPOCH_MIN_BYTES) return;
             size_t to_read = avail;
             if (to_read > DOWNLOAD_CHUNK) to_read = DOWNLOAD_CHUNK;
 
@@ -538,6 +572,23 @@ void loop() {
             if (!buf) { fail("Out of memory"); return; }
             size_t read = stream->readBytes(buf, to_read);
             if (read == 0) break;
+
+            if (!s_epoch_checked) {
+                uint32_t incoming_epoch = 0;
+                const hal::OtaEpochStatus epoch_status = hal::otaCheckSecurityEpoch(
+                    buf, read, currentSecurityEpoch(), &incoming_epoch);
+                if (epoch_status != hal::OtaEpochStatus::Allowed) {
+                    Update.abort();
+                    char error[80];
+                    snprintf(error, sizeof(error), "%s security epoch (%lu)",
+                             epoch_status == hal::OtaEpochStatus::Downgrade
+                                 ? "Downgrade rejected" : "Malformed image",
+                             (unsigned long)incoming_epoch);
+                    fail(error);
+                    return;
+                }
+                s_epoch_checked = true;
+            }
 
             size_t written = Update.write(buf, read);
             if (written != read) {

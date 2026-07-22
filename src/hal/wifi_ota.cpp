@@ -7,11 +7,13 @@
 #include "../diagnostics/log.h"
 #include "launcher_env.h"
 #include "ota_allocation_policy.h"
+#include "ota_security_epoch.h"
 #include "prefs.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
 #include <esp_random.h>
+#include <esp_ota_ops.h>
 #include <new>
 
 namespace sigurdos {
@@ -28,6 +30,13 @@ static OtaUploadSessionState upload_state;
 // OTA PIN brute-force protection (SEC-001)
 static constexpr int MAX_PIN_FAILURES = 5;
 static int pin_fail_count = 0;
+
+static uint32_t currentSecurityEpoch() {
+    uint32_t epoch = SIGURDOS_SECURITY_EPOCH;
+    const esp_app_desc_t* running = esp_ota_get_app_description();
+    if (running && running->secure_version > epoch) epoch = running->secure_version;
+    return epoch;
+}
 
 static void* createOtaServer(void*, hal::OtaAllocationKind kind) {
     if (kind != hal::OtaAllocationKind::WebServer) return nullptr;
@@ -232,6 +241,23 @@ bool start(const char* ssid, const char* password) {
                 }
             } else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (!otaUploadAcceptsChunk(upload_state)) return;
+                if (!upload_state.epoch_checked) {
+                    uint32_t incoming_epoch = 0;
+                    const hal::OtaEpochStatus epoch_status = hal::otaCheckSecurityEpoch(
+                        upload.buf, upload.currentSize, currentSecurityEpoch(),
+                        &incoming_epoch);
+                    if (epoch_status != hal::OtaEpochStatus::Allowed) {
+                        upload_state.failed = true;
+                        upload_state.started = false;
+                        Update.abort();
+                        SIG_LOGW("[ota] Upload rejected: %s security epoch (%u)",
+                                 epoch_status == hal::OtaEpochStatus::Downgrade
+                                     ? "downgrade" : "malformed",
+                                 static_cast<unsigned>(incoming_epoch));
+                        return;
+                    }
+                    upload_state.epoch_checked = true;
+                }
                 const size_t written = Update.write(upload.buf, upload.currentSize);
                 if (written != upload.currentSize) {
                     upload_state.failed = true;

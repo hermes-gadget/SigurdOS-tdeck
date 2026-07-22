@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 
 #include "hal/wifi_ota.h"
+#include "hal/ota_security_epoch.h"
 
 using sigurdos::ota::otaPinAccepts;
 using sigurdos::ota::otaSessionExpired;
@@ -98,7 +99,7 @@ TEST(OtaUpload, WritesRequireAuthenticationAndSuccessfulBegin) {
 }
 
 TEST(OtaUpload, FinishRequiresNonEmptyMatchingByteCount) {
-    OtaUploadSessionState state{true, true, false, false, 0};
+    OtaUploadSessionState state{true, true, false, false, true, 0};
     EXPECT_FALSE(otaUploadCanFinish(state, 0));
 
     state.received = 4096;
@@ -108,4 +109,42 @@ TEST(OtaUpload, FinishRequiresNonEmptyMatchingByteCount) {
 
     state.completed = true;
     EXPECT_FALSE(otaUploadCanFinish(state, 4096));
+}
+
+TEST(OtaEpoch, RejectsMalformedAndDowngradeImagesBeforeWriting) {
+    uint8_t image[sigurdos::hal::SIGURDOS_OTA_EPOCH_MIN_BYTES]{};
+    uint32_t incoming = 99;
+    EXPECT_EQ(sigurdos::hal::otaCheckSecurityEpoch(
+                  image, sizeof(image), 1, &incoming),
+              sigurdos::hal::OtaEpochStatus::Malformed);
+    EXPECT_EQ(incoming, 0U);
+
+    image[0] = 0xE9;
+    const size_t offset = sigurdos::hal::SIGURDOS_OTA_APP_DESC_OFFSET;
+    const uint32_t magic = sigurdos::hal::SIGURDOS_OTA_APP_DESC_MAGIC;
+    for (int i = 0; i < 4; ++i) image[offset + i] = uint8_t(magic >> (i * 8));
+    image[offset + 4] = 1;
+
+    EXPECT_EQ(sigurdos::hal::otaCheckSecurityEpoch(
+                  image, sizeof(image), 2, &incoming),
+              sigurdos::hal::OtaEpochStatus::Downgrade);
+    EXPECT_EQ(incoming, 1U);
+    EXPECT_EQ(sigurdos::hal::otaCheckSecurityEpoch(
+                  image, sizeof(image), 1, &incoming),
+              sigurdos::hal::OtaEpochStatus::Allowed);
+}
+
+TEST(OtaEpoch, AllowsOnlyEqualOrIncreasingMonotonicEpochs) {
+    uint8_t image[sigurdos::hal::SIGURDOS_OTA_EPOCH_MIN_BYTES]{};
+    image[0] = 0xE9;
+    const size_t offset = sigurdos::hal::SIGURDOS_OTA_APP_DESC_OFFSET;
+    const uint32_t magic = sigurdos::hal::SIGURDOS_OTA_APP_DESC_MAGIC;
+    for (int i = 0; i < 4; ++i) image[offset + i] = uint8_t(magic >> (i * 8));
+    image[offset + 4] = 3;
+    EXPECT_EQ(sigurdos::hal::otaCheckSecurityEpoch(image, sizeof(image), 2),
+              sigurdos::hal::OtaEpochStatus::Allowed);
+    EXPECT_EQ(sigurdos::hal::otaCheckSecurityEpoch(image, sizeof(image), 3),
+              sigurdos::hal::OtaEpochStatus::Allowed);
+    EXPECT_EQ(sigurdos::hal::otaCheckSecurityEpoch(image, sizeof(image), 4),
+              sigurdos::hal::OtaEpochStatus::Downgrade);
 }

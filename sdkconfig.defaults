@@ -1,3 +1,8 @@
 # Keep a newly booted OTA image pending until SigurdOS completes its own
 # display/UI/storage/settings/main-loop health contract.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# Every network OTA image must carry at least this monotonic secure_version.
+# Deployments may bind this to the ESP32-S3 eFuse secure-version counter; local
+# development does not automatically burn irreversible eFuses.
+CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
+CONFIG_BOOTLOADER_APP_SECURE_VERSION=1

@@ -48,6 +48,7 @@ struct OtaUploadSessionState {
     bool started = false;
     bool completed = false;
     bool failed = false;
+    bool epoch_checked = false;
     size_t received = 0;
 };
 
@@ -58,7 +59,7 @@ inline bool otaUploadAcceptsChunk(const OtaUploadSessionState& state) {
 
 inline bool otaUploadCanFinish(const OtaUploadSessionState& state,
                                size_t multipart_total_size) {
-    return otaUploadAcceptsChunk(state) && state.received > 0 &&
+    return otaUploadAcceptsChunk(state) && state.epoch_checked && state.received > 0 &&
            state.received == multipart_total_size;
 }
 
