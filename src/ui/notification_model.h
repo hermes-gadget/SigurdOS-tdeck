@@ -110,6 +110,18 @@ inline bool notification_contains_mention(const char* text, const char* own_name
     return false;
 }
 
+inline bool notification_mention_text(char* out, size_t out_size,
+                                      const char* sender, const char* channel)
+{
+    if (!out || out_size == 0) return false;
+    const char* safe_sender = sender ? sender : "Unknown";
+    const char* safe_channel = channel ? channel : "";
+    const char* marker = safe_channel[0] == '#' ? "" : "#";
+    const int written = std::snprintf(out, out_size, "Mention from %s in %s%s",
+                                      safe_sender, marker, safe_channel);
+    return written >= 0 && static_cast<size_t>(written) < out_size;
+}
+
 struct NotificationItem {
     NotificationEvent event = NotificationEvent::DirectMessage;
     NotificationLevel level = NotificationLevel::Info;

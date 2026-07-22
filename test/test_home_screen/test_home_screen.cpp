@@ -26,6 +26,7 @@
  */
 #include <gtest/gtest.h>
 #include <cstring>
+#include "ui/home_screen.h"
 
 namespace {
 
@@ -192,6 +193,14 @@ TEST(HomeScreenGridTest, MultipleRemainderPixelsAccumulateByRow) {
     EXPECT_EQ(row_origin(base_h, gap, extra_h, 1), 14);
     EXPECT_EQ(row_origin(base_h, gap, extra_h, 2), 28);
     EXPECT_EQ(row_origin(base_h, gap, extra_h, 3), 41);
+}
+
+TEST(HomeScreenBadgeTest, IndicatesUnreadOverflow) {
+    char text[8];
+    EXPECT_TRUE(sigurdos::ui::home_screen_format_unread_badge(text, sizeof(text), 99));
+    EXPECT_STREQ(text, "99");
+    EXPECT_TRUE(sigurdos::ui::home_screen_format_unread_badge(text, sizeof(text), 100));
+    EXPECT_STREQ(text, "99+");
 }
 
 } // anonymous namespace

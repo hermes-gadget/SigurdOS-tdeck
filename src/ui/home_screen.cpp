@@ -533,8 +533,9 @@ void home_screen_update_badges()
         lv_obj_t* lbl = lv_obj_get_child(badge_obj, 0);
         if (lbl) {
             char buf[8];
-            snprintf(buf, sizeof(buf), "%d", n > 99 ? 99 : n);
+            home_screen_format_unread_badge(buf, sizeof(buf), n);
             lv_label_set_text(lbl, buf);
+            lv_obj_set_width(badge_obj, n > 99 ? 24 : 18);
         }
     } else {
         lv_obj_add_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);

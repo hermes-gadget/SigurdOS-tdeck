@@ -563,13 +563,14 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
                 epoch, sigurdos::mesh::TimeSource::Manual)) {
             int yy, mmo, dd, hh, mmi;
             sigurdos::mesh::getCurrentLocalDateTime(&yy, &mmo, &dd, &hh, &mmi);
-            char dbuf[32], tbuf[16];
+            char dbuf[32], tbuf[16], home_time[6];
             snprintf(dbuf, sizeof(dbuf), "  Date: %04d-%02d-%02d", yy, mmo, dd);
             snprintf(tbuf, sizeof(tbuf), "  Time: %02d:%02d", hh, mmi);
+            snprintf(home_time, sizeof(home_time), "%02d:%02d", hh, mmi);
             update_row_label(g_date_row, dbuf);
             update_row_label(g_time_row, tbuf);
             update_time_source_row();
-            home_screen_update_time(tbuf);
+            home_screen_update_time(home_time);
             lv_obj_del_async(dlg);
         }
     }, LV_EVENT_CLICKED, (void*)ctx);

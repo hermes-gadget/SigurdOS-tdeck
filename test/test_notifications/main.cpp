@@ -21,6 +21,15 @@ TEST(NotificationPolicyTest, DetectsCaseInsensitiveWholeNameMentions)
     EXPECT_FALSE(notification_contains_mention("hello", ""));
 }
 
+TEST(NotificationPolicyTest, MentionTextAddsOnlyOneChannelMarker)
+{
+    char text[96];
+    EXPECT_TRUE(notification_mention_text(text, sizeof(text), "Alice", "general"));
+    EXPECT_STREQ(text, "Mention from Alice in #general");
+    EXPECT_TRUE(notification_mention_text(text, sizeof(text), "Alice", "#general"));
+    EXPECT_STREQ(text, "Mention from Alice in #general");
+}
+
 TEST(NotificationPolicyTest, LowResourceThresholdsAreBounded)
 {
     EXPECT_TRUE(notification_low_battery(15));

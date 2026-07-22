@@ -150,8 +150,8 @@ static void build_step1()
         // Skip date/time step if the clock already has a valid time
         // (set at build time, by companion app, GPS, or Launcher/flasher).
         // A Unix epoch before 2026-06-01 means the clock was never explicitly set.
-        uint32_t now = sigurdos::mesh::getCurrentTime();
-        s_step = (now > 1751232000) ? 2 : 1;  // 2026-06-01 = 1751232000
+        const uint32_t now = sigurdos::mesh::getCurrentTime();
+        s_step = onboarding_clock_valid(now) ? 2 : 1;
         lv_timer_create([](lv_timer_t* t) { lv_timer_del(t); rebuild_content(); }, 1, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
     add_to_group(next_btn);

@@ -96,6 +96,7 @@ test/
 |-- test_prefs_defaults/            Radio, identity, and UI preference default values
 |-- test_qr_show/                   QR code version sizing, buffer sizing, and scale fitting
 |-- test_radio_profiles/            Regional radio profile selection and persistence
+|-- test_repeater_command_policy/   Repeater command success/failure feedback
 |-- test_regions/                   Region structs, binary layout, key derivation
 |-- test_responsive/                Responsive layout column offset distribution
 |-- test_sdcard/                    SD card state, path checks, size formatting

@@ -23,6 +23,7 @@
 #include "../responsive.h"
 #include "../contact_paging.h"
 #include "../chat_screen.h"
+#include "../repeater_command_policy.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
@@ -231,9 +232,9 @@ void repeaters_screen_show()
 // arrives later as a chat message from the server.
 static void repeater_send(const char* contact_name, const char* cmd, const char* fmt) {
     if (!contact_name || !cmd || !cmd[0]) return;
-    sigurdos::mesh::sendCommand(contact_name, cmd);
+    const bool sent = sigurdos::mesh::sendCommand(contact_name, cmd);
     char buf[80];
-    snprintf(buf, sizeof(buf), fmt, cmd);
+    repeater_command_feedback(buf, sizeof(buf), sent, cmd, fmt);
     sigurdos::mesh::mesh_v2_queue_push("System", "", buf, 0, 0.0f);
 }
 

@@ -20,8 +20,19 @@
 
 
 #include "../hal/trackball.h"
+#include <cstddef>
+#include <cstdio>
 
 namespace sigurdos::ui {
+
+inline bool home_screen_format_unread_badge(char* out, size_t out_size, int unread)
+{
+    if (!out || out_size == 0) return false;
+    const int written = unread > 99
+        ? std::snprintf(out, out_size, "99+")
+        : std::snprintf(out, out_size, "%d", unread < 0 ? 0 : unread);
+    return written >= 0 && static_cast<size_t>(written) < out_size;
+}
 
 void home_screen_create();
 void home_screen_show();

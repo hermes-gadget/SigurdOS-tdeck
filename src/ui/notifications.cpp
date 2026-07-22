@@ -198,8 +198,7 @@ void notifications_message(const char* channel, const char* sender,
         std::snprintf(message, sizeof(message), "DM from %s", sender ? sender : "Unknown");
         notifications_post(NotificationEvent::DirectMessage, message);
     } else if (mention) {
-        std::snprintf(message, sizeof(message), "Mention from %s in #%s",
-                      sender ? sender : "Unknown", channel);
+        notification_mention_text(message, sizeof(message), sender, channel);
         notifications_post(NotificationEvent::Mention, message);
         g_unread_mention = true;
     }
