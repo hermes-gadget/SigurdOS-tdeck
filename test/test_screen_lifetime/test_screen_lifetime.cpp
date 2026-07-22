@@ -114,6 +114,25 @@ TEST_F(ScreenLifetimeTest, DelayedDeleteFromPreviousBindingIsIgnored)
     EXPECT_FALSE(lt.isBound());
 }
 
+TEST_F(ScreenLifetimeTest, ReparentedMapStateSurvivesItsPreviousRootDelete)
+{
+    lv_obj_t previous_root{}, current_root{};
+    lv_obj_t shared_canvas{};
+    lv_obj_t* active_canvas = &shared_canvas;
+
+    lt.bind(&previous_root);
+    lt.track(&active_canvas);
+    lt.bind(&current_root);
+    lt.track(&active_canvas);
+
+    lt.notifyDeleted(&previous_root);
+    EXPECT_EQ(active_canvas, &shared_canvas);
+    EXPECT_TRUE(lt.isBound());
+
+    lt.notifyDeleted(&current_root);
+    EXPECT_EQ(active_canvas, nullptr);
+}
+
 TEST_F(ScreenLifetimeTest, TwentyRapidReplacementCyclesIgnoreStaleDeletes)
 {
     lv_obj_t screens[20]{};

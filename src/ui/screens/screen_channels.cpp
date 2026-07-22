@@ -20,6 +20,7 @@
 #include "../screens_common.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../generation_owner.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../mesh/channel_validation.h"
 #include "../../mesh/public_channel.h"
@@ -28,6 +29,7 @@
 #include <lvgl.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
 #include <functional>
 
 namespace sigurdos::ui {
@@ -39,6 +41,21 @@ using namespace responsive;
 // Channels — channel list with create/join and delete
 // ════════════════════════════════════════════════════════
 static std::function<void()> g_channels_rebuild = nullptr;  // set by channels_screen_show
+static lv_obj_t* g_channels_root = nullptr;
+static uint32_t g_channels_generation = 0;
+
+static bool channels_owner_is_current(lv_obj_t* object)
+{
+    lv_obj_t* root = object ? lv_obj_get_screen(object) : nullptr;
+    return ui_generation_matches(
+        g_channels_root, g_channels_generation, root,
+        root ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(lv_obj_get_user_data(root))) : 0);
+}
+
+static void channels_rebuild_from(lv_obj_t* object)
+{
+    if (channels_owner_is_current(object) && g_channels_rebuild) g_channels_rebuild();
+}
 
 static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
 {
@@ -120,8 +137,8 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
 
         bool ok = sigurdos::mesh::addHashtagChannel(name);
         if (ok) {
+            channels_rebuild_from(dlg);
             lv_obj_del_async(dlg);
-            if (g_channels_rebuild) g_channels_rebuild();
         } else {
             if (fb) lv_label_set_text(fb, "Invalid or full");
         }
@@ -133,6 +150,9 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
 void channels_screen_show()
 {
     lv_obj_t* scr = make_screen_full("Channels");
+    g_channels_root = scr;
+    g_channels_generation = next_ui_generation(g_channels_generation);
+    lv_obj_set_user_data(scr, reinterpret_cast<void*>(static_cast<uintptr_t>(g_channels_generation)));
 
     lv_obj_t* list = lv_obj_create(scr);
     lv_obj_set_size(list, LV_PCT(100), CONTENT_H - 36);
@@ -144,7 +164,7 @@ void channels_screen_show()
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
 
-    std::function<void()> rebuild = [list, &rebuild]() {
+    std::function<void()> rebuild = [list]() {
         lv_obj_clean(list);
         char names[8][37];
         int n = sigurdos::mesh::exportChannels(names, 8);
@@ -250,7 +270,7 @@ void channels_screen_show()
                         lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ce) {
                             int idx2 = (int)(intptr_t)lv_event_get_user_data(ce);
                             sigurdos::mesh::removeChannel(idx2);
-                            if (g_channels_rebuild) g_channels_rebuild();
+                            channels_rebuild_from((lv_obj_t*)lv_event_get_target(ce));
                             lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
                         }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
                     }, LV_EVENT_CLICKED, (void*)(intptr_t)ch_idx);
@@ -316,7 +336,10 @@ void channels_screen_show()
     }, LV_EVENT_CLICKED, nullptr);
 
     // Null the rebuild callback when this screen is destroyed
-    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+        lv_obj_t* deleted = (lv_obj_t*)lv_event_get_target(e);
+        if (deleted != g_channels_root) return;
+        g_channels_root = nullptr;
         g_channels_rebuild = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 

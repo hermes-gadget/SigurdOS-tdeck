@@ -1010,9 +1010,7 @@ static void show_channel_list()
         show_add_channel_options(scr);
     }, LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_scr_load_anim(s, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
-    if (old_scr && old_scr != s) lv_obj_del_async(old_scr);
+    show_screen(s);
 }
 
 // ════════════════════════════════════════════════════
@@ -1967,9 +1965,7 @@ static void open_channel_messaging(int idx)
         lv_group_focus_obj(input_field);
     }
 
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
-    if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
+    show_screen(scr);
 }
 
 static void refresh_chat_list_view(lv_obj_t* scr) {

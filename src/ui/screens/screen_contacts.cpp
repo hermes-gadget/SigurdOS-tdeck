@@ -26,6 +26,7 @@
 #include "../notifications.h"
 #include "../contact_list_power.h"
 #include "../repeater_transcript.h"
+#include "../generation_owner.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/qr_show.h"
@@ -45,6 +46,42 @@ using namespace responsive;
 static int g_contacts_page = 0;
 static constexpr size_t REPEATER_TRANSCRIPT_CAPACITY = 16;
 static RepeaterTranscript<REPEATER_TRANSCRIPT_CAPACITY> g_repeater_transcript;
+static lv_obj_t* g_contact_detail_root = nullptr;
+static lv_timer_t* g_logout_timer = nullptr;
+static uint32_t g_contact_detail_generation = 0;
+
+struct LogoutTimerCtx {
+    lv_obj_t* root;
+    uint32_t generation;
+};
+
+static void cancel_logout_timer()
+{
+    if (!g_logout_timer) return;
+    delete static_cast<LogoutTimerCtx*>(lv_timer_get_user_data(g_logout_timer));
+    lv_timer_del(g_logout_timer);
+    g_logout_timer = nullptr;
+}
+
+static void start_logout_timer()
+{
+    cancel_logout_timer();
+    auto* ctx = new(std::nothrow) LogoutTimerCtx{
+        g_contact_detail_root, g_contact_detail_generation};
+    if (!ctx) return;
+    g_logout_timer = lv_timer_create([](lv_timer_t* timer) {
+        auto* owned = static_cast<LogoutTimerCtx*>(lv_timer_get_user_data(timer));
+        const bool still_current = timer == g_logout_timer && owned &&
+            ui_generation_matches(g_contact_detail_root, g_contact_detail_generation,
+                                  owned->root, owned->generation) &&
+            current_screen() == Screen::ContactDetail;
+        if (timer == g_logout_timer) g_logout_timer = nullptr;
+        delete owned;
+        lv_timer_del(timer);
+        if (still_current) go_back();
+    }, 600, ctx);
+    if (!g_logout_timer) delete ctx;
+}
 
 void show_contact_memory_error(lv_obj_t* scr)
 {
@@ -1155,6 +1192,15 @@ void contact_detail_screen_show(const char* contact_name)
     }
 
     lv_obj_t* scr = make_screen_full("Contact");
+    cancel_logout_timer();
+    g_contact_detail_root = scr;
+    g_contact_detail_generation = next_ui_generation(g_contact_detail_generation);
+    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+        lv_obj_t* deleted = (lv_obj_t*)lv_event_get_target(e);
+        if (deleted != g_contact_detail_root) return;
+        cancel_logout_timer();
+        g_contact_detail_root = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
 
     // Look up only the requested contact; the firmware can store 350 contacts.
     sigurdos::mesh::ContactInfo target_info{};
@@ -1788,10 +1834,7 @@ void contact_detail_screen_show(const char* contact_name)
                 const char* name = (const char*)lv_obj_get_user_data(target);
                 if (name) {
                     sigurdos::mesh::sendLogout(name);
-                    lv_timer_create([](lv_timer_t* t) {
-                        go_back();
-                        lv_timer_del(t);
-                    }, 600, nullptr);
+                    start_logout_timer();
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
