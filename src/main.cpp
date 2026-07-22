@@ -53,17 +53,19 @@ static void boot_status(const char* status)
 #include "esp_log.h"
 static const char* BOOT_TAG = "boot";
 
-[[noreturn]] static void retry_critical_battery_sleep()
+[[noreturn]] static void enter_orderly_sleep()
 {
-    // setup() must never return before LVGL, storage, mesh, and UI are ready.
-    // A failed wake-source setup is retried here with the boot watchdog
-    // disabled, instead of allowing Arduino to enter an uninitialized loop().
-    sigurdos::hal::boot_watchdog_stop();
+    // The mesh shutdown coordinator stops new work, persists every available
+    // store, quiesces buses, and retries checked deep-sleep preparation. It is
+    // valid before mesh init and skips persistence when no store is usable.
+    sigurdos::mesh::shutdown();
+
+    // TDeckBoard::sleep() is retrying and successful deep sleep is
+    // non-returning. Preserve the application invariant if that contract is
+    // ever violated by a platform implementation.
     while (true) {
-        const sigurdos::TDeckSleepStatus status = board.trySleep(0);
-        Serial.printf("[boot] critical-battery sleep failed (%s); retrying\n",
-                      sigurdos::tdeck_sleep_status_name(status));
-        delay(5000);
+        Serial.println("[power] shutdown coordinator returned unexpectedly");
+        delay(1000);
     }
 }
 
@@ -95,10 +97,7 @@ void setup()
             deep_sleep_reset, timer_wakeup, early_battery_mv)) {
         Serial.printf("[boot] battery still critical (%u mV); returning to deep sleep\n",
                       early_battery_mv);
-        const sigurdos::TDeckSleepStatus status = board.trySleep(0);
-        Serial.printf("[boot] initial deep-sleep attempt failed: %s\n",
-                      sigurdos::tdeck_sleep_status_name(status));
-        retry_critical_battery_sleep();
+        enter_orderly_sleep();
     }
     sigurdos::hal::buzzer_init();
 
@@ -270,9 +269,7 @@ void loop()
         last_batt_check = millis();
         if (board.isBatteryCritical()) {
             Serial.println("CRITICAL: Battery low — entering deep sleep");
-            const sigurdos::TDeckSleepStatus status = board.trySleep(0);
-            Serial.printf("[power] deep-sleep attempt failed: %s\n",
-                          sigurdos::tdeck_sleep_status_name(status));
+            enter_orderly_sleep();
         }
     }
 

@@ -107,31 +107,43 @@ TEST(MainLoopDispatchTest, IntegratesBootHealthAndValidatedDisplayRetryInOrder)
     EXPECT_LT(health_loop_pos, runtime_progress_pos);
 }
 
-TEST(MainLoopDispatchTest, CriticalBatterySleepFailureCannotEnterMainLoopUninitialized)
+TEST(MainLoopDispatchTest, EveryCriticalBatteryPathUsesOrderlyShutdown)
 {
     const std::string source = read_project_file("src/main.cpp");
     ASSERT_FALSE(source.empty());
 
     const size_t helper_pos = source.find(
-        "[[noreturn]] static void retry_critical_battery_sleep()");
+        "[[noreturn]] static void enter_orderly_sleep()");
+    const size_t shutdown_pos = source.find(
+        "sigurdos::mesh::shutdown();", helper_pos);
     const size_t early_guard_pos = source.find(
         "if (sigurdos::tdeck_should_resleep_early(");
     const size_t retry_call_pos = source.find(
-        "retry_critical_battery_sleep();", early_guard_pos);
+        "enter_orderly_sleep();", early_guard_pos);
     const size_t input_init_pos = source.find(
         "sigurdos_display_init_inputs();");
 
     ASSERT_NE(helper_pos, std::string::npos);
+    ASSERT_NE(shutdown_pos, std::string::npos);
     ASSERT_NE(early_guard_pos, std::string::npos);
     ASSERT_NE(retry_call_pos, std::string::npos);
     ASSERT_NE(input_init_pos, std::string::npos);
-    EXPECT_LT(helper_pos, early_guard_pos);
+    EXPECT_LT(helper_pos, shutdown_pos);
+    EXPECT_LT(shutdown_pos, early_guard_pos);
     EXPECT_LT(early_guard_pos, retry_call_pos);
     EXPECT_LT(retry_call_pos, input_init_pos);
 
     const std::string early_guard = source.substr(
         early_guard_pos, input_init_pos - early_guard_pos);
     EXPECT_EQ(early_guard.find("return;"), std::string::npos);
+
+    const size_t runtime_guard_pos = source.find("board.isBatteryCritical()");
+    const size_t runtime_sleep_pos = source.find(
+        "enter_orderly_sleep();", runtime_guard_pos);
+    ASSERT_NE(runtime_guard_pos, std::string::npos);
+    ASSERT_NE(runtime_sleep_pos, std::string::npos);
+    EXPECT_LT(runtime_guard_pos, runtime_sleep_pos);
+    EXPECT_EQ(source.find("board.trySleep("), std::string::npos);
 }
 
 }  // anonymous namespace

@@ -20,6 +20,7 @@
 #include "response_copy.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
+#include "hal/boot_watchdog.h"
 #include "hal/gps.h"
 #include "hal/prefs.h"
 #include "hal/github_ota.h"
@@ -1791,6 +1792,7 @@ void shutdown()
         []() {
             // Stop services that can start network or flash work while the
             // persistence checkpoint is being written.
+            sigurdos::hal::boot_watchdog_stop();
             sigurdos::github_ota::cancel();
             sigurdos::ota::stop();
         },

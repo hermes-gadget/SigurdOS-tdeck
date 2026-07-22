@@ -17,12 +17,27 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 #include <gtest/gtest.h>
 
 #include "hal/tdeck_board.h"
 
 namespace {
+
+std::string read_project_file(const char* path)
+{
+    const char* prefixes[] = {"", "../", "../../", "../../../", "../../../../"};
+    for (const char* prefix : prefixes) {
+        std::ifstream in(std::string(prefix) + path);
+        if (in.good()) {
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        }
+    }
+    return {};
+}
 
 class TDeckBoardPowerTest : public ::testing::Test {};
 
@@ -75,6 +90,45 @@ TEST_F(TDeckBoardPowerTest, SleepPreflightReportsInhibitionAndWakeFailure) {
     EXPECT_STREQ(sigurdos::tdeck_sleep_status_name(
                      TDeckSleepStatus::WakeConfigurationFailed),
                  "wake configuration failed");
+    EXPECT_STREQ(sigurdos::tdeck_sleep_status_name(
+                     TDeckSleepStatus::PeripheralRailHoldFailed),
+                 "peripheral rail hold failed");
+}
+
+TEST_F(TDeckBoardPowerTest, PeripheralRailIsLatchedLowAndReleasedWithoutGlitch) {
+    const std::string source = read_project_file("src/hal/tdeck_board.h");
+    ASSERT_FALSE(source.empty());
+
+    const size_t begin_pos = source.find("void begin()");
+    const size_t active_pos = source.find(
+        "digitalWrite(PIN_PERIPH_PWR, HIGH);", begin_pos);
+    const size_t release_pos = source.find("gpio_hold_dis(", active_pos);
+    const size_t release_global_pos = source.find(
+        "gpio_deep_sleep_hold_dis();", release_pos);
+    ASSERT_NE(begin_pos, std::string::npos);
+    ASSERT_NE(active_pos, std::string::npos);
+    ASSERT_NE(release_pos, std::string::npos);
+    ASSERT_NE(release_global_pos, std::string::npos);
+    EXPECT_LT(active_pos, release_pos);
+    EXPECT_LT(release_pos, release_global_pos);
+
+    const size_t sleep_pos = source.find("TDeckSleepStatus trySleep(");
+    const size_t low_pos = source.find(
+        "digitalWrite(PIN_PERIPH_PWR, LOW);", sleep_pos);
+    const size_t hold_pos = source.find("gpio_hold_en(", low_pos);
+    const size_t deep_hold_pos = source.find(
+        "gpio_deep_sleep_hold_en();", hold_pos);
+    const size_t enter_pos = source.find("enterDeepSleep();", deep_hold_pos);
+    ASSERT_NE(sleep_pos, std::string::npos);
+    ASSERT_NE(low_pos, std::string::npos);
+    ASSERT_NE(hold_pos, std::string::npos);
+    ASSERT_NE(deep_hold_pos, std::string::npos);
+    ASSERT_NE(enter_pos, std::string::npos);
+    EXPECT_LT(low_pos, hold_pos);
+    EXPECT_LT(hold_pos, deep_hold_pos);
+    EXPECT_LT(deep_hold_pos, enter_pos);
+
+    EXPECT_EQ(source.find("ESP_PD_DOMAIN_RTC_PERIPH"), std::string::npos);
 }
 
 TEST_F(TDeckBoardPowerTest, OtherBootReasonsAndRecoveredBatteryContinue) {

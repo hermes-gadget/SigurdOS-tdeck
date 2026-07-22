@@ -22,6 +22,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #ifdef ESP32_PLATFORM
+#include <driver/gpio.h>
 #include <driver/rtc_io.h>
 #endif
 #ifdef SIGURDOS_TDECK
@@ -61,6 +62,7 @@ enum class TDeckSleepStatus : uint8_t {
     Ready,
     Inhibited,
     WakeConfigurationFailed,
+    PeripheralRailHoldFailed,
 };
 
 inline TDeckSleepStatus tdeck_sleep_preflight(bool inhibited,
@@ -80,6 +82,8 @@ inline const char* tdeck_sleep_status_name(TDeckSleepStatus status) {
         return "inhibited";
     case TDeckSleepStatus::WakeConfigurationFailed:
         return "wake configuration failed";
+    case TDeckSleepStatus::PeripheralRailHoldFailed:
+        return "peripheral rail hold failed";
     }
     return "unknown";
 }
@@ -150,9 +154,19 @@ public:
         _startup_reason = BD_STARTUP_NORMAL;
         _shutdown_pending = false;
 
-        // Enable peripheral power
+        // Preload the active level before releasing a deep-sleep pad hold.
+        // ESP-IDF requires this order to prevent a low glitch on wake.
         pinMode(PIN_PERIPH_PWR, OUTPUT);
         digitalWrite(PIN_PERIPH_PWR, HIGH);
+#ifdef ESP32_PLATFORM
+        const esp_err_t rail_release_error = gpio_hold_dis(
+            static_cast<gpio_num_t>(PIN_PERIPH_PWR));
+        gpio_deep_sleep_hold_dis();
+        if (!tdeck_wake_configuration_succeeded(rail_release_error)) {
+            Serial.printf("[power] peripheral rail hold release failed: %d\n",
+                          rail_release_error);
+        }
+#endif
 
         // Trackball button as input with internal pull-up (GPIO 0 shared with BOOT)
         pinMode(PIN_TRACKBALL, INPUT_PULLUP);
@@ -244,13 +258,6 @@ public:
             return preflight;
         }
 
-        const esp_err_t domain_error =
-            esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
-        if (!tdeck_wake_configuration_succeeded(domain_error)) {
-            Serial.printf("[power] RTC power-domain setup failed: %d\n",
-                          domain_error);
-        }
-
         quiescePeripheralRail();
 
         // GPIO45 (DIO1) is not RTC-capable on ESP32-S3 (RTC GPIOs are
@@ -278,11 +285,30 @@ public:
         pinMode(PIN_PERIPH_PWR, OUTPUT);
         digitalWrite(PIN_PERIPH_PWR, LOW);
         delay(10);
+#ifdef ESP32_PLATFORM
+        const esp_err_t hold_error = gpio_hold_en(
+            static_cast<gpio_num_t>(PIN_PERIPH_PWR));
+        if (!tdeck_wake_configuration_succeeded(hold_error)) {
+            Serial.printf("[power] peripheral rail hold failed: %d\n",
+                          hold_error);
+            return TDeckSleepStatus::PeripheralRailHoldFailed;
+        }
+        // The per-pad hold latches GPIO 10's active LOW configuration; this
+        // global gate makes that hold effective while digital GPIO powers down.
+        gpio_deep_sleep_hold_en();
+#endif
         enterDeepSleep();
     }
 
     void sleep(uint32_t secs) override {
-        (void)trySleep(secs);
+        // MeshCore's virtual API cannot report failure. Keep callers out of a
+        // partially quiesced application and retry the checked transition.
+        while (true) {
+            const TDeckSleepStatus status = trySleep(secs);
+            Serial.printf("[power] deep-sleep attempt failed (%s); retrying\n",
+                          tdeck_sleep_status_name(status));
+            delay(5000);
+        }
     }
 
     void setInhibitSleep(bool inhibit) { _inhibit_sleep = inhibit; }

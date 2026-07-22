@@ -415,8 +415,10 @@ pct = ((mv - 3000) * 100) / (4200 - 3000);
 ### Auto-Shutdown
 
 - Checked every 30 seconds in `main.cpp loop()`
-- If `mv < 3200`: enters deep sleep indefinitely (`board.sleep(0)`)
-- Shutdown powers off peripherals via `PIN_PERIPH_PWR` LOW
+- If `mv < 3200`: uses the same orderly shutdown coordinator as the manual
+  action, including OTA stop and checked settings/mesh persistence
+- Shutdown quiesces buses before driving `PIN_PERIPH_PWR` LOW and latching the
+  rail off for deep sleep
 - No dedicated charge-detect pin — `sigurdos_battery_charging()` always returns
   `false`
 
@@ -644,15 +646,18 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 
 ### Entering Deep Sleep (`TDeckBoard::sleep`)
 
-1. Set `PIN_PERIPH_PWR` LOW (disconnect peripherals)
-2. Set `PIN_TFT_BL` LOW (turn off display backlight)
-3. Configure RTC GPIO:
-   - `PIN_LORA_DIO1` → input-only with pulldown
-   - `PIN_LORA_NSS` → hold enable
+1. Stop OTA/new work and persist settings, identity, channels, and contacts
+   when storage is initialized
+2. Configure the mandatory 15-minute recovery timer before changing hardware
+3. Turn off backlight/buzzer, deassert chip selects, stop SD/I2C/GPS/SPI, and
+   make peripheral signal pins high impedance
 4. Enable wake sources:
    - **EXT1:** unavailable: `PIN_LORA_DIO1` is GPIO45, outside the ESP32-S3 RTC GPIO set
-   - **Timer:** optional, if `secs > 0`
-5. Call `esp_deep_sleep_start()`
+   - **Timer:** always configured; `sleep(0)` uses a 15-minute battery-recheck wake
+5. Drive `PIN_PERIPH_PWR` LOW, call `gpio_hold_en(GPIO10)`, and enable the
+   ESP32-S3 global digital deep-sleep hold
+6. Call `esp_deep_sleep_start()`; checked preparation failures retry in a
+   controlled low-power path instead of returning to the application
 
 ### Wake Reasons
 
@@ -664,7 +669,8 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 
 ### Wake Recovery
 
-- `rtc_gpio_hold_dis` on NSS
+- Preload `PIN_PERIPH_PWR` HIGH before releasing its per-pad hold, then disable
+  the global deep-sleep hold to avoid a low rail glitch
 - `rtc_gpio_deinit` on DIO1
 - Display re-initialised with rotation(1) and full black fill
 
