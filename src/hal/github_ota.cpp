@@ -96,6 +96,7 @@ static int                    s_content_length = 0;
 static int                    s_downloaded = 0;
 static bool                   s_epoch_checked = false;
 static unsigned long          s_last_progress = 0;
+static unsigned long          s_last_data = 0;
 static unsigned long          s_connect_start = 0;
 static bool                   s_cancelled = false;
 
@@ -177,16 +178,20 @@ static void cleanupConnection() {
     }
 }
 
-static void fail(const char* msg) {
-    Serial.printf("[gh-ota] FAIL: %s\n", msg);
-    setStatus(GitHubOTAState::Failed, 0, "Failed", msg);
+static void cleanupTransfer(bool abort_flash) {
+    if (abort_flash && Update.isRunning()) Update.abort();
     cleanupConnection();
-    // Free API buffer if allocated
     if (s_api_buf) {
         free(s_api_buf);
         s_api_buf = nullptr;
-        s_api_buf_len = 0;
     }
+    s_api_buf_len = 0;
+}
+
+static void fail(const char* msg) {
+    Serial.printf("[gh-ota] FAIL: %s\n", msg);
+    setStatus(GitHubOTAState::Failed, 0, "Failed", msg);
+    cleanupTransfer(true);
     WiFi.disconnect();
     delay(10);
     s_active = false;
@@ -268,6 +273,7 @@ bool startGitHubUpdate() {
     s_epoch_checked = false;
     s_http_code = 0;
     s_content_length = 0;
+    s_last_data = 0;
     s_connect_start = millis();
     s_download_url[0] = '\0';
     s_resolved_tag[0] = '\0';
@@ -504,6 +510,7 @@ void loop() {
             s_downloaded = 0;
             s_epoch_checked = false;
             s_last_progress = millis();
+            s_last_data = s_last_progress;
 
         } else if (WiFi.status() == WL_CONNECT_FAILED ||
                    WiFi.status() == WL_NO_SSID_AVAIL) {
@@ -528,6 +535,11 @@ void loop() {
 
     // ── Phase 3: Download + write ───────────────────────────────
     if (st == GitHubOTAState::Downloading || st == GitHubOTAState::Writing) {
+        if (s_downloaded < s_content_length && Update.isRunning() &&
+            githubOtaDownloadIdleTimedOut(s_last_data, millis())) {
+            fail("Download idle timeout");
+            return;
+        }
         if (!s_http || !s_http->connected()) {
             if (s_downloaded >= s_content_length && s_content_length > 0) {
                 if (Update.end(true)) {
@@ -601,6 +613,7 @@ void loop() {
             s_downloaded += read;
 
             unsigned long now = millis();
+            s_last_data = now;
             if (now - s_last_progress > 500) {
                 s_last_progress = now;
                 int pct = (s_content_length > 0)
@@ -628,9 +641,6 @@ void cancel() {
     if (!s_active) return;
     s_cancelled = true;
     Serial.println("[gh-ota] Cancel requested");
-    if (githubOtaFlashSessionActive(s_status.state)) {
-        Update.abort();
-    }
     fail("Cancelled");
 }
 

@@ -25,6 +25,7 @@
 #include "Arduino.h"
 #include "hal/sdcard.h"
 #include "hal/sdcard_replace.h"
+#include "hal/spi_shared.h"
 #include "hal/tdeck_pins.h"
 #include <cstring>
 #include <map>
@@ -63,6 +64,21 @@ protected:
         sd_mock_set_state(SDState::NOT_MOUNTED, 0, 0);
     }
 };
+
+TEST_F(SDCardTest, SharedBusResetUsesOneBoundedEndBeginLifecycle) {
+    SPIClass& spi = sigurdos_shared_spi();
+    const int initial_begins = spi.begin_count;
+    const int initial_ends = spi.end_count;
+
+    EXPECT_TRUE(sigurdos_shared_spi_reset(40, 38, 41, 39));
+    EXPECT_TRUE(sigurdos_shared_spi_reset(40, 38, 41, 39));
+    EXPECT_EQ(spi.begin_count, initial_begins + 2);
+    EXPECT_EQ(spi.end_count, initial_ends + 1);
+
+    sigurdos_shared_spi_begin(40, 38, 41, 9);
+    EXPECT_EQ(spi.begin_count, initial_begins + 2);
+    EXPECT_EQ(spi.end_count, initial_ends + 1);
+}
 
 using sigurdos::sdcard::detail::RenameResult;
 using sigurdos::sdcard::detail::ReplaceOps;

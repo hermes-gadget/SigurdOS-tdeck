@@ -19,6 +19,8 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 #include <cstdint>
+#include <cstddef>
+#include <cmath>
 #include <Arduino.h>
 #include <Wire.h>
 #ifdef ESP32_PLATFORM
@@ -86,6 +88,22 @@ inline const char* tdeck_sleep_status_name(TDeckSleepStatus status) {
         return "peripheral rail hold failed";
     }
     return "unknown";
+}
+
+inline float tdeck_average_mcu_temperature(const float* samples,
+                                           size_t count) {
+    if (!samples || count == 0) return 0.0f;
+    float total = 0.0f;
+    size_t valid_count = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const float sample = samples[i];
+        if (!std::isfinite(sample) || sample < -40.0f || sample > 125.0f) {
+            continue;
+        }
+        total += sample;
+        ++valid_count;
+    }
+    return valid_count ? total / static_cast<float>(valid_count) : 0.0f;
 }
 
 #ifdef SIGURDOS_TDECK
@@ -220,9 +238,9 @@ public:
     }
 
     float getMCUTemperature() override {
-        uint32_t raw = 0;
-        for (int i = 0; i < 4; i++) raw += temperatureRead();
-        return (float)raw / 4.0f;
+        float samples[4];
+        for (float& sample : samples) sample = temperatureRead();
+        return tdeck_average_mcu_temperature(samples, 4);
     }
 
     const char* getManufacturerName() const override {

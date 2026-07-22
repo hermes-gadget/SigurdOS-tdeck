@@ -34,6 +34,19 @@ inline bool otaSessionExpired(uint32_t started_at, uint32_t now) {
     return static_cast<uint32_t>(now - started_at) >= OTA_SESSION_MAX_MS;
 }
 
+inline bool otaAccessPointInputsValid(const char* ssid,
+                                      const char* password) {
+    if (!ssid) return false;
+    size_t ssid_len = 0;
+    while (ssid[ssid_len] && ssid_len <= 32U) ++ssid_len;
+    if (ssid_len == 0U || ssid_len > 32U) return false;
+
+    if (!password || password[0] == '\0') return true;
+    size_t password_len = 0;
+    while (password[password_len] && password_len <= 63U) ++password_len;
+    return password_len >= 8U && password_len <= 63U;
+}
+
 // WebServer initializes HTTPUpload::totalSize to zero immediately before the
 // multipart START callback. Arduino Update rejects a literal zero, so unknown
 // multipart sizes must use its documented sentinel instead.
@@ -64,7 +77,7 @@ inline bool otaUploadCanFinish(const OtaUploadSessionState& state,
 }
 
 // Start WiFi AP + web server for OTA upload.
-// ssid: max 32 chars (truncated), password: max 63 (empty = open AP).
+// ssid: 1-32 chars. password: 8-63 chars (empty = generate a password).
 // Returns true if started successfully. Returns false (refuses to start) when
 // no device PIN is configured, since the PIN is the upload endpoint's only auth.
 bool start(const char* ssid, const char* password = "");

@@ -22,7 +22,7 @@ namespace ota {
 static WebServer* server = nullptr;
 static bool active = false;
 static char server_ip[16] = "";
-static char ap_password[17] = "";
+static char ap_password[64] = "";
 static uint32_t session_started_at = 0;
 static String csrf_token;  // regenerated per OTA session
 static OtaUploadSessionState upload_state;
@@ -49,6 +49,11 @@ static const hal::OtaAllocationOps OTA_SERVER_ALLOCATOR{
 
 bool start(const char* ssid, const char* password) {
     if (active) return true;
+
+    if (!otaAccessPointInputsValid(ssid, password)) {
+        SIG_LOGW("[ota] REFUSED: invalid AP SSID or password length");
+        return false;
+    }
 
     if (sigurdos_is_under_launcher()) {
         SIG_LOGW("[ota] REFUSED: OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
@@ -87,7 +92,11 @@ bool start(const char* ssid, const char* password) {
             }
             ap_password[12] = '\0';
         }
-        WiFi.softAP(ssid, ap_password);
+        if (!WiFi.softAP(ssid, ap_password)) {
+            SIG_LOGE("[ota] WiFi AP startup failed");
+            stop();
+            return false;
+        }
 
         ip = WiFi.softAPIP();
         snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);

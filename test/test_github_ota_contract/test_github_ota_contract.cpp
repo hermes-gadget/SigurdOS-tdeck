@@ -27,6 +27,7 @@ namespace {
 using sigurdos::github_ota::GitHubOTAState;
 using sigurdos::github_ota::GitHubOTAStatus;
 using sigurdos::github_ota::githubOtaFlashSessionActive;
+using sigurdos::github_ota::githubOtaDownloadIdleTimedOut;
 using sigurdos::github_ota::branchNeedsReleaseApi;
 using sigurdos::github_ota::buildReleaseDownloadUrl;
 using sigurdos::github_ota::copyFallbackDownloadUrl;
@@ -83,6 +84,13 @@ TEST(GitHubOTAContractTest, OnlyDownloadAndWriteStatesOwnAFlashSession) {
     EXPECT_TRUE(githubOtaFlashSessionActive(GitHubOTAState::Writing));
     EXPECT_FALSE(githubOtaFlashSessionActive(GitHubOTAState::Success));
     EXPECT_FALSE(githubOtaFlashSessionActive(GitHubOTAState::Failed));
+}
+
+TEST(GitHubOTAContractTest, DownloadIdleTimeoutIsBoundedAndWrapSafe) {
+    EXPECT_FALSE(githubOtaDownloadIdleTimedOut(100U, 15099U));
+    EXPECT_TRUE(githubOtaDownloadIdleTimedOut(100U, 15100U));
+    EXPECT_FALSE(githubOtaDownloadIdleTimedOut(0xFFFFFF00U, 0x00000100U));
+    EXPECT_TRUE(githubOtaDownloadIdleTimedOut(0xFFFFC000U, 0x00000000U));
 }
 
 TEST(GitHubOTAPlanTest, LatestAndEmptyBranchUseFallbackWithoutApi) {

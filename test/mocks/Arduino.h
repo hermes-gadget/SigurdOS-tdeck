@@ -396,11 +396,14 @@ extern TwoWire Wire;
 
 class SPIClass {
 public:
+    int begin_count = 0;
+    int end_count = 0;
     SPIClass() {}
     SPIClass(uint8_t) {}  // host number (FSPI=1, VSPI=2)
-    void begin() {}
-    void begin(int sck, int miso, int mosi) { (void)sck; (void)miso; (void)mosi; }
-    void begin(int sck, int miso, int mosi, int cs) { (void)sck; (void)miso; (void)mosi; (void)cs; }
+    void begin() { ++begin_count; }
+    void begin(int sck, int miso, int mosi) { (void)sck; (void)miso; (void)mosi; ++begin_count; }
+    void begin(int sck, int miso, int mosi, int cs) { (void)sck; (void)miso; (void)mosi; (void)cs; ++begin_count; }
+    void end() { ++end_count; }
 };
 extern SPIClass SPI;
 

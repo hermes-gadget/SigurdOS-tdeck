@@ -26,6 +26,7 @@
 #include "hal/ota_security_epoch.h"
 
 using sigurdos::ota::otaPinAccepts;
+using sigurdos::ota::otaAccessPointInputsValid;
 using sigurdos::ota::otaSessionExpired;
 using sigurdos::ota::otaUpdateBeginSize;
 using sigurdos::ota::OTA_UPDATE_SIZE_UNKNOWN;
@@ -71,6 +72,25 @@ TEST(OtaAuth, RejectsSuffixesSignsWhitespaceAndOverflow) {
     EXPECT_FALSE(otaPinAccepts(1234, "+1234"));
     EXPECT_FALSE(otaPinAccepts(1234, " 1234"));
     EXPECT_FALSE(otaPinAccepts(1, "4294967297"));
+}
+
+TEST(OtaAccessPoint, ValidatesSsidAndWpaPasswordLengths) {
+    EXPECT_FALSE(otaAccessPointInputsValid(nullptr, "password"));
+    EXPECT_FALSE(otaAccessPointInputsValid("", "password"));
+    EXPECT_TRUE(otaAccessPointInputsValid("SigurdOS", nullptr));
+    EXPECT_TRUE(otaAccessPointInputsValid("SigurdOS", ""));
+    EXPECT_FALSE(otaAccessPointInputsValid("SigurdOS", "short"));
+    EXPECT_TRUE(otaAccessPointInputsValid("SigurdOS", "12345678"));
+    EXPECT_TRUE(otaAccessPointInputsValid(
+        "12345678901234567890123456789012", "12345678"));
+    EXPECT_FALSE(otaAccessPointInputsValid(
+        "123456789012345678901234567890123", "12345678"));
+    EXPECT_TRUE(otaAccessPointInputsValid(
+        "SigurdOS",
+        "123456789012345678901234567890123456789012345678901234567890123"));
+    EXPECT_FALSE(otaAccessPointInputsValid(
+        "SigurdOS",
+        "1234567890123456789012345678901234567890123456789012345678901234"));
 }
 
 TEST(OtaAuth, SessionExpiryIsDeadlineAndWrapSafe) {

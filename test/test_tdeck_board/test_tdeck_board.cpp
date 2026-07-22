@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <limits>
 
 #include <gtest/gtest.h>
 
@@ -136,6 +137,34 @@ TEST_F(TDeckBoardPowerTest, OtherBootReasonsAndRecoveredBatteryContinue) {
     EXPECT_FALSE(sigurdos::tdeck_should_resleep_early(true, false, 3199));
     EXPECT_FALSE(sigurdos::tdeck_should_resleep_early(true, true, 3200));
     EXPECT_FALSE(sigurdos::tdeck_should_resleep_early(true, true, 0));
+}
+
+TEST_F(TDeckBoardPowerTest, TemperatureAveragePreservesFractionalSamples) {
+    const float samples[] = {41.25f, 42.5f, 43.75f, 44.5f};
+    EXPECT_FLOAT_EQ(sigurdos::tdeck_average_mcu_temperature(samples, 4),
+                    43.0f);
+}
+
+TEST_F(TDeckBoardPowerTest, TemperatureAverageRejectsInvalidSamples) {
+    const float samples[] = {
+        -10.0f,
+        30.0f,
+        -100.0f,
+        200.0f,
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+    };
+    EXPECT_FLOAT_EQ(sigurdos::tdeck_average_mcu_temperature(samples, 6),
+                    10.0f);
+}
+
+TEST_F(TDeckBoardPowerTest, TemperatureAverageReturnsZeroWithoutValidSamples) {
+    const float samples[] = {
+        -100.0f, std::numeric_limits<float>::quiet_NaN(), 200.0f};
+    EXPECT_FLOAT_EQ(sigurdos::tdeck_average_mcu_temperature(samples, 3),
+                    0.0f);
+    EXPECT_FLOAT_EQ(sigurdos::tdeck_average_mcu_temperature(nullptr, 3),
+                    0.0f);
 }
 
 } // namespace
