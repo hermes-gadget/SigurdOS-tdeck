@@ -24,6 +24,10 @@
  */
 #include <gtest/gtest.h>
 
+#include <fstream>
+#include <iterator>
+#include <string>
+
 // Include all core headers
 #include "hal/tdeck_pins.h"
 #include "hal/tdeck_board.h"
@@ -43,6 +47,15 @@
 #include "ui/ui.h"
 
 namespace {
+
+std::string readProjectFile(const char* path) {
+    const char* prefixes[] = {"", "../", "../../", "../../../", "../../../../"};
+    for (const char* prefix : prefixes) {
+        std::ifstream in(std::string(prefix) + path);
+        if (in.good()) return std::string(std::istreambuf_iterator<char>(in), {});
+    }
+    return {};
+}
 
 class BuildIntegrationTest : public ::testing::Test {};
 
@@ -108,6 +121,21 @@ TEST_F(BuildIntegrationTest, ESP32PlatformDefined) {
     #else
     GTEST_SKIP() << "ESP32_PLATFORM not defined in native test (expected)";
     #endif
+}
+
+TEST_F(BuildIntegrationTest, Esp32ComponentCompileLaneIsDeclared) {
+    const std::string config = readProjectFile("platformio.ini");
+    const std::string probe =
+        readProjectFile("src/validation/esp32_component_compile.cpp");
+    ASSERT_FALSE(config.empty());
+    ASSERT_FALSE(probe.empty());
+    EXPECT_NE(config.find("[env:SigurdOS_TDeck_esp32_components]"),
+              std::string::npos);
+    EXPECT_NE(probe.find("BleFrameQueue<32, 4>"), std::string::npos);
+    EXPECT_NE(probe.find("BleTaskMutex::Guard"), std::string::npos);
+    EXPECT_NE(probe.find("RTC_DATA_ATTR"), std::string::npos);
+    EXPECT_NE(probe.find("esp_ota_get_running_partition"), std::string::npos);
+    EXPECT_NE(probe.find("heap_caps_malloc"), std::string::npos);
 }
 
 } // anonymous namespace
