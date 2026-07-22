@@ -18,6 +18,7 @@
 #include "contact_uri.h"
 #include "persistence_store.h"
 #include "response_copy.h"
+#include "telemetry_lpp_parser.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/gps.h"
@@ -28,7 +29,6 @@
 #include "regions.h"
 #include "utils/utf8_util.h"
 #include "../diagnostics/debug_cfg.h"
-#include <helpers/sensors/LPPDataHelpers.h>
 
 // REQ_TYPE constants not defined in core BaseChatMesh.h (only in examples)
 #ifndef REQ_TYPE_GET_TELEMETRY_DATA
@@ -783,73 +783,12 @@ bool hasTelemetryResponse() {
     for (int i = 0; i < n; i++) {
         auto* re = g_mesh->getResponse(i);
         if (re && re->tag == _last_telemetry_tag) {
-            // Parse CayenneLPP from response body (skip 4-byte tag)
+            // Parse CayenneLPP from the response body after its four-byte tag.
+            // Never publish a partial result from a malformed peer response.
+            if (re->len < 4) return false;
             TelemetryResult result;
-            memset(&result, 0, sizeof(result));
-            if (re->len > 4) {
-                LPPReader reader(re->data + 4, re->len - 4);
-                uint8_t ch, type;
-                int idx = 0;
-                while (reader.readHeader(ch, type) && idx < MAX_TELEMETRY_ITEMS) {
-                    TelemetryItem& item = result.items[result.n_items++];
-                    item.channel = ch;
-                    item.type = type;
-                    switch (type) {
-                        case LPP_VOLTAGE: {
-                            float v;
-                            reader.readVoltage(v);
-                            item.value_float = v;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.2fV", v);
-                            break;
-                        }
-                        case LPP_TEMPERATURE: {
-                            float t;
-                            reader.readTemperature(t);
-                            item.value_float = t;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.1fC", t);
-                            break;
-                        }
-                        case LPP_RELATIVE_HUMIDITY: {
-                            float h;
-                            reader.readRelativeHumidity(h);
-                            item.value_float = h;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.0f%%", h);
-                            break;
-                        }
-                        case LPP_BAROMETRIC_PRESSURE: {
-                            float p;
-                            reader.readPressure(p);
-                            item.value_float = p;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.1f hPa", p);
-                            break;
-                        }
-                        case LPP_GPS: {
-                            float lat, lon, alt;
-                            reader.readGPS(lat, lon, alt);
-                            item.value_float = lat;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.4f, %.4f %.0fm", lat, lon, alt);
-                            break;
-                        }
-                        case LPP_CURRENT: {
-                            float a;
-                            reader.readCurrent(a);
-                            item.value_float = a;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.3fA", a);
-                            break;
-                        }
-                        default:
-                            reader.skipData(type);
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "type=%d", type);
-                            break;
-                    }
-                }
+            if (!detail::parseTelemetryLpp(re->data + 4, re->len - 4, &result)) {
+                return false;
             }
             _cached_telemetry = result;
             _has_cached_telemetry = true;
