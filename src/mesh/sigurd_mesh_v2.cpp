@@ -7,11 +7,13 @@
 #include "companion_message_policy.h"
 #include "advert_blob.h"
 #include "path_discovery.h"
+#include "ping_result_policy.h"
 #include "control_parser.h"
 #include "login_response.h"
 #include "utils/utf8_util.h"
 #include "channel_validation.h"
 #include "channel_slot_policy.h"
+#include "strict_base64.h"
 #include "telemetry_response_policy.h"
 #include <cstring>
 #include <cstdlib>
@@ -22,6 +24,10 @@
 #include "hal/gps.h"
 #include "hal/tdeck_board.h"
 #include "../diagnostics/debug_cfg.h"
+
+#if defined(ESP32_PLATFORM)
+#include <esp_random.h>
+#endif
 
 namespace sigurdos {
 namespace mesh {
@@ -189,14 +195,22 @@ namespace mesh {
     bool SigurdMeshV2::sendPingNearby() {
         uint32_t now = _ms->getMillis();
         if (_ping_last_at != 0 && now - _ping_last_at < PING_COOLDOWN_MS) return false;
-        _ping_tag = (uint32_t)(now ^ (uint32_t)(intptr_t)this);
+        _ping_tag = 0;
+        for (int attempt = 0; attempt < 4 && _ping_tag == 0; ++attempt) {
+#if defined(ESP32_PLATFORM)
+            _ping_tag = esp_random();
+#else
+            getRNG()->random(reinterpret_cast<uint8_t*>(&_ping_tag), sizeof(_ping_tag));
+#endif
+        }
+        if (_ping_tag == 0) return false;
         _ping_sent_at = now;
         _ping_last_at = now;
         _ping_n_results = 0;
 
         char ping[20];
         int n = snprintf(ping, sizeof(ping), "PING:%08lx", (unsigned long)_ping_tag);
-        if (n <= 0 || (size_t)n > sizeof(ping)) return false;
+        if (n <= 0 || (size_t)n >= sizeof(ping)) return false;
 
         ::mesh::Packet* pkt = createRawData((uint8_t*)ping, (size_t)n);
         if (!pkt) return false;
@@ -245,9 +259,8 @@ namespace mesh {
 
         // PONG received — collect if it matches our active ping
         if (memcmp(clean, "PONG:", 5) == 0 && _ping_sent_at != 0 && _ping_tag != 0) {
-            if (_ping_n_results >= PING_RESULTS_MAX) return;
             uint32_t now_ms = _ms->getMillis();
-            if (now_ms > _ping_sent_at + PING_WINDOW_MS) return;
+            if (!pingWindowActive(_ping_sent_at, now_ms, PING_WINDOW_MS)) return;
 
             const char* tag_end = (const char*)memchr(pkt->payload + 5, ':',
                                                       pkt->payload_len - 5);
@@ -272,18 +285,22 @@ namespace mesh {
 
             size_t name_len = (size_t)(rssi_start - remaining);
             if (name_len > 31) name_len = 31;
+            if (name_len == 0) return;
 
             const uint8_t* rssi_data = reinterpret_cast<const uint8_t*>(rssi_start + 1);
             const size_t rssi_len = pkt->payload_len -
                 static_cast<size_t>((rssi_start + 1) -
                                     reinterpret_cast<const char*>(pkt->payload));
-            int rssi = 0;
-            if (!parse_bounded_int(rssi_data, rssi_len, &rssi)) return;
+            int reported_rssi = 0;
+            if (!parse_bounded_int(rssi_data, rssi_len, &reported_rssi)) return;
+            (void)reported_rssi;  // Legacy field is untrusted; use receiver radio data.
 
-            PingResult& pr = _ping_results[_ping_n_results++];
-            memcpy(pr.name, remaining, name_len);
-            pr.name[name_len] = '\0';
-            pr.rssi = rssi;
+            char name[32];
+            memcpy(name, remaining, name_len);
+            name[name_len] = '\0';
+            recordUnauthenticatedPingHint(_ping_results, _ping_n_results,
+                                           PING_RESULTS_MAX, name,
+                                           (int)_radio->getLastRSSI());
             return;
         }
 
@@ -1302,28 +1319,13 @@ namespace mesh {
     }
 
     int SigurdMeshV2::decode_b64(const char* in, size_t in_len, uint8_t* out, size_t out_cap) {
-        if (!in || !out || out_cap == 0) return 0;
-        static const char T[] =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        int o = 0;
-        uint32_t buf = 0;
-        int bits = 0;
-        for (size_t i = 0; i < in_len && in[i] != '='; i++) {
-            const char* p = strchr(T, in[i]);
-            if (!p) continue;
-            buf = (buf << 6) | (uint32_t)(p - T);
-            bits += 6;
-            if (bits >= 8) {
-                bits -= 8;
-                if (o < (int)out_cap) out[o++] = (uint8_t)(buf >> bits);
-                buf &= (1U << bits) - 1;
-            }
-        }
-        return o;
+        size_t decoded = 0;
+        return decodeBase64Strict(in, in_len, out, out_cap, decoded)
+            ? static_cast<int>(decoded) : 0;
     }
 
     bool SigurdMeshV2::addChannelBool(const char* name, const char* psk_base64) {
-        if (!name || !name[0] || !psk_base64) return false;
+        if (!name || !name[0] || !psk_base64 || !channel_name_valid(name)) return false;
         int idx = getChannelCount();
         if (idx >= MAX_GROUP_CHANNELS) return false;
         for (int i = 0; i < idx; i++) {

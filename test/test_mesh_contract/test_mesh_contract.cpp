@@ -24,6 +24,7 @@
 #include "mesh/mesh_wrapper.h"
 #include "mesh/login_session.h"
 #include "mesh/login_response.h"
+#include "mesh/ping_result_policy.h"
 #include "mesh/public_channel.h"
 #include "mesh/response_copy.h"
 
@@ -211,6 +212,31 @@ TEST(MeshContractTest, ResponseCopyWritesOnlyWhenAllBuffersFit) {
     EXPECT_EQ(tag, 77u);
     EXPECT_EQ(std::memcmp(data, source, sizeof(source)), 0);
     EXPECT_STREQ(name, "alice");
+}
+
+TEST(MeshContractTest, PingWindowUsesWrapSafeElapsedTime) {
+    EXPECT_TRUE(sigurdos::mesh::pingWindowActive(100, 3099, 3000));
+    EXPECT_FALSE(sigurdos::mesh::pingWindowActive(100, 3100, 3000));
+    EXPECT_TRUE(sigurdos::mesh::pingWindowActive(0xFFFFFFF0u, 0x10u, 64));
+    EXPECT_FALSE(sigurdos::mesh::pingWindowActive(0, 1, 3000));
+}
+
+TEST(MeshContractTest, PingHintsDeduplicateAndUseLocalSignalMeasurement) {
+    sigurdos::mesh::PingResult hints[2]{};
+    int count = 0;
+    EXPECT_TRUE(sigurdos::mesh::recordUnauthenticatedPingHint(
+        hints, count, 2, "alice", -90));
+    EXPECT_TRUE(sigurdos::mesh::recordUnauthenticatedPingHint(
+        hints, count, 2, "alice", -72));
+    EXPECT_EQ(count, 1);
+    EXPECT_STREQ(hints[0].name, "alice");
+    EXPECT_EQ(hints[0].rssi, -72);
+
+    EXPECT_TRUE(sigurdos::mesh::recordUnauthenticatedPingHint(
+        hints, count, 2, "bob", -80));
+    EXPECT_FALSE(sigurdos::mesh::recordUnauthenticatedPingHint(
+        hints, count, 2, "mallory", -10));
+    EXPECT_EQ(count, 2);
 }
 
 } // namespace

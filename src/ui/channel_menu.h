@@ -54,12 +54,18 @@ bool channel_menu_perform(ChannelAction action, const char* channel, int channel
 // chat scope". Bare names and $names are accepted; public #names are rejected.
 bool private_scope_name_valid(const char* name, const char** reason = nullptr);
 
-// Normalize a user-entered private scope and derive its 16-byte key. Empty/null
+using ScopeRandomFill = bool (*)(uint8_t* output, size_t length, void* context);
+
+// Normalize a user-entered routing scope and generate its independent 16-byte
+// key. Empty/null
 // clears the scope and writes an empty out_name plus a zero key. Non-empty input
-// writes "$<body>" to out_name and a stable 16-byte key to key16.
+// writes "$<body>" to out_name and a random key to key16. Tests may inject a
+// deterministic filler; firmware defaults to the ESP32 hardware RNG.
 bool private_scope_prepare(const char* scope_name,
                            char* out_name, size_t out_name_len,
                            uint8_t key16[16],
-                           const char** reason = nullptr);
+                           const char** reason = nullptr,
+                           ScopeRandomFill random_fill = nullptr,
+                           void* random_context = nullptr);
 
 } // namespace sigurdos::ui

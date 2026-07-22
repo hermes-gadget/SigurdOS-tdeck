@@ -38,6 +38,7 @@
 #include <SPIFFS.h>
 #include <Preferences.h>  // for NVS prefs
 #include <mbedtls/base64.h>
+#include "channel_uri.h"
 #include <time.h>
 #include <Mesh.h>
 #include <helpers/SimpleMeshTables.h>
@@ -2333,19 +2334,10 @@ bool importContactByUri(const char* uri) {
     }
 
     // ── Raw hex blob format: meshcore://<hex> (biz card) ──
-    // Extract all hex chars and convert to binary for importContact()
     {
         char hex[512];
-        int i = 0;
-        while (*p && i < (int)(sizeof(hex) - 1)) {
-            if (::mesh::Utils::isHexChar(*p)) {
-                hex[i++] = *p;
-            }
-            p++;
-        }
-        hex[i] = '\0';
-
-        if (i >= (int)(PUB_KEY_SIZE * 2)) { // at least a public key's worth
+        size_t hex_len = 0;
+        if (parseRawContactUriHex(uri, hex, sizeof(hex), hex_len)) {
             uint8_t buf[256];
             int blen = SigurdMeshV2::hexToBytes(hex, buf, sizeof(buf));
             if (blen > 0) {
@@ -2372,47 +2364,13 @@ bool addChannelByUri(const char* uri) {
 
     // Must start with "meshcore://"
     if (strncmp(uri, "meshcore://", 11) != 0) return false;
-    const char* p = uri + 11;
-
-    // Must be channel/add?...
-    if (strncmp(p, "channel/add?", 12) != 0) return false;
-    p += 12;
-
-    char name[32] = {0};
-    char secret_hex[65] = {0};  // 32 hex chars = 16 bytes, but allow up to 64
-
-    while (*p) {
-        const char* key_start = p;
-        while (*p && *p != '=' && *p != '&') p++;
-        int key_len = (int)(p - key_start);
-        if (*p == '=') {
-            p++;
-            const char* val_start = p;
-            while (*p && *p != '&') p++;
-            int val_len = (int)(p - val_start);
-
-            if (key_len == 4 && strncmp(key_start, "name", 4) == 0) {
-                int copy = val_len < (int)(sizeof(name) - 1)
-                    ? val_len : (int)(sizeof(name) - 1);
-                memcpy(name, val_start, copy);
-                name[copy] = '\0';
-                urlDecode(name);
-            } else if (key_len == 6 && strncmp(key_start, "secret", 6) == 0) {
-                int copy = val_len < (int)(sizeof(secret_hex) - 1)
-                    ? val_len : (int)(sizeof(secret_hex) - 1);
-                memcpy(secret_hex, val_start, copy);
-                secret_hex[copy] = '\0';
-            }
-        }
-        if (*p == '&') p++;
-    }
-
-    if (!name[0] || !secret_hex[0]) return false;
+    ChannelUriFields fields{};
+    if (!parseChannelAddUri(uri, fields) || !channel_name_valid(fields.name)) return false;
 
     // Decode secret hex → bytes → base64 (what addChannel expects)
     uint8_t raw_secret[32];  // up to 32 bytes
-    int raw_len = SigurdMeshV2::hexToBytes(secret_hex, raw_secret, sizeof(raw_secret));
-    if (raw_len <= 0) return false;
+    int raw_len = SigurdMeshV2::hexToBytes(fields.secret_hex, raw_secret, sizeof(raw_secret));
+    if (raw_len != 16 && raw_len != 32) return false;
 
     // Base64-encode the raw secret
     // Output size: ((raw_len + 2) / 3) * 4 + 1 — max 45 for 32 bytes
@@ -2420,7 +2378,7 @@ bool addChannelByUri(const char* uri) {
     encodeBase64(raw_secret, raw_len, b64);
 
     // Use the wrapper's addChannel which accepts base64 PSK
-    return g_mesh->addChannelBool(name, b64);
+    return addChannel(fields.name, b64);
 }
 
 // ── QR code support ─────────────────────────────

@@ -107,7 +107,7 @@ void finder_screen_show()
             auto* r = sigurdos::mesh::getPingResult(i);
             if (!r) continue;
             row_n++;
-            snprintf(buf, sizeof(buf), "%s  %ddBm", r->name, r->rssi);
+            snprintf(buf, sizeof(buf), "~ %s  %ddBm (unverified)", r->name, r->rssi);
             lv_obj_t* item = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
             lv_obj_set_style_bg_color(item,
                 lv_color_hex(row_n % 2 == 1 ? BG_TERTIARY : BG_INPUT), 0);

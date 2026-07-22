@@ -20,7 +20,7 @@
  * Unit tests for the channel quick-action menu logic.
  *
  * Covers: private-scope menu availability, UI-only action handling, private
- * scope validation, and deterministic private key derivation.
+ * scope validation, and random private key generation.
  */
 #include <gtest/gtest.h>
 #include <cstring>
@@ -36,6 +36,23 @@ using sigurdos::ui::private_scope_name_valid;
 using sigurdos::ui::private_scope_prepare;
 
 namespace {
+
+struct FakeRandom {
+    uint8_t next = 1;
+    int calls = 0;
+};
+
+bool fill_fake_random(uint8_t* output, size_t length, void* context) {
+    auto* state = static_cast<FakeRandom*>(context);
+    state->calls++;
+    for (size_t i = 0; i < length; ++i) output[i] = state->next++;
+    return true;
+}
+
+bool fill_zero_random(uint8_t* output, size_t length, void*) {
+    std::memset(output, 0, length);
+    return true;
+}
 
 static bool menu_has(const ChannelMenuItem* items, int n, ChannelAction a) {
     for (int i = 0; i < n; i++) {
@@ -137,23 +154,28 @@ TEST(ChannelMenuTest, PrivateScopeNameValidRejectsPublicOrBadNames) {
 TEST(ChannelMenuTest, PrivateScopePrepareNormalizesBareNameToDollar) {
     char name[31];
     uint8_t key[16];
-    ASSERT_TRUE(private_scope_prepare("eng-sw", name, sizeof(name), key));
+    FakeRandom random{};
+    ASSERT_TRUE(private_scope_prepare("eng-sw", name, sizeof(name), key, nullptr,
+                                      fill_fake_random, &random));
     EXPECT_STREQ(name, "$eng-sw");
 
     uint8_t zero[16]{};
     EXPECT_NE(std::memcmp(key, zero, sizeof(key)), 0);
 }
 
-TEST(ChannelMenuTest, PrivateScopePrepareAcceptsDollarPrefixedName) {
+TEST(ChannelMenuTest, PrivateScopePrepareAcceptsDollarPrefixedNameWithIndependentKeys) {
     char bare_name[31];
     uint8_t bare_key[16];
     char dollar_name[31];
     uint8_t dollar_key[16];
 
-    ASSERT_TRUE(private_scope_prepare("eng-sw", bare_name, sizeof(bare_name), bare_key));
-    ASSERT_TRUE(private_scope_prepare("$eng-sw", dollar_name, sizeof(dollar_name), dollar_key));
+    FakeRandom random{};
+    ASSERT_TRUE(private_scope_prepare("eng-sw", bare_name, sizeof(bare_name), bare_key,
+                                      nullptr, fill_fake_random, &random));
+    ASSERT_TRUE(private_scope_prepare("$eng-sw", dollar_name, sizeof(dollar_name), dollar_key,
+                                      nullptr, fill_fake_random, &random));
     EXPECT_STREQ(dollar_name, "$eng-sw");
-    EXPECT_EQ(std::memcmp(bare_key, dollar_key, sizeof(bare_key)), 0);
+    EXPECT_NE(std::memcmp(bare_key, dollar_key, sizeof(bare_key)), 0);
 }
 
 TEST(ChannelMenuTest, PrivateScopePrepareDifferentNamesGetDifferentKeys) {
@@ -162,8 +184,11 @@ TEST(ChannelMenuTest, PrivateScopePrepareDifferentNamesGetDifferentKeys) {
     char second_name[31];
     uint8_t second_key[16];
 
-    ASSERT_TRUE(private_scope_prepare("eng-sw", first_name, sizeof(first_name), first_key));
-    ASSERT_TRUE(private_scope_prepare("ops", second_name, sizeof(second_name), second_key));
+    FakeRandom random{};
+    ASSERT_TRUE(private_scope_prepare("eng-sw", first_name, sizeof(first_name), first_key,
+                                      nullptr, fill_fake_random, &random));
+    ASSERT_TRUE(private_scope_prepare("ops", second_name, sizeof(second_name), second_key,
+                                      nullptr, fill_fake_random, &random));
     EXPECT_NE(std::memcmp(first_key, second_key, sizeof(first_key)), 0);
 }
 
@@ -201,6 +226,17 @@ TEST(ChannelMenuTest, PrivateScopePrepareRejectsTooSmallOutput) {
     char name[4];
     uint8_t key[16];
     EXPECT_FALSE(private_scope_prepare("eng-sw", name, sizeof(name), key));
+}
+
+TEST(ChannelMenuTest, PrivateScopePrepareRejectsMissingOrAllZeroEntropy) {
+    char name[31];
+    uint8_t key[16];
+    const char* reason = nullptr;
+    EXPECT_FALSE(private_scope_prepare("eng-sw", name, sizeof(name), key, &reason));
+    EXPECT_STREQ(reason, "Secure random unavailable");
+    EXPECT_FALSE(private_scope_prepare("eng-sw", name, sizeof(name), key, &reason,
+                                       fill_zero_random, nullptr));
+    EXPECT_STREQ(reason, "Secure random unavailable");
 }
 
 } // namespace

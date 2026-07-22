@@ -11,6 +11,7 @@
 #include "utils/utf8_util.h"
 #include "companion_message_policy.h"
 #include "companion_ble_pin.h"
+#include "channel_validation.h"
 #include "mesh_wrapper.h"
 #include "mesh_wrapper_internal.h"
 #include "scope_key_hex.h"
@@ -297,6 +298,8 @@ public:
     }
     bool setChannel(int index, const CompanionChannel& channel) override {
         if (!mesh_ptr() || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
+        if (!memchr(channel.name, '\0', sizeof(channel.name))) return false;
+        if (channel.name[0] && !sigurdos::mesh::channel_name_valid(channel.name)) return false;
         ChannelDetails cd{};
         strncpy(cd.name, channel.name, sizeof(cd.name) - 1);
         memcpy(cd.channel.secret, channel.secret, sizeof(cd.channel.secret));

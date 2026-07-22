@@ -21,6 +21,10 @@
 #include <cstdio>
 #include <cstring>
 
+#if defined(ESP32_PLATFORM)
+#include <esp_random.h>
+#endif
+
 #include "../mesh/channel_validation.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../mesh/public_channel.h"
@@ -37,35 +41,16 @@ bool channel_supports_private_scope(const char* channel)
     return channel && channel[0];
 }
 
-static uint64_t fnv1a64(const char* text, uint64_t seed)
+static bool secure_scope_random(uint8_t* output, size_t length, void*)
 {
-    uint64_t h = 1469598103934665603ULL ^ seed;
-    const unsigned char* p = (const unsigned char*)text;
-    while (*p) {
-        h ^= (uint64_t)*p++;
-        h *= 1099511628211ULL;
-    }
-    return h;
-}
-
-static uint64_t mix64(uint64_t x)
-{
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9ULL;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebULL;
-    x ^= x >> 31;
-    return x;
-}
-
-static void derive_private_scope_key(const char* name, uint8_t key16[16])
-{
-    uint64_t a = mix64(fnv1a64(name, 0x7369677572646f73ULL));
-    uint64_t b = mix64(fnv1a64(name, 0x7072697661746524ULL));
-    for (int i = 0; i < 8; i++) {
-        key16[i] = (uint8_t)(a >> (i * 8));
-        key16[i + 8] = (uint8_t)(b >> (i * 8));
-    }
+#if defined(ESP32_PLATFORM)
+    esp_fill_random(output, length);
+    return true;
+#else
+    (void)output;
+    (void)length;
+    return false;
+#endif
 }
 
 bool private_scope_name_valid(const char* name, const char** reason)
@@ -91,7 +76,9 @@ bool private_scope_name_valid(const char* name, const char** reason)
 bool private_scope_prepare(const char* scope_name,
                            char* out_name, size_t out_name_len,
                            uint8_t key16[16],
-                           const char** reason)
+                           const char** reason,
+                           ScopeRandomFill random_fill,
+                           void* random_context)
 {
     if (!out_name || out_name_len == 0 || !key16) {
         if (reason) *reason = "Internal error";
@@ -116,7 +103,23 @@ bool private_scope_prepare(const char* scope_name,
         return false;
     }
 
-    derive_private_scope_key(out_name, key16);
+    if (!random_fill) random_fill = secure_scope_random;
+    uint8_t generated[16]{};
+    bool nonzero = false;
+    for (int attempt = 0; attempt < 4 && !nonzero; ++attempt) {
+        if (!random_fill(generated, sizeof(generated), random_context)) {
+            if (reason) *reason = "Secure random unavailable";
+            out_name[0] = 0;
+            return false;
+        }
+        for (uint8_t value : generated) nonzero = nonzero || value != 0;
+    }
+    if (!nonzero) {
+        if (reason) *reason = "Secure random unavailable";
+        out_name[0] = 0;
+        return false;
+    }
+    std::memcpy(key16, generated, sizeof(generated));
     return true;
 }
 
@@ -134,7 +137,7 @@ int channel_menu_build(const char* channel, ChannelMenuItem* out, int max)
     };
 
     if (channel_supports_private_scope(channel)) {
-        push(ChannelAction::ChooseScope, "Private scope...");
+        push(ChannelAction::ChooseScope, "Random routing scope...");
     }
     push(ChannelAction::MarkRead,     "Mark all read");
     if (!sigurdos::mesh::isPublicChannelName(channel)) {

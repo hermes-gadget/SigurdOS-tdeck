@@ -2279,8 +2279,8 @@ void chat_screen_show_channel_menu()
     lv_obj_t* scope_lbl = lv_label_create(dlg);
     char scope_buf[48];
     const ChatPrivateScopeState* scope = get_chat_private_scope(channel);
-    if (scope) snprintf(scope_buf, sizeof(scope_buf), "Private: %s", scope->name);
-    else       snprintf(scope_buf, sizeof(scope_buf), "Private: none");
+    if (scope) snprintf(scope_buf, sizeof(scope_buf), "Routing scope: %s", scope->name);
+    else       snprintf(scope_buf, sizeof(scope_buf), "Routing scope: none");
     lv_label_set_text(scope_lbl, scope_buf);
     lv_obj_set_style_text_color(scope_lbl, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(scope_lbl, emoji_wrapped_montserrat_10, 0);
@@ -2429,7 +2429,7 @@ static void show_scope_picker() {
     }, LV_EVENT_DELETE, nullptr);
 
     lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Private scope");
+    lv_label_set_text(title, "Random routing scope");
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
@@ -2449,7 +2449,7 @@ static void show_scope_picker() {
     lv_obj_set_style_radius(ta, 0, 0);
     lv_textarea_set_one_line(ta, true);
     lv_textarea_set_max_length(ta, 30);
-    lv_textarea_set_placeholder_text(ta, "private scope");
+    lv_textarea_set_placeholder_text(ta, "display name (key is random)");
     apply_focus_style(ta);
 
     lv_obj_t* set_btn = lv_btn_create(dlg);

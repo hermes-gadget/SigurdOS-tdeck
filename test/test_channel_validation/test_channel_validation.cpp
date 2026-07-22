@@ -26,9 +26,83 @@
 #include <cstdio>
 
 #include "mesh/channel_slot_policy.h"
+#include "mesh/channel_uri.h"
 #include "mesh/channel_validation.h"
+#include "mesh/strict_base64.h"
 
 namespace {
+
+TEST(ChannelSecurityInputTest, StrictBase64AcceptsCanonical16And32ByteKeys) {
+    uint8_t output[32]{};
+    size_t output_len = 0;
+    EXPECT_TRUE(sigurdos::mesh::decodeBase64Strict(
+        "AAECAwQFBgcICQoLDA0ODw==", 24, output, sizeof(output), output_len));
+    EXPECT_EQ(output_len, 16U);
+    EXPECT_EQ(output[15], 15U);
+
+    EXPECT_TRUE(sigurdos::mesh::decodeBase64Strict(
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", 44,
+        output, sizeof(output), output_len));
+    EXPECT_EQ(output_len, 32U);
+    EXPECT_EQ(output[31], 31U);
+}
+
+TEST(ChannelSecurityInputTest, StrictBase64RejectsMalformedAndNonCanonicalInput) {
+    uint8_t output[32]{};
+    size_t output_len = 99;
+    const char* invalid[] = {
+        "AAECAwQFBgcICQoLDA0ODw",       // missing padding
+        "AAECAwQF!gcICQoLDA0ODw==",    // ignored-character attack
+        "AAECAwQFBgcICQoLDA0ODw==junk",// trailing data
+        "AAECAwQFBgcICQoLDA0ODx==",    // non-zero canonical padding bits
+        "=AECAwQFBgcICQoLDA0ODw==",    // early padding
+        "AAECAwQFBgcICQoLDA0ODw==\n",  // whitespace
+    };
+    for (const char* value : invalid) {
+        EXPECT_FALSE(sigurdos::mesh::decodeBase64Strict(
+            value, std::strlen(value), output, sizeof(output), output_len)) << value;
+    }
+}
+
+TEST(ChannelSecurityInputTest, ChannelUriHasExactGrammarAndNoTruncation) {
+    sigurdos::mesh::ChannelUriFields fields{};
+    const char* valid =
+        "meshcore://channel/add?name=ops%2Dteam&secret="
+        "000102030405060708090a0b0c0d0e0f";
+    ASSERT_TRUE(sigurdos::mesh::parseChannelAddUri(valid, fields));
+    EXPECT_STREQ(fields.name, "ops-team");
+    EXPECT_STREQ(fields.secret_hex, "000102030405060708090a0b0c0d0e0f");
+
+    const char* invalid[] = {
+        "meshcore://channel/add?name=ops&name=other&secret=000102030405060708090a0b0c0d0e0f",
+        "meshcore://channel/add?name=ops&secret=000102030405060708090a0b0c0d0e0f&secret=000102030405060708090a0b0c0d0e0f",
+        "meshcore://channel/add?name=ops&unknown=x&secret=000102030405060708090a0b0c0d0e0f",
+        "meshcore://channel/add?name=bad%2&secret=000102030405060708090a0b0c0d0e0f",
+        "meshcore://channel/add?name=abcdefghijklmnopqrstuvwxyz123456&secret=000102030405060708090a0b0c0d0e0f",
+        "meshcore://channel/add?name=ops&secret=000102030405060708090a0b0c0d0e",
+        "meshcore://channel/add?name=ops&secret=000102030405060708090a0b0c0d0e0f&",
+    };
+    for (const char* value : invalid) {
+        EXPECT_FALSE(sigurdos::mesh::parseChannelAddUri(value, fields)) << value;
+    }
+}
+
+TEST(ChannelSecurityInputTest, RawContactUriRejectsSeparatorsAndOddOrOversizeData) {
+    char hex[512]{};
+    size_t len = 0;
+    const char* valid =
+        "meshcore://000102030405060708090a0b0c0d0e0f"
+        "101112131415161718191a1b1c1d1e1f";
+    EXPECT_TRUE(sigurdos::mesh::parseRawContactUriHex(valid, hex, sizeof(hex), len));
+    EXPECT_EQ(len, 64U);
+
+    EXPECT_FALSE(sigurdos::mesh::parseRawContactUriHex(
+        "meshcore://00010203-0405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        hex, sizeof(hex), len));
+    EXPECT_FALSE(sigurdos::mesh::parseRawContactUriHex(
+        "meshcore://000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1",
+        hex, sizeof(hex), len));
+}
 
 // ---------------------------------------------------------------------------
 // channel_name_valid — positive cases
