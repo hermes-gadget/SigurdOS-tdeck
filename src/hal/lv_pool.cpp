@@ -32,6 +32,8 @@
 #include <Arduino.h>
 #include <esp_heap_caps.h>
 
+#include "diagnostics/log.h"
+
 extern "C" void* sigurdos_lv_pool_alloc(size_t size)
 {
     void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -42,7 +44,9 @@ extern "C" void* sigurdos_lv_pool_alloc(size_t size)
 
 extern "C" [[noreturn]] void sigurdos_lv_assert_handler(void)
 {
-    Serial.println("[E] LVGL assertion failed; halting");
+    SIG_LOGE("LVGL assertion failed; halting");
+#if !defined(SIGURDOS_COMPANION_USB) || !SIGURDOS_COMPANION_USB
     Serial.flush();
+#endif
     while (true) delay(1000);
 }
