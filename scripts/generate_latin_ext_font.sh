@@ -8,14 +8,18 @@ set -euo pipefail
 # These glyphs cover Western/Central European accented characters that are
 # missing from the built-in lv_font_montserrat_* (ASCII-only) fonts.
 #
-# Requires: curl, lv_font_conv (npm install -g lv_font_conv)
+# Requires: curl and `npm ci --prefix scripts/font-tools`.
 
-# Use a pre-instantiated static Regular font.
-# The Google Fonts variable font is converted to static Regular via fonttools.
-FONT_TMP="/tmp/Montserrat-Regular.ttf"
-OUTPUT_DIR="$(dirname "$0")/../src/fonts"
+# Use the official project's immutable static Regular release asset.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FONT_URL="https://raw.githubusercontent.com/JulietaUla/Montserrat/5dae7a4ef9c0bf9fe48dc54fd1076eefaa0a8c7e/fonts/ttf/Montserrat-Regular.ttf"
+FONT_SHA256="6eabd0fb8e3066b6155bac338ef5a6c35b9963ab3f39be7c67edc4a99d870699"
+FONT_WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$FONT_WORK_DIR"' EXIT
+FONT_TMP="$FONT_WORK_DIR/Montserrat-Regular.ttf"
+OUTPUT_DIR="${FONT_OUTPUT_DIR:-$SCRIPT_DIR/../src/fonts}"
 OUTPUT_C="${OUTPUT_DIR}/latin_ext_font.c"
-OUTPUT_H="${OUTPUT_DIR}/latin_ext_font.h"
+LV_FONT_CONV="${LV_FONT_CONV:-$SCRIPT_DIR/font-tools/node_modules/.bin/lv_font_conv}"
 FONT_SIZE=16
 BPP=4
 
@@ -34,9 +38,11 @@ BPP=4
 #
 # Euro sign (U+20AC): €
 
-echo "Using pre-prepared Montserrat Regular font at $FONT_TMP"
+mkdir -p "$OUTPUT_DIR"
+curl --fail --location --silent --show-error "$FONT_URL" -o "$FONT_TMP"
+echo "$FONT_SHA256  $FONT_TMP" | sha256sum --check
 echo "Generating Latin-extended font (size=${FONT_SIZE}, bpp=${BPP})..."
-lv_font_conv \
+"$LV_FONT_CONV" \
     --font "$FONT_TMP" \
     --size $FONT_SIZE \
     --bpp $BPP \
@@ -47,30 +53,7 @@ lv_font_conv \
     --lv-font-name latin_ext_font \
     -r 0x00C0-0x017F \
     -r 0x20AC
+sed -i "s|--font $FONT_TMP|--font Montserrat-Regular.ttf|; s|--output $OUTPUT_C|--output latin_ext_font.c|" "$OUTPUT_C"
 
-echo "Generating header..."
-cat > "$OUTPUT_H" << 'HEADER'
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2025 Ben
-#pragma once
-#include <lvgl.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-// Latin-extended font (Montserrat Regular) providing Latin-1 Supplement +
-// Latin Extended-A glyphs for Western/Central European accented characters.
-// Used as a fallback between the ASCII-only Montserrat fonts and the emoji font.
-// Size: 16px, Bpp: 4 (grayscale anti-aliasing)
-extern const lv_font_t latin_ext_font;
-
-#ifdef __cplusplus
-}
-#endif
-HEADER
-
-echo "Done! Generated:"
-echo "  $OUTPUT_C"
-echo "  $OUTPUT_H"
-ls -lh "$OUTPUT_C" "$OUTPUT_H"
+echo "Done! Generated $OUTPUT_C"
+ls -lh "$OUTPUT_C"

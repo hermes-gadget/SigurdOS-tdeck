@@ -5,13 +5,17 @@ set -euo pipefail
 #
 # This script downloads Noto Emoji font (SIL OFL) and generates
 # an LVGL-compatible C source with a subset of common emoji.
-# Requires: curl, lv_font_conv (npm install -g lv_font_conv)
+# Requires: curl and `npm ci --prefix scripts/font-tools`.
 
-FONT_URL="https://github.com/google/fonts/raw/main/ofl/notoemoji/NotoEmoji%5Bwght%5D.ttf"
-FONT_TMP="/tmp/NotoEmoji.ttf"
-OUTPUT_DIR="$(dirname "$0")/../src/fonts"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FONT_URL="https://raw.githubusercontent.com/google/fonts/b979dba422e445492b0eb9951ac52ee0b4d648c3/ofl/notoemoji/NotoEmoji%5Bwght%5D.ttf"
+FONT_SHA256="de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551"
+FONT_WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$FONT_WORK_DIR"' EXIT
+FONT_TMP="$FONT_WORK_DIR/NotoEmoji.ttf"
+OUTPUT_DIR="${FONT_OUTPUT_DIR:-$SCRIPT_DIR/../src/fonts}"
 OUTPUT_C="${OUTPUT_DIR}/emoji_font.c"
-OUTPUT_H="${OUTPUT_DIR}/emoji_font.h"
+LV_FONT_CONV="${LV_FONT_CONV:-$SCRIPT_DIR/font-tools/node_modules/.bin/lv_font_conv}"
 FONT_SIZE=16
 BPP=4
 # color emoji fonts (CBDT/CBLC) instead of converting to pure grayscale.
@@ -337,9 +341,11 @@ RANGES+=" -r 0x1F3CC"         # 🏌
 RANGES+=" -r 0x1F3CB"         # 🏋
 
 echo "Downloading Noto Emoji..."
-curl -sL "$FONT_URL" -o "$FONT_TMP"
+mkdir -p "$OUTPUT_DIR"
+curl --fail --location --silent --show-error "$FONT_URL" -o "$FONT_TMP"
+echo "$FONT_SHA256  $FONT_TMP" | sha256sum --check
 echo "Generating emoji font (size=${FONT_SIZE}, bpp=${BPP}, $(echo $RANGES | grep -o '0x[0-9A-Fa-f]\+' | wc -l) codepoints)..."
-lv_font_conv \
+"$LV_FONT_CONV" \
     --font "$FONT_TMP" \
     --size $FONT_SIZE \
     --bpp $BPP \
@@ -349,48 +355,7 @@ lv_font_conv \
     --lv-include 'lvgl.h' \
     --lv-font-name emoji_font \
     $RANGES
+sed -i "s|--font $FONT_TMP|--font NotoEmoji.ttf|; s|--output $OUTPUT_C|--output emoji_font.c|" "$OUTPUT_C"
 
-echo "Generating header..."
-cat > "$OUTPUT_H" << 'HEADER'
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2025 Ben
-#pragma once
-#include <lvgl.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-// Emoji font with commonly used emoji subset (Noto Emoji, SIL OFL)
-// Automatically generated — see scripts/generate_emoji_font.sh
-// Size: 16px, Bpp: 4 (grayscale anti-aliasing)
-extern const lv_font_t emoji_font;
-
-// Writable wrappers around Montserrat fonts with emoji fallback set.
-// Use these instead of lv_font_montserrat_XX where emoji support is needed.
-extern const lv_font_t* emoji_wrapped_montserrat_10;
-extern const lv_font_t* emoji_wrapped_montserrat_12;
-extern const lv_font_t* emoji_wrapped_montserrat_14;
-extern const lv_font_t* emoji_wrapped_montserrat_16;
-extern const lv_font_t* emoji_wrapped_montserrat_24;
-
-// Register emoji font as fallback for all Montserrat sizes used in the UI.
-// Call once during UI initialization.
-void emoji_font_register_fallback();
-
-// Get the total number of emoji codepoints in the font.
-// Useful for the emoji-list terminal command and test verification.
-int emoji_font_get_count();
-
-// Get emoji UTF-8 string by index. Returns nullptr if index is out of range.
-const char* emoji_font_get_by_index(int index);
-
-#ifdef __cplusplus
-}
-#endif
-HEADER
-
-echo "Done! Generated:"
-echo "  $OUTPUT_C"
-echo "  $OUTPUT_H"
-ls -lh "$OUTPUT_C" "$OUTPUT_H"
+echo "Done! Generated $OUTPUT_C"
+ls -lh "$OUTPUT_C"

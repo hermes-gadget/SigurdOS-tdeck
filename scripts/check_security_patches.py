@@ -1,38 +1,27 @@
 #!/usr/bin/env python3
-"""
-Pre-build security hardening for the bundled Arduino WebServer framework.
+"""Fail closed unless the pinned Arduino WebServer package is fully hardened.
 
-The platformio/espressif32 package can install a framework version with known
-WebServer CVEs. GitHub Actions starts from a clean package cache, so these
-patches must be reproducible from tracked repo contents instead of relying on
-manual edits under ~/.platformio.
+This verifier intentionally never edits PlatformIO's package cache.  A framework
+upgrade must contain the complete reviewed functions below and update the
+expected file hashes in the repository.
 """
 
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
 import sys
 from pathlib import Path
 
-Import("env")
 
-
-FRAMEWORK_DIR = (
-    Path(env.subst("$PROJECT_PACKAGES_DIR"))
-    / "framework-arduinoespressif32"
-    / "libraries"
-    / "WebServer"
-    / "src"
-)
-
-PATCHES = [
-    {
-        "filename": "Parsing.cpp",
-        "desc": "boundary length limit",
-        "needle": "boundary.length() > 70",
-        "before": """bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
-  (void) len;
-  log_v("Parse Form: Boundary: %s Length: %d", boundary.c_str(), len);
-  String line;
-""",
-        "after": """bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
+EXPECTED_PACKAGE_VERSION = "3.20017.241212+sha.dcc1105b"
+EXPECTED_HASHES = {
+    "Parsing.cpp": "7485c16824cfe52c23e205f1d35c4cf1c4c1eb59c4dbb5952bbaee0578f2caea",
+    "WebServer.cpp": "d026efc5ff120059ec405a85a5629f0bd1c5c4e56850aff24ab96718e2b5194a",
+}
+REQUIRED_BLOCKS = {
+    "Parsing.cpp": """bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
   (void) len;
   log_v("Parse Form: Boundary: %s Length: %d", boundary.c_str(), len);
   if (boundary.length() > 70) {
@@ -41,18 +30,7 @@ PATCHES = [
   }
   String line;
 """,
-    },
-    {
-        "filename": "WebServer.cpp",
-        "desc": "CRLF sanitization",
-        "needle": 'safeName.replace("\\r", "");',
-        "before": """void WebServer::sendHeader(const String& name, const String& value, bool first) {
-  String headerLine = name;
-  headerLine += F(": ");
-  headerLine += value;
-  headerLine += "\\r\\n";
-""",
-        "after": """void WebServer::sendHeader(const String& name, const String& value, bool first) {
+    "WebServer.cpp": """void WebServer::sendHeader(const String& name, const String& value, bool first) {
   String safeName = name;
   String safeValue = value;
   safeName.replace("\\r", "");
@@ -65,40 +43,68 @@ PATCHES = [
   headerLine += safeValue;
   headerLine += "\\r\\n";
 """,
-    },
-]
+}
 
 
-def patch_file(path, before, after, needle, desc):
-    if not path.exists():
-        raise FileNotFoundError(f"{path} not found")
-
-    content = path.read_text()
-    if needle in content:
-        print(f"[sec-check] OK: {desc}")
-        return
-
-    if before not in content:
-        raise RuntimeError(f"expected upstream block not found in {path.name}")
-
-    path.write_text(content.replace(before, after, 1))
-    verified = path.read_text()
-    if needle not in verified:
-        raise RuntimeError(f"{desc} patch did not verify in {path.name}")
-    print(f"[sec-check] PATCHED: {desc}")
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-failed = False
-for patch in PATCHES:
-    path = FRAMEWORK_DIR / patch["filename"]
+def verify(framework_root: Path, overlay_root: Path) -> list[str]:
+    failures: list[str] = []
+    package_json = framework_root / "package.json"
+    source_dir = overlay_root / "src"
     try:
-        patch_file(path, patch["before"], patch["after"], patch["needle"], patch["desc"])
-    except Exception as exc:
-        print(f"[sec-check] FAIL: {patch['desc']} ({exc})")
-        failed = True
+        package = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"cannot read framework package metadata: {exc}"]
+    if package.get("version") != EXPECTED_PACKAGE_VERSION:
+        failures.append(
+            f"unsupported framework version {package.get('version')!r}; "
+            f"expected {EXPECTED_PACKAGE_VERSION!r}"
+        )
 
-if failed:
-    print("[sec-check] HARD FAIL - build aborted to prevent shipping vulnerable firmware")
-    sys.exit(1)
+    for filename, required in REQUIRED_BLOCKS.items():
+        path = source_dir / filename
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            failures.append(f"cannot read {filename}: {exc}")
+            continue
+        if required not in content:
+            failures.append(f"{filename}: complete hardened function does not match")
+        actual_hash = sha256(path)
+        if actual_hash != EXPECTED_HASHES[filename]:
+            failures.append(
+                f"{filename}: unreviewed content hash {actual_hash}; "
+                f"expected {EXPECTED_HASHES[filename]}"
+            )
+    return failures
 
-print("[sec-check] All security patches verified")
+
+def run(framework_root: Path, overlay_root: Path) -> None:
+    failures = verify(framework_root, overlay_root)
+    if failures:
+        for failure in failures:
+            print(f"[sec-check] FAIL: {failure}")
+        raise SystemExit(1)
+    print(f"[sec-check] OK: framework {EXPECTED_PACKAGE_VERSION} with tracked WebServer overlay")
+    print("[sec-check] OK: boundary limit and four CR/LF sanitizers")
+
+
+def cli() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--framework-root", type=Path, required=True)
+    parser.add_argument("--overlay-root", type=Path, required=True)
+    args = parser.parse_args()
+    run(args.framework_root, args.overlay_root)
+
+
+if __name__ == "__main__":
+    cli()
+elif "Import" in globals():
+    Import("env")
+    run(
+        Path(env.subst("$PROJECT_PACKAGES_DIR")) / "framework-arduinoespressif32",
+        Path(env.subst("$PROJECT_DIR")) / "lib" / "WebServer",
+    )

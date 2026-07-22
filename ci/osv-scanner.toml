@@ -1,0 +1,3 @@
+# Reviewed OSV exception list. Keep this file even when empty so additions are
+# explicit repository changes. Every future [[IgnoredVulns]] entry must include
+# a bounded ignoreUntil date and a concrete reason.
