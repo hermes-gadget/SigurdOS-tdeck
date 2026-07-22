@@ -8,6 +8,7 @@
 #include "launcher_env.h"
 #include "ota_allocation_policy.h"
 #include "ota_security_epoch.h"
+#include "ota_write_policy.h"
 #include "prefs.h"
 #include <WiFi.h>
 #include <WebServer.h>
@@ -268,14 +269,18 @@ bool start(const char* ssid, const char* password) {
                     upload_state.epoch_checked = true;
                 }
                 const size_t written = Update.write(upload.buf, upload.currentSize);
-                if (written != upload.currentSize) {
+                size_t next_received = upload_state.received;
+                const hal::OtaWriteResult write_result = hal::otaRecordExactWrite(
+                    upload_state.received, upload.currentSize, written,
+                    upload.totalSize, &next_received);
+                if (!hal::otaWriteAccepted(write_result)) {
                     upload_state.failed = true;
                     upload_state.started = false;
                     SIG_LOGW("[ota] Update.write failed: %s", Update.errorString());
                     Update.printError(Serial);
                     Update.abort();
                 } else {
-                    upload_state.received += written;
+                    upload_state.received = next_received;
                 }
             } else if (upload.status == UPLOAD_FILE_END) {
                 if (!otaUploadCanFinish(upload_state, upload.totalSize)) {

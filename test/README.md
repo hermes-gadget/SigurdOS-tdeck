@@ -89,6 +89,7 @@ test/
 |-- test_onboarding/                Onboarding date/time validation and leap year rules
 |-- test_ota_auth/                  OTA authentication, URL, and certificate policy
 |-- test_ota_boot_health/           OTA boot-health confirmation and rollback deadlines
+|-- test_ota_write/                 Exact-write, partial-I/O, overflow, and abort policy
 |-- test_path_autoadd/              Received-path contact auto-add policy
 |-- test_path_codec/                Path byte encoding and decoding boundaries
 |-- test_pins/                      GPIO ranges, conflicts, and board pin sanity

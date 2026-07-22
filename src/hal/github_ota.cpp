@@ -10,6 +10,7 @@
 #include "launcher_env.h"
 #include "ota_allocation_policy.h"
 #include "ota_security_epoch.h"
+#include "ota_write_policy.h"
 #include "prefs.h"
 #include "wifi_ota.h"
 #include <WiFi.h>
@@ -603,14 +604,18 @@ void loop() {
             }
 
             size_t written = Update.write(buf, read);
-            if (written != read) {
+            size_t next_downloaded = static_cast<size_t>(s_downloaded);
+            const hal::OtaWriteResult write_result = hal::otaRecordExactWrite(
+                static_cast<size_t>(s_downloaded), read, written,
+                static_cast<size_t>(s_content_length), &next_downloaded);
+            if (!hal::otaWriteAccepted(write_result)) {
                 Serial.printf("[gh-ota] Write mismatch: read=%u written=%u\n",
                               (unsigned)read, (unsigned)written);
                 fail("Flash write error");
                 return;
             }
 
-            s_downloaded += read;
+            s_downloaded = static_cast<int>(next_downloaded);
 
             unsigned long now = millis();
             s_last_data = now;
