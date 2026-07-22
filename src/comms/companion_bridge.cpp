@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Ben
 
 #include "companion_bridge.h"
+#include "secure_wipe.h"
 #include "mesh/path_codec.h"
 
 #include <cstring>
@@ -118,8 +119,7 @@ void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* ho
     _last_sync_time = 0;
     _contact_iter = -1;
     _offline_len = 0;
-    _sign_active = false;
-    _sign_len = 0;
+    clearSigningState();
     _was_connected = false;
     _pending_response_len = 0;
     _push_drop_count = 0;
@@ -187,6 +187,20 @@ void CompanionBridge::clearPendingBinary()
     std::memset(_pending_binary, 0, sizeof(_pending_binary));
 }
 
+void CompanionBridge::clearSigningState()
+{
+    secureWipe(_sign_buf, sizeof(_sign_buf));
+    _sign_active = false;
+    _sign_len = 0;
+}
+
+bool CompanionBridge::sensitiveBuffersClearedForTest() const
+{
+    for (uint8_t byte : _cmd_frame) if (byte != 0) return false;
+    for (uint8_t byte : _sign_buf) if (byte != 0) return false;
+    return !_sign_active && _sign_len == 0;
+}
+
 void CompanionBridge::resetConnectionSession()
 {
     _app_target_ver = 3;
@@ -195,8 +209,8 @@ void CompanionBridge::resetConnectionSession()
     _iter_filter_since = 0;
     _most_recent_lastmod = 0;
     _offline_len = 0;
-    _sign_active = false;
-    _sign_len = 0;
+    clearSigningState();
+    secureWipe(_pending_response, sizeof(_pending_response));
     _pending_response_len = 0;
     clearInflightMessage();
     clearPendingBinary();
@@ -220,6 +234,7 @@ bool CompanionBridge::flushPendingResponse()
     if (!_serial || !_serial->isConnected()) return false;
     const size_t len = _pending_response_len;
     if (_serial->writeFrame(_pending_response, len) != len) return false;
+    secureWipe(_pending_response, sizeof(_pending_response));
     _pending_response_len = 0;
     return true;
 }
@@ -579,8 +594,7 @@ void CompanionBridge::onIdentityChanged()
     _iter_filter_since = 0;
     _most_recent_lastmod = 0;
     _offline_len = 0;
-    _sign_active = false;
-    _sign_len = 0;
+    clearSigningState();
     clearPendingBinary();
 }
 
@@ -822,8 +836,9 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     // non-idempotent one) until the prior response is transport-admitted.
     if (_pending_response_len != 0) return false;
     expirePendingBinary();
-    std::memcpy(_cmd_frame, frame, len);
+    if (frame != _cmd_frame) std::memcpy(_cmd_frame, frame, len);
     _cmd_frame[len] = 0;
+    ScopedWipe command_wipe(_cmd_frame, sizeof(_cmd_frame));
 
     const uint8_t cmd = _cmd_frame[0];
     const size_t minimum_length = commandMinimumLength(cmd);
@@ -1208,7 +1223,8 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 
     if (cmd == CMD_EXPORT_PRIVATE_KEY) {
 #if SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT
-        uint8_t key[64];
+        uint8_t key[64]{};
+        ScopedWipe key_wipe(key, sizeof(key));
         if (!_host->exportPrivateKey(key)) {
             writeDisabledFrame();
             return true;
@@ -1216,6 +1232,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         _out_frame[0] = RESP_CODE_PRIVATE_KEY;
         std::memcpy(&_out_frame[1], key, sizeof(key));
         sendResponseFrame(_out_frame, 1 + sizeof(key));
+        secureWipe(_out_frame, sizeof(_out_frame));
 #else
         writeDisabledFrame();
 #endif
@@ -1552,8 +1569,8 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 
     // ── Message signing ──────────────────────────────────────
     if (cmd == CMD_SIGN_START) {
+        clearSigningState();
         _sign_active = true;
-        _sign_len = 0;
         int i = 0;
         _out_frame[i++] = RESP_CODE_SIGN_START;
         _out_frame[i++] = 0;  // reserved
@@ -1582,8 +1599,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             return true;
         }
         int sig_len = _host->signData(_sign_buf, _sign_len, &_out_frame[1]);
-        _sign_active = false;
-        _sign_len = 0;
+        clearSigningState();
         if (sig_len > 0) {
             _out_frame[0] = RESP_CODE_SIGNATURE;
             sendResponseFrame(_out_frame, 1 + (size_t)sig_len);

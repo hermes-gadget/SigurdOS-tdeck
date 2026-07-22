@@ -6,6 +6,8 @@
 #include "comms/ble_init_gate.h"
 #include "comms/ble_auth_watchdog.h"
 #include "comms/ble_bond_rotation.h"
+#include "comms/ble_auth_throttle.h"
+#include "comms/secure_wipe.h"
 #include "comms/ble_task_mutex.h"
 #include "helpers/esp32/BleFramePolicy.h"
 
@@ -23,6 +25,8 @@ using sigurdos::comms::BleFrameQueuePushResult;
 using sigurdos::comms::BleRxAdmissionAction;
 using sigurdos::comms::BleAuthWatchdog;
 using sigurdos::comms::BleBondRotationState;
+using sigurdos::comms::BleAuthThrottle;
+using sigurdos::comms::BlePeerAddress;
 using sigurdos::comms::BleTaskMutex;
 
 TEST(BleAttPayloadPolicy, AccountsForThreeByteAttHeaderAtBoundaries)
@@ -77,6 +81,72 @@ TEST(BleBondRotationState, BootRequestIsImmediateAndWrapSafe)
 }
 
 using Queue = BleFrameQueue<MAX_LEN, CAPACITY>;
+
+BlePeerAddress peer(uint8_t last)
+{
+    BlePeerAddress value{};
+    value.bytes[5] = last;
+    return value;
+}
+
+TEST(BleAuthThrottle, NewPeersRequireLocalPairingWindowButBondsReconnect)
+{
+    BleAuthThrottle throttle;
+    EXPECT_FALSE(throttle.attemptAllowed(peer(1), false, 100));
+    EXPECT_TRUE(throttle.attemptAllowed(peer(1), true, 100));
+
+    throttle.openPairingWindow(100);
+    EXPECT_TRUE(throttle.attemptAllowed(peer(1), false, 101));
+    EXPECT_FALSE(throttle.pairingWindowOpen(120100));
+    EXPECT_FALSE(throttle.attemptAllowed(peer(1), false, 120100));
+}
+
+TEST(BleAuthThrottle, RepeatedFailuresUseBoundedPeerAwareBackoff)
+{
+    BleAuthThrottle throttle;
+    throttle.openPairingWindow(0);
+    uint32_t now = 10;
+    uint32_t delay = 0;
+    for (int i = 0; i < 20; ++i) {
+        delay = throttle.recordFailure(peer(1), now);
+        EXPECT_LE(delay, sigurdos::comms::BLE_AUTH_BACKOFF_MAX_MS);
+        now += delay;
+    }
+    EXPECT_EQ(delay, sigurdos::comms::BLE_AUTH_BACKOFF_MAX_MS);
+    EXPECT_GT(throttle.peerFailureCount(peer(1)), 0);
+    EXPECT_GT(throttle.globalFailureCount(), throttle.peerFailureCount(peer(2)));
+}
+
+TEST(BleAuthThrottle, CooldownAndPairingWindowHandleMillisWrap)
+{
+    BleAuthThrottle throttle;
+    throttle.openPairingWindow(0xFFFFFFF0u);
+    const uint32_t delay = throttle.recordFailure(peer(1), 0xFFFFFFF0u);
+    EXPECT_TRUE(throttle.blocked(0x00000020u));
+    EXPECT_FALSE(throttle.blocked(0xFFFFFFF0u + delay));
+}
+
+TEST(BleAuthThrottle, SuccessAndExplicitLocalActionClearFailures)
+{
+    BleAuthThrottle throttle;
+    throttle.recordFailure(peer(1), 100);
+    throttle.recordSuccess();
+    EXPECT_EQ(throttle.globalFailureCount(), 0);
+    EXPECT_TRUE(throttle.attemptAllowed(peer(1), true, 101));
+
+    throttle.recordFailure(peer(2), 200);
+    throttle.openPairingWindow(201);
+    EXPECT_EQ(throttle.globalFailureCount(), 0);
+    EXPECT_TRUE(throttle.attemptAllowed(peer(3), false, 202));
+}
+
+TEST(SecureWipe, ClearsEveryByte)
+{
+    uint8_t secret[64];
+    std::memset(secret, 0xA5, sizeof(secret));
+    sigurdos::comms::secureWipe(secret, sizeof(secret));
+    for (uint8_t byte : secret) EXPECT_EQ(byte, 0);
+}
 
 TEST(BleAuthWatchdog, ExpiresOnceAndHandlesMillisWrap)
 {
@@ -227,6 +297,7 @@ TEST(BleFrameQueue, PreservesFifoOrderAndContents)
         EXPECT_EQ(seq, expected);
     }
     EXPECT_EQ(queue.size(), 0u);
+    EXPECT_TRUE(queue.storageClearedForTest());
 }
 
 TEST(BleFrameQueue, DropsWhenFullAndRejectsBadFrames)
@@ -241,6 +312,7 @@ TEST(BleFrameQueue, DropsWhenFullAndRejectsBadFrames)
 
     queue.clear();
     EXPECT_EQ(queue.size(), 0u);
+    EXPECT_TRUE(queue.storageClearedForTest());
     EXPECT_FALSE(queue.push(nullptr, 8));        // null data
     EXPECT_FALSE(queue.push(frame, 0));          // empty
     EXPECT_FALSE(queue.push(frame, MAX_LEN + 1));// oversize

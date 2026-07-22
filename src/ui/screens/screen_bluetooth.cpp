@@ -74,6 +74,18 @@ void bluetooth_screen_show()
         update_row_label(row, state_buf);
     }, LV_EVENT_CLICKED, row_state);
 
+    lv_obj_t* row_pair = lv_list_add_btn(list, LV_SYMBOL_PLUS,
+                                         "  Pair new device (2 min)");
+    lv_obj_set_style_bg_color(row_pair, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_bg_opa(row_pair, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(row_pair, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(row_pair, [](lv_event_t* e) {
+        lv_obj_t* row = (lv_obj_t*)lv_event_get_user_data(e);
+        if (sigurdos::mesh::companionBleOpenPairingWindow()) {
+            update_row_label(row, "  Pairing open for 2 minutes");
+        }
+    }, LV_EVENT_CLICKED, row_pair);
+
     snprintf(buf, sizeof(buf), "  App: %s", sigurdos::mesh::companionBleConnected() ? "Connected" : "Not connected");
     lv_obj_t* row_conn = lv_list_add_btn(list, LV_SYMBOL_OK, buf);
     lv_obj_set_style_bg_color(row_conn, lv_color_hex(BG_INPUT), 0);

@@ -175,6 +175,7 @@ void factoryReset();
 // Companion BLE bridge
 bool companionBleAvailable();
 bool companionBleSetEnabled(bool enabled);
+bool companionBleOpenPairingWindow();
 bool companionBleEnabled();
 bool companionBleConnected();
 uint32_t companionBleLastSyncTime();

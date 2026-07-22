@@ -13,6 +13,7 @@
 #include "ble_init_gate.h"
 #include "ble_task_mutex.h"
 #include "ble_auth_watchdog.h"
+#include "ble_auth_throttle.h"
 
 namespace sigurdos {
 namespace comms {
@@ -59,6 +60,7 @@ public:
     uint32_t connectionGeneration() const override;
     size_t writeFrame(const uint8_t src[], size_t len) override;
     size_t checkRecvFrame(uint8_t dest[]) override;
+    void openPairingWindow();
 
     // Stops advertising/connections and asks Bluedroid to remove every bond.
     // bondedDeviceCount() returns -1 when the security database is unavailable.
@@ -84,6 +86,9 @@ private:
     bool initializeConfigured();
     bool validateInitializedStack();
     void rollbackInitialization();
+    bool peerIsBonded(const BlePeerAddress& peer) const;
+    void recordAuthenticationFailure(uint32_t now_ms);
+    void applyAdvertisingThrottle(uint32_t now_ms);
 
     BleSerialObserverStats _stats{};
     BleInitGate _init_gate;
@@ -92,6 +97,12 @@ private:
     uint32_t _configured_pin = 0;
     mutable BleTaskMutex _task_mutex;
     BleAuthWatchdog _auth_watchdog;
+    BleAuthThrottle _auth_throttle;
+    BlePeerAddress _connecting_peer{};
+    bool _connecting_peer_bonded = false;
+    bool _authentication_completed = false;
+    bool _advertising_suppressed = false;
+    bool _local_disable = false;
     BLEServer* _connected_server = nullptr;
 
     // NET-002 (#813): the base class receive queue is written from the

@@ -251,7 +251,7 @@ static constexpr size_t SIGURDOS_COMPANION_SIGNATURE_SIZE = 64;
 static constexpr size_t SIGURDOS_COMPANION_MAX_SIGN_DATA = 8192;
 
 #ifndef SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT
-#define SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT 1
+#define SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT 0
 #endif
 
 #ifndef SIGURDOS_ENABLE_PRIVATE_KEY_IMPORT
@@ -404,6 +404,7 @@ public:
     uint32_t lastSyncTime() const { return _last_sync_time; }
     uint8_t appTargetVersion() const { return _app_target_ver; }
     uint32_t pushDropCount() const { return _push_drop_count; }
+    bool sensitiveBuffersClearedForTest() const;
 
     bool enqueueMessage(const sigurdos::mesh::StoredMessage& msg);
     bool enqueueChannelData(uint8_t channel_index,
@@ -479,6 +480,7 @@ private:
     void clearPendingBinary();
     void refreshConnectionSession();
     void clearInflightMessage();
+    void clearSigningState();
 
     struct PendingBinaryRequest {
         uint32_t tag = 0;
@@ -499,14 +501,14 @@ private:
     Frame _offline[OFFLINE_QUEUE_SIZE];
     sigurdos::mesh::StoredMessage _offline_snapshot[OFFLINE_QUEUE_SIZE]{};
     PendingBinaryRequest _pending_binary[MAX_PENDING_BINARY_REQUESTS]{};
-    uint8_t _cmd_frame[MAX_FRAME_SIZE + 1];
-    uint8_t _out_frame[MAX_FRAME_SIZE + 1];
-    uint8_t _pending_response[MAX_FRAME_SIZE];
+    uint8_t _cmd_frame[MAX_FRAME_SIZE + 1]{};
+    uint8_t _out_frame[MAX_FRAME_SIZE + 1]{};
+    uint8_t _pending_response[MAX_FRAME_SIZE]{};
     uint8_t _pending_response_len = 0;
     uint32_t _push_drop_count = 0;
 
     // CMD_SIGN_START/DATA/FINISH accumulate data here between frames.
-    uint8_t _sign_buf[SIGURDOS_COMPANION_MAX_SIGN_DATA];
+    uint8_t _sign_buf[SIGURDOS_COMPANION_MAX_SIGN_DATA]{};
     size_t  _sign_len = 0;
     bool    _sign_active = false;
     bool    _was_connected = false;  // detect BLE disconnect to clear signing state (#712)

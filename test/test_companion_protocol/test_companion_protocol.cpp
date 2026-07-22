@@ -1683,6 +1683,7 @@ TEST_F(CompanionProtocolTest, SignFlow) {
     ASSERT_EQ(serial.writes[0].size(), 1u + 64u);
     EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_SIGNATURE);
     EXPECT_EQ(host.sign_len_seen, 4);
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
 }
 
 TEST_F(CompanionProtocolTest, IdentityChangeClearsSigningSession) {
@@ -1694,12 +1695,45 @@ TEST_F(CompanionProtocolTest, IdentityChangeClearsSigningSession) {
     ASSERT_TRUE(bridge.handleFrame(data, sizeof(data)));
 
     bridge.onIdentityChanged();
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
     serial.writes.clear();
     uint8_t finish[1] = { cc::CMD_SIGN_FINISH };
     ASSERT_TRUE(bridge.handleFrame(finish, sizeof(finish)));
     ASSERT_EQ(serial.writes.size(), 1u);
     EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
     EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_BAD_STATE);
+}
+
+TEST_F(CompanionProtocolTest, DisconnectWipesSigningAndCommandBuffers) {
+    uint8_t start[] = { cc::CMD_SIGN_START };
+    uint8_t data[] = { cc::CMD_SIGN_DATA, 0xA5, 0x5A, 0xC3 };
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    ASSERT_TRUE(bridge.handleFrame(data, sizeof(data)));
+    EXPECT_FALSE(bridge.sensitiveBuffersClearedForTest());
+
+    serial.enabled = true;
+    serial.connected = true;
+    bridge.loop();
+    serial.connected = false;
+    bridge.loop();
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
+}
+
+TEST_F(CompanionProtocolTest, PrivateKeyImportInputIsWipedAndExportIsDisabledByDefault) {
+    uint8_t import_frame[65];
+    std::memset(import_frame, 0xD7, sizeof(import_frame));
+    import_frame[0] = cc::CMD_IMPORT_PRIVATE_KEY;
+    ASSERT_TRUE(bridge.handleFrame(import_frame, sizeof(import_frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
+
+    serial.writes.clear();
+    uint8_t export_frame[] = { cc::CMD_EXPORT_PRIVATE_KEY };
+    ASSERT_TRUE(bridge.handleFrame(export_frame, sizeof(export_frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_DISABLED);
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
 }
 
 TEST_F(CompanionProtocolTest, SignDataBeforeStartFails) {

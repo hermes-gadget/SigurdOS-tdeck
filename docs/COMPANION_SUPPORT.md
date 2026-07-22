@@ -6,7 +6,7 @@ signing, and configuration. Recognition of a command identifier does not imply
 that its operation is supported.
 
 This matrix describes the pinned MeshCore protocol at submodule commit
-`3e62b51667973ea61d0467cbe828309e011321ba`. Its numeric companion
+`a75f24ecc98889e2beb4f702dc89e737aa82739e`. Its numeric companion
 command/response/PUSH/error contract also matches reviewed public-upstream
 commit `a3a1aa5e3be34b42d8ac8c2cc244d30af6cdd71e`; the reproducible verification
 procedure is in [`RELEASE_EVIDENCE.md`](RELEASE_EVIDENCE.md#companion-interop-and-golden-frames).
@@ -21,7 +21,7 @@ procedure is in [`RELEASE_EVIDENCE.md`](RELEASE_EVIDENCE.md#companion-interop-an
 | Radio, tuning, flood scope, and custom variables | Supported | Subject to T-Deck radio-region and TX-safety gates |
 | Binary and anonymous peer requests (`CMD_SEND_BINARY_REQ`, `CMD_SEND_ANON_REQ`) | Supported | Requests are sent through `BaseChatMesh`; matching replies emit `PUSH_CODE_BINARY_RESPONSE`. Anonymous requests may use transient contacts |
 | Status, telemetry, and trace | Supported | Standard request/response and async push flows |
-| Identity import/export and signing | Supported | Signing accepts up to 8192 bytes. Builds can set `SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT=0` and/or `SIGURDOS_ENABLE_PRIVATE_KEY_IMPORT=0`; disabled commands return the protocol's disabled response. BLE administration relies on bonding; companion USB has no protocol authentication |
+| Identity import/export and signing | Partial | Signing accepts up to 8192 bytes. Private-key import remains supported; export is disabled by default because the pinned asynchronous BLE queue cannot erase completed slots. Trusted development builds may explicitly set `SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT=1`. Sensitive command, signing, key-temporary, and receive-queue storage is erased at lifecycle boundaries. BLE administration relies on bonding; companion USB has no protocol authentication |
 | `CMD_SEND_RAW_PACKET` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD`; arbitrary packet injection is not exposed |
 
 Of the 58 defined command IDs, `CMD_SEND_RAW_PACKET` is the only command that is
@@ -67,6 +67,13 @@ oversized, or queue-saturating write is treated as a transport fault: the peer
 is disconnected and must reconnect and resynchronize. The observer's
 `ble_write_drop_count` therefore counts connection-fatal RX faults, not silent
 telemetry loss.
+
+Existing bonded devices may authenticate whenever BLE is enabled. A new device
+is accepted only during the two-minute window opened locally from Bluetooth →
+Pair new device. Failed, timed-out, or abandoned authentication applies
+peer-aware and global exponential advertising backoff, bounded at five minutes.
+A successful authentication or explicitly opening a new pairing window clears
+the counters, preventing a remote permanent lockout.
 
 BLE bonds authorize an administrative companion. USB companion mode instead
 trusts physical access to the cable and host; the four-digit device PIN does

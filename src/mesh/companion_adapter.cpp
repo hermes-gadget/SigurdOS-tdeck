@@ -1382,6 +1382,16 @@ bool companionBleSetEnabled(bool enabled) {
 #endif
 }
 
+bool companionBleOpenPairingWindow() {
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    if (!g_ble_serial.isEnabled()) return false;
+    g_ble_serial.openPairingWindow();
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool companionBleEnabled() { CompanionBridge* b = companionBridge(); return b && b->isEnabled(); }
 bool companionBleConnected() { CompanionBridge* b = companionBridge(); return b && b->isConnected(); }
 uint32_t companionBleLastSyncTime() { CompanionBridge* b = companionBridge(); return b ? b->lastSyncTime() : 0; }

@@ -7,7 +7,7 @@ aid, not a claim that physical possession of the device is harmless.
 
 | Boundary | Protection | Important limitation |
 |---|---|---|
-| BLE companion | ESP32 BLE Secure Connections bonding and the displayed pairing passkey | A bonded phone is an administrator. Remove stale bonds before transferring the device. The four-digit device PIN is not the BLE authenticator. |
+| BLE companion | ESP32 BLE Secure Connections bonding, a locally opened two-minute new-pairing window, and the displayed pairing passkey | A bonded phone is an administrator. Known bonds may reconnect outside the pairing window. Remove stale bonds before transferring the device. The four-digit device PIN is not the BLE authenticator. |
 | USB companion | Physical access to the USB data port | Companion USB is a diagnostic/trusted-host transport and has no protocol authentication. Do not connect it to an untrusted host. |
 | Device PIN | Local LVGL Settings and identity-administration gates | The PIN is a short UI access-control mechanism, not disk encryption and not a companion-protocol credential. It does not protect USB administration. |
 

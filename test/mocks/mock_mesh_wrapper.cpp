@@ -93,6 +93,7 @@ bool saveState() { return true; }
 
 bool companionBleAvailable() { return false; }
 bool companionBleSetEnabled(bool enabled) { (void)enabled; return false; }
+bool companionBleOpenPairingWindow() { return false; }
 bool companionBleEnabled() { return false; }
 bool companionBleConnected() { return false; }
 uint32_t companionBleLastSyncTime() { return 0; }

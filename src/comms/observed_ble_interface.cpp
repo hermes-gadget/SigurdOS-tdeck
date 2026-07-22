@@ -11,11 +11,59 @@
 namespace sigurdos {
 namespace comms {
 
+bool ObservedSerialBLEInterface::peerIsBonded(const BlePeerAddress& peer) const
+{
+    int count = esp_ble_get_bond_device_num();
+    if (count <= 0) return false;
+#if defined(CONFIG_BT_SMP_MAX_BONDS)
+    static constexpr int MAX_BONDS = CONFIG_BT_SMP_MAX_BONDS;
+#else
+    static constexpr int MAX_BONDS = 15;
+#endif
+    if (count > MAX_BONDS) return false;
+    esp_ble_bond_dev_t bonds[MAX_BONDS]{};
+    int listed = count;
+    if (esp_ble_get_bond_device_list(&listed, bonds) != ESP_OK ||
+        listed < 0 || listed > count) {
+        return false;
+    }
+    for (int i = 0; i < listed; ++i) {
+        if (std::memcmp(bonds[i].bd_addr, peer.bytes, sizeof(peer.bytes)) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ObservedSerialBLEInterface::recordAuthenticationFailure(uint32_t now_ms)
+{
+    _auth_throttle.recordFailure(_connecting_peer, now_ms);
+    _advertising_suppressed = true;
+}
+
+void ObservedSerialBLEInterface::applyAdvertisingThrottle(uint32_t now_ms)
+{
+    if (!_init_gate.initialized() || !SerialBLEInterface::isEnabled() ||
+        SerialBLEInterface::isConnected()) {
+        return;
+    }
+    BLEAdvertising* advertising = BLEDevice::getAdvertising();
+    if (!advertising) return;
+    if (_auth_throttle.blocked(now_ms)) {
+        advertising->stop();
+        _advertising_suppressed = true;
+    } else if (_advertising_suppressed) {
+        advertising->start();
+        _advertising_suppressed = false;
+    }
+}
+
 void ObservedSerialBLEInterface::refreshConnectionState()
 {
     _stats.enabled = SerialBLEInterface::isEnabled();
     _stats.connected = SerialBLEInterface::isConnected();
-    _stats.advertising_expected = _stats.enabled && !_stats.connected;
+    _stats.advertising_expected = _stats.enabled && !_stats.connected &&
+                                  !_auth_throttle.blocked(millis());
 }
 
 void ObservedSerialBLEInterface::configure(const char* prefix, const char* name,
@@ -67,10 +115,13 @@ bool ObservedSerialBLEInterface::validateInitializedStack()
 
 void ObservedSerialBLEInterface::rollbackInitialization()
 {
+    _local_disable = true;
+    _authentication_completed = true;
     _auth_watchdog.cancel();
     _rx_queue.clear();
     _connected_server = nullptr;
     if (BLEDevice::getInitialized()) BLEDevice::deinit(false);
+    _local_disable = false;
     refreshConnectionState();
 }
 
@@ -87,23 +138,42 @@ void ObservedSerialBLEInterface::enable()
     if (!initializeConfigured()) return;
     SerialBLEInterface::enable();  // also clears the (now unused) base buffers
     _rx_queue.clear();
+    _advertising_suppressed = false;
     _stats.enable_count++;
+    applyAdvertisingThrottle(millis());
     refreshConnectionState();
 }
 
 void ObservedSerialBLEInterface::disable()
 {
     BleTaskMutex::Guard guard(_task_mutex);
+    _local_disable = true;
+    _authentication_completed = true;
     _auth_watchdog.cancel();
     if (!_init_gate.initialized()) {
         _rx_queue.clear();
         _stats.disable_count++;
         refreshConnectionState();
+        _local_disable = false;
         return;
     }
     SerialBLEInterface::disable();
     _rx_queue.clear();
     _stats.disable_count++;
+    refreshConnectionState();
+    _local_disable = false;
+}
+
+void ObservedSerialBLEInterface::openPairingWindow()
+{
+    BleTaskMutex::Guard guard(_task_mutex);
+    _auth_throttle.openPairingWindow(millis());
+    _advertising_suppressed = false;
+    if (_init_gate.initialized() && SerialBLEInterface::isEnabled() &&
+        !SerialBLEInterface::isConnected()) {
+        BLEAdvertising* advertising = BLEDevice::getAdvertising();
+        if (advertising) advertising->start();
+    }
     refreshConnectionState();
 }
 
@@ -157,8 +227,11 @@ size_t ObservedSerialBLEInterface::checkRecvFrame(uint8_t dest[])
     // returned here comes from _rx_queue.
     size_t len = SerialBLEInterface::checkRecvFrame(dest);
     uint16_t expired_conn_id = 0;
-    if (_auth_watchdog.takeExpired(millis(), expired_conn_id)) {
+    const uint32_t now_ms = millis();
+    if (_auth_watchdog.takeExpired(now_ms, expired_conn_id)) {
         _stats.auth_timeout_count++;
+        _authentication_completed = true;
+        recordAuthenticationFailure(now_ms);
         if (_connected_server) _connected_server->disconnect(expired_conn_id);
     }
     if (len == 0) {
@@ -169,6 +242,7 @@ size_t ObservedSerialBLEInterface::checkRecvFrame(uint8_t dest[])
         _stats.last_rx_code = dest ? dest[0] : 0;
     }
     refreshConnectionState();
+    applyAdvertisingThrottle(now_ms);
     return len;
 }
 
@@ -180,7 +254,10 @@ bool ObservedSerialBLEInterface::removeAllBonds()
     // No old credential may remain reachable while the security database is
     // being changed. Keep the service stopped even when a purge call fails.
     if (SerialBLEInterface::isEnabled()) {
+        _local_disable = true;
+        _authentication_completed = true;
         SerialBLEInterface::disable();
+        _local_disable = false;
         _stats.disable_count++;
     }
     refreshConnectionState();
@@ -258,6 +335,10 @@ bool ObservedSerialBLEInterface::onConfirmPIN(uint32_t pass_key)
 bool ObservedSerialBLEInterface::onSecurityRequest()
 {
     BleTaskMutex::Guard guard(_task_mutex);
+    if (!_auth_throttle.attemptAllowed(_connecting_peer,
+                                       _connecting_peer_bonded, millis())) {
+        return false;
+    }
     return SerialBLEInterface::onSecurityRequest();
 }
 
@@ -269,9 +350,12 @@ void ObservedSerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cm
         _stats.auth_success_count++;
         _stats.connection_generation++;
         if (_stats.connection_generation == 0) _stats.connection_generation = 1;
+        _auth_throttle.recordSuccess();
     } else {
         _stats.auth_failure_count++;
+        recordAuthenticationFailure(millis());
     }
+    _authentication_completed = true;
     SerialBLEInterface::onAuthenticationComplete(cmpl);
     refreshConnectionState();
 }
@@ -293,6 +377,10 @@ void ObservedSerialBLEInterface::onConnect(BLEServer* server,
     if (param) {
         _stats.last_conn_id = param->connect.conn_id;
         if (server) _stats.last_mtu = server->getPeerMTU(param->connect.conn_id);
+        std::memcpy(_connecting_peer.bytes, param->connect.remote_bda,
+                    sizeof(_connecting_peer.bytes));
+        _connecting_peer_bonded = peerIsBonded(_connecting_peer);
+        _authentication_completed = false;
         _auth_watchdog.arm(param->connect.conn_id, millis());
     }
     SerialBLEInterface::onConnect(server, param);
@@ -316,13 +404,19 @@ void ObservedSerialBLEInterface::onDisconnect(BLEServer* server)
 {
     BleTaskMutex::Guard guard(_task_mutex);
     _stats.disconnect_count++;
+    const bool abandoned_authentication = _auth_watchdog.armed() &&
+                                          !_authentication_completed &&
+                                          !_local_disable;
     _auth_watchdog.cancel();
+    if (abandoned_authentication) recordAuthenticationFailure(millis());
     SerialBLEInterface::onDisconnect(server);
     // Pending frames belong to the dead connection; the base class drops its
     // own buffers on the disconnect transition, mirror that for _rx_queue.
     _rx_queue.clear();
     _connected_server = nullptr;
+    _authentication_completed = false;
     refreshConnectionState();
+    applyAdvertisingThrottle(millis());
 }
 
 void ObservedSerialBLEInterface::onWrite(BLECharacteristic* characteristic,

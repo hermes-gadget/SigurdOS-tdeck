@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include "secure_wipe.h"
 
 #if defined(ESP32_PLATFORM)
 #include <freertos/FreeRTOS.h>
@@ -74,9 +75,10 @@ public:
         if (!dest) return 0;
         LockGuard guard(*this);
         if (_count == 0) return 0;
-        const Frame& slot = _frames[_head];
+        Frame& slot = _frames[_head];
         const size_t len = slot.len;
         memcpy(dest, slot.buf, len);
+        secureWipe(&slot, sizeof(slot));
         _head = (_head + 1) % CAPACITY;
         _count--;
         return len;
@@ -87,12 +89,23 @@ public:
         LockGuard guard(*this);
         _head = 0;
         _count = 0;
+        secureWipe(_frames, sizeof(_frames));
     }
 
     size_t size() const
     {
         LockGuard guard(*this);
         return _count;
+    }
+
+    bool storageClearedForTest() const
+    {
+        LockGuard guard(*this);
+        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(_frames);
+        for (size_t i = 0; i < sizeof(_frames); ++i) {
+            if (bytes[i] != 0) return false;
+        }
+        return true;
     }
 
 private:
@@ -125,7 +138,7 @@ private:
         ~LockGuard() { queue.unlock(); }
     };
 
-    Frame _frames[CAPACITY];
+    Frame _frames[CAPACITY]{};
     size_t _head = 0;
     size_t _count = 0;
 #if defined(ESP32_PLATFORM)
