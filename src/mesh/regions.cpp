@@ -5,6 +5,7 @@
 #include "persistence_store.h"
 #include "scope_key_hex.h"
 #include "region_name.h"
+#include "region_policy.h"
 #include "../hal/prefs.h"
 #include <SPIFFS.h>
 #include <cstring>
@@ -351,8 +352,7 @@ size_t exportRegions(char* dest, size_t max_len) {
 
 bool regionAllowsFlood(const char* name) {
     ::RegionEntry* r = findRegion(name);
-    if (!r) return true;  // unknown regions: default allow
-    return (r->flags & REGION_DENY_FLOOD) == 0;
+    return regionFloodAllowed(r != nullptr, r ? r->flags : 0, REGION_DENY_FLOOD);
 }
 
 bool setRegionFloodAllowed(const char* name, bool allowed) {
@@ -418,7 +418,7 @@ const char* getDefaultScopeName() {
 static bool setDefaultScopeInMemory(const char* name) {
     if (!g_region_map) return false;
 
-    if (!name || !name[0] || strcmp(name, "<null>") == 0) {
+    if (regionScopeIsClear(name)) {
         g_region_map->setDefaultRegion(nullptr);
     } else {
         if (!regionNameValid(name)) return false;
@@ -491,12 +491,7 @@ static bool commitActiveRegionPrefs(const char* name, const char* key_hex,
         return false;
     }
 
-    if (name && name[0]) {
-        strncpy(g_active_name, name, sizeof(g_active_name) - 1);
-        g_active_name[sizeof(g_active_name) - 1] = '\0';
-    } else {
-        g_active_name[0] = '\0';
-    }
+    copyActiveRegion(g_active_name, sizeof(g_active_name), name);
     return true;
 }
 

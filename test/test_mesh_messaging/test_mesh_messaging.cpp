@@ -33,6 +33,7 @@
 #include "mesh/companion_message_policy.h"
 #include "mesh/incoming_message_policy.h"
 #include "mesh/mesh_safety_policy.h"
+#include "utils/fixed_queue.h"
 
 namespace {
 
@@ -187,40 +188,7 @@ struct MeshMessage {
 
 // ── Message queue (circular buffer) ──────────────────────
 static constexpr int MAX_QUEUED = 32;
-
-class MessageQueue {
-    MeshMessage buf[MAX_QUEUED];
-    int head = 0;  // write index
-    int tail = 0;  // read index
-    int count = 0;
-
-public:
-    void reset() {
-        head = 0;
-        tail = 0;
-        count = 0;
-    }
-
-    bool push(const MeshMessage& msg) {
-        if (count >= MAX_QUEUED) return false; // queue full
-        buf[head] = msg;
-        head = (head + 1) % MAX_QUEUED;
-        count++;
-        return true;
-    }
-
-    bool pop(MeshMessage* out) {
-        if (count == 0) return false;
-        *out = buf[tail];
-        tail = (tail + 1) % MAX_QUEUED;
-        count--;
-        return true;
-    }
-
-    int size() const { return count; }
-    bool empty() const { return count == 0; }
-    bool full() const { return count >= MAX_QUEUED; }
-};
+using MessageQueue = sigurdos::utils::FixedQueue<MeshMessage, MAX_QUEUED>;
 
 // ── Send/receive simulation ──────────────────────────────
 class MeshSession {
@@ -276,7 +244,8 @@ public:
         return drained;
     }
 
-    int pending_count() const { return inbox.size(); }
+    int pending_count() const { return static_cast<int>(inbox.size()); }
+    bool poll_outbox(MeshMessage* out) { return outbox.pop(out); }
     int unread() const { return unread_count; }
 };
 
@@ -381,11 +350,11 @@ TEST_F(MeshMessagingTest, MessagePreservesSenderAndText) {
 }
 
 TEST_F(MeshMessagingTest, SelfMessagesMarkedAsSelf) {
-    mesh.send_message("Alice", "My message");
-    // Self-messages go to outbox, not inbox — but we can check is_self
-    // via the outbox
-    // For this test, validate send_message creates a self-marked message
-    EXPECT_TRUE(true); // send_message works (compiles and runs)
+    ASSERT_TRUE(mesh.send_message("Alice", "My message"));
+    MeshMessage sent;
+    ASSERT_TRUE(mesh.poll_outbox(&sent));
+    EXPECT_TRUE(sent.is_self);
+    EXPECT_STREQ(sent.text, "My message");
 }
 
 TEST_F(MeshMessagingTest, ReceivedMessagesAreNotSelf) {
@@ -409,7 +378,7 @@ TEST_F(MeshMessagingTest, MessagesPreserveTimestamp) {
 }
 
 // ── Overflow ──────────────────────────────────────────────
-TEST_F(MeshMessagingTest, QueueOverflowDropsOldest) {
+TEST_F(MeshMessagingTest, QueueOverflowRejectsNewest) {
     // Fill to capacity
     for (int i = 0; i < 32; i++) {
         char name[8];

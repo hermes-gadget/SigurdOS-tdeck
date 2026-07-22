@@ -64,7 +64,7 @@ test/
 |-- test_gps/                       NMEA parsing, coordinates, checksums, fix fields
 |-- test_hal_contract/              HAL lifecycle, power, display, and GPS API stability
 |-- test_hal_oom/                   HAL allocation-failure and recovery behavior
-|-- test_home_screen/               Home tile routing contract
+|-- test_home_screen/               Production home-route table, layout, and badges
 |-- test_i2c_bus/                   Shared I2C probing, configuration, and bus recovery
 |-- test_identity_store/            Atomic, checksummed identity persistence
 |-- test_input_contract/            Trackball, keyboard, and input event encoding stability
@@ -79,11 +79,11 @@ test/
 |-- test_map/                       Map projection, LRU/negative cache, and load budgets
 |-- test_map_renderer/              Map renderer constants, zoom validation, and tile math
 |-- test_mesh_contract/             Mesh advert types, contact flags, and buffer capacity stability
-|-- test_mesh_messaging/            Message queues, contacts, responses, LPP parsing
+|-- test_mesh_messaging/            Production FIFO/policies plus protocol parsing
 |-- test_mesh_wrapper/              Public mesh API contracts and return ranges
 |-- test_mesh_wrapper_internal/     Wrapper seam helpers: scope-key hex codec, DM conversation key
 |-- test_message_store/             Message append, dedup, rotation, and persistence
-|-- test_navigation/                Navigation stack and back-swipe behavior
+|-- test_navigation/                Production router stack and back-swipe behavior
 |-- test_navigation_contract/       Screen enum stability and screen inventory checks
 |-- test_notifications/             Alert priority, mention matching, expiry, and resource thresholds
 |-- test_onboarding/                Onboarding date/time validation and leap year rules
@@ -97,7 +97,7 @@ test/
 |-- test_qr_show/                   QR code version sizing, buffer sizing, and scale fitting
 |-- test_radio_profiles/            Regional radio profile selection and persistence
 |-- test_repeater_command_policy/   Repeater command success/failure feedback
-|-- test_regions/                   Region structs, binary layout, key derivation
+|-- test_regions/                   Production region policy, persistence, and API contracts
 |-- test_responsive/                Responsive layout column offset distribution
 |-- test_sdcard/                    SD card state, path checks, size formatting
 |-- test_screen_lifetime/           Screen delete guard: tracked pointer nulling, timer teardown

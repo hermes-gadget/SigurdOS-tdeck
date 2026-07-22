@@ -1,438 +1,181 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2025 Ben
-//
-// This file is part of SigurdOS.
-//
-// SigurdOS is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// SigurdOS is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
+// Copyright (C) 2026 Ben
 
+// Compile the production router with renderer recorders. The state machine,
+// history capacity, route validation, and back-swipe behavior are not copied.
+#define SIGURDOS_NAVIGATION_TEST 1
 
-/**
- * Unit tests for screen navigation state machine
- * Tests: routing correctness, back navigation with history stack, same-screen guard
- *
- * NOTE: These tests validate the navigation logic by replicating
- * the stack-based history behavior. Full LVGL integration is tested
- * on-hardware since the mock layer doesn't render screens.
- */
-#include <gtest/gtest.h>
-#include <string>
+#include <array>
 #include <vector>
+
+#include <gtest/gtest.h>
+
+#include "hal/prefs.h"
+#include "ui/navigation.h"
 
 namespace {
 
-// ── Replicate the navigation state machine for pure testing ──
-enum class Screen {
-    Home, Chat, Contacts, Channels, Network, Heard,
-    Map, Advertise, Settings, Trace, Terminal,
-    Signal, RadioSetup, Repeaters, Onboarding, ContactDetail,
-    SettingsRadio, SettingsGPS, SettingsDisplay, SettingsSystem,
-    NodeStats, Telemetry, NodeStatus, WiFiNetworks, Bluetooth, Regions,
-    RepeaterDetail, CustomRadioSetup, COUNT
-};
+using sigurdos::ui::Screen;
 
-enum class SigurdOSEvent {
-    Left, Right, Up, Down, Click
-};
+int g_dispatch_count = 0;
+Screen g_last_dispatched = Screen::COUNT;
+bool g_back_highlighted = false;
 
-static Screen current = Screen::Home;
-
-// Stack-based history (matches navigation.cpp)
-static constexpr int MAX_HISTORY = 8;
-static Screen history[MAX_HISTORY];
-static int   history_top = -1;
-static std::vector<std::string> nav_log;
-
-// Two-swipe back state
-static int back_swipe_commit = 0;
-
-static void push_history(Screen s) {
-    if (history_top < MAX_HISTORY - 1) {
-        // Normal case: room on the stack
-        history_top++;
-        history[history_top] = s;
-    } else {
-        // Stack full: drop the oldest entry by shifting everything left
-        for (int i = 0; i < MAX_HISTORY - 1; i++) {
-            history[i] = history[i + 1];
-        }
-        history[MAX_HISTORY - 1] = s;
-    }
+void record_dispatch(Screen screen)
+{
+    ++g_dispatch_count;
+    g_last_dispatched = screen;
 }
 
-static Screen pop_history() {
-    if (history_top < 0) return Screen::Home;
-    Screen s = history[history_top];
-    history_top--;
-    return s;
-}
+} // namespace
 
-static bool history_empty() {
-    return history_top < 0;
-}
+namespace sigurdos::ui {
 
-static bool can_go_back() {
-    return !history_empty();
-}
+bool pin_grace_active() { return false; }
+void pin_entry_show(Screen) { FAIL() << "PIN prompt with PIN disabled"; }
+void highlight_back_button(bool highlighted) { g_back_highlighted = highlighted; }
 
-void navigate_to(Screen screen) {
-    if (screen == current) return;
-    back_swipe_commit = 0;
-    push_history(current);
-    current = screen;
-    nav_log.push_back("nav:" + std::to_string((int)screen));
-}
+void home_screen_show() { record_dispatch(Screen::Home); }
+void chat_screen_show() { record_dispatch(Screen::Chat); }
+void contacts_screen_show() { record_dispatch(Screen::Contacts); }
+void channels_screen_show() { record_dispatch(Screen::Channels); }
+void finder_screen_show() { record_dispatch(Screen::Network); }
+void heard_screen_show() { record_dispatch(Screen::Heard); }
+void map_screen_show() { record_dispatch(Screen::Map); }
+void advertise_screen_show() { record_dispatch(Screen::Advertise); }
+void settings_screen_show() { record_dispatch(Screen::Settings); }
+void trace_screen_show() { record_dispatch(Screen::Trace); }
+void terminal_screen_show() { record_dispatch(Screen::Terminal); }
+void signal_screen_show() { record_dispatch(Screen::Signal); }
+void radio_setup_screen_show() { record_dispatch(Screen::RadioSetup); }
+void repeaters_screen_show() { record_dispatch(Screen::Repeaters); }
+void onboarding_screen_show() { record_dispatch(Screen::Onboarding); }
+void settings_radio_show() { record_dispatch(Screen::SettingsRadio); }
+void settings_gps_show() { record_dispatch(Screen::SettingsGPS); }
+void settings_display_show() { record_dispatch(Screen::SettingsDisplay); }
+void settings_system_show() { record_dispatch(Screen::SettingsSystem); }
+void node_stats_screen_show() { record_dispatch(Screen::NodeStats); }
+void telemetry_screen_show() { record_dispatch(Screen::Telemetry); }
+void node_status_screen_show() { record_dispatch(Screen::NodeStatus); }
+void wifi_networks_screen_show() { record_dispatch(Screen::WiFiNetworks); }
+void bluetooth_screen_show() { record_dispatch(Screen::Bluetooth); }
+void regions_screen_show() { record_dispatch(Screen::Regions); }
+void custom_rf_screen_show() { record_dispatch(Screen::CustomRadioSetup); }
+void contact_detail_screen_show(const char*) { record_dispatch(Screen::ContactDetail); }
+void repeater_detail_screen_show(const char*, bool) { record_dispatch(Screen::RepeaterDetail); }
 
-void go_back() {
-    if (history_empty()) return;
-    back_swipe_commit = 0;
-    Screen target = pop_history();
-    current = target;
-    nav_log.push_back("back:" + std::to_string((int)target));
-}
+} // namespace sigurdos::ui
 
-bool handle_back_swipe(SigurdOSEvent event) {
-    if (event != SigurdOSEvent::Left) {
-        back_swipe_commit = 0;
-        return false;
-    }
+#include "../../src/ui/navigation.cpp"
 
-    back_swipe_commit++;
-    if (back_swipe_commit >= 2) {
-        back_swipe_commit = 0;
-        go_back();
-        return true;
-    }
+namespace {
 
-    return true; // first swipe consumed
-}
-
-void reset_nav() {
-    current = Screen::Home;
-    history_top = -1;
-    back_swipe_commit = 0;
-    nav_log.clear();
-}
-
-class NavigationTest : public ::testing::Test {
+class ProductionNavigationTest : public ::testing::Test {
 protected:
-    void SetUp() override { reset_nav(); }
+    void SetUp() override
+    {
+        sigurdos::NodePrefs prefs{};
+        prefs.set_defaults();
+        prefs.device_pin = 0;
+        ASSERT_TRUE(sigurdos::prefs_set(prefs));
+        sigurdos::ui::navigation_reset_for_test();
+        g_dispatch_count = 0;
+        g_last_dispatched = Screen::COUNT;
+        g_back_highlighted = false;
+    }
 };
 
-// ── Initial state ───────────────────────────────────────
-TEST_F(NavigationTest, InitialStateIsHome) {
-    EXPECT_EQ(current, Screen::Home);
-    EXPECT_TRUE(history_empty());
-    EXPECT_FALSE(can_go_back());
-    EXPECT_TRUE(nav_log.empty());
+TEST_F(ProductionNavigationTest, StartsAtHomeWithEmptyHistory)
+{
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    EXPECT_FALSE(sigurdos::ui::can_go_back());
 }
 
-// ── Forward navigation ──────────────────────────────────
-TEST_F(NavigationTest, NavigateToChatUpdatesState) {
-    navigate_to(Screen::Chat);
-    EXPECT_EQ(current, Screen::Chat);
-    EXPECT_FALSE(history_empty());
-    EXPECT_TRUE(can_go_back());
-    EXPECT_EQ(nav_log.size(), 1u);
+TEST_F(ProductionNavigationTest, SameScreenNavigationIsANoop)
+{
+    sigurdos::ui::navigate_to(Screen::Home);
+    EXPECT_EQ(g_dispatch_count, 0);
+    EXPECT_FALSE(sigurdos::ui::can_go_back());
 }
 
-TEST_F(NavigationTest, NavigateToSameScreenIsNoop) {
-    navigate_to(Screen::Home);  // already home
-    EXPECT_EQ(current, Screen::Home);
-    EXPECT_TRUE(history_empty()); // no push
-    EXPECT_FALSE(can_go_back());
-    EXPECT_TRUE(nav_log.empty());
+TEST_F(ProductionNavigationTest, DeepNavigationReturnsThroughProductionHistory)
+{
+    sigurdos::ui::navigate_to(Screen::Chat);
+    sigurdos::ui::navigate_to(Screen::Settings);
+    sigurdos::ui::navigate_to(Screen::Terminal);
+
+    sigurdos::ui::go_back();
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Settings);
+    sigurdos::ui::go_back();
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Chat);
+    sigurdos::ui::go_back();
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    EXPECT_FALSE(sigurdos::ui::can_go_back());
 }
 
-TEST_F(NavigationTest, NavigateToAllScreens) {
-    std::vector<Screen> screens = {
+TEST_F(ProductionNavigationTest, OverflowRetainsTheNewestSixteenEntries)
+{
+    constexpr std::array<Screen, 20> targets = {
         Screen::Chat, Screen::Contacts, Screen::Channels, Screen::Network,
         Screen::Heard, Screen::Map, Screen::Advertise, Screen::Settings,
-        Screen::Trace, Screen::Terminal, Screen::Signal
+        Screen::Trace, Screen::Terminal, Screen::Signal, Screen::RadioSetup,
+        Screen::Repeaters, Screen::Onboarding, Screen::SettingsRadio,
+        Screen::SettingsGPS, Screen::SettingsDisplay, Screen::SettingsSystem,
+        Screen::NodeStats, Screen::Telemetry,
     };
+    for (Screen target : targets) sigurdos::ui::navigate_to(target);
 
-    for (auto s : screens) {
-        reset_nav();
-        navigate_to(s);
-        EXPECT_EQ(current, s);
-        EXPECT_FALSE(history_empty()); // Home pushed onto stack
-    }
-}
-
-// ── Back navigation (stack-based) ────────────────────────
-TEST_F(NavigationTest, GoBackReturnsToPrevious) {
-    navigate_to(Screen::Chat);
-    EXPECT_TRUE(can_go_back());
-    go_back();
-    EXPECT_EQ(current, Screen::Home);
-    EXPECT_FALSE(can_go_back());
-}
-
-TEST_F(NavigationTest, GoBackFromHomeIsNoop) {
-    go_back(); // stack empty, nowhere to go
-    EXPECT_EQ(current, Screen::Home);
-    EXPECT_FALSE(can_go_back());
-}
-
-TEST_F(NavigationTest, DeepNavigationAndBack) {
-    // Home → Chat → Settings → Terminal → back ×3 → Home
-    navigate_to(Screen::Chat);      // stack: [Home]
-    navigate_to(Screen::Settings);  // stack: [Home, Chat]
-    navigate_to(Screen::Terminal);  // stack: [Home, Chat, Settings]
-    EXPECT_EQ(current, Screen::Terminal);
-
-    go_back();  // pop Settings → current=Settings
-    EXPECT_EQ(current, Screen::Settings);
-
-    go_back();  // pop Chat → current=Chat
-    EXPECT_EQ(current, Screen::Chat);
-
-    go_back();  // pop Home → current=Home
-    EXPECT_EQ(current, Screen::Home);
-
-    // Stack should be empty now
-    EXPECT_TRUE(history_empty());
-    EXPECT_FALSE(can_go_back());
-}
-
-// ── Rapid navigation ────────────────────────────────────
-TEST_F(NavigationTest, RapidNavigationDoesNotLoseState) {
-    for (int i = 0; i < 100; i++) {
-        Screen s = (Screen)((i % 12) + 1); // cycle through all screens
-        navigate_to(s);
-    }
-    // Should still have a valid state
-    EXPECT_NE(current, Screen::COUNT);
-}
-
-// ── Stack overflow — linear stack drops oldest ───────────
-TEST_F(NavigationTest, HistoryStackDropsOldestOnOverflow) {
-    // Fill the stack with 10 entries (more than MAX_HISTORY=8)
-    // Linear stack should drop the oldest (Home) and keep the newest 8
-    navigate_to(Screen::Chat);      // push Home (1)
-    navigate_to(Screen::Contacts);  // push Chat (2)
-    navigate_to(Screen::Channels);  // push Contacts (3)
-    navigate_to(Screen::Network);   // push Channels (4)
-    navigate_to(Screen::Heard);     // push Network (5)
-    navigate_to(Screen::Map);       // push Heard (6)
-    navigate_to(Screen::Advertise); // push Map (7)
-    navigate_to(Screen::Settings);  // push Advertise (8) — stack full
-    navigate_to(Screen::Trace);     // push Settings → shift oldest (Home) out (9)
-    navigate_to(Screen::Terminal);  // push Trace → shift oldest (Chat) out (10)
-    EXPECT_EQ(current, Screen::Terminal);
-
-    // Go back should trace through the last 8 screens in order
-    go_back(); EXPECT_EQ(current, Screen::Trace);
-    go_back(); EXPECT_EQ(current, Screen::Settings);
-    go_back(); EXPECT_EQ(current, Screen::Advertise);
-    go_back(); EXPECT_EQ(current, Screen::Map);
-    go_back(); EXPECT_EQ(current, Screen::Heard);
-    go_back(); EXPECT_EQ(current, Screen::Network);
-    go_back(); EXPECT_EQ(current, Screen::Channels);
-    go_back(); EXPECT_EQ(current, Screen::Contacts);
-    // Should be exhausted now (home was dropped)
-    EXPECT_FALSE(can_go_back());
-}
-
-// ── Stack overflow preserves back navigation count ───────
-TEST_F(NavigationTest, OverflowBackSequenceFullCount) {
-    // Navigate through 12 screens (well over 8-slot buffer)
-    navigate_to(Screen::Chat);      // push Home (1)
-    navigate_to(Screen::Contacts);  // push Chat (2)
-    navigate_to(Screen::Channels);  // push Contacts (3)
-    navigate_to(Screen::Network);   // push Channels (4)
-    navigate_to(Screen::Heard);     // push Network (5)
-    navigate_to(Screen::Map);       // push Heard (6)
-    navigate_to(Screen::Advertise); // push Map (7)
-    navigate_to(Screen::Settings);  // push Advertise (8) — stack full
-    navigate_to(Screen::Trace);     // push Settings → shift oldest out (9)
-    navigate_to(Screen::Terminal);  // push Trace (10)
-    navigate_to(Screen::Signal);    // push Terminal (11)
-    navigate_to(Screen::RadioSetup);// push Signal (12)
-
-    // Should always have exactly MAX_HISTORY back steps available
     int back_count = 0;
-    while (can_go_back()) {
-        go_back();
-        back_count++;
+    for (int index = 18; index >= 3; --index) {
+        ASSERT_TRUE(sigurdos::ui::can_go_back());
+        sigurdos::ui::go_back();
+        EXPECT_EQ(sigurdos::ui::current_screen(), targets[index]) << index;
+        ++back_count;
     }
-    EXPECT_EQ(back_count, MAX_HISTORY);
+    EXPECT_EQ(back_count, 16);
+    EXPECT_FALSE(sigurdos::ui::can_go_back());
 }
 
-// ── Navigation to every screen from every screen ────────
-TEST_F(NavigationTest, AllScreenPairsWork) {
-    for (int from = 0; from < (int)Screen::COUNT; from++) {
-        for (int to = 0; to < (int)Screen::COUNT; to++) {
-            reset_nav();
-            navigate_to((Screen)from);
-            navigate_to((Screen)to);
-            if (from == to) {
-                EXPECT_EQ(current, (Screen)from);
-            } else {
-                EXPECT_EQ(current, (Screen)to);
-                // Stack should have: Home (if from != Home) + from
-                EXPECT_FALSE(history_empty());
-            }
-        }
-    }
+TEST_F(ProductionNavigationTest, TwoLeftSwipesNavigateBack)
+{
+    sigurdos::ui::navigate_to(Screen::Chat);
+    EXPECT_TRUE(sigurdos::ui::handle_back_swipe(SigurdOSTrackballEvent::Left));
+    EXPECT_TRUE(g_back_highlighted);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Chat);
+
+    EXPECT_TRUE(sigurdos::ui::handle_back_swipe(SigurdOSTrackballEvent::Left));
+    EXPECT_FALSE(g_back_highlighted);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
 }
 
-// ── Screen count matches expected ───────────────────────
-TEST_F(NavigationTest, ScreenCountMatchesTestInventory) {
-    EXPECT_EQ((int)Screen::COUNT, 28);
+TEST_F(ProductionNavigationTest, NonLeftInputResetsBackSwipeCommit)
+{
+    sigurdos::ui::navigate_to(Screen::Chat);
+    sigurdos::ui::handle_back_swipe(SigurdOSTrackballEvent::Left);
+    EXPECT_FALSE(sigurdos::ui::handle_back_swipe(SigurdOSTrackballEvent::Up));
+    EXPECT_FALSE(g_back_highlighted);
+    sigurdos::ui::handle_back_swipe(SigurdOSTrackballEvent::Left);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Chat);
 }
 
-// ── Screen enum values are contiguous ───────────────────
-TEST_F(NavigationTest, ScreenEnumValuesAreContiguous) {
-    EXPECT_EQ((int)Screen::Home, 0);
-    EXPECT_EQ((int)Screen::Chat, 1);
-    EXPECT_EQ((int)Screen::Signal, 11);
-    EXPECT_EQ((int)Screen::COUNT, 28);
+TEST_F(ProductionNavigationTest, ParameterizedDetailRouteReturnsToCaller)
+{
+    sigurdos::ui::navigate_to(Screen::Contacts);
+    sigurdos::ui::navigate_to_contact_detail("Alice");
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::ContactDetail);
+    EXPECT_EQ(g_last_dispatched, Screen::ContactDetail);
+
+    sigurdos::ui::go_back();
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Contacts);
 }
 
-TEST_F(NavigationTest, ContactsRoomDetailBackReturnsToContacts) {
-    navigate_to(Screen::Contacts);
-    navigate_to(Screen::RepeaterDetail);
-    go_back();
-    EXPECT_EQ(current, Screen::Contacts);
+TEST_F(ProductionNavigationTest, InvalidRoutesCannotMutateState)
+{
+    sigurdos::ui::navigate_to(Screen::COUNT);
+    sigurdos::ui::navigate_to(static_cast<Screen>(999));
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    EXPECT_FALSE(sigurdos::ui::can_go_back());
+    EXPECT_EQ(g_dispatch_count, 0);
 }
 
-TEST_F(NavigationTest, RepeatersDetailBackReturnsToRepeaters) {
-    navigate_to(Screen::Repeaters);
-    navigate_to(Screen::RepeaterDetail);
-    go_back();
-    EXPECT_EQ(current, Screen::Repeaters);
-}
-
-TEST_F(NavigationTest, MapContactDetailBackReturnsToMap) {
-    navigate_to(Screen::Map);
-    navigate_to(Screen::ContactDetail);
-    go_back();
-    EXPECT_EQ(current, Screen::Map);
-}
-
-TEST_F(NavigationTest, RadioSetupBackReturnsToRadioSettings) {
-    navigate_to(Screen::SettingsRadio);
-    navigate_to(Screen::RadioSetup);
-    go_back();
-    EXPECT_EQ(current, Screen::SettingsRadio);
-}
-
-TEST_F(NavigationTest, CustomRadioBackReturnsToRadioSetup) {
-    navigate_to(Screen::RadioSetup);
-    navigate_to(Screen::CustomRadioSetup);
-    go_back();
-    EXPECT_EQ(current, Screen::RadioSetup);
-}
-
-// ── Back-swipe (two-swipe commit) ─────────────────────────
-TEST_F(NavigationTest, SingleLeftSwipeIsConsumedNoBack) {
-    navigate_to(Screen::Chat);
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));
-    // First swipe consumed but no navigation
-    EXPECT_EQ(current, Screen::Chat);
-    EXPECT_TRUE(can_go_back());
-    EXPECT_EQ(nav_log.size(), 1u); // only the forward nav
-}
-
-TEST_F(NavigationTest, TwoLeftSwipesTriggersGoBack) {
-    navigate_to(Screen::Chat);
-    handle_back_swipe(SigurdOSEvent::Left);  // first: neutralise
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));  // second: navigate back
-    EXPECT_EQ(current, Screen::Home);
-    EXPECT_EQ(nav_log.size(), 2u); // nav + back
-}
-
-TEST_F(NavigationTest, NonLeftEventResetsBackSwipeCounter) {
-    navigate_to(Screen::Chat);
-    handle_back_swipe(SigurdOSEvent::Left);  // first: neutralise
-    handle_back_swipe(SigurdOSEvent::Up);    // resets counter
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));  // first again after reset
-    EXPECT_EQ(current, Screen::Chat); // still on Chat
-    // Second swipe now should work
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));
-    EXPECT_EQ(current, Screen::Home);
-}
-
-TEST_F(NavigationTest, NavigateToResetsBackSwipeCounter) {
-    navigate_to(Screen::Chat);
-    handle_back_swipe(SigurdOSEvent::Left);  // first swipe
-    navigate_to(Screen::Settings);         // should reset counter
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));  // first swipe on Settings
-    EXPECT_EQ(current, Screen::Settings);
-}
-
-TEST_F(NavigationTest, GoBackResetsBackSwipeCounter) {
-    navigate_to(Screen::Chat);
-    navigate_to(Screen::Settings);
-    handle_back_swipe(SigurdOSEvent::Left);  // first swipe
-    // Second swipe triggers go_back AND resets counter
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));
-    EXPECT_EQ(current, Screen::Chat); // went back from Settings
-    // Counter is 0 after go_back, so next Left is a fresh first swipe
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));
-    EXPECT_EQ(current, Screen::Chat); // first swipe on Chat, still here
-}
-
-TEST_F(NavigationTest, BackSwipeFromHomeDoesNothing) {
-    // On Home: can_go_back() is false, handle_back_swipe should not crash
-    // First swipe consumed, no-op
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));
-    EXPECT_EQ(current, Screen::Home);
-    // Second swipe: go_back() check history_empty, returns early
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));
-    EXPECT_EQ(current, Screen::Home);
-}
-
-TEST_F(NavigationTest, UpDownRightEventsDontTriggerBack) {
-    navigate_to(Screen::Chat);
-    EXPECT_FALSE(handle_back_swipe(SigurdOSEvent::Up));
-    EXPECT_FALSE(handle_back_swipe(SigurdOSEvent::Down));
-    EXPECT_FALSE(handle_back_swipe(SigurdOSEvent::Right));
-    EXPECT_FALSE(handle_back_swipe(SigurdOSEvent::Click));
-    EXPECT_EQ(current, Screen::Chat);
-    EXPECT_EQ(nav_log.size(), 1u);
-}
-
-TEST_F(NavigationTest, BackSwipeFromAnyNonHomeScreen) {
-    std::vector<Screen> screens = {
-        Screen::Chat, Screen::Contacts, Screen::Channels, Screen::Network,
-        Screen::Heard, Screen::Map, Screen::Advertise, Screen::Settings,
-        Screen::Trace, Screen::Terminal, Screen::Signal
-    };
-
-    for (auto s : screens) {
-        reset_nav();
-        navigate_to(s);
-        handle_back_swipe(SigurdOSEvent::Left);  // first: neutralise
-        ASSERT_TRUE(handle_back_swipe(SigurdOSEvent::Left));  // second: back
-        EXPECT_EQ(current, Screen::Home)
-            << "Failed for screen " << (int)s;
-    }
-}
-
-TEST_F(NavigationTest, BackSwipeRapidTripleLeftDoesNotDoubleBack) {
-    navigate_to(Screen::Chat);
-    navigate_to(Screen::Settings);
-    // Three rapid lefts: swipe1 consumed, swipe2 → back to Chat, swipe3 → first on Chat
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));   // 1: consumed
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));   // 2: back to Chat
-    EXPECT_EQ(current, Screen::Chat);
-    // Counter was reset by go_back, so swipe3 starts fresh
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));   // 3: first on Chat
-    EXPECT_EQ(current, Screen::Chat); // still on Chat
-    EXPECT_TRUE(handle_back_swipe(SigurdOSEvent::Left));   // 4: second → back to Home
-    EXPECT_EQ(current, Screen::Home);
-}
-
-} // anonymous namespace
+} // namespace

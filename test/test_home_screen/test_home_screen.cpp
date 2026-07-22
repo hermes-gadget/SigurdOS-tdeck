@@ -40,53 +40,6 @@ TEST(HomeScreenActivationTest, TouchAndTrackballShareStableFilterPolicy) {
     EXPECT_FALSE(home_tile_filters(3).rooms_only);
 }
 
-// ── Replicate the home screen icon routing table for pure testing ──
-// Mirrors home_screen.cpp lines 53-73
-
-enum class Screen {
-    Home,
-    Chat,
-    Contacts,
-    Channels,
-    Network,
-    Heard,
-    Map,
-    Advertise,
-    Settings,
-    Trace,
-    Terminal,
-    Signal,
-    RadioSetup,
-    Repeaters,
-    Onboarding,
-    COUNT
-};
-
-struct IconDef {
-    const char* label;
-    const char* symbol;
-    bool        badge;
-    Screen      target;
-};
-
-// MUST match home_screen.cpp exactly (same order, same targets)
-static const IconDef icons[] = {
-    {"CHATS",     "\x0e",  true,  Screen::Chat},
-    {"CONTACTS",  "\x0f",  false, Screen::Contacts},
-    {"REPEATERS", "\x15",  false, Screen::Repeaters},
-    {"FINDER",    "\x12",  false, Screen::Network},
-    {"PACKETS",   "\x0b",  false, Screen::Heard},
-    {"MAP",       "\x13",  false, Screen::Map},
-    {"ADVERTISE", "\x07",  false, Screen::Advertise},
-    {"SETTINGS",  "\x16",  false, Screen::Settings},
-    {"TRACE",     "\x17",  false, Screen::Trace},
-    {"TERMINAL",  "\x0c",  false, Screen::Terminal},
-    {"SETUP",     "\x16",  false, Screen::Onboarding},
-    {"SIGNAL",    "\x19",  false, Screen::Signal},
-};
-
-static constexpr int ICON_COUNT = sizeof(icons) / sizeof(icons[0]);
-
 static int row_height(int base_h, int extra_h, int row) {
     return base_h + (row < extra_h ? 1 : 0);
 }
@@ -98,85 +51,33 @@ static int row_origin(int base_h, int gap, int extra_h, int row) {
 
 // ── Tests ────────────────────────────────────────────────
 
-TEST(HomeScreenIconTest, AllTilesHaveUniqueTargets) {
-    // Each tile should navigate to a distinct screen.
-    // After fix: only PACKETS points to Heard (1 tile), no duplicates.
-    int heard_count = 0;
-    for (int i = 0; i < ICON_COUNT; i++) {
-        if (icons[i].target == Screen::Heard)
-            heard_count++;
+TEST(HomeScreenRouteTest, ProductionTableContainsEveryTile) {
+    EXPECT_EQ(sigurdos::ui::homeRouteCount(), sigurdos::ui::HOME_ROUTE_COUNT);
+    for (std::size_t index = 0; index < sigurdos::ui::HOME_ROUTE_COUNT; ++index) {
+        EXPECT_NE(sigurdos::ui::homeRouteAt(index), nullptr) << index;
     }
-    // FIXED: only PACKETS = 1 tile pointing to Heard
-    EXPECT_EQ(heard_count, 1)
-        << "Only PACKETS should target Heard (REPEATERS now targets Repeaters)";
+    EXPECT_EQ(sigurdos::ui::homeRouteAt(sigurdos::ui::HOME_ROUTE_COUNT), nullptr);
 }
 
-TEST(HomeScreenIconTest, RepeatersTargetsRepeaters) {
-    // REPEATERS now goes to Screen::Repeaters (dedicated repeaters-only view)
-    EXPECT_EQ(icons[2].target, Screen::Repeaters)
-        << "REPEATERS should target Repeaters screen (repeaters only)";
+TEST(HomeScreenRouteTest, ProductionTargetsMatchUserFacingRoutes) {
+    using sigurdos::ui::Screen;
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("CHATS")->target, Screen::Chat);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("DMs")->target, Screen::Chat);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("ROOMS")->target, Screen::Contacts);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("CONTACTS")->target, Screen::Contacts);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("REPEATERS")->target, Screen::Repeaters);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("PACKETS")->target, Screen::Heard);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("MAP")->target, Screen::Map);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("SETTINGS")->target, Screen::Settings);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("SIGNAL")->target, Screen::Signal);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("missing"), nullptr);
 }
 
-TEST(HomeScreenIconTest, RepeatersAndFinderAreDifferent) {
-    // REPEATERS and FINDER should go to different screens
-    EXPECT_NE(icons[2].target, icons[3].target)
-        << "REPEATERS and FINDER should go to different screens";
-}
-
-TEST(HomeScreenIconTest, PacketsTargetsHeard) {
-    // PACKETS should stay on Heard (raw packets log)
-    EXPECT_EQ(icons[4].target, Screen::Heard);
-}
-
-TEST(HomeScreenIconTest, FinderTargetsNetwork) {
-    // FINDER correctly shows the Network screen (nearby nodes)
-    EXPECT_EQ(icons[3].target, Screen::Network);
-}
-
-TEST(HomeScreenIconTest, RepeatersAndPacketsAreDifferent) {
-    // FIXED: REPEATERS (Network) and PACKETS (Heard) now go to different screens
-    EXPECT_NE(icons[2].target, icons[4].target)
-        << "REPEATERS and PACKETS should go to different screens";
-}
-
-TEST(HomeScreenIconTest, AllIconsPresent) {
-    EXPECT_EQ(ICON_COUNT, 12);
-}
-
-TEST(HomeScreenIconTest, ChatsTargetsChat) {
-    EXPECT_EQ(icons[0].target, Screen::Chat);
-}
-
-TEST(HomeScreenIconTest, ContactsTargetsContacts) {
-    EXPECT_EQ(icons[1].target, Screen::Contacts);
-}
-
-TEST(HomeScreenIconTest, MapTargetsMap) {
-    EXPECT_EQ(icons[5].target, Screen::Map);
-}
-
-TEST(HomeScreenIconTest, AdvertiseTargetsAdvertise) {
-    EXPECT_EQ(icons[6].target, Screen::Advertise);
-}
-
-TEST(HomeScreenIconTest, SettingsTargetsSettings) {
-    EXPECT_EQ(icons[7].target, Screen::Settings);
-}
-
-TEST(HomeScreenIconTest, TraceTargetsTrace) {
-    EXPECT_EQ(icons[8].target, Screen::Trace);
-}
-
-TEST(HomeScreenIconTest, TerminalTargetsTerminal) {
-    EXPECT_EQ(icons[9].target, Screen::Terminal);
-}
-
-TEST(HomeScreenIconTest, SetupTargetsOnboarding) {
-    EXPECT_EQ(icons[10].target, Screen::Onboarding);
-}
-
-TEST(HomeScreenIconTest, SignalTargetsSignal) {
-    EXPECT_EQ(icons[11].target, Screen::Signal);
+TEST(HomeScreenRouteTest, ProductionTableOwnsFilterPolicy) {
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("CHATS")->filters.chat_filter, 1);
+    EXPECT_EQ(sigurdos::ui::findHomeRoute("DMs")->filters.chat_filter, 2);
+    EXPECT_TRUE(sigurdos::ui::findHomeRoute("ROOMS")->filters.rooms_only);
+    EXPECT_FALSE(sigurdos::ui::findHomeRoute("CONTACTS")->filters.rooms_only);
 }
 
 TEST(HomeScreenGridTest, SingleRemainderPixelOffsetsEveryFollowingRow) {

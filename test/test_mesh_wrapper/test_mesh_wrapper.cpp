@@ -45,6 +45,10 @@ protected:
     }
 };
 
+// These cases intentionally validate only the public compile/link surface.
+// Runtime behavior belongs in production-linked policy and integration suites.
+class MeshWrapperApiCompileContract : public MeshWrapperTest {};
+
 TEST_F(MeshWrapperTest, ResetRestoresEveryPublishedMockMetric) {
     sigurdos::mesh::mock_set_noise(-42);
     sigurdos::mesh::mock_set_rssi(-12);
@@ -65,7 +69,7 @@ TEST_F(MeshWrapperTest, ResetRestoresEveryPublishedMockMetric) {
 }
 
 // ── API function signatures compile and link ────────────
-TEST_F(MeshWrapperTest, InitFunctionExists) {
+TEST_F(MeshWrapperApiCompileContract, InitFunctionExists) {
     // We can't call init() without hardware, but the function symbol exists.
     // Verify return type is bool (spiffs_ok parameter has default).
     using init_fn = bool (*)(bool);
@@ -73,74 +77,74 @@ TEST_F(MeshWrapperTest, InitFunctionExists) {
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, LoopFunctionExists) {
+TEST_F(MeshWrapperApiCompileContract, LoopFunctionExists) {
     using loop_fn = void (*)();
     (void)static_cast<loop_fn>(sigurdos::mesh::loop);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, SendDirectSignature) {
+TEST_F(MeshWrapperApiCompileContract, SendDirectSignature) {
     using send_fn = uint32_t (*)(const char*, const char*);
     (void)static_cast<send_fn>(sigurdos::mesh::sendMessage);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, SendChannelSignature) {
+TEST_F(MeshWrapperApiCompileContract, SendChannelSignature) {
     using send_fn = bool (*)(const char*, const char*);
     (void)static_cast<send_fn>(sigurdos::mesh::sendChannelMessage);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, AddHashtagChannelSignature) {
+TEST_F(MeshWrapperApiCompileContract, AddHashtagChannelSignature) {
     using add_fn = bool (*)(const char*);
     (void)static_cast<add_fn>(sigurdos::mesh::addHashtagChannel);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, RemoveChannelSignature) {
+TEST_F(MeshWrapperApiCompileContract, RemoveChannelSignature) {
     using rm_fn = bool (*)(int);
     (void)static_cast<rm_fn>(sigurdos::mesh::removeChannel);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, GetNoiseFloorReturnsInt) {
+TEST_F(MeshWrapperApiCompileContract, GetNoiseFloorReturnsInt) {
     using fn = int (*)();
     (void)static_cast<fn>(sigurdos::mesh::getNoiseFloor);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, GetLastRSSIReturnsInt) {
+TEST_F(MeshWrapperApiCompileContract, GetLastRSSIReturnsInt) {
     using fn = int (*)();
     (void)static_cast<fn>(sigurdos::mesh::getLastRSSI);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, GetLastSNRReturnsFloat) {
+TEST_F(MeshWrapperApiCompileContract, GetLastSNRReturnsFloat) {
     using fn = float (*)();
     (void)static_cast<fn>(sigurdos::mesh::getLastSNR);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, GetUnreadCountReturnsInt) {
+TEST_F(MeshWrapperApiCompileContract, GetUnreadCountReturnsInt) {
     using fn = int (*)();
     (void)static_cast<fn>(sigurdos::mesh::pendingMessageCount);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, PacketLogGenerationReturnsMonotonicCounterType) {
+TEST_F(MeshWrapperApiCompileContract, PacketLogGenerationReturnsMonotonicCounterType) {
     using fn = uint32_t (*)();
     (void)static_cast<fn>(sigurdos::mesh::getPacketLogGeneration);
     (void)sigurdos::mesh::getPacketLogGeneration();
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, ApplyRadioParamsAcceptsRxGainFlag) {
+TEST_F(MeshWrapperApiCompileContract, ApplyRadioParamsAcceptsRxGainFlag) {
     using fn = bool (*)(float, float, int, int, int, bool);
     (void)static_cast<fn>(sigurdos::mesh::applyRadioParams);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, PersistenceApisReportCommitStatus) {
+TEST_F(MeshWrapperApiCompileContract, PersistenceApisReportCommitStatus) {
     using save_fn = bool (*)();
     using favourite_fn = bool (*)(const char*, bool);
     (void)static_cast<save_fn>(sigurdos::mesh::saveState);
@@ -286,20 +290,20 @@ TEST_F(MeshWrapperTest, ExportContactsFullReturnsNonNegative) {
 }
 
 // ── removeContact signature exists ──────────────────────
-TEST_F(MeshWrapperTest, RemoveContactSignature) {
+TEST_F(MeshWrapperApiCompileContract, RemoveContactSignature) {
     using rm_fn = bool (*)(const char*);
     (void)static_cast<rm_fn>(sigurdos::mesh::removeContact);
     SUCCEED();
 }
 
 // ── resetPathTo signature exists ────────────────────────
-TEST_F(MeshWrapperTest, ResetPathToSignature) {
+TEST_F(MeshWrapperApiCompileContract, ResetPathToSignature) {
     using fn = bool (*)(const char*);
     (void)static_cast<fn>(sigurdos::mesh::resetPathTo);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, FactoryResetSignature) {
+TEST_F(MeshWrapperApiCompileContract, FactoryResetSignature) {
     using fn = void (*)();
     (void)static_cast<fn>(sigurdos::mesh::factoryReset);
     SUCCEED();
@@ -307,7 +311,7 @@ TEST_F(MeshWrapperTest, FactoryResetSignature) {
 
 // ── Node Stats API surface ──
 
-TEST_F(MeshWrapperTest, NodeStatsCounterSignatures) {
+TEST_F(MeshWrapperApiCompileContract, NodeStatsCounterSignatures) {
     // All getter return types compile-time-checked
     using getU32 = uint32_t (*)();
     using getUL  = unsigned long (*)();
@@ -390,13 +394,13 @@ TEST_F(MeshWrapperTest, AckAlsoRefreshesDeliveryCounter) {
 
 // Identity backup API surface
 
-TEST_F(MeshWrapperTest, ExportIdentitySignature) {
+TEST_F(MeshWrapperApiCompileContract, ExportIdentitySignature) {
     using export_fn = bool (*)(char*, size_t);
     (void)static_cast<export_fn>(sigurdos::mesh::exportIdentity);
     SUCCEED();
 }
 
-TEST_F(MeshWrapperTest, ImportIdentitySignature) {
+TEST_F(MeshWrapperApiCompileContract, ImportIdentitySignature) {
     using import_fn = bool (*)(const char*);
     (void)static_cast<import_fn>(sigurdos::mesh::importIdentity);
     SUCCEED();
