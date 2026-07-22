@@ -1986,8 +1986,7 @@ void setDutyCycle(uint8_t percent) {
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, name) == 0) {
-                g_mesh->sendLoginTo(*c, password);
-                return true;
+                return g_mesh->sendLoginTo(*c, password);
             }
         }
         return false;
@@ -2022,9 +2021,18 @@ void setDutyCycle(uint8_t percent) {
     // Force login state for a contact (test/override only)
     void forceLoginState(const char* name, uint8_t status, uint8_t permission) {
         if (!g_mesh || !name) return;
-        int idx = g_mesh->findLoginEntry(name);
+        const ::ContactInfo* contact = nullptr;
+        for (int i = 0; i < g_mesh->getContactCount(); ++i) {
+            const ::ContactInfo* candidate = g_mesh->getContact(i);
+            if (!candidate || strcmp(candidate->name, name) != 0) continue;
+            if (contact) return;  // ambiguous display name
+            contact = candidate;
+        }
+        if (!contact) return;
+
+        int idx = g_mesh->findLoginEntry(contact->id.pub_key);
         if (idx < 0) {
-            idx = g_mesh->addLoginEntry(name);
+            idx = g_mesh->addLoginEntry(*contact);
             if (idx < 0) return;
         }
         g_mesh->_login_entries[idx].status = status;

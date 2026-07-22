@@ -518,27 +518,47 @@ public:
     };
 
     struct LoginEntry {
-        char     contact_name[32];
-        uint8_t  permission;        // server permission byte (0=guest, 1=admin, etc.)
-        uint8_t  acl_permissions;   // v7+ ACL byte
-        uint8_t  status;            // LoginStatus
-        uint32_t started_at_ms;     // when login was initiated (for timeout)
-        uint32_t timeout_ms;        // normalized estimated response deadline
-        bool     keep_alive_active; // negotiated keep-alive should still exist
+        char     contact_name[32] = {};
+        uint8_t  pub_key[PUB_KEY_SIZE] = {};
+        uint8_t  permission = 0;        // server permission byte (0=guest, 1=admin, etc.)
+        uint8_t  acl_permissions = 0;   // v7+ ACL byte
+        uint8_t  status = LOGIN_NONE;   // LoginStatus
+        uint32_t started_at_ms = 0;     // when login was initiated (for timeout)
+        uint32_t timeout_ms = 0;        // normalized estimated response deadline
+        bool     keep_alive_active = false; // negotiated keep-alive should still exist
         bool     in_use = false;
     };
     LoginEntry _login_entries[MAX_LOGIN_ENTRIES];
 
-    int findLoginEntry(const char* name) const {
+    int findLoginEntry(const uint8_t* pub_key) const {
+        if (!pub_key) return -1;
         for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
             if (_login_entries[i].in_use &&
-                strcmp(_login_entries[i].contact_name, name) == 0)
+                memcmp(_login_entries[i].pub_key, pub_key, PUB_KEY_SIZE) == 0) {
                 return i;
+            }
         }
         return -1;
     }
 
-    int addLoginEntry(const char* name, uint32_t estimated_timeout_ms = 0);
+    // Name lookup remains a UI convenience. Duplicate names are ambiguous and
+    // deliberately return no result instead of selecting the first identity.
+    int findLoginEntry(const char* name) const {
+        if (!name || !name[0]) return -1;
+        int match = -1;
+        for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
+            if (!_login_entries[i].in_use ||
+                strcmp(_login_entries[i].contact_name, name) != 0) {
+                continue;
+            }
+            if (match >= 0) return -1;
+            match = i;
+        }
+        return match;
+    }
+
+    int addLoginEntry(const ::ContactInfo& contact,
+                      uint32_t estimated_timeout_ms = 0);
 
     void updateLoginSessions(uint32_t now_ms);
 
@@ -546,12 +566,10 @@ public:
     void loop();
 
 
-    void removeLoginEntry(const char* name) {
-        int idx = findLoginEntry(name);
+    void removeLoginEntry(const uint8_t* pub_key) {
+        int idx = findLoginEntry(pub_key);
         if (idx >= 0) {
-            _login_entries[idx].in_use = false;
-            _login_entries[idx].status = LOGIN_NONE;
-            _login_entries[idx].keep_alive_active = false;
+            _login_entries[idx] = LoginEntry{};
         }
     }
 
@@ -584,7 +602,7 @@ public:
     // Send a login request to a repeater or room server contact.
     // Uses BaseChatMesh::sendLogin() which sends as PAYLOAD_TYPE_ANON_REQ.
     // The response arrives in onContactResponse() with RESP_SERVER_LOGIN_OK at data[4].
-    void sendLoginTo(const ::ContactInfo& contact, const char* password);
+    bool sendLoginTo(const ::ContactInfo& contact, const char* password);
 
 
     // Logout: stop the keep-alive connection and clear the session.

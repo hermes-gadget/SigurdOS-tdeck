@@ -122,8 +122,22 @@ namespace mesh {
 
     int SigurdMeshV2::sendLoginCompanion(const ::ContactInfo& contact, const char* password, uint32_t& est_timeout) {
         est_timeout = 0;
+        const int previous_idx = findLoginEntry(contact.id.pub_key);
+        const LoginEntry previous =
+            previous_idx >= 0 ? _login_entries[previous_idx] : LoginEntry{};
+        const int login_idx = addLoginEntry(contact);
+        if (login_idx < 0) return MSG_SEND_FAILED;
+
         int r = BaseChatMesh::sendLogin(contact, password ? password : "", est_timeout);
-        if (r != MSG_SEND_FAILED) addLoginEntry(contact.name, est_timeout);
+        if (r == MSG_SEND_FAILED) {
+            _login_entries[login_idx] =
+                previous_idx >= 0 ? previous : LoginEntry{};
+            return r;
+        }
+
+        _login_entries[login_idx].started_at_ms = _ms->getMillis();
+        _login_entries[login_idx].timeout_ms =
+            login_session::normalizeTimeout(est_timeout);
         return r;
     }
 
@@ -132,7 +146,9 @@ namespace mesh {
     }
 
     void SigurdMeshV2::companionStopConnection(const uint8_t* pub_key) {
-        if (pub_key) BaseChatMesh::stopConnection(pub_key);
+        if (!pub_key) return;
+        BaseChatMesh::stopConnection(pub_key);
+        removeLoginEntry(pub_key);
     }
 
     int SigurdMeshV2::exportSelfContact(const char* name, uint8_t* out, size_t out_cap) {
@@ -690,10 +706,11 @@ namespace mesh {
                 return nullptr;  // contact gone — can't return the right one
             }
         }
-        return nullptr;
+        return ack_val == 0 ? nullptr : BaseChatMesh::checkConnectionsAck(data);
     }
 
     void SigurdMeshV2::onMessageRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) {
+        BaseChatMesh::markConnectionActive(contact);
         int rssi = (int)_radio->getLastRSSI();
         float snr = pkt ? pkt->getSNR() : _radio->getLastSNR();
         updateSignalSample(contact.id.pub_key, rssi, snr);
@@ -706,6 +723,7 @@ namespace mesh {
     }
 
     void SigurdMeshV2::onCommandDataRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt, uint32_t sender_timestamp, const char* text) {
+        BaseChatMesh::markConnectionActive(contact);
         sigurdos::mesh::pushCmdResponse(contact.name, text, sender_timestamp);
         // Store as COMPANION_TXT_CLI_DATA with the raw app payload text so the
         // companion bridge emits the correct txt_type to official apps. The
@@ -742,6 +760,7 @@ namespace mesh {
     }
 
     void SigurdMeshV2::onSignedMessageRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt, uint32_t sender_timestamp, const uint8_t* sender_prefix, const char* text) {
+        BaseChatMesh::markConnectionActive(contact);
         int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
         uint8_t companion_path_len =
@@ -809,6 +828,7 @@ namespace mesh {
 
     void SigurdMeshV2::onContactResponse(const ::ContactInfo& contact, const uint8_t* data, uint8_t len) {
         if (!data || len < 4) return;
+        BaseChatMesh::markConnectionActive(contact);
         uint32_t tag;
         memcpy(&tag, data, 4);
 
@@ -818,7 +838,7 @@ namespace mesh {
         // Legacy: bytes 4-5 = "OK" (2 chars)
         // Only a pending login may consume this response. Active sessions also
         // receive status, telemetry, and binary replies from the same contact.
-        int login_idx = findLoginEntry(contact.name);
+        int login_idx = findLoginEntry(contact.id.pub_key);
         if (login_idx >= 0 && _login_entries[login_idx].in_use &&
             _login_entries[login_idx].status == LOGIN_PENDING) {
             const login_response::Parsed response = login_response::parse(data, len);
@@ -1086,49 +1106,32 @@ namespace mesh {
             prefs.manual_add_contacts, prefs.autoadd_config, type);
     }
 
-    int SigurdMeshV2::addLoginEntry(const char* name, uint32_t estimated_timeout_ms) {
-        if (!name || !name[0]) return -1;
-        int idx = findLoginEntry(name);
-        if (idx >= 0) {
-            _login_entries[idx].status = LOGIN_PENDING;
-            _login_entries[idx].permission = 0;
-            _login_entries[idx].acl_permissions = 0;
-            _login_entries[idx].started_at_ms = _ms->getMillis();
-            _login_entries[idx].timeout_ms =
-                login_session::normalizeTimeout(estimated_timeout_ms);
-            _login_entries[idx].keep_alive_active = false;
-            return idx;
+    int SigurdMeshV2::addLoginEntry(const ::ContactInfo& contact,
+                                    uint32_t estimated_timeout_ms) {
+        int idx = findLoginEntry(contact.id.pub_key);
+        if (idx < 0) {
+            idx = login_session::selectReservationSlot(
+                _login_entries, MAX_LOGIN_ENTRIES);
         }
-        for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
-            if (!_login_entries[i].in_use) {
-                strncpy(_login_entries[i].contact_name, name,
-                        sizeof(_login_entries[i].contact_name) - 1);
-                _login_entries[i].contact_name[sizeof(_login_entries[i].contact_name) - 1] = '\0';
-                _login_entries[i].status = LOGIN_PENDING;
-                _login_entries[i].permission = 0;
-                _login_entries[i].acl_permissions = 0;
-                _login_entries[i].started_at_ms = _ms->getMillis();
-                _login_entries[i].timeout_ms =
-                    login_session::normalizeTimeout(estimated_timeout_ms);
-                _login_entries[i].keep_alive_active = false;
-                _login_entries[i].in_use = true;
-                return i;
-            }
-        }
-        return -1; // table full
+        if (idx < 0) return -1;
+
+        LoginEntry& entry = _login_entries[idx];
+        entry = LoginEntry{};
+        strncpy(entry.contact_name, contact.name, sizeof(entry.contact_name) - 1);
+        entry.contact_name[sizeof(entry.contact_name) - 1] = '\0';
+        memcpy(entry.pub_key, contact.id.pub_key, PUB_KEY_SIZE);
+        entry.status = LOGIN_PENDING;
+        entry.started_at_ms = _ms->getMillis();
+        entry.timeout_ms = login_session::normalizeTimeout(estimated_timeout_ms);
+        entry.in_use = true;
+        return idx;
     }
 
     void SigurdMeshV2::invalidateAllLoginSessions() {
         for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
             const LoginEntry& entry = _login_entries[i];
             if (!entry.in_use) continue;
-            for (int j = 0; j < getContactCount(); j++) {
-                const ::ContactInfo* contact = getContact(j);
-                if (contact && strcmp(contact->name, entry.contact_name) == 0) {
-                    BaseChatMesh::stopConnection(contact->id.pub_key);
-                    break;
-                }
-            }
+            BaseChatMesh::stopConnection(entry.pub_key);
         }
         clearAllLoginEntries();
     }
@@ -1140,13 +1143,7 @@ namespace mesh {
 
             const ::ContactInfo* contact = nullptr;
             if (entry.status == LOGIN_OK && entry.keep_alive_active) {
-                for (int j = 0; j < getContactCount(); j++) {
-                    const ::ContactInfo* candidate = getContact(j);
-                    if (candidate && strcmp(candidate->name, entry.contact_name) == 0) {
-                        contact = candidate;
-                        break;
-                    }
-                }
+                contact = lookupContactByPubKey(entry.pub_key, PUB_KEY_SIZE);
             }
             const bool connected = contact && BaseChatMesh::hasConnectionTo(contact->id.pub_key);
             const login_session::Status next = login_session::evaluate(
@@ -1161,13 +1158,7 @@ namespace mesh {
             entry.status = (uint8_t)next;
             entry.keep_alive_active = false;
             if (!contact) {
-                for (int j = 0; j < getContactCount(); j++) {
-                    const ::ContactInfo* candidate = getContact(j);
-                    if (candidate && strcmp(candidate->name, entry.contact_name) == 0) {
-                        contact = candidate;
-                        break;
-                    }
-                }
+                contact = lookupContactByPubKey(entry.pub_key, PUB_KEY_SIZE);
             }
             if (contact) {
                 sigurdos::mesh::mesh_v2_companion_login_push(
@@ -1185,29 +1176,35 @@ namespace mesh {
         updateLoginSessions(_ms->getMillis());
     }
 
-    void SigurdMeshV2::sendLoginTo(const ::ContactInfo& contact, const char* password) {
-        if (!password) return;
+    bool SigurdMeshV2::sendLoginTo(const ::ContactInfo& contact, const char* password) {
+        if (!password) return false;
+        const int previous_idx = findLoginEntry(contact.id.pub_key);
+        const LoginEntry previous =
+            previous_idx >= 0 ? _login_entries[previous_idx] : LoginEntry{};
+        const int login_idx = addLoginEntry(contact);
+        if (login_idx < 0) return false;
+
         uint32_t est_timeout = 0;
         int r = BaseChatMesh::sendLogin(contact, password, est_timeout);
         if (r != MSG_SEND_FAILED) {
-            addLoginEntry(contact.name, est_timeout);
+            _login_entries[login_idx].started_at_ms = _ms->getMillis();
+            _login_entries[login_idx].timeout_ms =
+                login_session::normalizeTimeout(est_timeout);
 #if SIGURDOS_DEBUG_MESH
             Serial.printf("[mesh] Login sent to %s (result=%d, timeout=%u)\n",
                           contact.name, r, est_timeout);
 #endif
+            return true;
         } else {
-            int idx = addLoginEntry(contact.name, est_timeout);
-            if (idx >= 0) {
-                _login_entries[idx].status = LOGIN_FAILED;
-                sigurdos::mesh::mesh_v2_companion_login_push(
-                    contact.id.pub_key, false, 0, 0, 0, 0);
-            }
+            _login_entries[login_idx] =
+                previous_idx >= 0 ? previous : LoginEntry{};
+            return false;
         }
     }
 
     void SigurdMeshV2::sendLogoutTo(const ::ContactInfo& contact) {
         BaseChatMesh::stopConnection(contact.id.pub_key);
-        removeLoginEntry(contact.name);
+        removeLoginEntry(contact.id.pub_key);
 #if SIGURDOS_DEBUG_MESH
         Serial.printf("[mesh] Logged out from %s\n", contact.name);
 #endif

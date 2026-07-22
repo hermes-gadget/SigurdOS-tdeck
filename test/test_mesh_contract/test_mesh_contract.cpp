@@ -92,6 +92,69 @@ TEST(MeshContractTest, LoginSessionTransitionsExposeTimeoutAndDrop) {
     EXPECT_EQ(evaluate(OK, 0, 0, false, false, 0), OK);
 }
 
+TEST(MeshContractTest, LoginReservationPrefersFreeThenTerminalSlots) {
+    using namespace sigurdos::mesh::login_session;
+    struct Slot {
+        bool in_use;
+        uint8_t status;
+    };
+
+    Slot slots[] = {
+        {true, FAILED},
+        {true, OK},
+        {false, NONE},
+        {true, TIMED_OUT},
+    };
+    EXPECT_EQ(selectReservationSlot(slots, 4), 2);
+
+    slots[2] = {true, PENDING};
+    EXPECT_EQ(selectReservationSlot(slots, 4), 0);
+
+    slots[0] = {true, OK};
+    EXPECT_EQ(selectReservationSlot(slots, 4), 3);
+
+    slots[3] = {true, DROPPED};
+    EXPECT_EQ(selectReservationSlot(slots, 4), 3);
+}
+
+TEST(MeshContractTest, LoginReservationNeverEvictsPendingOrActiveSessions) {
+    using namespace sigurdos::mesh::login_session;
+    struct Slot {
+        bool in_use;
+        uint8_t status;
+    };
+    const Slot full[] = {
+        {true, PENDING},
+        {true, OK},
+        {true, PENDING},
+        {true, OK},
+    };
+    EXPECT_EQ(selectReservationSlot(full, 4), -1);
+    EXPECT_EQ(selectReservationSlot<Slot>(nullptr, 4), -1);
+}
+
+TEST(MeshContractTest, RepeatedTerminalLoginsCannotExhaustTable) {
+    using namespace sigurdos::mesh::login_session;
+    struct Slot {
+        bool in_use;
+        uint8_t status;
+    };
+    Slot slots[] = {
+        {true, FAILED},
+        {true, TIMED_OUT},
+        {true, DROPPED},
+        {true, FAILED},
+    };
+
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const int slot = selectReservationSlot(slots, 4);
+        ASSERT_GE(slot, 0);
+        slots[slot] = {true, PENDING};
+        slots[slot].status = static_cast<uint8_t>(
+            attempt % 2 == 0 ? FAILED : TIMED_OUT);
+    }
+}
+
 TEST(MeshContractTest, LegacyLoginResponseIsAcceptedAtSixBytes) {
     const uint8_t response[6] = {1, 2, 3, 4, 'O', 'K'};
     const auto parsed = sigurdos::mesh::login_response::parse(
