@@ -393,6 +393,24 @@ TEST_F(TileCacheTest, EvictDoesNotFreeMemory) {
     EXPECT_NE(slot->pixels, nullptr);
 }
 
+TEST_F(TileCacheTest, ClearReleasesEveryOwnedBufferAndResetsEntries) {
+    for (int i = 0; i < TILE_CACHE_SIZE; ++i) {
+        cache[i] = {i + 1, i + 2, i + 3,
+                    reinterpret_cast<uint16_t*>(static_cast<intptr_t>(i + 1)),
+                    static_cast<uint32_t>(10 + i)};
+    }
+
+    int releases = 0;
+    tile_cache_clear(cache, TILE_CACHE_SIZE,
+                     [&releases](uint16_t*) { ++releases; });
+
+    EXPECT_EQ(releases, TILE_CACHE_SIZE);
+    for (const auto& entry : cache) {
+        EXPECT_EQ(entry.pixels, nullptr);
+        EXPECT_EQ(entry.last_used, 0U);
+    }
+}
+
 TEST_F(TileCacheTest, PrepareSlotReusesVictimAllocation) {
     uint16_t old_pixel = 0;
     uint16_t replacement_pixel = 0;

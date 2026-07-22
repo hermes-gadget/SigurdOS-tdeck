@@ -53,6 +53,15 @@ struct TileLoadBudget {
 // Zero-initialise all entries in the cache array (pixels = nullptr)
 void tile_cache_init(CachedTile* cache, int count);
 
+template <typename FreeFn>
+void tile_cache_clear(CachedTile* cache, int count, FreeFn release) {
+    if (!cache || count <= 0) return;
+    for (int i = 0; i < count; ++i) {
+        if (cache[i].pixels) release(cache[i].pixels);
+        cache[i] = {0, 0, 0, nullptr, 0};
+    }
+}
+
 // ── Lookup ──────────────────────────────────────────────────
 
 // Look up a tile by coordinates.

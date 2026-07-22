@@ -78,6 +78,7 @@ TEST_F(MapRendererMathTest, CraftedRgbaTileIhdrIsAccepted) {
     const PngIhdrFixture png = make_png_ihdr(256, 256, 8, 6);
 
     EXPECT_TRUE(sigurdos_map_png_ihdr_supported(png.data(), png.size()));
+    EXPECT_GE(SIGURDOS_MAP_PNG_MAX_COMPRESSED_BYTES, 256U * 1024U);
     EXPECT_EQ(SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES, 262400U);
 }
 
@@ -125,6 +126,41 @@ TEST_F(MapRendererMathTest, ZoomValidationRejectsOutOfRangeValues) {
     EXPECT_TRUE(sigurdos_map_zoom_valid(18));
     EXPECT_FALSE(sigurdos_map_zoom_valid(-1));
     EXPECT_FALSE(sigurdos_map_zoom_valid(19));
+}
+
+TEST_F(MapRendererMathTest, TileIndexParsingRejectsOverflowAndWorldRange) {
+    int value = -1;
+    EXPECT_TRUE(sigurdos_map_parse_tile_index("0", 1, 0, &value));
+    EXPECT_EQ(value, 0);
+    EXPECT_TRUE(sigurdos_map_parse_tile_index("255", 3, 8, &value));
+    EXPECT_EQ(value, 255);
+
+    EXPECT_FALSE(sigurdos_map_parse_tile_index("256", 3, 8, &value));
+    EXPECT_FALSE(sigurdos_map_parse_tile_index(
+        "999999999999999999999999", 24, 8, &value));
+    EXPECT_FALSE(sigurdos_map_parse_tile_index("12x", 3, 8, &value));
+    EXPECT_FALSE(sigurdos_map_parse_tile_index("0", 1, 19, &value));
+    EXPECT_FALSE(sigurdos_map_parse_tile_index("0", 1, 0, nullptr));
+}
+
+TEST_F(MapRendererMathTest, SparseZoomNavigationSkipsUnavailableLevels) {
+    bool available[19] = {};
+    available[8] = true;
+    available[10] = true;
+    auto has_zoom = [&available](int zoom) { return available[zoom]; };
+
+    EXPECT_EQ(sigurdos_map_select_available_zoom(8, 1, 8, 10, has_zoom), 10);
+    EXPECT_EQ(sigurdos_map_select_available_zoom(10, -1, 8, 10, has_zoom), 8);
+    EXPECT_EQ(sigurdos_map_select_available_zoom(10, 1, 8, 10, has_zoom), 10);
+}
+
+TEST_F(MapRendererMathTest, InvalidCurrentZoomUsesNearestLowerTieBreak) {
+    bool available[19] = {};
+    available[8] = true;
+    available[10] = true;
+    auto has_zoom = [&available](int zoom) { return available[zoom]; };
+
+    EXPECT_EQ(sigurdos_map_select_available_zoom(9, 0, 8, 10, has_zoom), 8);
 }
 
 TEST_F(MapRendererMathTest, TilesPerAxisUsesZoomPowerOfTwo) {

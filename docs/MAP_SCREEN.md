@@ -207,7 +207,7 @@ TileCoverage {
    - Parses the `"bounds"` array `[min_lat, min_lon, max_lat, max_lon]`
    - Overrides the initial center to the midpoint of the bounds
 5. `clamp_view_to_coverage()` — prevents panning/zooming outside available tiles:
-   - Clamps zoom level to available range
+   - Selects the nearest discovered zoom level; zoom controls skip sparse gaps
    - Clamps center lat/lon so at least half a tile margin remains visible
 
 ### Map Interaction API
@@ -293,6 +293,7 @@ Evict:    find first nullptr slot, else LRU (lowest last_used)
 | Function | Purpose |
 |----------|---------|
 | `tile_cache_init(cache, count)` | Zero-initialises all entries (`pixels = nullptr`, `last_used = 0`) |
+| `tile_cache_clear(cache, count, free_fn)` | Frees cached pixel buffers through `free_fn` and resets every slot |
 | `tile_cache_lookup(cache, count, zoom, tx, ty, &clock)` | Linear scan. On hit: updates `last_used` to `++(*clock)`, returns entry. On miss: returns `nullptr` (clock unchanged). |
 | `tile_cache_evict_slot(cache, count)` | Returns the first empty slot (`pixels == nullptr`), or the entry with the lowest `last_used` (LRU). **Does NOT free memory** — the caller must free `slot->pixels` before overwriting it. |
 
@@ -302,8 +303,9 @@ Evict:    find first nullptr slot, else LRU (lowest last_used)
   allocating heap memory.
 - Entries expire after 30 seconds using unsigned subtraction, so expiry remains
   correct across `millis()` wraparound. A full cache evicts its oldest failure.
-- Missing, corrupt, unreadable, or allocation-failed tiles enter the cache;
-  re-entering Map or rediscovering an SD tile set clears stale misses.
+- Missing, corrupt, unreadable, or allocation-failed tiles enter the cache.
+  Re-entering Map or rediscovering an SD tile set clears both positive and
+  negative cache entries so replaced media cannot leave stale pixels or misses.
 - `TileLoadBudget` permits two uncached file/decode attempts per render. Cache
   hits and known misses are free, while excess candidates are deferred.
 - `sigurdos_map_last_load_attempts()`, `sigurdos_map_last_negative_hits()`,
@@ -315,7 +317,7 @@ Evict:    find first nullptr slot, else LRU (lowest last_used)
 | Allocation | Size per entry | Total (4 entries) | Location |
 |------------|---------------|-------------------|----------|
 | Decoded RGB565 pixels | 256 × 256 × 2 = 131,072 bytes | **524,288 bytes (~512 KB)** | PSRAM (with DRAM fallback via `map_alloc`) |
-| PNG file buffer (ephemeral) | ~15–30 KB per tile load | Allocated per-load, freed after decode | PSRAM |
+| PNG file buffer (ephemeral) | Up to 320 KB per tile load | Allocated per-load, freed after decode | PSRAM |
 | Canvas draw buffer | 320 × 240 × 2 = 153,600 bytes | **153,600 bytes (~150 KB)** | PSRAM (DRAM fallback) |
 
 **Total map-related PSRAM usage:** ~677 KB (cache + canvas fallback + transient decode buffers)
@@ -350,7 +352,7 @@ SD Card: /sdcard/tiles/{z}/{x}/{y}.png
                │
                ▼
         fopen(path, "rb")
-        fseek/ftell → validate size (≤ 196 KB)
+        fseek/ftell → validate size (≤ 320 KB)
         fread → png_buf in PSRAM
                │
                ▼
@@ -450,7 +452,7 @@ The mountpoint is defined in `src/hal/sdcard.h`:
 | Format | PNG (loaded via lodepng) |
 | Dimensions | 256 × 256 pixels |
 | Color | RGBA (8-bit per channel) — alpha discarded during conversion |
-| Max file size | 196 KB (enforced by `load_tile()`) |
+| Max file size | 320 KB (enforced by `load_tile()`) |
 | Naming | Numeric Y basename only — `12.png` accepted, `12@2x.png` rejected |
 | Structure | `{z}/{x}/{y}.png` — exactly one level of X subdirectories |
 

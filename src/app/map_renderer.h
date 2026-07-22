@@ -39,6 +39,9 @@ static constexpr double SIGURDOS_MAP_DEFAULT_CA_LAT = 56.1304;
 static constexpr double SIGURDOS_MAP_DEFAULT_CA_LON = -106.3468;
 static constexpr int SIGURDOS_MAP_DEFAULT_CA_ZOOM = 3;
 static constexpr std::size_t SIGURDOS_MAP_PNG_IHDR_SIZE = 33;
+// Incompressible 256x256 RGBA data is slightly larger than 256 KiB once
+// framed as PNG. Leave bounded room for framing and modest ancillary data.
+static constexpr std::size_t SIGURDOS_MAP_PNG_MAX_COMPRESSED_BYTES = 320U * 1024U;
 static constexpr std::size_t SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES =
     static_cast<std::size_t>(SIGURDOS_MAP_TILE_SIZE) *
     (SIGURDOS_MAP_TILE_SIZE * 4 + 1);
@@ -193,6 +196,26 @@ inline bool sigurdos_map_tile_valid(int zoom, int x, int y) {
     return n > 0 && x >= 0 && x < n && y >= 0 && y < n;
 }
 
+inline bool sigurdos_map_parse_tile_index(const char* text,
+                                           std::size_t length,
+                                           int zoom,
+                                           int* out) {
+    if (!text || !out || length == 0 || !sigurdos_map_zoom_valid(zoom)) {
+        return false;
+    }
+    std::uint64_t value = 0;
+    for (std::size_t i = 0; i < length; ++i) {
+        if (text[i] < '0' || text[i] > '9') return false;
+        const unsigned digit = static_cast<unsigned>(text[i] - '0');
+        if (value > (2147483647U - digit) / 10U) return false;
+        value = value * 10U + digit;
+    }
+    const int parsed = static_cast<int>(value);
+    if (!sigurdos_map_tile_valid(zoom, 0, parsed)) return false;
+    *out = parsed;
+    return true;
+}
+
 inline bool sigurdos_map_tile_intersects_viewport(int screen_x, int screen_y,
                                                    int viewport_w, int viewport_h) {
     return viewport_w > 0 && viewport_h > 0 &&
@@ -265,6 +288,32 @@ inline int sigurdos_map_marker_origin(int screen_coordinate,
                                       int parent_screen_offset,
                                       int marker_size) {
     return screen_coordinate - parent_screen_offset - marker_size / 2;
+}
+
+template <typename AvailableFn>
+inline int sigurdos_map_select_available_zoom(int current, int direction,
+                                               int min_zoom, int max_zoom,
+                                               AvailableFn available) {
+    if (min_zoom > max_zoom) return current;
+    current = sigurdos_map_clamp_int(current, min_zoom, max_zoom);
+
+    if (direction != 0) {
+        const int step = direction > 0 ? 1 : -1;
+        for (int zoom = current + step;
+             zoom >= min_zoom && zoom <= max_zoom; zoom += step) {
+            if (available(zoom)) return zoom;
+        }
+        return current;
+    }
+
+    if (available(current)) return current;
+    for (int distance = 1; distance <= max_zoom - min_zoom; ++distance) {
+        const int lower = current - distance;
+        if (lower >= min_zoom && available(lower)) return lower;
+        const int upper = current + distance;
+        if (upper <= max_zoom && available(upper)) return upper;
+    }
+    return current;
 }
 
 template <typename T, typename FreeFn>

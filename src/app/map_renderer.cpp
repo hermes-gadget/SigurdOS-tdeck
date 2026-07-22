@@ -184,7 +184,9 @@ static void apply_preset_default_view() {
 static void clamp_view_to_coverage() {
     if (!have_tile_coverage) return;
 
-    zoom_level = clamp(zoom_level, min_available_zoom, max_available_zoom);
+    zoom_level = sigurdos_map_select_available_zoom(
+        zoom_level, 0, min_available_zoom, max_available_zoom,
+        [](int zoom) { return tile_coverage[zoom].valid; });
     const TileCoverage& c = tile_coverage[zoom_level];
     if (!c.valid) return;
 
@@ -293,7 +295,8 @@ static TileLoadResult load_tile(int zoom, int tx, int ty,
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    if (fsize <= 0 || fsize > 196 * 1024) {
+    if (fsize <= 0 ||
+        static_cast<unsigned long>(fsize) > SIGURDOS_MAP_PNG_MAX_COMPRESSED_BYTES) {
         set_tile_status("load:size %ld %d/%d/%d", fsize, zoom, tx, ty);
         fclose(f); return record_tile_failure(zoom, tx, ty, now_ms);
     }
@@ -467,7 +470,13 @@ static bool scan_y_range(int zoom, int x, int* min_y, int* max_y, int* sample_y)
     while ((ye = readdir(yd)) != nullptr) {
         if ((++scanned_entries % 32) == 0) map_scan_progress();
         if (!entry_is_png_tile(ye)) continue;
-        int y = atoi(ye->d_name);
+        const char* ext = strrchr(ye->d_name, '.');
+        int y = -1;
+        if (!ext || !sigurdos_map_parse_tile_index(
+                        ye->d_name, static_cast<size_t>(ext - ye->d_name),
+                        zoom, &y)) {
+            continue;
+        }
         if (mn_y < 0) {
             mn_y = mx_y = y;
         } else {
@@ -491,7 +500,13 @@ static bool scan_y_range(int zoom, int x, int* min_y, int* max_y, int* sample_y)
     while ((ye = readdir(yd)) != nullptr) {
         if ((++scanned_entries % 32) == 0) map_scan_progress();
         if (!entry_is_png_tile(ye)) continue;
-        int y = atoi(ye->d_name);
+        const char* ext = strrchr(ye->d_name, '.');
+        int y = -1;
+        if (!ext || !sigurdos_map_parse_tile_index(
+                        ye->d_name, static_cast<size_t>(ext - ye->d_name),
+                        zoom, &y)) {
+            continue;
+        }
         double dist = fabs((double)y - mid_y);
         if (best_y < 0 || dist < best_dist) {
             best_y = y;
@@ -873,10 +888,12 @@ void sigurdos_map_reparent(lv_obj_t* new_parent) {
 }
 
 void sigurdos_map_discover_tiles() {
-    // Tile discovery follows an SD insertion/re-entry and is the natural point
-    // to forget stale misses from a previous sparse/missing tile set.
+    // Tile discovery follows an SD insertion/re-entry. Both positive and
+    // negative cache entries may refer to files from the previous card state.
     sigurdos::hal::boot_watchdog_progress(
         sigurdos::hal::BootStage::MapDiscovery);
+    tile_cache_clear(tile_cache, TILE_CACHE_SIZE, map_free);
+    cache_clock = 0;
     missing_tile_cache_init(missing_tile_cache, MISSING_TILE_CACHE_SIZE);
     load_metadata();
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Runtime);
@@ -891,13 +908,8 @@ void sigurdos_map_deinit() {
     // cause a use-after-free crash on the next map visit.
     sigurdos_map_contact_deinit();
 
-    // Free LRU tile cache pixels
-    for (int i = 0; i < TILE_CACHE_SIZE; i++) {
-        if (tile_cache[i].pixels) {
-            map_free(tile_cache[i].pixels);
-            tile_cache[i].pixels = nullptr;
-        }
-    }
+    tile_cache_clear(tile_cache, TILE_CACHE_SIZE, map_free);
+    cache_clock = 0;
     missing_tile_cache_init(missing_tile_cache, MISSING_TILE_CACHE_SIZE);
 
     if (canvas_pixels) { heap_caps_free(canvas_pixels); canvas_pixels = nullptr; }
@@ -934,12 +946,20 @@ void sigurdos_map_pan(int dx, int dy) {
 }
 
 void sigurdos_map_zoom_in()  {
-    zoom_level = clamp(zoom_level + 1, MIN_ZOOM, MAX_ZOOM);
+    zoom_level = have_tile_coverage
+        ? sigurdos_map_select_available_zoom(
+              zoom_level, 1, min_available_zoom, max_available_zoom,
+              [](int zoom) { return tile_coverage[zoom].valid; })
+        : clamp(zoom_level + 1, MIN_ZOOM, MAX_ZOOM);
     clamp_view_to_coverage();
 }
 
 void sigurdos_map_zoom_out() {
-    zoom_level = clamp(zoom_level - 1, MIN_ZOOM, MAX_ZOOM);
+    zoom_level = have_tile_coverage
+        ? sigurdos_map_select_available_zoom(
+              zoom_level, -1, min_available_zoom, max_available_zoom,
+              [](int zoom) { return tile_coverage[zoom].valid; })
+        : clamp(zoom_level - 1, MIN_ZOOM, MAX_ZOOM);
     clamp_view_to_coverage();
 }
 
