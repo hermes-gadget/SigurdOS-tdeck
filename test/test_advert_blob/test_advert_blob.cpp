@@ -3,9 +3,11 @@
 
 #include <gtest/gtest.h>
 #include "mesh/advert_blob.h"
+#include "mesh/advert_blob_store.h"
 #include <cstring>
 #include <string>
 #include <vector>
+#include <cstdio>
 
 using namespace sigurdos::mesh;
 
@@ -92,4 +94,32 @@ TEST(AdvertBlob, ReportsBlobRemovalFailure)
     FakeBlobFileSystem fs{{"/blob_00010203"}, {}, true};
 
     EXPECT_FALSE(deleteBlobByKey(fs, key, sizeof(key)));
+}
+
+TEST(AdvertBlob, AtomicStoreRejectsInvalidReplacementAndPreservesLiveBlob)
+{
+    static constexpr const char* path = "/tmp/sigurdos_advert_blob_test.bin";
+    std::remove(path);
+    std::remove("/tmp/sigurdos_advert_blob_test.bin.tmp");
+
+    uint8_t original[SIGURDOS_ADVERT_BLOB_MIN_LEN];
+    std::memset(original, 0x5A, sizeof(original));
+    AdvertBlobWriteContext valid{original, sizeof(original)};
+    ASSERT_TRUE(sigurdos::storage::atomicFileReplace(
+        path, writeAdvertBlob, &valid, validateAdvertBlob, &valid));
+
+    AdvertBlobWriteContext invalid{original,
+        SIGURDOS_ADVERT_BLOB_MIN_LEN - 1};
+    EXPECT_FALSE(sigurdos::storage::atomicFileReplace(
+        path, writeAdvertBlob, &invalid, validateAdvertBlob, &invalid));
+
+    FILE* file = std::fopen(path, "rb");
+    ASSERT_NE(file, nullptr);
+    uint8_t stored[sizeof(original)] = {};
+    EXPECT_EQ(std::fread(stored, 1, sizeof(stored), file), sizeof(stored));
+    std::fclose(file);
+    EXPECT_EQ(std::memcmp(stored, original, sizeof(original)), 0);
+
+    std::remove(path);
+    std::remove("/tmp/sigurdos_advert_blob_test.bin.tmp");
 }

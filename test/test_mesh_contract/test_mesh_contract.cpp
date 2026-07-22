@@ -27,6 +27,7 @@
 #include "mesh/ping_result_policy.h"
 #include "mesh/public_channel.h"
 #include "mesh/response_copy.h"
+#include "mesh/client_repeat_policy.h"
 
 namespace {
 
@@ -44,6 +45,12 @@ TEST(MeshContractTest, AdvertTypesMatchMeshCoreCompanionValues) {
     EXPECT_EQ(ADV_TYPE_REPEATER, 2);
     EXPECT_EQ(ADV_TYPE_ROOM, 3);
     EXPECT_EQ(ADV_TYPE_SENSOR, 4);
+}
+
+TEST(MeshContractTest, ClientRepeatMatchesUpstreamCompanionSemantics) {
+    EXPECT_FALSE(sigurdos::mesh::clientRepeatAllowsForward(0));
+    EXPECT_TRUE(sigurdos::mesh::clientRepeatAllowsForward(1));
+    EXPECT_TRUE(sigurdos::mesh::clientRepeatAllowsForward(255));
 }
 
 TEST(MeshContractTest, PublicChannelDefaultsStayStable) {

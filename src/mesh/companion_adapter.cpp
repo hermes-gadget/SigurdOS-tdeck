@@ -720,8 +720,6 @@ public:
     // ── System ───────────────────────────────────────────────
     void reboot() override {
         sigurdos::mesh::saveState();
-        sigurdos::mesh::saveContacts();
-        sigurdos::mesh::saveChannels();
         delay(200);
         ESP.restart();
     }

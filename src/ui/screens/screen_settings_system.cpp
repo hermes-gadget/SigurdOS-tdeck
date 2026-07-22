@@ -1230,7 +1230,6 @@ void settings_system_show()
     lv_obj_add_event_cb(btn_reboot, [](lv_event_t*) {
         // Small delay for flash writes to complete, then restart
         sigurdos::mesh::saveState();
-        sigurdos::mesh::saveChannels();
         vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();
     }, LV_EVENT_CLICKED, nullptr);

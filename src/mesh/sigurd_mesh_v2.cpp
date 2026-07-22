@@ -7,6 +7,8 @@
 #include "companion_message_policy.h"
 #include "incoming_message_policy.h"
 #include "advert_blob.h"
+#include "advert_blob_store.h"
+#include "client_repeat_policy.h"
 #include "path_discovery.h"
 #include "ping_result_policy.h"
 #include "control_parser.h"
@@ -1052,6 +1054,8 @@ namespace mesh {
     int SigurdMeshV2::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
         char path[48];
         if (!dest_buf || !makeAdvertBlobPath(key, key_len, path, sizeof(path))) return 0;
+        sigurdos::storage::atomicFileRecover(
+            path, sigurdos::mesh::validateAdvertBlob, nullptr);
         if (!SPIFFS.exists(path)) {
             if (!makeAdvertBlobPath(key, key_len, path, sizeof(path), true) ||
                 !SPIFFS.exists(path)) {
@@ -1078,14 +1082,12 @@ namespace mesh {
             !makeAdvertBlobPath(key, key_len, path, sizeof(path))) {
             return false;
         }
-        File f = SPIFFS.open(path, "w");
-        if (!f) return false;
-        const size_t written = f.write(src_buf, (size_t)len);
-        f.close();
-        if (written != (size_t)len) {
-            SPIFFS.remove(path);
-            return false;
-        }
+        if (!sigurdos::storage::atomicFileRecover(
+                path, sigurdos::mesh::validateAdvertBlob, nullptr)) return false;
+        AdvertBlobWriteContext context{src_buf, static_cast<size_t>(len)};
+        if (!sigurdos::storage::atomicFileReplace(
+                path, sigurdos::mesh::writeAdvertBlob, &context,
+                sigurdos::mesh::validateAdvertBlob, &context)) return false;
 
         char legacy_path[48];
         if (makeAdvertBlobPath(key, key_len, legacy_path, sizeof(legacy_path), true) &&
@@ -1104,10 +1106,9 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::allowPacketForward(const ::mesh::Packet* packet) {
-        if (sigurdos::prefs_get().client_repeat == 0) return false;
-        // Deny forward if packet matches a region with DENY_FLOOD flag
-        if (sigurdos::mesh::regionDeniesFlood(const_cast<::mesh::Packet*>(packet))) return false;
-        return true;
+        (void)packet;
+        return sigurdos::mesh::clientRepeatAllowsForward(
+            sigurdos::prefs_get().client_repeat);
     }
 
     bool SigurdMeshV2::shouldAutoAddContactType(uint8_t type) const {

@@ -15,6 +15,7 @@
 #include "companion_message_policy.h"
 #include "cmd_response_queue.h"
 #include "durable_fanout.h"
+#include "state_checkpoint.h"
 #include "contact_store.h"
 #include "contact_uri.h"
 #include "esp32_hardware_rng.h"
@@ -1649,7 +1650,13 @@ void loadChannels() {
 }
 
 bool saveState() {
-    return !g_mesh || saveIdentity(g_mesh->self_id);
+    return sigurdos::mesh::detail::saveStateCheckpoint(
+        sigurdos::mesh::regionsPersistenceDirty(),
+        []() { return sigurdos::prefs_save(sigurdos::prefs_get()); },
+        []() { return saveChannels(); },
+        []() { return !g_mesh || saveIdentity(g_mesh->self_id); },
+        []() { return saveContacts(); },
+        []() { return sigurdos::mesh::regionsSave(); });
 }
 
 // ── Contact persistence ─────────────────────────
@@ -1756,16 +1763,9 @@ void shutdown()
             // Settings are normally committed on every change. Re-commit the
             // cached snapshot here so the orderly shutdown has a checked NVS
             // checkpoint alongside the mesh's SPIFFS-backed state.
-            const bool settings_saved = sigurdos::prefs_save(sigurdos::prefs_get());
-            const bool channels_saved = saveChannels();
-            const bool identity_saved = saveState();
-            const bool contacts_saved = saveContacts();
-            const bool saved = settings_saved && channels_saved &&
-                               identity_saved && contacts_saved;
+            const bool saved = saveState();
             if (!saved) {
-                Serial.printf(
-                    "[power] persistence failed: prefs=%d channels=%d identity=%d contacts=%d\n",
-                    settings_saved, channels_saved, identity_saved, contacts_saved);
+                Serial.println("[power] coordinated persistence checkpoint failed");
             }
             // The stores close/commit synchronously; retain a short settling
             // interval before changing peripheral power domains.

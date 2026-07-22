@@ -33,6 +33,7 @@
 #include "mesh/mesh_wrapper.h"
 #include "mesh/durable_mutation.h"
 #include "mocks/mock_mesh_state.h"
+#include "mesh/state_checkpoint.h"
 
 namespace {
 
@@ -147,6 +148,32 @@ TEST_F(MeshWrapperTest, PersistenceApisReportCommitStatus) {
     (void)static_cast<save_fn>(sigurdos::mesh::saveContacts);
     (void)static_cast<favourite_fn>(sigurdos::mesh::setContactFavourite);
     SUCCEED();
+}
+
+TEST_F(MeshWrapperTest, StateCheckpointAttemptsEveryStoreAfterFailure) {
+    int calls = 0;
+    const bool saved = sigurdos::mesh::detail::saveStateCheckpoint(
+        true,
+        [&]() { ++calls; return false; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; });
+    EXPECT_FALSE(saved);
+    EXPECT_EQ(calls, 5);
+}
+
+TEST_F(MeshWrapperTest, CleanRegionStoreIsNotRewritten) {
+    int calls = 0;
+    const bool saved = sigurdos::mesh::detail::saveStateCheckpoint(
+        false,
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return false; });
+    EXPECT_TRUE(saved);
+    EXPECT_EQ(calls, 4);
 }
 
 TEST_F(MeshWrapperTest, FailedDurableCommitRollsBackRuntimeMutation) {
