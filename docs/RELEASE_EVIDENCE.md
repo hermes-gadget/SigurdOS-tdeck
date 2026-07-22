@@ -67,6 +67,27 @@ all six web-flasher component/full/Launcher binaries. Legacy schema-1 evidence
 is still parsed, but any declared hashes must cover and exactly match this full
 set during post-build verification.
 
+For tagged releases, the workflow also hashes every published input (including
+the manifest, build metadata, and release evidence) into `SHA256SUMS.txt`, then
+uses GitHub's OIDC identity to create `SHA256SUMS.sigstore.json`. Verify it with
+Cosign before trusting the checksum file:
+
+```bash
+cosign verify-blob \
+  --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp \
+    '^https://github.com/hermes-gadget/SigurdOS-tdeck/.github/workflows/build-release.yml@refs/tags/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  SHA256SUMS.txt
+sha256sum --check SHA256SUMS.txt
+```
+
+GitHub build-provenance attestations bind the same release files to the tagged
+workflow run and can be checked with `gh attestation verify <file> --repo
+hermes-gadget/SigurdOS-tdeck`. These publisher signatures do not enable ESP32-S3
+secure boot or device-side signed OTA verification; those require a separate
+device-key provisioning and rollback policy.
+
 ## Companion interop and golden frames
 
 Run the official USB client matrix as documented in `scripts/official-meshcore-client-test/README.md` and the BLE scenarios in `docs/COMPANION_BLE_TEST_ENV.md`. Record firmware versions, date, pass/fail per case, and links to sanitized output. Do not record device IDs, public keys, contact names, message contents, credentials, or private keys.

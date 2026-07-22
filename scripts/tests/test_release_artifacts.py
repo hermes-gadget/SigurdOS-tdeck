@@ -159,6 +159,16 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.assertIn("scripts/validate_release_artifacts.py", workflow)
         self.assertIn("--artifacts-dir artifacts", workflow)
         self.assertIn("--write-attestation artifacts/release-evidence.json", workflow)
+        self.assertIn("! -name SHA256SUMS.sigstore.json", workflow)
+        self.assertIn("cosign sign-blob --yes", workflow)
+        self.assertIn("artifacts/SHA256SUMS.sigstore.json", workflow)
+        self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", workflow)
+        self.assertIn("subject-path: artifacts/*", workflow)
+        self.assertIn("attestations: write", workflow)
+        self.assertIn("id-token: write", workflow)
+
+    def test_tracked_firmware_directory_contains_no_binary_images(self):
+        self.assertEqual([], list((ROOT / "firmware").glob("*.bin")))
 
     def release_dir(self):
         temporary = tempfile.TemporaryDirectory()
