@@ -377,6 +377,25 @@ Each BaseChatMesh `ContactInfo` plus SigurdOS wrapper metadata stores:
 
 ---
 
+## Request/Response Correlation
+
+Status, telemetry, room-history, and companion binary requests are serialized
+per destination identity. A contact may have one pending ordinary request or
+one pending login, never both. The pending slot is reserved before MeshCore is
+asked to transmit and is released if transmission fails or the estimated reply
+deadline expires. Name-based APIs reject duplicate display names; callers that
+already resolved a public key use the `ContactInfo` overload directly.
+
+Ordinary replies are accepted only when all three transaction attributes
+match: the echoed request tag, the sender's full 32-byte public key, and the
+stored request type. Login is intentionally different: current MeshCore login
+replies put the server timestamp—not the initiating request tag—in their first
+four bytes. Login state is therefore correlated by full public key plus a
+pending-session state and accepts only the exact current 13-byte or legacy
+6-byte response shapes.
+
+---
+
 ## Ping Nearby (Zero-Hop Discovery)
 
 The Ping Nearby feature actively discovers nodes within immediate radio range (one hop) without needing prior advert exchange from those nodes.

@@ -39,6 +39,9 @@ The Network screen (internally called **Finder**) is SigurdOS's node discovery a
 
 The Ping Nearby feature actively discovers which nodes are within immediate LoRa range using a lightweight zero-hop request/response protocol.
 
+This UI feature is separate from the binary MeshCore node-discovery responder
+described below.
+
 ### Protocol
 
 ```
@@ -74,6 +77,19 @@ The tag is formatted as an 8-digit hex string and embedded in both payloads.
 | **PONG** | `"PONG:<tag>:<name>:<rssi>"` (e.g. `PONG:A3F72C81:NodeAlpha:-72`) | `sendZeroHop()` with control-disco bit set |
 
 Both messages use `createRawData()` and set `payload[0] |= 0x80` to mark them as control-disco packets. This ensures they are handled by `onControlDataRecv()` and **not** forwarded beyond the immediate one-hop neighbourhood.
+
+### MeshCore Node-Discovery Responder
+
+`SigurdMeshV2::onControlDataRecv()` also implements MeshCore's binary discovery
+protocol. It accepts only exact 6-byte requests or 10-byte requests with a
+`since` timestamp. The request supplies a node-type filter, a correlation tag,
+and a flag selecting an 8-byte public-key prefix or the full 32-byte key.
+
+Responses echo the tag, include the device's configured advert type, and encode
+the measured inbound SNR as a signed quarter-dB byte. Requests that do not match
+the local type or modification time are ignored. To avoid response storms, the
+device permits at most four discovery responses per 120-second window and uses
+a randomized, widened zero-hop transmit delay.
 
 ### PingResult Struct
 

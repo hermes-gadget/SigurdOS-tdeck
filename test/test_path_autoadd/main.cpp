@@ -6,6 +6,7 @@
 
 #include "mesh/autoadd_policy.h"
 #include "mesh/path_discovery.h"
+#include "mesh/node_discovery.h"
 
 namespace sm = sigurdos::mesh;
 
@@ -20,6 +21,49 @@ TEST(PathDiscovery, BuildsUpstreamTelemetryRequestPayload)
         0x03, 0xFE, 0x00, 0x00, 0x00, 0x11, 0x22, 0x33, 0x44
     };
     EXPECT_EQ(std::memcmp(request, expected, sizeof(expected)), 0);
+}
+
+TEST(NodeDiscovery, ParsesSinceFilterAndBuildsSignedSnrVector)
+{
+    const uint8_t request_bytes[10] = {
+        0x81, 0x04, 0x78, 0x56, 0x34, 0x12, 0x40, 0x30, 0x20, 0x10
+    };
+    sm::node_discovery::Request request{};
+    ASSERT_TRUE(sm::node_discovery::parseRequest(
+        request_bytes, sizeof(request_bytes), request));
+    EXPECT_TRUE(request.prefix_only);
+    EXPECT_EQ(request.filter, 0x04);
+    EXPECT_EQ(request.tag, 0x12345678U);
+    EXPECT_EQ(request.since, 0x10203040U);
+    EXPECT_TRUE(sm::node_discovery::matches(request, 2, 0x10203040U));
+    EXPECT_FALSE(sm::node_discovery::matches(request, 2, 0x1020303FU));
+
+    uint8_t key[32];
+    for (size_t i = 0; i < sizeof(key); ++i) key[i] = (uint8_t)i;
+    uint8_t response[38]{};
+    ASSERT_EQ(sm::node_discovery::buildResponse(
+        request, 2, -9, key, response, sizeof(response)), 14U);
+    const uint8_t expected[14] = {
+        0x92, 0xF7, 0x78, 0x56, 0x34, 0x12,
+        0, 1, 2, 3, 4, 5, 6, 7
+    };
+    EXPECT_EQ(std::memcmp(response, expected, sizeof(expected)), 0);
+}
+
+TEST(NodeDiscovery, RejectsEmptyFiltersMalformedLengthsAndResponseStorms)
+{
+    uint8_t bytes[10] = {0x80, 0, 1, 0, 0, 0, 0, 0, 0, 0};
+    sm::node_discovery::Request request{};
+    ASSERT_TRUE(sm::node_discovery::parseRequest(bytes, 6, request));
+    EXPECT_FALSE(sm::node_discovery::matches(request, 1, 0));
+    EXPECT_FALSE(sm::node_discovery::parseRequest(bytes, 7, request));
+
+    sm::node_discovery::RateLimiter limiter;
+    for (uint16_t i = 0; i < sm::node_discovery::RATE_MAX; ++i) {
+        EXPECT_TRUE(limiter.allow(100));
+    }
+    EXPECT_FALSE(limiter.allow(100));
+    EXPECT_TRUE(limiter.allow(220));
 }
 
 TEST(AutoAddPolicy, ManualAddBitControlsGlobalAutoAdd)

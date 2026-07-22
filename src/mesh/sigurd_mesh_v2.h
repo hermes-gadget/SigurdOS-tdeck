@@ -18,6 +18,8 @@
 #include "mesh_safety_policy.h"
 #include "flood_scope_state.h"
 #include "login_session.h"
+#include "node_discovery.h"
+#include "request_correlation.h"
 #include "path_codec.h"
 #include "airtime_policy.h"
 #include "auto_add_policy.h"
@@ -223,11 +225,13 @@ public:
 
     static constexpr int MAX_PENDING_REQUESTS = 8;
     struct PendingRequest {
-        uint32_t tag;
-        char     dest_name[32];
-        uint8_t  req_type;       // request type (0 = unknown/data)
-        char     channel_name[32]; // for REQ_TYPE_GET_ROOM_MSGS: which channel to fetch
-        uint32_t sent_at_ms;
+        uint32_t tag = 0;
+        char     dest_name[32] = {};
+        uint8_t  dest_key[PUB_KEY_SIZE]{};
+        uint8_t  req_type = 0;       // request type (0 = unknown/data)
+        char     channel_name[32] = {}; // for REQ_TYPE_GET_ROOM_MSGS: which channel to fetch
+        uint32_t sent_at_ms = 0;
+        uint32_t timeout_ms = 0;
         bool     companion_binary = false;
         bool     in_use = false;
     };
@@ -236,18 +240,23 @@ public:
     static constexpr int MAX_RESPONSES = 8;
     static constexpr int MAX_RESPONSE_DATA = 128;
     struct ResponseEntry {
-        uint32_t tag;
-        char     contact_name[32];
-        uint8_t  data[MAX_RESPONSE_DATA];
-        uint8_t  len;
-        bool     valid;
+        uint32_t tag = 0;
+        char     contact_name[32] = {};
+        uint8_t  contact_key[PUB_KEY_SIZE] = {};
+        uint8_t  req_type = 0;
+        uint8_t  data[MAX_RESPONSE_DATA] = {};
+        uint8_t  len = 0;
+        bool     valid = false;
     };
     ResponseEntry _responses[MAX_RESPONSES];
     int _n_responses = 0;
 
     // Send a typed REQ to a contact by name. Returns true if sent.
     // The response arrives via onContactResponse() and is stored in _responses[].
-    bool sendRequest(const char* name, uint8_t req_type);
+    bool sendRequest(const char* name, uint8_t req_type,
+                     uint32_t* tag_out = nullptr);
+    bool sendRequest(const ::ContactInfo& contact, uint8_t req_type,
+                     uint32_t* tag_out = nullptr);
 
 
     // Send a custom-data REQ to a contact by name.
@@ -560,6 +569,12 @@ public:
 
     int addLoginEntry(const ::ContactInfo& contact,
                       uint32_t estimated_timeout_ms = 0);
+    int findPendingLogin(const uint8_t* pub_key) const;
+    bool hasPendingRequest(const uint8_t* pub_key) const;
+    bool findUniqueContact(const char* name, ::ContactInfo& contact);
+    int reservePendingRequest(const ::ContactInfo& contact, uint8_t req_type,
+                              bool companion_binary,
+                              const char* channel_name = nullptr);
 
     void updateLoginSessions(uint32_t now_ms);
 
@@ -579,6 +594,9 @@ public:
             _login_entries[i] = LoginEntry{};
         }
     }
+
+    node_discovery::RateLimiter _discovery_rate_limiter;
+    uint32_t _discovery_modified_at = 0;
 
     // Stop every tracked keep-alive while the old identity and contact table
     // are still available, then clear all session/permission state.

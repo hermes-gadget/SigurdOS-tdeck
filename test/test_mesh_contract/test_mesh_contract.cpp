@@ -30,6 +30,7 @@
 #include "mesh/client_repeat_policy.h"
 #include "mesh/capacity_policy.h"
 #include "mesh/scope_activation_policy.h"
+#include "mesh/request_correlation.h"
 
 namespace {
 
@@ -194,19 +195,15 @@ TEST(MeshContractTest, LegacyLoginResponseIsAcceptedAtSixBytes) {
               sigurdos::mesh::login_response::Format::LegacySuccess);
 }
 
-TEST(MeshContractTest, CurrentLoginBaseResponseDoesNotRequireAcl) {
+TEST(MeshContractTest, TruncatedCurrentLoginResponseIsRejected) {
     const uint8_t response[7] = {1, 2, 3, 4, 0, 2, 3};
     const auto parsed = sigurdos::mesh::login_response::parse(
         response, sizeof(response));
     EXPECT_EQ(parsed.format,
-              sigurdos::mesh::login_response::Format::CurrentSuccess);
-    EXPECT_EQ(parsed.keep_alive_secs, 32);
-    EXPECT_EQ(parsed.permission, 3);
-    EXPECT_EQ(parsed.acl_permissions, 0);
-    EXPECT_EQ(parsed.firmware_level, 0);
+              sigurdos::mesh::login_response::Format::Unrecognized);
 }
 
-TEST(MeshContractTest, CurrentLoginParsesOptionalAclAndFirmwareLevel) {
+TEST(MeshContractTest, CurrentLoginRequiresAndParsesFullWireShape) {
     const uint8_t response[13] = {
         1, 2, 3, 4, 0, 4, 2, 0xA5, 9, 8, 7, 6, 11,
     };
@@ -226,12 +223,27 @@ TEST(MeshContractTest, LoginFailureRequiresCurrentBaseFields) {
                   short_response, sizeof(short_response)).format,
               sigurdos::mesh::login_response::Format::Unrecognized);
 
-    const uint8_t failure[7] = {1, 2, 3, 4, 7, 0, 0};
+    const uint8_t failure[13] = {1, 2, 3, 4, 7, 0, 0, 0, 9, 8, 7, 6, 2};
     const auto parsed = sigurdos::mesh::login_response::parse(
         failure, sizeof(failure));
     EXPECT_EQ(parsed.format,
               sigurdos::mesh::login_response::Format::CurrentFailure);
     EXPECT_EQ(parsed.failure_code, 7);
+}
+
+TEST(MeshContractTest, ResponsesRequireExactTagKeyAndRequestType) {
+    uint8_t expected_key[32]{};
+    uint8_t other_key[32]{};
+    expected_key[0] = 1;
+    other_key[0] = 2;
+    EXPECT_TRUE(sigurdos::mesh::typedResponseMatches(
+        42, expected_key, 3, 42, expected_key, 3, sizeof(expected_key)));
+    EXPECT_FALSE(sigurdos::mesh::typedResponseMatches(
+        41, expected_key, 3, 42, expected_key, 3, sizeof(expected_key)));
+    EXPECT_FALSE(sigurdos::mesh::typedResponseMatches(
+        42, other_key, 3, 42, expected_key, 3, sizeof(expected_key)));
+    EXPECT_FALSE(sigurdos::mesh::typedResponseMatches(
+        42, expected_key, 1, 42, expected_key, 3, sizeof(expected_key)));
 }
 
 TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {

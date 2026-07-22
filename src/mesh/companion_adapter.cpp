@@ -1022,22 +1022,11 @@ private:
         if (!mesh_ptr() || !pub_key) return r;
         ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;
-        char name[32];
-        strncpy(name, c->name, sizeof(name) - 1);
-        name[sizeof(name) - 1] = '\0';
-        bool ok = telemetry ? sigurdos::mesh::requestTelemetry(name)
-                            : sigurdos::mesh::requestStatus(name);
-        if (!ok) return r;
         uint8_t want = telemetry ? (uint8_t)REQ_TYPE_GET_TELEMETRY_DATA
                                  : (uint8_t)REQ_TYPE_GET_STATUS;
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (mesh_ptr()->_pending_reqs[i].in_use &&
-                mesh_ptr()->_pending_reqs[i].req_type == want &&
-                strcmp(mesh_ptr()->_pending_reqs[i].dest_name, name) == 0) {
-                r.expected_ack = mesh_ptr()->_pending_reqs[i].tag;
-                break;
-            }
-        }
+        uint32_t tag = 0;
+        if (!mesh_ptr()->sendRequest(*c, want, &tag) || tag == 0) return r;
+        r.expected_ack = tag;
         r.ok = true;
         r.sent_flood = (c->out_path_len == 0xFF);
         r.est_timeout = 0;

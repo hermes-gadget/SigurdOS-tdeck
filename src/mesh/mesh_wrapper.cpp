@@ -433,11 +433,13 @@ static int _lost_count = 0;
 static int _delivery_counter = 0;
 
 static uint32_t _last_telemetry_tag = 0;
+static uint8_t _last_telemetry_key[PUB_KEY_SIZE]{};
 static sigurdos::mesh::TelemetryResult _cached_telemetry;
 static bool _has_cached_telemetry = false;
 
 // ── Status request tracking (Phase 4.2) ───────
 static uint32_t _last_status_tag = 0;
+static uint8_t _last_status_key[PUB_KEY_SIZE]{};
 static sigurdos::mesh::NodeStatus _cached_status;
 static bool _has_cached_status = false;
 
@@ -742,16 +744,19 @@ const char* getLoggedInRoomServerName(int index) {
 bool requestStatus(const char* dest_name) {
     if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS);
-    if (ok) {
-        // Find the tag from the pending request table
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (g_mesh->_pending_reqs[i].in_use &&
-                strcmp(g_mesh->_pending_reqs[i].dest_name, dest_name) == 0) {
-                _last_status_tag = g_mesh->_pending_reqs[i].tag;
-                break;
-            }
-        }
+    ::ContactInfo contact{};
+    bool found = false;
+    for (int i = 0; i < g_mesh->getNumContacts(); ++i) {
+        if (g_mesh->getContactByIdx((uint32_t)i, contact) &&
+            strcmp(contact.name, dest_name) == 0) { found = true; break; }
+    }
+    if (!found) return false;
+    uint32_t tag = 0;
+    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS, &tag);
+    if (ok && tag != 0) {
+        _last_status_tag = tag;
+        memcpy(_last_status_key, contact.id.pub_key, PUB_KEY_SIZE);
+        _has_cached_status = false;
     }
     return ok;
 }
@@ -761,7 +766,10 @@ bool hasStatusResponse() {
     int n = g_mesh->getResponseCount();
     for (int i = 0; i < n; i++) {
         auto* re = g_mesh->getResponse(i);
-        if (re && re->tag == _last_status_tag) {
+        if (re && typedResponseMatches(
+                re->tag, re->contact_key, re->req_type,
+                _last_status_tag, _last_status_key,
+                REQ_TYPE_GET_STATUS, PUB_KEY_SIZE)) {
             parse_status_blob(re->data, re->len, &_cached_status);
             _has_cached_status = true;
             return true;
@@ -780,15 +788,20 @@ bool getStatusResult(NodeStatus* out) {
 bool requestTelemetry(const char* dest_name) {
     if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_TELEMETRY_DATA);
-    if (ok) {
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (g_mesh->_pending_reqs[i].in_use &&
-                strcmp(g_mesh->_pending_reqs[i].dest_name, dest_name) == 0) {
-                _last_telemetry_tag = g_mesh->_pending_reqs[i].tag;
-                break;
-            }
-        }
+    ::ContactInfo contact{};
+    bool found = false;
+    for (int i = 0; i < g_mesh->getNumContacts(); ++i) {
+        if (g_mesh->getContactByIdx((uint32_t)i, contact) &&
+            strcmp(contact.name, dest_name) == 0) { found = true; break; }
+    }
+    if (!found) return false;
+    uint32_t tag = 0;
+    bool ok = g_mesh->sendRequest(
+        dest_name, REQ_TYPE_GET_TELEMETRY_DATA, &tag);
+    if (ok && tag != 0) {
+        _last_telemetry_tag = tag;
+        memcpy(_last_telemetry_key, contact.id.pub_key, PUB_KEY_SIZE);
+        _has_cached_telemetry = false;
     }
     return ok;
 }
@@ -798,7 +811,10 @@ bool hasTelemetryResponse() {
     int n = g_mesh->getResponseCount();
     for (int i = 0; i < n; i++) {
         auto* re = g_mesh->getResponse(i);
-        if (re && re->tag == _last_telemetry_tag) {
+        if (re && typedResponseMatches(
+                re->tag, re->contact_key, re->req_type,
+                _last_telemetry_tag, _last_telemetry_key,
+                REQ_TYPE_GET_TELEMETRY_DATA, PUB_KEY_SIZE)) {
             // Parse CayenneLPP from the response body after its four-byte tag.
             // Never publish a partial result from a malformed peer response.
             if (re->len < 4) return false;
