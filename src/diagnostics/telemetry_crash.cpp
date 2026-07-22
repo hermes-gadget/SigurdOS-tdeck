@@ -14,6 +14,30 @@
 #include <esp_core_dump.h>
 #include <esp_system.h>
 
+#if defined(ESP32_PLATFORM)
+#include <sdkconfig.h>
+
+// Arduino is linked against a precompiled ESP-IDF, so project sdkconfig files
+// cannot enable these features after the framework has been built. Fail the
+// telemetry build if a future framework pin does not provide the exact crash
+// capture capabilities this module requires.
+#if !defined(CONFIG_ESP_COREDUMP_ENABLE) || !CONFIG_ESP_COREDUMP_ENABLE
+#error "Telemetry crash recovery requires ESP-IDF core dump support"
+#endif
+#if !defined(CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH) || !CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+#error "Telemetry crash recovery requires flash core dumps"
+#endif
+#if !defined(CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF) || !CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF
+#error "Telemetry crash recovery requires ELF core dumps"
+#endif
+#if !defined(CONFIG_ESP_COREDUMP_CHECKSUM_CRC32) || !CONFIG_ESP_COREDUMP_CHECKSUM_CRC32
+#error "Telemetry crash recovery requires core dump integrity checking"
+#endif
+#if !defined(CONFIG_ESP_COREDUMP_MAX_TASKS_NUM) || CONFIG_ESP_COREDUMP_MAX_TASKS_NUM < 16
+#error "Telemetry crash recovery requires at least 16 task snapshots"
+#endif
+#endif
+
 namespace sigurdos {
 namespace telemetry {
 namespace crash {

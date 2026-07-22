@@ -93,6 +93,9 @@ jobs:
       - name: Build debug firmware
         run: pio run -e SigurdOS_TDeck_debug
 
+      - name: Build crash-telemetry firmware
+        run: pio run -e SigurdOS_TDeck_telemetry
+
       - name: Build remote test firmware
         run: pio run -e SigurdOS_TDeck_remote_test_radio
 

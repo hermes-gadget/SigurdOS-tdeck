@@ -52,6 +52,7 @@ class BuildCapabilities:
     test_controller: bool
     ble_agent: bool = False
     periodic_stats: bool = False
+    crash_telemetry: bool = False
     command_protocol: CommandProtocol = CommandProtocol.RELEASE
 
 
@@ -121,6 +122,14 @@ BUILD_ENVIRONMENTS: dict[str, BuildCapabilities] = {
         radio=True,
         test_controller=True,
         periodic_stats=True,
+        crash_telemetry=True,
+        command_protocol=CommandProtocol.REMOTE_TEST,
+    ),
+    "SigurdOS_TDeck_telemetry_diff": BuildCapabilities(
+        radio=True,
+        test_controller=True,
+        periodic_stats=True,
+        crash_telemetry=True,
         command_protocol=CommandProtocol.REMOTE_TEST,
     ),
 }

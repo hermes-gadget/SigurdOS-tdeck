@@ -105,10 +105,15 @@ class PhaseSelection:
     ui: bool = False
     radio: bool = False
     soak: bool = False
+    crash_recovery: bool = False
 
     @property
     def label(self) -> str:
-        enabled = [name for name in ("smoke", "ui", "radio", "soak") if getattr(self, name)]
+        enabled = [
+            name
+            for name in ("smoke", "ui", "radio", "soak", "crash_recovery")
+            if getattr(self, name)
+        ]
         return "+".join(enabled)
 
 
@@ -297,6 +302,19 @@ def _check_variant(
         data={"recovered": info.recovered},
     )
     expected = capabilities_for(expected_environment)
+    actual = capabilities_for(info.build_environment)
+    if selection.crash_recovery and (actual is None or not actual.crash_telemetry):
+        _record(
+            report,
+            "crash.capability",
+            TestStatus.FAIL,
+            "destructive crash recovery requires a detected telemetry build",
+            started,
+            started_at,
+            critical=True,
+            data={"detected_environment": info.build_environment or "unknown"},
+        )
+        return False
     mismatch: list[str] = []
     unknown: list[str] = []
     if expected:
@@ -768,6 +786,135 @@ def run_radio(
             _restore_radio_profile(connection, report, original[0])
 
 
+def run_crash_recovery(
+    connection: PersistentSerial,
+    report: HardwareReport,
+    *,
+    reboot_pause_s: float = 2.0,
+) -> None:
+    """Trigger a controlled panic and require a retained flash-dump summary."""
+
+    if connection.protocol != CommandProtocol.REMOTE_TEST:
+        now, now_at = time.monotonic(), utc_now()
+        _record(
+            report,
+            "crash.protocol",
+            TestStatus.FAIL,
+            "crash recovery requires the telemetry remote-test protocol",
+            now,
+            now_at,
+            critical=True,
+        )
+        return
+
+    if not _run_check(
+        report,
+        "crash.clear_stale",
+        lambda: _command_expect(
+            connection,
+            "crash clear",
+            ("@ok|cmd=crash clear",),
+            timeout_s=5,
+        ),
+        critical=True,
+    ):
+        return
+
+    trigger_started, trigger_at = time.monotonic(), utc_now()
+    response = connection.send_command(
+        "crash test",
+        timeout_s=3,
+        expected=("crash test triggered",),
+        recover_on_silence=False,
+    )
+    acknowledged = "crash test triggered" in response.output
+    _record(
+        report,
+        "crash.trigger",
+        TestStatus.PASS,
+        "controlled panic acknowledged"
+        if acknowledged
+        else "panic command sent; USB reset before acknowledgement",
+        trigger_started,
+        trigger_at,
+        data={"output": response.output[-1600:]},
+    )
+
+    connection.close()
+    if reboot_pause_s > 0:
+        time.sleep(reboot_pause_s)
+    reboot_started, reboot_at = time.monotonic(), utc_now()
+    try:
+        connection.connect()
+        info = connection.detect_firmware()
+        reboot_capabilities = capabilities_for(info.build_environment)
+        rebooted = (
+            info.protocol == CommandProtocol.REMOTE_TEST
+            and reboot_capabilities is not None
+            and reboot_capabilities.crash_telemetry
+        )
+        _record(
+            report,
+            "crash.reboot",
+            TestStatus.PASS if rebooted else TestStatus.FAIL,
+            "telemetry controller returned after panic"
+            if rebooted
+            else "telemetry controller did not return after panic",
+            reboot_started,
+            reboot_at,
+            critical=not rebooted,
+            data={
+                "detected_environment": info.build_environment or "unknown",
+                "evidence": info.evidence[-1600:],
+            },
+        )
+        if not rebooted:
+            return
+    except HardwareSerialError as exc:
+        _record(
+            report,
+            "crash.reboot",
+            TestStatus.FAIL,
+            str(exc),
+            reboot_started,
+            reboot_at,
+            critical=True,
+        )
+        return
+
+    def retained_summary() -> tuple[bool, str, dict[str, Any]]:
+        summary = connection.send_command(
+            "crash report",
+            timeout_s=8,
+            expected=("core_dump=1",),
+        )
+        passed = "@crash|" in summary.output and "core_dump=1" in summary.output
+        return (
+            passed,
+            "esp_core_dump_get_summary() context retained"
+            if passed
+            else "retained record did not contain a valid flash core dump",
+            {"output": summary.output[-2400:]},
+        )
+
+    if not _run_check(
+        report,
+        "crash.flash_summary",
+        retained_summary,
+        critical=True,
+    ):
+        return
+    _run_check(
+        report,
+        "crash.retention",
+        retained_summary,
+        critical=True,
+    )
+    report.notes.append(
+        "Crash context and the flash core dump were intentionally retained for exact-build export."
+    )
+
+
 def _build_or_flash(args: argparse.Namespace, metadata: dict[str, Any]) -> None:
     if not (args.build or args.flash):
         return
@@ -853,6 +1000,8 @@ def _selection(args: argparse.Namespace) -> PhaseSelection:
         return PhaseSelection(radio=True)
     if args.soak:
         return PhaseSelection(soak=True)
+    if args.crash_recovery:
+        return PhaseSelection(crash_recovery=True)
     return PhaseSelection(smoke=True)
 
 
@@ -916,6 +1065,8 @@ def _run_local(args: argparse.Namespace, metadata: dict[str, Any]) -> int:
                 coding_rate=args.radio_cr,
                 tx_power_dbm=args.radio_power,
             )
+        if selection.crash_recovery:
+            run_crash_recovery(connection, report)
         if selection.soak:
             soak = SoakRunner(
                 connection,
@@ -996,6 +1147,8 @@ def _worker_arguments(
         mode = "--radio"
     elif selection.soak:
         mode = "--soak"
+    elif selection.crash_recovery:
+        mode = "--crash-recovery"
     worker = [
         "python3",
         "-m",
@@ -1003,6 +1156,7 @@ def _worker_arguments(
         mode,
         "--local",
         "--remote-worker",
+        *(["--confirm-destructive-crash"] if selection.crash_recovery else []),
         "--port",
         args.port or PI_TDECK_PORT,
         "--baud",
@@ -1108,6 +1262,11 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--ui", action="store_true", help="navigation stability sweep")
     mode.add_argument("--radio", action="store_true", help="radio configuration and low-power TX")
     mode.add_argument("--soak", action="store_true", help="persistent runtime soak")
+    mode.add_argument(
+        "--crash-recovery",
+        action="store_true",
+        help="destructive panic/reboot/flash-core-dump validation",
+    )
     mode.add_argument("--all", action="store_true", help="smoke + UI + radio + soak")
 
     transport = parser.add_mutually_exclusive_group()
@@ -1124,6 +1283,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--leak-threshold", type=int, default=1000)
     parser.add_argument("--screenshot-interval", type=float, default=300.0)
     parser.add_argument("--progress-interval", type=float, default=60.0)
+    parser.add_argument(
+        "--confirm-destructive-crash",
+        action="store_true",
+        help="required acknowledgement for --crash-recovery",
+    )
 
     parser.add_argument("--radio-frequency", type=float, default=TEST_RADIO_PARAMS.frequency_mhz)
     parser.add_argument("--radio-sf", type=int, default=TEST_RADIO_PARAMS.spreading_factor)
@@ -1159,6 +1323,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--iterations must be at least 1")
     if args.duration <= 0:
         parser.error("--duration must be positive")
+    if args.crash_recovery and not args.confirm_destructive_crash:
+        parser.error("--crash-recovery requires --confirm-destructive-crash")
     if args.firmware and args.build:
         parser.error("--firmware and --build are mutually exclusive")
     if args.firmware and not args.flash:

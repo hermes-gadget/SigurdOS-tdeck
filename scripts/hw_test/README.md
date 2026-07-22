@@ -49,10 +49,20 @@ always stop the selected phases.
 | `--ui` | Sweep the standardized screen list and sample heap after each iteration |
 | `--radio` | Save the original profile, configure and verify the bench profile, transmit one low-power packet, then restore/reboot/verify the original profile |
 | `--soak` | Monitor `[stat]` telemetry and crashes over one persistent serial session |
+| `--crash-recovery` | Deliberately panic a telemetry build, reconnect, and require a valid retained flash-core-dump summary twice |
 | `--full` | Smoke + UI + radio; deliberately excludes a long soak |
-| `--all` | Smoke + UI + radio + soak |
+| `--all` | Smoke + UI + radio + soak; deliberately excludes destructive crash recovery |
 
 With no mode flag the runner defaults to `--smoke`.
+
+Crash recovery is destructive and requires a second acknowledgement flag. It
+also refuses any detected firmware other than a telemetry build:
+
+```bash
+python3 scripts/hw_test/hw_test_runner.py \
+  --crash-recovery --confirm-destructive-crash \
+  --local --port /dev/ttyACM0 --env SigurdOS_TDeck_telemetry
+```
 
 The radio phase transmits. Its default bench profile is 868.100 MHz,
 SF10/BW250/CR5 at 2 dBm. The operator is responsible for using a legal,

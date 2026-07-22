@@ -37,7 +37,10 @@ from hw_test.hw_test_runner import (
     _check_variant,
     _merge_report_metadata,
     _parse_radio_profile,
+    build_parser,
+    run_crash_recovery,
     run_radio,
+    validate_args,
 )
 from hw_test.hw_soak import SoakConfig
 
@@ -349,6 +352,91 @@ class ReportTests(unittest.TestCase):
             next(item for item in report.results if item.name == "radio.verify_restore").status,
             TestStatus.PASS,
         )
+
+    def test_crash_recovery_refuses_non_telemetry_firmware(self) -> None:
+        report = HardwareReport(mode="crash_recovery", transport="local")
+        info = DeviceInfo(
+            protocol=CommandProtocol.REMOTE_TEST,
+            build_environment="SigurdOS_TDeck_remote_test",
+            test_controller=True,
+        )
+        self.assertFalse(
+            _check_variant(
+                report,
+                info,
+                "SigurdOS_TDeck_telemetry",
+                PhaseSelection(crash_recovery=True),
+            )
+        )
+        self.assertEqual(report.results[-1].name, "crash.capability")
+        self.assertTrue(report.results[-1].critical)
+
+    def test_crash_recovery_requires_flash_summary_and_retention(self) -> None:
+        class FakeConnection:
+            protocol = CommandProtocol.REMOTE_TEST
+
+            def __init__(self) -> None:
+                self.commands: list[str] = []
+                self.close_count = 0
+                self.connect_count = 0
+
+            def send_command(self, command: str, **_: object) -> SimpleNamespace:
+                self.commands.append(command)
+                output = {
+                    "crash clear": "@ok|cmd=crash clear\n",
+                    "crash test": "[telemetry] crash test triggered\n",
+                    "crash report": "@crash|reason=4|core_dump=1|pc=1107362629\n",
+                }[command]
+                return SimpleNamespace(
+                    output=output,
+                    attempts=1,
+                    recovered=False,
+                    wire_command=command,
+                )
+
+            def close(self) -> None:
+                self.close_count += 1
+
+            def connect(self) -> None:
+                self.connect_count += 1
+
+            def detect_firmware(self) -> DeviceInfo:
+                return DeviceInfo(
+                    protocol=CommandProtocol.REMOTE_TEST,
+                    build_environment="SigurdOS_TDeck_telemetry",
+                    test_controller=True,
+                    evidence="telemetry ready",
+                )
+
+        connection = FakeConnection()
+        report = HardwareReport(mode="crash_recovery", transport="local")
+        run_crash_recovery(connection, report, reboot_pause_s=0)
+
+        self.assertEqual(
+            connection.commands,
+            ["crash clear", "crash test", "crash report", "crash report"],
+        )
+        self.assertEqual(connection.close_count, 1)
+        self.assertEqual(connection.connect_count, 1)
+        self.assertEqual(
+            [result.name for result in report.results],
+            [
+                "crash.clear_stale",
+                "crash.trigger",
+                "crash.reboot",
+                "crash.flash_summary",
+                "crash.retention",
+            ],
+        )
+        self.assertTrue(all(result.status == TestStatus.PASS for result in report.results))
+
+    def test_crash_recovery_cli_requires_explicit_confirmation(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            ["--crash-recovery", "--local", "--port", "/dev/ttyACM0"]
+        )
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            validate_args(parser, args)
 
 
 class ConstantsAndFlashTests(unittest.TestCase):
