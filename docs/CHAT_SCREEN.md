@@ -212,8 +212,9 @@ Dialog features:
 
 Channels are pulled from the MeshCore mesh layer via `mesh::exportChannels()`.
 
-- **Max channels**: `MAX_CHANNELS` = 16
-- **Storage**: `dyn_channels[MAX_CHANNELS][32]` — fixed-size char array
+- **Mesh channel capacity**: 16 exported group channels
+- **Conversation registry**: 32 canonical entries — 16 mesh channels plus 16 synthetic DMs
+- **Filtered views**: CHATS and DMs store non-owning indices into the registry, so switching views never removes hidden histories or unread counts
 - **Sorting**: MRU (most recently used) — `active_channel` tracks the current selection
 - **Auto-join**: On first load, if no channels exist, `mesh::joinPublicChannel()` is called
 - **Fallback**: If the mesh still returns no channels, `#general` is created as a synthetic fallback
@@ -254,7 +255,7 @@ struct ChannelMessage {
 
 ### Per-Channel Storage
 
-Each channel (up to 16) gets a circular buffer allocated on first use:
+Each conversation (up to 32: 16 mesh channels and 16 DMs) gets a circular buffer allocated on first use:
 
 - **PSRAM path**: `heap_caps_malloc(CHAT_MSGS_MAX * sizeof(ChannelMessage), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` → capacity = 200
 - **DRAM fallback**: If PSRAM is exhausted, falls back to internal DRAM at reduced capacity (`CHAT_MSGS_MIN_CAP` = 8)
@@ -469,7 +470,7 @@ Opens or creates a direct message conversation with a contact.
 Adds a message to the per-channel history. The primary entry point for incoming mesh messages (called from `ui::loop()` → `mesh::pollMessages()`).
 
 - Empty `channel` is auto-mapped to `"DM: <sender>"` (DM routing)
-- Unknown channels are auto-created (up to `MAX_CHANNELS`)
+- Unknown conversations are auto-created while the 32-entry registry has capacity
 - If the channel's messaging view is currently visible, the bubble is rendered immediately
 - Unread count is incremented for background channels
 - Automatically trims excess LVGL label widgets if display cap is exceeded

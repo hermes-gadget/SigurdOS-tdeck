@@ -19,6 +19,7 @@
 
 #include "chat_screen.h"
 #include "chat_message_buffer.h"
+#include "chat_conversation_view.h"
 #include "channel_menu.h"
 #include "navigation.h"
 #include "screens.h"
@@ -136,13 +137,14 @@ static constexpr int LIST_CONT_H = DISPLAY_H - LIST_CONT_Y - LIST_DIV_H - BOT_BA
 static constexpr int LIST_ROW_H  = 44;
 
 // ── Channel state ──────────────────────────────────────────
-static constexpr int MAX_CHANNELS = 16;
+static constexpr int MAX_MESH_CHANNELS = CHAT_MESH_CONVERSATION_CAPACITY;
+static constexpr int MAX_CONVERSATIONS = CHAT_CONVERSATION_CAPACITY;
 // Row width of the channel-name table: "DM: " (4) + contact name (31) + null
 // = 36 → 37 for safety. Every buffer that mirrors a dyn_channels entry MUST use
 // this constant — a stride mismatch silently corrupts the channel-state snapshot
 // taken in refresh_channels() (see issue #686).
 static constexpr int CHANNEL_NAME_CAP = 37;
-static char  dyn_channels[MAX_CHANNELS][CHANNEL_NAME_CAP];
+static char  dyn_channels[MAX_CONVERSATIONS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
 static int   active_channel = 0;
@@ -156,6 +158,7 @@ static lv_obj_t* chat_bubble_pool[CHAT_RENDER_WINDOW] = {};
 // ── Channel filter mode ────────────────────────────────────
 // 0 = show all, 1 = channels only, 2 = DMs only
 static int   chat_filter_mode = 0;
+static ChatConversationView<MAX_CONVERSATIONS> conversation_view;
 
 // ── Per-channel metadata ───────────────────────────────────
 struct ChannelMeta {
@@ -163,11 +166,11 @@ struct ChannelMeta {
     uint32_t timestamp;
     int      unread;
 };
-static ChannelMeta ch_meta[MAX_CHANNELS];
+static ChannelMeta ch_meta[MAX_CONVERSATIONS];
 
 // ChannelMessage and the per-channel buffer mechanics live in
 // chat_message_buffer.h (issue #820) so they are testable off-target.
-static ChatMessageBuffer ch_buffers[MAX_CHANNELS];
+static ChatMessageBuffer ch_buffers[MAX_CONVERSATIONS];
 
 
 struct ChatPrivateScopeState {
@@ -176,19 +179,19 @@ struct ChatPrivateScopeState {
     uint8_t key[16];
     bool has_scope;
 };
-static ChatPrivateScopeState ch_private_scopes[MAX_CHANNELS];
+static ChatPrivateScopeState ch_private_scopes[MAX_CONVERSATIONS];
 
 static ChatPrivateScopeState* find_chat_private_scope(const char* conversation, bool create)
 {
     if (!conversation || !conversation[0]) return nullptr;
-    for (int i = 0; i < MAX_CHANNELS; i++) {
+    for (int i = 0; i < MAX_CONVERSATIONS; i++) {
         if (ch_private_scopes[i].conversation[0] &&
             strcmp(ch_private_scopes[i].conversation, conversation) == 0) {
             return &ch_private_scopes[i];
         }
     }
     if (!create) return nullptr;
-    for (int i = 0; i < MAX_CHANNELS; i++) {
+    for (int i = 0; i < MAX_CONVERSATIONS; i++) {
         if (!ch_private_scopes[i].conversation[0]) {
             strncpy(ch_private_scopes[i].conversation, conversation,
                     sizeof(ch_private_scopes[i].conversation) - 1);
@@ -229,13 +232,13 @@ static void clear_chat_private_scope(const char* conversation)
 
 static void ensure_channel_buffer(int idx)
 {
-    if (idx < 0 || idx >= MAX_CHANNELS) return;
+    if (idx < 0 || idx >= MAX_CONVERSATIONS) return;
     ch_buffers[idx].ensure(CHAT_MSGS_MAX, CHAT_MSGS_MIN_CAP);
 }
 
 static bool has_channel_buffer(int idx)
 {
-    return idx >= 0 && idx < MAX_CHANNELS && ch_buffers[idx].allocated();
+    return idx >= 0 && idx < MAX_CONVERSATIONS && ch_buffers[idx].allocated();
 }
 
 static uint16_t chat_msg_cap()
@@ -245,7 +248,7 @@ static uint16_t chat_msg_cap()
 
 static void trim_channel_history(int idx, uint16_t cap)
 {
-    if (idx < 0 || idx >= MAX_CHANNELS || cap == 0) {
+    if (idx < 0 || idx >= MAX_CONVERSATIONS || cap == 0) {
         return;
     }
     // Keeps the legacy ensure side effect: callers gate on
@@ -321,13 +324,28 @@ static lv_obj_t* create_channel_pill(lv_obj_t* parent, int idx)
 // ════════════════════════════════════════════════════
 // Dynamic channels — pulled from mesh, sorted by MRU
 // ════════════════════════════════════════════════════
+static void rebuild_conversation_view()
+{
+    conversation_view.rebuild(dyn_channels, dyn_count, chat_filter_mode);
+}
+
+static int visible_conversation_count()
+{
+    return conversation_view.count();
+}
+
+static int canonical_conversation_index(int visible_index)
+{
+    return conversation_view.canonicalIndex(visible_index);
+}
+
 static void refresh_channels()
 {
     // Cache old channel state so we can clean up + rebuild without flicker
     // NOTE: static to avoid ~1.9KB stack allocation in LVGL event handler context
-    static char old_names[MAX_CHANNELS][CHANNEL_NAME_CAP] = {{0}};
-    static ChannelMeta old_meta[MAX_CHANNELS] = {};
-    static ChatMessageBuffer old_bufs[MAX_CHANNELS];
+    static char old_names[MAX_CONVERSATIONS][CHANNEL_NAME_CAP] = {{0}};
+    static ChannelMeta old_meta[MAX_CONVERSATIONS] = {};
+    static ChatMessageBuffer old_bufs[MAX_CONVERSATIONS];
     // The flat memcpy below relies on old_names having the same row stride as
     // dyn_channels; assert it so the two can never silently diverge again (#686).
     static_assert(sizeof(old_names) == sizeof(dyn_channels),
@@ -344,75 +362,22 @@ static void refresh_channels()
 
     memcpy(old_names, dyn_channels, sizeof(old_names));
     memcpy(old_meta, ch_meta, sizeof(old_meta));
-    for (int i = 0; i < MAX_CHANNELS; i++) {
+    for (int i = 0; i < MAX_CONVERSATIONS; i++) {
         old_bufs[i].takeFrom(ch_buffers[i]);
         memset(&ch_meta[i], 0, sizeof(ch_meta[i]));
     }
 
     // ── Get fresh channel list from mesh ─────────────────
-    dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_CHANNELS);
+    dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_MESH_CHANNELS);
     if (dyn_count == 0) {
         if (sigurdos::mesh::joinPublicChannel()) {
-            dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_CHANNELS);
+            dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_MESH_CHANNELS);
         }
         if (dyn_count == 0) {
             strncpy(dyn_channels[0], "#general", sizeof(dyn_channels[0]) - 1);
             dyn_channels[0][sizeof(dyn_channels[0]) - 1] = '\0';
             dyn_count = 1;
         }
-    }
-
-    // ── Apply channel filter ─────────────────────────────
-    if (chat_filter_mode == 1) {
-        // Channels only: keep real group channels, including PSK-backed Public.
-#if defined(SIGURDOS_DEBUG)
-        Serial.printf("[chat] filter: channels only, before=%d\n", dyn_count);
-#endif
-        int keep = 0;
-        for (int i = 0; i < dyn_count; i++) {
-            if (chat_screen_filter_accepts_channel(chat_filter_mode, dyn_channels[i])) {
-                if (keep < i) {
-                    strncpy(dyn_channels[keep], dyn_channels[i], sizeof(dyn_channels[keep]) - 1);
-                    dyn_channels[keep][sizeof(dyn_channels[keep]) - 1] = '\0';
-                }
-                keep++;
-            }
-        }
-        dyn_count = keep;
-#if defined(SIGURDOS_DEBUG)
-        Serial.printf("[chat] filter: channels only, after=%d\n", dyn_count);
-#endif
-    } else if (chat_filter_mode == 2) {
-        // DMs only: keep entries starting with "DM:"
-#if defined(SIGURDOS_DEBUG)
-        Serial.printf("[chat] filter: DMs only, before=%d\n", dyn_count);
-#endif
-        int keep = 0;
-        for (int i = 0; i < dyn_count; i++) {
-            if (chat_screen_filter_accepts_channel(chat_filter_mode, dyn_channels[i])) {
-                if (keep < i) {
-                    strncpy(dyn_channels[keep], dyn_channels[i], sizeof(dyn_channels[keep]) - 1);
-                    dyn_channels[keep][sizeof(dyn_channels[keep]) - 1] = '\0';
-                }
-                keep++;
-            }
-        }
-        dyn_count = keep;
-#if defined(SIGURDOS_DEBUG)
-        Serial.printf("[chat] filter: DMs only, after=%d\n", dyn_count);
-#endif
-    }
-    // mode 0: no filter, show all
-
-    // ── Fallback: if filter removed everything, add a default ─
-    if (dyn_count == 0) {
-        if (chat_filter_mode == 1) {
-            // Channels filter: add a synthetic fallback if mesh is unavailable.
-            strncpy(dyn_channels[0], "#general", sizeof(dyn_channels[0]) - 1);
-            dyn_channels[0][sizeof(dyn_channels[0]) - 1] = '\0';
-            dyn_count = 1;
-        }
-        // DMs filter with no DMs: leave empty (user can start one from Contacts)
     }
 
     // ── Remap: transfer message buffers by matching names ─
@@ -434,22 +399,20 @@ static void refresh_channels()
     // DM conversations are synthetic entries (prefixed "DM:")
     // that aren't part of the mesh channel export. Re-append
     // any that existed before the refresh so they persist.
-    // Skip when filtering to channels only (mode 1).
-    if (chat_filter_mode != 1) {
-        for (int old_idx = 0; old_idx < old_count; old_idx++) {
-            if (old_names[old_idx][0] == '\0') continue;
-            if (strncmp(old_names[old_idx], "DM:", 3) != 0) continue;
-            if (dyn_count >= MAX_CHANNELS) {
-                // No room — free the orphaned buffer
-                old_bufs[old_idx].release();
-                continue;
-            }
-            int new_idx = dyn_count++;
-            strncpy(dyn_channels[new_idx], old_names[old_idx], sizeof(dyn_channels[new_idx]) - 1);
-            dyn_channels[new_idx][sizeof(dyn_channels[new_idx]) - 1] = '\0';
-            ch_buffers[new_idx].takeFrom(old_bufs[old_idx]);  // claimed
-            ch_meta[new_idx] = old_meta[old_idx];
+    for (int old_idx = 0; old_idx < old_count; old_idx++) {
+        if (old_names[old_idx][0] == '\0') continue;
+        if (strncmp(old_names[old_idx], "DM:", 3) != 0) continue;
+        if (dyn_count >= MAX_CONVERSATIONS) {
+            // The registry reserves room for MAX_MESH_CHANNELS plus the same
+            // number of synthetic DMs.  Only excess conversations are evicted.
+            old_bufs[old_idx].release();
+            continue;
         }
+        int new_idx = dyn_count++;
+        strncpy(dyn_channels[new_idx], old_names[old_idx], sizeof(dyn_channels[new_idx]) - 1);
+        dyn_channels[new_idx][sizeof(dyn_channels[new_idx]) - 1] = '\0';
+        ch_buffers[new_idx].takeFrom(old_bufs[old_idx]);  // claimed
+        ch_meta[new_idx] = old_meta[old_idx];
     }
 
     // ── Free orphaned buffers ────────────────────────────
@@ -471,6 +434,7 @@ static void refresh_channels()
         }
     }
     if (active_channel >= dyn_count) active_channel = 0;
+    rebuild_conversation_view();
 }
 
 static void mark_channel_used(int idx)
@@ -501,7 +465,8 @@ static void apply_ch_row_selection(lv_obj_t* row, bool selected)
 
 static void clear_ch_row_selection()
 {
-    if (ch_list_selected >= 0 && ch_list_selected < dyn_count && ch_list) {
+    if (ch_list_selected >= 0 &&
+        ch_list_selected < visible_conversation_count() && ch_list) {
         lv_obj_t* row = lv_obj_get_child(ch_list, ch_list_selected);
         if (row) apply_ch_row_selection(row, false);
     }
@@ -517,11 +482,14 @@ static void clear_ch_focus_buttons()
 static void refresh_chat_list_view(lv_obj_t* scr);
 
 static void populate_channel_rows(lv_obj_t* list) {
-    for (int i = 0; i < dyn_count; i++) {
+    const int row_count = visible_conversation_count();
+    for (int visible_idx = 0; visible_idx < row_count; visible_idx++) {
+        const int i = canonical_conversation_index(visible_idx);
+        if (i < 0) continue;
         lv_obj_t* row = lv_obj_create(list);
         lv_obj_set_size(row, LV_PCT(100), LIST_ROW_H);
         lv_obj_set_style_bg_color(row,
-            lv_color_hex(i % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+            lv_color_hex(visible_idx % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
         lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(row, 0, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
@@ -529,7 +497,7 @@ static void populate_channel_rows(lv_obj_t* list) {
         lv_obj_set_user_data(row, (void*)(intptr_t)i);
         lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
         lv_obj_set_scroll_dir(row, LV_DIR_NONE);
-        apply_ch_row_selection(row, i == ch_list_selected);
+        apply_ch_row_selection(row, visible_idx == ch_list_selected);
 
         lv_obj_t* avatar = lv_obj_create(row);
         lv_obj_set_size(avatar, 32, 32);
@@ -561,7 +529,7 @@ static void populate_channel_rows(lv_obj_t* list) {
             lv_obj_set_style_text_color(ts, lv_color_hex(TEXT_SECONDARY), 0);
             lv_obj_set_style_text_font(ts, emoji_wrapped_montserrat_10, 0);
             // Account for delete button width (28px + gap) when visible
-            bool has_del = dyn_count > 1;
+            bool has_del = row_count > 1;
             int ts_off = -4;
             if (ch_meta[i].unread > 0) ts_off -= 22;  // unread badge
             if (has_del)               ts_off -= 32;  // delete button (28px + gap)
@@ -579,7 +547,7 @@ static void populate_channel_rows(lv_obj_t* list) {
         int preview_w = CONTENT_W - 70;
         if (ch_meta[i].timestamp > 0) preview_w -= 60;
         if (ch_meta[i].unread > 0)    preview_w -= 24;
-        if (dyn_count > 1)            preview_w -= 32;  // delete button (28px + gap)
+        if (row_count > 1)            preview_w -= 32;  // delete button (28px + gap)
         if (preview_w < 10) preview_w = 10;  // safe floor for narrow displays
         lv_obj_set_width(prev, preview_w);
         lv_obj_align(prev, LV_ALIGN_TOP_LEFT, 46, 26);
@@ -587,7 +555,7 @@ static void populate_channel_rows(lv_obj_t* list) {
         if (ch_meta[i].unread > 0) {
             lv_obj_t* badge = lv_obj_create(row);
             lv_obj_set_size(badge, 18, 18);
-            int badge_off = dyn_count > 1 ? -36 : -4;
+            int badge_off = row_count > 1 ? -36 : -4;
             lv_obj_align(badge, LV_ALIGN_RIGHT_MID, badge_off, 0);
             lv_obj_set_style_bg_color(badge, lv_color_hex(ACCENT), 0);
             lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
@@ -609,7 +577,7 @@ static void populate_channel_rows(lv_obj_t* list) {
         int ch_idx = i;
 
         // Delete button (hidden when only 1 channel, or for synthetic DM entries)
-        if (dyn_count > 1 &&
+        if (row_count > 1 &&
             !chat_screen_is_dm_name(dyn_channels[i]) &&
             !sigurdos::mesh::isPublicChannelName(dyn_channels[i])) {
             lv_obj_t* del_btn = lv_btn_create(row);
@@ -700,7 +668,7 @@ static int find_channel_idx(const char* channel)
 
 static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
 {
-    if (idx < 0 || idx >= MAX_CHANNELS) return;
+    if (idx < 0 || idx >= MAX_CONVERSATIONS) return;
     // Truncate preview to fit the display: ~25 chars + "..." works in all row layouts
     const char* src = text ? text : "";
     size_t slen = strlen(src);
@@ -718,7 +686,7 @@ static void update_channel_meta(int idx, const char* text, uint32_t timestamp)
 static void append_channel_message(int idx, const char* sender, const char* text,
                                    uint32_t timestamp, bool is_self)
 {
-    if (idx < 0 || idx >= MAX_CHANNELS) return;
+    if (idx < 0 || idx >= MAX_CONVERSATIONS) return;
     ChannelMessage* msg = ch_buffers[idx].append(sender, text, timestamp, is_self,
                                                  chat_msg_cap(), CHAT_MSGS_MAX,
                                                  CHAT_MSGS_MIN_CAP);
@@ -729,7 +697,7 @@ static void append_channel_message(int idx, const char* sender, const char* text
 static bool loaded_message_exists(int idx, const char* sender, const char* text,
                                   uint32_t timestamp, bool is_self)
 {
-    if (idx < 0 || idx >= MAX_CHANNELS || !has_channel_buffer(idx)) return false;
+    if (idx < 0 || idx >= MAX_CONVERSATIONS || !has_channel_buffer(idx)) return false;
     const char* safe_sender = sender ? sender : "";
     const char* safe_text = text ? text : "";
     for (uint16_t i = 0; i < ch_buffers[idx].count(); i++) {
@@ -749,7 +717,7 @@ static bool loaded_message_exists(int idx, const char* sender, const char* text,
 static bool append_loaded_channel_message(int idx, const char* sender, const char* text,
                                           uint32_t timestamp, bool is_self, bool acked)
 {
-    if (idx < 0 || idx >= MAX_CHANNELS) return false;
+    if (idx < 0 || idx >= MAX_CONVERSATIONS) return false;
     ensure_channel_buffer(idx);
     if (loaded_message_exists(idx, sender, text, timestamp, is_self)) {
         if (acked && has_channel_buffer(idx)) {
@@ -779,11 +747,12 @@ static int ensure_loaded_conversation(const char* conversation)
 {
     if (!conversation || !conversation[0]) return -1;
     int idx = find_channel_idx(conversation);
-    if (idx < 0 && dyn_count < MAX_CHANNELS) {
+    if (idx < 0 && dyn_count < MAX_CONVERSATIONS) {
         idx = dyn_count;
         strncpy(dyn_channels[idx], conversation, sizeof(dyn_channels[idx]) - 1);
         dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = 0;
         dyn_count++;
+        rebuild_conversation_view();
     }
     return idx;
 }
@@ -806,7 +775,7 @@ static void chat_load_stored_messages()
     for (int i = 0; i < n; i++) {
         const sigurdos::mesh::StoredMessage& msg = recent[i];
         int idx = ensure_loaded_conversation(msg.conversation);
-        if (idx < 0 || idx >= MAX_CHANNELS) continue;
+        if (idx < 0 || idx >= MAX_CONVERSATIONS) continue;
 
         const char* text = msg.text;
         char prefix[40];
@@ -821,6 +790,7 @@ static void chat_load_stored_messages()
                                       msg.is_self, msg.acked);
     }
     heap_caps_free(recent);
+    rebuild_conversation_view();
 }
 
 static lv_obj_t* make_chat_list_screen()
@@ -966,7 +936,10 @@ static void show_channel_list()
     ch_focus = 0;
 
     refresh_channels();
-    ch_list_selected = 0;
+    ch_list_selected = conversation_view.visibleIndex(active_channel);
+    if (ch_list_selected < 0 && visible_conversation_count() > 0) {
+        ch_list_selected = 0;
+    }
 
     lv_obj_t* s = make_chat_list_screen();
 
@@ -987,9 +960,11 @@ static void show_channel_list()
 
     populate_channel_rows(ch_list);
 #if defined(SIGURDOS_DEBUG)
-    Serial.printf("[chat] populate: dyn_count=%d names=[", dyn_count);
-    for (int i = 0; i < dyn_count; i++) {
-        Serial.printf("%s%s", i > 0 ? "," : "", dyn_channels[i]);
+    Serial.printf("[chat] populate: canonical=%d visible=%d names=[",
+                  dyn_count, visible_conversation_count());
+    for (int visible_idx = 0; visible_idx < visible_conversation_count(); visible_idx++) {
+        const int i = canonical_conversation_index(visible_idx);
+        Serial.printf("%s%s", visible_idx > 0 ? "," : "", dyn_channels[i]);
     }
     Serial.println("]");
 #endif
@@ -1025,8 +1000,13 @@ static void rebuild_channel_ribbon()
     lv_obj_set_style_bg_opa(channel_ribbon, LV_OPA_COVER, 0);
     lv_obj_clean(channel_ribbon);
 
-    for (int i = 0; i < dyn_count; i++) {
-        create_channel_pill(channel_ribbon, i);
+    if (conversation_view.visibleIndex(active_channel) < 0 &&
+        active_channel >= 0 && active_channel < dyn_count) {
+        create_channel_pill(channel_ribbon, active_channel);
+    }
+    for (int visible_idx = 0; visible_idx < visible_conversation_count(); visible_idx++) {
+        create_channel_pill(channel_ribbon,
+                            canonical_conversation_index(visible_idx));
     }
 
     lv_obj_invalidate(channel_ribbon);
@@ -1286,8 +1266,13 @@ static void create_top_bar()
         }
     }, LV_EVENT_CLICKED, nullptr);
 
-    for (int i = 0; i < dyn_count; i++) {
-        create_channel_pill(channel_ribbon, i);
+    if (conversation_view.visibleIndex(active_channel) < 0 &&
+        active_channel >= 0 && active_channel < dyn_count) {
+        create_channel_pill(channel_ribbon, active_channel);
+    }
+    for (int visible_idx = 0; visible_idx < visible_conversation_count(); visible_idx++) {
+        create_channel_pill(channel_ribbon,
+                            canonical_conversation_index(visible_idx));
     }
 
     // Divider
@@ -1489,7 +1474,7 @@ static void create_message_list()
 
 static void render_active_messages()
 {
-    if (!msg_list || active_channel < 0 || active_channel >= MAX_CHANNELS) return;
+    if (!msg_list || active_channel < 0 || active_channel >= MAX_CONVERSATIONS) return;
     const int32_t previous_scroll_y = lv_obj_get_scroll_y(msg_list);
 
     const uint16_t cap = chat_msg_cap();
@@ -2516,6 +2501,7 @@ static void show_scope_picker() {
 
 void chat_screen_set_filter(int mode) {
     chat_filter_mode = mode;
+    rebuild_conversation_view();
 }
 
 bool chat_screen_overlay_active() {
@@ -2558,14 +2544,15 @@ void chat_screen_open_dm(const char* contact_name)
     snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
 
     int idx = find_channel_idx(dm_name);
-    if (idx < 0 && dyn_count < MAX_CHANNELS) {
+    if (idx < 0 && dyn_count < MAX_CONVERSATIONS) {
         idx = dyn_count;
         strncpy(dyn_channels[idx], dm_name, sizeof(dyn_channels[idx]) - 1);
         dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
         dyn_count++;
+        rebuild_conversation_view();
     }
 
-    if (idx >= 0 && idx < MAX_CHANNELS) {
+    if (idx >= 0 && idx < MAX_CONVERSATIONS) {
         open_channel_messaging(idx);
     }
 }
@@ -2591,16 +2578,17 @@ void chat_screen_add_msg_at(const char* channel, const char* sender, const char*
 
     int idx = find_channel_idx(channel);
     if (idx < 0) {
-        if (dyn_count < MAX_CHANNELS) {
+        if (dyn_count < MAX_CONVERSATIONS) {
             idx = dyn_count;
             strncpy(dyn_channels[idx], channel, sizeof(dyn_channels[idx]) - 1);
             dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
             dyn_count++;
+            rebuild_conversation_view();
         } else {
             return;
         }
     }
-    if (idx >= MAX_CHANNELS) return;
+    if (idx >= MAX_CONVERSATIONS) return;
 
     append_channel_message(idx, sender, text, message_time, is_self);
     bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
@@ -2718,6 +2706,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
     }
 
     if (ch_list) {
+        const int row_count = visible_conversation_count();
         switch (event) {
         case SigurdOSTrackballEvent::Up:
         case SigurdOSTrackballEvent::Down: {
@@ -2725,16 +2714,17 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             if (ch_focus != 0) {
                 clear_ch_focus_buttons();
                 ch_focus = 0;
-                if (ch_list_selected >= 0 && ch_list_selected < dyn_count) {
+                if (ch_list_selected >= 0 && ch_list_selected < row_count) {
                     lv_obj_t* row = lv_obj_get_child(ch_list, ch_list_selected);
                     if (row) apply_ch_row_selection(row, true);
                 }
             }
+            if (row_count <= 0) return true;
             int old = ch_list_selected;
             if (event == SigurdOSTrackballEvent::Up)
-                ch_list_selected = ch_list_selected > 0 ? ch_list_selected - 1 : dyn_count - 1;
+                ch_list_selected = ch_list_selected > 0 ? ch_list_selected - 1 : row_count - 1;
             else
-                ch_list_selected = ch_list_selected < dyn_count - 1 ? ch_list_selected + 1 : 0;
+                ch_list_selected = ch_list_selected < row_count - 1 ? ch_list_selected + 1 : 0;
             if (ch_list_selected != old) {
                 lv_obj_t* old_row = lv_obj_get_child(ch_list, old);
                 if (old_row) apply_ch_row_selection(old_row, false);
@@ -2796,9 +2786,12 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
                 go_back();
             } else if (ch_focus == 2 && ch_add_btn) {
                 lv_obj_send_event(ch_add_btn, LV_EVENT_CLICKED, nullptr);
-            } else if (ch_list_selected >= 0 && ch_list_selected < dyn_count) {
-                ch_meta[ch_list_selected].unread = 0;
-                open_channel_messaging(ch_list_selected);
+            } else if (ch_list_selected >= 0 && ch_list_selected < row_count) {
+                const int idx = canonical_conversation_index(ch_list_selected);
+                if (idx >= 0) {
+                    ch_meta[idx].unread = 0;
+                    open_channel_messaging(idx);
+                }
             }
             return true;
         default:
@@ -2839,15 +2832,16 @@ static bool migrate_legacy_history_message(const char* channel,
 void chat_load_messages()
 {
     if (dyn_count == 0) {
-        dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_CHANNELS);
+        dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_MESH_CHANNELS);
         if (dyn_count == 0 && sigurdos::mesh::joinPublicChannel()) {
-            dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_CHANNELS);
+            dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_MESH_CHANNELS);
         }
         if (dyn_count == 0) {
             strncpy(dyn_channels[0], "#general", sizeof(dyn_channels[0]) - 1);
             dyn_channels[0][sizeof(dyn_channels[0]) - 1] = '\0';
             dyn_count = 1;
         }
+        rebuild_conversation_view();
     }
 
     // /msgs was the pre-companion UI snapshot. Stream it into the unified log
@@ -2869,7 +2863,7 @@ void chat_screen_set_message_cap(uint16_t cap)
     np.chat_msg_cap = clamped;
     sigurdos::prefs_set(np);
 
-    for (int i = 0; i < MAX_CHANNELS; i++) {
+    for (int i = 0; i < MAX_CONVERSATIONS; i++) {
         trim_channel_history(i, clamped);
     }
 }
