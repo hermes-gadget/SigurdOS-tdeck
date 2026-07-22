@@ -24,6 +24,12 @@
 
 static constexpr size_t SIGURDOS_TOUCH_GT911_MAX_POINTS = 5;
 static constexpr size_t SIGURDOS_TOUCH_GT911_POINT_SIZE = 8;
+static constexpr uint8_t SIGURDOS_TOUCH_IDLE_THRESHOLD = 5;
+
+inline uint8_t sigurdos_touch_idle_increment(uint8_t count)
+{
+    return count < SIGURDOS_TOUCH_IDLE_THRESHOLD ? (uint8_t)(count + 1) : count;
+}
 
 inline bool sigurdos_touch_raw_point_valid(uint16_t raw_x, uint16_t raw_y)
 {

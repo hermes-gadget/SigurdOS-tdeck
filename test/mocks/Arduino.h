@@ -239,15 +239,17 @@ extern HardwareSerial Serial1;
 // ── I2C ──────────────────────────────────────────────────
 class TwoWire {
 public:
-    void begin() {
+    bool begin() {
         _begun = true;
         _begin_count++;
+        return _begin_result;
     }
-    void begin(int sda, int scl) {
+    bool begin(int sda, int scl) {
         _begun = true;
         _begin_count++;
         _begin_sda = sda;
         _begin_scl = scl;
+        return _begin_result;
     }
     void setClock(uint32_t clock) { _clock = clock; }
     void setTimeOut(uint16_t timeout_ms) { _timeout_ms = timeout_ms; }
@@ -275,6 +277,7 @@ public:
             _address_history[_address_count++] = _tx_addr;
         }
         _end_count++;
+        if (_fail_end_at != 0 && _end_count == _fail_end_at) return 1;
         if (_nack_remaining > 0) {
             _nack_remaining--;
             return 1;  // NACK — simulate I2C no-ACK for warm-handoff testing
@@ -310,6 +313,7 @@ public:
     void mock_set_error(uint8_t err) { _end_error = err; }
     void mock_reset() {
         _begun = false;
+        _begin_result = true;
         _begin_count = 0;
         _begin_sda = -1;
         _begin_scl = -1;
@@ -322,6 +326,7 @@ public:
         _nack_count = 0;
         _nack_remaining = 0;
         _end_count = 0;
+        _fail_end_at = 0;
         std::memset(_address_history, 0, sizeof(_address_history));
         _address_count = 0;
         _rx_addr = 0;
@@ -331,11 +336,13 @@ public:
         std::memset(_q_buf, 0, sizeof(_q_buf));
         _q_len = 0;
     }
+    void mock_set_begin_result(bool result) { _begin_result = result; }
+    void mock_fail_end_at(size_t call) { _fail_end_at = call; }
     // How many endTransmission calls to NACK before allowing success.
     // Used to test warm-handoff retry logic after Launcher handoff.
     void mock_set_nack_count(uint8_t n) { _nack_count = n; _nack_remaining = n; }
     void mock_queue_rx_byte(uint8_t val) {
-        if (_q_len < 32) _q_buf[_q_len++] = val;
+        if (_q_len < sizeof(_q_buf)) _q_buf[_q_len++] = val;
     }
     uint8_t mock_last_tx_addr() const { return _tx_addr; }
     uint8_t mock_last_tx_data(int i) const {
@@ -356,6 +363,7 @@ public:
 
 private:
     bool _begun = false;
+    bool _begin_result = true;
     int _begin_count = 0;
     int _begin_sda = -1;
     int _begin_scl = -1;
@@ -368,15 +376,16 @@ private:
     uint8_t _nack_count = 0;
     uint8_t _nack_remaining = 0;
     size_t _end_count = 0;
+    size_t _fail_end_at = 0;
     uint8_t _address_history[64] = {};
     size_t _address_count = 0;
 
     uint8_t _rx_addr = 0;
-    uint8_t _rx_buf[32] = {};
+    uint8_t _rx_buf[64] = {};
     size_t  _rx_pos = 0;
     size_t  _rx_len = 0;
 
-    uint8_t _q_buf[32] = {};
+    uint8_t _q_buf[64] = {};
     size_t  _q_len = 0;
 };
 extern TwoWire Wire;

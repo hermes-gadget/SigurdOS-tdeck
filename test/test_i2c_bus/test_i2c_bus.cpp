@@ -61,6 +61,25 @@ TEST_F(I2cBusTest, RecoveryDoesNothingWhenBusIsAlreadyFree)
   EXPECT_EQ(arduino_mock::pin_mode_calls[PIN_TOUCH_SCL], 1);
 }
 
+TEST_F(I2cBusTest, RecoveryRejectsSclLowEvenWhenSdaIsHigh)
+{
+  arduino_mock::forced_read_value[PIN_TOUCH_SCL] = LOW;
+  arduino_mock::forced_read_count[PIN_TOUCH_SCL] = 1;
+  EXPECT_EQ(sigurdos::i2c::recover_before_begin(),
+            sigurdos::i2c::RecoveryResult::Stuck);
+}
+
+TEST_F(I2cBusTest, RecoveryRejectsBothLinesLowWithoutClocking)
+{
+  arduino_mock::forced_read_value[PIN_TOUCH_SDA] = LOW;
+  arduino_mock::forced_read_count[PIN_TOUCH_SDA] = 1;
+  arduino_mock::forced_read_value[PIN_TOUCH_SCL] = LOW;
+  arduino_mock::forced_read_count[PIN_TOUCH_SCL] = 1;
+  EXPECT_EQ(sigurdos::i2c::recover_before_begin(),
+            sigurdos::i2c::RecoveryResult::Stuck);
+  EXPECT_EQ(arduino_mock::pin_mode_calls[PIN_TOUCH_SCL], 1);
+}
+
 TEST_F(I2cBusTest, RecoveryReleasesSdaWithBoundedClocking)
 {
   arduino_mock::forced_read_value[PIN_TOUCH_SDA] = LOW;
@@ -85,7 +104,7 @@ TEST_F(I2cBusTest, RecoveryStopsAfterNineClocksWhenSdaStaysLow)
 
 TEST_F(I2cBusTest, BeginRecoversBeforeStartingWire)
 {
-  sigurdos::i2c::begin();
+  EXPECT_TRUE(sigurdos::i2c::begin());
 
   EXPECT_TRUE(Wire.mock_was_begun());
   EXPECT_EQ(Wire.mock_begin_count(), 1);
@@ -93,6 +112,17 @@ TEST_F(I2cBusTest, BeginRecoversBeforeStartingWire)
   EXPECT_EQ(Wire.mock_begin_scl(), PIN_TOUCH_SCL);
   EXPECT_EQ(Wire.mock_clock(), sigurdos::i2c::BUS_CLOCK_HZ);
   EXPECT_EQ(Wire.mock_timeout_ms(), sigurdos::i2c::TRANSACTION_TIMEOUT_MS);
+}
+
+TEST_F(I2cBusTest, FailedControllerBeginCanBeRetried)
+{
+  Wire.mock_set_begin_result(false);
+  EXPECT_FALSE(sigurdos::i2c::begin());
+  EXPECT_EQ(Wire.mock_begin_count(), 1);
+
+  Wire.mock_set_begin_result(true);
+  EXPECT_TRUE(sigurdos::i2c::begin());
+  EXPECT_EQ(Wire.mock_begin_count(), 2);
 }
 
 TEST_F(I2cBusTest, BeginIsProcessWideIdempotent)

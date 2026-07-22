@@ -394,6 +394,13 @@ TEST_F(TouchTest, NoTouchInitially) {
     EXPECT_EQ(status, 0);
 }
 
+TEST_F(TouchTest, IdleCounterSaturatesAtPollingThreshold) {
+    uint8_t count = SIGURDOS_TOUCH_IDLE_THRESHOLD - 1;
+    EXPECT_EQ(sigurdos_touch_idle_increment(count), SIGURDOS_TOUCH_IDLE_THRESHOLD);
+    EXPECT_EQ(sigurdos_touch_idle_increment(SIGURDOS_TOUCH_IDLE_THRESHOLD),
+              SIGURDOS_TOUCH_IDLE_THRESHOLD);
+}
+
 TEST_F(TouchTest, TouchPressDetected) {
     regs.set_touch(0, 1, 160, 120);
     uint8_t pts = regs.read(GT911_REG_STATUS & 0xFF) & 0x0F;
@@ -485,6 +492,54 @@ TEST_F(TouchTest, RuntimeRecoveryStopsAfterBoundedFailures) {
     sigurdos_touch_loop();
     EXPECT_EQ(Wire.mock_end_count(), transactions_after_exhaustion);
     EXPECT_FALSE(sigurdos_touch_ready());
+}
+
+TEST_F(TouchTest, IntHighStatusFailuresCountTowardRecovery) {
+    ASSERT_TRUE(sigurdos_touch_init());
+    arduino_mock::pin_states[PIN_TOUCH_INT] = HIGH;
+    Wire.mock_set_error(1);
+
+    for (int i = 0; i < 4; ++i) {
+        arduino_mock::current_millis += 100;
+        sigurdos_touch_loop();
+    }
+
+    SigurdOSTouchDiag diag{};
+    ASSERT_TRUE(sigurdos_touch_get_diag(&diag));
+    EXPECT_EQ(diag.consecutive_i2c_errors, 4);
+}
+
+TEST_F(TouchTest, PersistentPayloadReadFailuresTriggerRecovery) {
+    ASSERT_TRUE(sigurdos_touch_init());
+
+    for (int i = 0; i < 5; ++i) {
+        Wire.mock_queue_rx_byte(0x81);  // ready, one point; payload is absent
+        arduino_mock::current_millis += 100;
+        sigurdos_touch_loop();
+    }
+
+    SigurdOSTouchDiag diag{};
+    ASSERT_TRUE(sigurdos_touch_get_diag(&diag));
+    EXPECT_EQ(diag.reinit_count, 1u);
+    EXPECT_EQ(diag.consecutive_i2c_errors, 0);
+}
+
+TEST_F(TouchTest, PersistentAcknowledgementFailuresTriggerRecovery) {
+    ASSERT_TRUE(sigurdos_touch_init());
+
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        Wire.mock_queue_rx_byte(0x81);
+        for (int i = 0; i < 40; ++i) Wire.mock_queue_rx_byte(i == 1 ? 10 : (i == 3 ? 20 : 0));
+        // Each poll performs status-address, payload-address, then ACK writes.
+        Wire.mock_fail_end_at(Wire.mock_end_count() + 3);
+        arduino_mock::current_millis += 100;
+        sigurdos_touch_loop();
+    }
+
+    SigurdOSTouchDiag diag{};
+    ASSERT_TRUE(sigurdos_touch_get_diag(&diag));
+    EXPECT_EQ(diag.reinit_count, 1u);
+    EXPECT_EQ(diag.consecutive_i2c_errors, 0);
 }
 
 } // anonymous namespace

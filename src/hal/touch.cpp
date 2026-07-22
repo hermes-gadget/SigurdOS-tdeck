@@ -39,7 +39,6 @@ static constexpr int      GT911_POINT_SIZE     = (int)SIGURDOS_TOUCH_GT911_POINT
 static constexpr uint32_t GT911_INIT_RETRY_MS  = 50;
 static constexpr uint32_t GT911_POLL_INTERVAL  = 10;     // ms between full scans (active)
 static constexpr uint32_t GT911_IDLE_INTERVAL  = 50;     // ms when no touch activity (PERF-004)
-static constexpr int      TOUCH_IDLE_THRESHOLD = 5;      // consecutive idle polls before slowing
 static constexpr uint8_t  TOUCH_MAX_REINIT_ATTEMPTS = 3;
 static constexpr uint32_t TOUCH_REINIT_RETRY_MS = 1000;
 
@@ -54,7 +53,7 @@ static uint32_t last_poll      = 0;
 static bool     was_pressed     = false;   // for edge detection
 static int      touch_i2c_errors = 0;   // consecutive I2C read failures
 static constexpr int TOUCH_MAX_CONSECUTIVE_ERRORS = 5;
-static int      touch_idle_count = 0;   // consecutive idle polls (PERF-004)
+static uint8_t  touch_idle_count = 0;   // saturates once idle polling is active
 static uint8_t  touch_reinit_attempts = 0;
 static bool     touch_reinit_pending = false;
 static uint32_t touch_next_reinit_ms = 0;
@@ -68,6 +67,14 @@ static void diag_record_release(uint32_t now)
 {
     diag_release_count++;
     diag_last_event_ms = now;
+}
+
+static void touch_release(uint32_t now)
+{
+    if (!pressed) return;
+    pressed = false;
+    was_pressed = true;
+    diag_record_release(now);
 }
 
 // ── Helpers ───────────────────────────────────────────────
@@ -135,11 +142,7 @@ static void touch_attempt_reinit(uint32_t now)
     touch_reinit_attempts++;
     const uint8_t attempt = touch_reinit_attempts;
 
-    if (pressed) {
-        pressed = false;
-        was_pressed = true;
-        diag_record_release(now);
-    }
+    touch_release(now);
 
     // Reset the GT911 controller
     gt911_reset();
@@ -156,8 +159,11 @@ static void touch_attempt_reinit(uint32_t now)
     }
 
     if (found) {
-        // Clear status register and resume
-        i2c_write_reg(GT911_REG_STATUS, 0);
+        // Clear status register before publishing recovery success.
+        if (!i2c_write_reg(GT911_REG_STATUS, 0)) found = false;
+    }
+
+    if (found) {
         touch_i2c_errors = 0;
         touch_idle_count = 0;
         initialized = true;
@@ -219,8 +225,9 @@ bool sigurdos_touch_init()
         return false;
     }
 
-    // Clear any stale touch data
-    i2c_write_reg(GT911_REG_STATUS, 0);
+    // Clear any stale touch data. A controller that cannot acknowledge this
+    // required transaction is not ready.
+    if (!i2c_write_reg(GT911_REG_STATUS, 0)) return false;
 
     initialized = true;
     last_x = -1;
@@ -266,39 +273,15 @@ void sigurdos_touch_loop()
 
     // Adaptive poll interval: fast (10ms) when touch is active,
     // slow (50ms) after consecutive idle polls (PERF-004).
-    uint32_t interval = (touch_idle_count >= TOUCH_IDLE_THRESHOLD)
+    uint32_t interval = (touch_idle_count >= SIGURDOS_TOUCH_IDLE_THRESHOLD)
                         ? GT911_IDLE_INTERVAL : GT911_POLL_INTERVAL;
     if (now - last_poll < interval) return;
     last_poll = now;
 
     // I2C clock is set once at init (100kHz for shared bus compatibility)
 
-    // Check INT pin — GT911 pulls it LOW when new data is ready.
-    // When HIGH, there may be no new data, but the GT911 can buffer
-    // multiple touch samples. Read the status register to confirm
-    // before deciding to release — otherwise rapid taps that arrive
-    // between poll cycles are silently dropped.
-    if (digitalRead(PIN_TOUCH_INT) == HIGH) {
-        // Read status register to confirm no buffered data
-        uint8_t status = 0;
-        if (i2c_read_bytes(GT911_REG_STATUS, &status, 1) && (status & 0x80)) {
-            // Buffered data waiting — fall through to process it
-            // (INT de-asserted between taps but GT911 still has data)
-            touch_idle_count = 0;  // activity detected (PERF-004)
-        } else {
-            // Genuinely no new data — maintain existing state
-            touch_idle_count++;  // (PERF-004)
-            if (pressed) {
-                pressed = false;
-                was_pressed = true;
-                diag_record_release(now);
-            }
-            return;
-        }
-    }
-    touch_idle_count = 0;  // INT LOW = touch activity (PERF-004)
-
-    // Read status register
+    // One poll is one transaction: status, optional payload, and required
+    // acknowledgement must all succeed before the error streak is reset.
     uint8_t status = 0;
     if (!i2c_read_bytes(GT911_REG_STATUS, &status, 1)) {
         touch_i2c_errors++;
@@ -308,20 +291,26 @@ void sigurdos_touch_loop()
         }
         return;
     }
-    touch_i2c_errors = 0;  // successful read, reset error counter
 
     // Bit 7 = buffer status (1 = ready, 0 = no data)
-    if (!(status & 0x80)) return;
+    if (!(status & 0x80)) {
+        touch_i2c_errors = 0;
+        touch_idle_count = sigurdos_touch_idle_increment(touch_idle_count);
+        touch_release(now);
+        return;
+    }
+    touch_idle_count = 0;
 
     int num_points = status & 0x0F;
     if (num_points == 0 || num_points > GT911_MAX_POINTS) {
         // Buffer ready but no points — clear and treat as release
-        i2c_write_reg(GT911_REG_STATUS, 0);
-        if (pressed) {
-            pressed = false;
-            was_pressed = true;
-            diag_record_release(now);
+        if (!i2c_write_reg(GT911_REG_STATUS, 0)) {
+            touch_i2c_errors++;
+            if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS) touch_start_reinit(now);
+            return;
         }
+        touch_i2c_errors = 0;
+        touch_release(now);
         return;
     }
 
@@ -329,8 +318,9 @@ void sigurdos_touch_loop()
     static uint8_t point_data[GT911_MAX_POINTS * GT911_POINT_SIZE];  // static avoids repeated stack alloc
     if (!i2c_read_bytes(GT911_REG_STATUS + 1, point_data, sizeof(point_data))) {
         touch_i2c_errors++;
-        // Clear status to acknowledge even on partial read failure
-        i2c_write_reg(GT911_REG_STATUS, 0);
+        // Best-effort acknowledgement does not turn a failed payload into a
+        // successful poll transaction.
+        (void)i2c_write_reg(GT911_REG_STATUS, 0);
         if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS) {
             // Persistent I2C wedge — attempt bounded GT911 re-init (RELI-001)
             touch_start_reinit(now);
@@ -375,7 +365,12 @@ void sigurdos_touch_loop()
     }
 
     // Clear status register to acknowledge (GT911 won't update until cleared)
-    i2c_write_reg(GT911_REG_STATUS, 0);
+    if (!i2c_write_reg(GT911_REG_STATUS, 0)) {
+        touch_i2c_errors++;
+        if (touch_i2c_errors >= TOUCH_MAX_CONSECUTIVE_ERRORS) touch_start_reinit(now);
+        return;
+    }
+    touch_i2c_errors = 0;
 
     if (found_x >= 0 && found_y >= 0) {
         // Touch detected
@@ -395,11 +390,7 @@ void sigurdos_touch_loop()
 #endif
     } else {
         // Buffer ready but no valid point — release
-        if (pressed) {
-            pressed = false;
-            was_pressed = true;
-            diag_record_release(now);
-        }
+        touch_release(now);
     }
 }
 
