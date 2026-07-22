@@ -49,7 +49,7 @@ const char* name(Id id);
 
 // Set/cycle the active layout. User changes are persisted to NVS.
 bool set_active(Id id, bool persist = true);
-Id cycle();
+bool cycle(Id* selected = nullptr);
 
 // Map a pre-decoded C3 ASCII key to UTF-8. nullptr means pass the key through.
 // Some mappings contain multiple codepoints (for example Arabic lam-alef or

@@ -105,8 +105,6 @@ bool prefs_load(NodePrefs& p) {
     p.sf           = nvs.getUChar("sf", 0);
     p.cr           = nvs.getUChar("cr", 0);
     p.tx_power_dbm  = nvs.getChar("txpwr", 0);
-    if (p.tx_power_dbm > 0 && p.tx_power_dbm < 2) p.tx_power_dbm = 2;
-    if (p.tx_power_dbm > 22) p.tx_power_dbm = 22;
     p.configured    = nvs.getBool("cfg", false);
     p.kbd_backlight = nvs.getUChar("kbd_bl", 127);
     p.kbd_layout = nvs.getUChar("kbd_layout", 0);
@@ -196,6 +194,7 @@ bool prefs_load(NodePrefs& p) {
     else { p.radio_profile[sizeof(p.radio_profile) - 1] = '\0'; }
 
     nvs.end();
+    detail::normalizeAndValidate(p);
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
     if (ble_state.needs_migration) {
@@ -252,7 +251,7 @@ const NodePrefs& prefs_get() {
 
 bool prefs_set(const NodePrefs& p) {
     NodePrefs candidate = p;
-    candidate.gps_interval = sigurdos_gps_normalize_interval(candidate.gps_interval);
+    detail::normalizeAndValidate(candidate);
     if (!prefs_save(candidate)) return false;
     g_prefs = candidate;
     return true;
@@ -295,7 +294,9 @@ static void makePasswordStoreKey(char* out, size_t out_size,
 }
 
 bool saveRepeaterPassword(const char* name, const char* password) {
-    if (!name || !name[0] || !password) return false;
+    if (!detail::repeaterPasswordFitsSchema(name, password)) return false;
+    const size_t name_len = strlen(name);
+    const size_t password_len = strlen(password);
     Preferences nvs;
     if (!nvs.begin(PW_NS, false)) return false;
 
@@ -328,9 +329,12 @@ bool saveRepeaterPassword(const char* name, const char* password) {
     char nk[10], pk[10];
     makePasswordStoreKey(nk, sizeof(nk), "name", (uint8_t)slot);
     makePasswordStoreKey(pk, sizeof(pk), "pw", (uint8_t)slot);
-    nvs.putString(nk, name);
-    nvs.putString(pk, password);
-    nvs.putUChar("count", count);
+    if (nvs.putString(nk, name) != name_len ||
+        nvs.putString(pk, password) != password_len ||
+        nvs.putUChar("count", count) != 1) {
+        nvs.end();
+        return false;
+    }
     nvs.end();
     return true;
 }
@@ -359,10 +363,10 @@ bool loadRepeaterPassword(const char* name, char* password, size_t max_len) {
     return false;
 }
 
-void removeRepeaterPassword(const char* name) {
-    if (!name || !name[0]) return;
+bool removeRepeaterPassword(const char* name) {
+    if (!name || !name[0] || strlen(name) >= 32) return false;
     Preferences nvs;
-    if (!nvs.begin(PW_NS, false)) return;
+    if (!nvs.begin(PW_NS, false)) return false;
 
     uint8_t count = clampPasswordStoreCount(nvs.getUChar("count", 0));
     for (uint8_t i = 0; i < count; i++) {
@@ -371,34 +375,32 @@ void removeRepeaterPassword(const char* name) {
         char existing[32] = {0};
         size_t len = nvs.getString(key, existing, sizeof(existing));
         if (len > 0 && strcmp(existing, name) == 0) {
-            char nk[10], pk[10];
+            char nk[10], pk[10], last_nk[10], last_pk[10];
             makePasswordStoreKey(nk, sizeof(nk), "name", i);
             makePasswordStoreKey(pk, sizeof(pk), "pw", i);
-            nvs.remove(nk);
-            nvs.remove(pk);
-            // Shift remaining entries down
-            for (uint8_t j = i; j + 1 < count; j++) {
-                char oldnk[10], oldpk[10], newnk[10], newpk[10];
-                makePasswordStoreKey(oldnk, sizeof(oldnk), "name", (uint8_t)(j + 1));
-                makePasswordStoreKey(oldpk, sizeof(oldpk), "pw", (uint8_t)(j + 1));
-                makePasswordStoreKey(newnk, sizeof(newnk), "name", j);
-                makePasswordStoreKey(newpk, sizeof(newpk), "pw", j);
-                char tmp_name[32] = {0}, tmp_pw[64] = {0};
-                if (nvs.getString(oldnk, tmp_name, sizeof(tmp_name)) > 0) {
-                    nvs.putString(newnk, tmp_name);
-                    nvs.remove(oldnk);
-                }
-                if (nvs.getString(oldpk, tmp_pw, sizeof(tmp_pw)) > 0) {
-                    nvs.putString(newpk, tmp_pw);
-                    nvs.remove(oldpk);
+            const uint8_t last = count - 1;
+            makePasswordStoreKey(last_nk, sizeof(last_nk), "name", last);
+            makePasswordStoreKey(last_pk, sizeof(last_pk), "pw", last);
+            if (i != last) {
+                char moved_name[32] = {0}, moved_pw[64] = {0};
+                const size_t moved_name_len = nvs.getString(last_nk, moved_name, sizeof(moved_name));
+                const size_t moved_pw_len = nvs.getString(last_pk, moved_pw, sizeof(moved_pw));
+                if (moved_name_len == 0 || moved_name_len >= sizeof(moved_name) ||
+                    moved_pw_len == 0 || moved_pw_len >= sizeof(moved_pw) ||
+                    nvs.putString(nk, moved_name) != moved_name_len ||
+                    nvs.putString(pk, moved_pw) != moved_pw_len) {
+                    nvs.end();
+                    return false;
                 }
             }
-            count = (count > 0) ? count - 1 : 0;
-            nvs.putUChar("count", count);
-            break;
+            if (nvs.putUChar("count", last) != 1) { nvs.end(); return false; }
+            if (!nvs.remove(last_nk) || !nvs.remove(last_pk)) { nvs.end(); return false; }
+            nvs.end();
+            return true;
         }
     }
     nvs.end();
+    return false;
 }
 
 } // namespace sigurdos

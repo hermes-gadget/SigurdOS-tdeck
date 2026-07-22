@@ -24,6 +24,8 @@
 
 #include "hal/prefs.h"
 #include "hal/prefs_write_policy.h"
+#include <limits>
+#include <string>
 
 namespace {
 
@@ -165,6 +167,60 @@ TEST_F(PrefsTest, CompanionPolicyWidthsRoundTripWithoutTruncation) {
     EXPECT_EQ(86400u, loaded.gps_interval);
     EXPECT_EQ(7, loaded.multi_acks);
     EXPECT_EQ(3, loaded.advert_loc_policy);
+}
+
+TEST(PrefsValidationTest, InvalidConfiguredRadioFallsBackToReceiveDisabledDefaults) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    prefs.configured = true;
+    prefs.freq = std::numeric_limits<float>::quiet_NaN();
+    prefs.bw = 0.0f;
+    prefs.sf = 255;
+    prefs.cr = 0;
+    prefs.tx_power_dbm = -20;
+
+    EXPECT_FALSE(sigurdos::detail::normalizeAndValidate(prefs));
+    EXPECT_FALSE(prefs.configured);
+    EXPECT_FLOAT_EQ(prefs.freq, 0.0f);
+    EXPECT_FLOAT_EQ(prefs.bw, 0.0f);
+    EXPECT_EQ(prefs.sf, 0);
+    EXPECT_EQ(prefs.cr, 0);
+    EXPECT_EQ(prefs.tx_power_dbm, 0);
+}
+
+TEST(PrefsValidationTest, ValidBoundariesSurviveAndTimingCorruptionIsNormalized) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    prefs.configured = true;
+    prefs.freq = 400.0f;
+    prefs.bw = 7.8f;
+    prefs.sf = 6;
+    prefs.cr = 5;
+    prefs.tx_power_dbm = 2;
+    prefs.rx_delay_base = std::numeric_limits<float>::infinity();
+    prefs.tx_delay_factor = -1.0f;
+    prefs.direct_tx_delay_factor = std::numeric_limits<float>::quiet_NaN();
+
+    EXPECT_TRUE(sigurdos::detail::normalizeAndValidate(prefs));
+    EXPECT_FLOAT_EQ(prefs.rx_delay_base, 10.0f);
+    EXPECT_FLOAT_EQ(prefs.tx_delay_factor, 1.0f);
+    EXPECT_FLOAT_EQ(prefs.direct_tx_delay_factor, 1.0f);
+}
+
+TEST(PrefsValidationTest, RepeaterPasswordSchemaMatchesReadBuffers) {
+    const std::string max_name(31, 'n');
+    const std::string too_long_name(32, 'n');
+    const std::string max_password(63, 'p');
+    const std::string too_long_password(64, 'p');
+
+    EXPECT_TRUE(sigurdos::detail::repeaterPasswordFitsSchema(
+        max_name.c_str(), max_password.c_str()));
+    EXPECT_FALSE(sigurdos::detail::repeaterPasswordFitsSchema(
+        too_long_name.c_str(), "password"));
+    EXPECT_FALSE(sigurdos::detail::repeaterPasswordFitsSchema(
+        "repeater", too_long_password.c_str()));
+    EXPECT_FALSE(sigurdos::detail::repeaterPasswordFitsSchema("", "password"));
+    EXPECT_FALSE(sigurdos::detail::repeaterPasswordFitsSchema("repeater", ""));
 }
 
 TEST(BlePrefsMigrationTest, FreshInstallUsesDiscoverableDefault) {

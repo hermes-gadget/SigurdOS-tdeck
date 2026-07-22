@@ -10,6 +10,9 @@
 namespace sigurdos {
 
 static NodePrefs g_prefs;
+static bool g_prefs_set_result = true;
+
+void prefs_mock_set_save_result(bool result) { g_prefs_set_result = result; }
 
 bool prefs_load(NodePrefs& p) {
     p = g_prefs;
@@ -30,6 +33,7 @@ const NodePrefs& prefs_get() {
 }
 
 bool prefs_set(const NodePrefs& p) {
+    if (!g_prefs_set_result) return false;
     g_prefs = p;
     if (g_prefs.gps_interval > 86400) g_prefs.gps_interval = 86400;
     return true;

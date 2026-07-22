@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 
 namespace sigurdos {
 
@@ -123,6 +124,60 @@ inline uint8_t normalizePathHashMode(uint8_t mode) {
     return mode <= 2 ? mode : 0;
 }
 
+inline bool validRadioBandwidth(float bw) {
+    static constexpr float allowed[] = {
+        7.8f, 10.4f, 15.6f, 20.8f, 31.25f, 41.7f, 62.5f, 125.0f, 250.0f, 500.0f,
+    };
+    if (!std::isfinite(bw)) return false;
+    for (float value : allowed) if (std::fabs(bw - value) < 0.02f) return true;
+    return false;
+}
+
+inline bool normalizeAndValidate(NodePrefs& prefs) {
+    if (prefs.gps_interval > 86400) prefs.gps_interval = 86400;
+    if (prefs.kbd_layout >= 12) prefs.kbd_layout = 0;
+    if (prefs.display_brightness < 20) prefs.display_brightness = 20;
+    if (prefs.display_brightness > 240) prefs.display_brightness = 240;
+    prefs.path_hash_mode = normalizePathHashMode(prefs.path_hash_mode);
+    if (!std::isfinite(prefs.rx_delay_base) || prefs.rx_delay_base < 0.0f ||
+        prefs.rx_delay_base > 20.0f) prefs.rx_delay_base = 10.0f;
+    if (!std::isfinite(prefs.tx_delay_factor) || prefs.tx_delay_factor < 0.0f ||
+        prefs.tx_delay_factor > 2.0f) prefs.tx_delay_factor = 1.0f;
+    if (!std::isfinite(prefs.direct_tx_delay_factor) ||
+        prefs.direct_tx_delay_factor < 0.0f || prefs.direct_tx_delay_factor > 2.0f) {
+        prefs.direct_tx_delay_factor = 1.0f;
+    }
+    if (!std::isfinite(prefs.airtime_factor) || prefs.airtime_factor < 0.0f) {
+        prefs.airtime_factor = 0.0f;
+    }
+    if (!prefs.configured) {
+        prefs.freq = prefs.bw = 0.0f;
+        prefs.sf = prefs.cr = 0;
+        prefs.tx_power_dbm = 0;
+        prefs.radio_profile[0] = '\0';
+        return true;
+    }
+    const bool valid = std::isfinite(prefs.freq) && prefs.freq >= 400.0f &&
+        prefs.freq <= 930.0f && validRadioBandwidth(prefs.bw) &&
+        prefs.sf >= 6 && prefs.sf <= 12 && prefs.cr >= 5 && prefs.cr <= 8 &&
+        prefs.tx_power_dbm >= 2 && prefs.tx_power_dbm <= 22;
+    if (!valid) {
+        prefs.configured = false;
+        prefs.freq = prefs.bw = 0.0f;
+        prefs.sf = prefs.cr = 0;
+        prefs.tx_power_dbm = 0;
+        prefs.radio_profile[0] = '\0';
+    }
+    return valid;
+}
+
+inline bool repeaterPasswordFitsSchema(const char* name, const char* password) {
+    if (!name || !password) return false;
+    const size_t name_len = std::strlen(name);
+    const size_t password_len = std::strlen(password);
+    return name_len > 0 && name_len < 32 && password_len > 0 && password_len < 64;
+}
+
 enum class BlePrefsWriteMode : uint8_t {
     Preserve,
     Write,
@@ -165,6 +220,6 @@ bool prefs_set_ble_enabled(bool enabled);
 // ── Saved repeater passwords (persist across firmware updates in NVS) ──
 bool saveRepeaterPassword(const char* name, const char* password);
 bool loadRepeaterPassword(const char* name, char* password, size_t max_len);
-void removeRepeaterPassword(const char* name);
+bool removeRepeaterPassword(const char* name);
 
 } // namespace sigurdos

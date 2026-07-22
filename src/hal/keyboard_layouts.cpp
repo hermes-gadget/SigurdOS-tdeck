@@ -217,20 +217,21 @@ const char* name(Id id)
 bool set_active(Id id, bool persist)
 {
     if (!valid(id)) return false;
-    current = id;
     if (persist) {
         NodePrefs updated = prefs_get();
         updated.kbd_layout = static_cast<uint8_t>(id);
-        prefs_set(updated);
+        if (!prefs_set(updated)) return false;
     }
+    current = id;
     return true;
 }
 
-Id cycle()
+bool cycle(Id* selected)
 {
     const uint8_t next = (static_cast<uint8_t>(current) + 1) % COUNT;
-    set_active(static_cast<Id>(next), true);
-    return current;
+    if (!set_active(static_cast<Id>(next), true)) return false;
+    if (selected) *selected = current;
+    return true;
 }
 
 const char* map_key(Id id, int key, bool shifted)
