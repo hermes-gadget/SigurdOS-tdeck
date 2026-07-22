@@ -56,6 +56,19 @@ struct StoredMessage {
     bool attempt_known;
 };
 
+// Outcome of the most recent messageStoreBegin() recovery pass. Callers can
+// distinguish a healthy store from one that was repaired, salvaged, or moved
+// aside instead of treating every successful begin as equivalent.
+enum class MessageStoreRecoveryResult : uint8_t {
+    Clean,
+    Migrated,
+    Repaired,
+    Salvaged,
+    Quarantined,
+    UnsupportedVersion,
+    Failed,
+};
+
 namespace detail {
 static constexpr uint32_t MESSAGE_STORE_MAGIC = 0x534d5347; // "SMSG"
 // v5 adds a non-zero monotonic next-ID field to the file header. Version-4
@@ -88,6 +101,7 @@ void storedMessageNormalize(StoredMessage& msg);
 } // namespace detail
 
 bool messageStoreBegin();
+MessageStoreRecoveryResult messageStoreLastRecoveryResult();
 bool messageStoreClear();
 bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out = nullptr);
 int  messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max);
@@ -110,6 +124,11 @@ int  messageStoreCount();
 
 #if !defined(ESP32_PLATFORM)
 void messageStoreSetNativePath(const char* path);
+// Limit the next in-place header publication to the first N bytes. Values
+// 0..12 simulate a power cut at every byte boundary; -1 disables the fault.
+void messageStoreSetNativeHeaderWriteLimit(int bytes);
+// Limit a direct record append to N bytes; -1 disables the fault.
+void messageStoreSetNativeRecordWriteLimit(int bytes);
 #endif
 
 } // namespace mesh
