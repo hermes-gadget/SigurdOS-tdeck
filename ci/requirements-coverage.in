@@ -1,0 +1,6 @@
+# Regenerate the hashed lock with:
+# uv pip compile ci/requirements-coverage.in \
+#   --output-file ci/requirements-coverage.txt \
+#   --generate-hashes --python-version 3.12
+-r requirements-platformio.in
+gcovr==8.4

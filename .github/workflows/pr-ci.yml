@@ -64,7 +64,7 @@ jobs:
           dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/platformio-packages.lock') }}
 
       - name: Install PlatformIO
-        run: python -m pip install --require-hashes -r ci/requirements-platformio.txt intelhex
+        run: python -m pip install --require-hashes -r ci/requirements-platformio.txt
 
       - name: Build firmware
         run: |
@@ -198,22 +198,22 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           submodules: recursive
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: '3.12'
+          python-version: '3.12.11'
 
       - name: Restore PlatformIO packages
         uses: ./.github/actions/cache-platformio
         with:
-          dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/platformio-packages.lock') }}
+          dependency-hash: ${{ hashFiles('platformio.ini', 'lib/meshcore/library.json', 'ci/requirements-platformio.in', 'ci/requirements-platformio.txt', 'ci/requirements-coverage.in', 'ci/requirements-coverage.txt', 'ci/platformio-packages.lock') }}
 
       - name: Install PlatformIO and coverage tooling
-        run: python -m pip install --upgrade platformio gcovr
+        run: python -m pip install --require-hashes -r ci/requirements-coverage.txt
 
       - name: Run all coverage-capable native tests
         run: pio test -e native_coverage -v
@@ -237,7 +237,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-production-coverage
           path: |

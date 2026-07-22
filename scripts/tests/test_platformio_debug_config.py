@@ -35,6 +35,7 @@ DEBUG_ENVIRONMENTS = (
     "SigurdOS_TDeck_gps_validation",
     "SigurdOS_TDeck_gps_validation_wifi",
 )
+SILENT_DEBUG_ENVIRONMENTS = {"SigurdOS_TDeck_companion_usb"}
 
 CONTROLLED_RADIO_MACROS = (
     "LORA_FREQ",
@@ -82,7 +83,8 @@ class PlatformIODebugConfigTests(unittest.TestCase):
                 self.assertIn("-UNDEBUG", flags)
                 self.assertNotIn("NDEBUG", macros)
                 self.assertEqual(macros.count("CORE_DEBUG_LEVEL"), 1)
-                self.assertIn("-DCORE_DEBUG_LEVEL=5", flags)
+                expected_level = 0 if environment in SILENT_DEBUG_ENVIRONMENTS else 5
+                self.assertIn(f"-DCORE_DEBUG_LEVEL={expected_level}", flags)
 
     def test_controlled_radio_macros_have_one_effective_definition(self) -> None:
         for environment in DEBUG_ENVIRONMENTS:

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+ACTION_REF = re.compile(r"uses:\s+[^.\s][^@\s]+@([^\s]+)")
 
 
 class SecurityWorkflowTests(unittest.TestCase):
@@ -29,11 +31,23 @@ class SecurityWorkflowTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", self.workflow)
 
     def test_codeql_runs_extended_cpp_queries(self) -> None:
-        self.assertIn("github/codeql-action/init@v4", self.workflow)
+        self.assertIn("github/codeql-action/init@e0647621c2984b5ed2f768cb892365bf2a616ad1", self.workflow)
         self.assertIn("languages: c-cpp", self.workflow)
         self.assertIn("build-mode: none", self.workflow)
         self.assertIn("queries: security-extended", self.workflow)
         self.assertIn("security-events: write", self.workflow)
+
+    def test_actions_and_platformio_tooling_are_immutable(self) -> None:
+        refs = ACTION_REF.findall(self.workflow)
+        self.assertGreater(len(refs), 0)
+        for ref in refs:
+            self.assertRegex(ref, r"^[0-9a-f]{40}$")
+        self.assertIn("./.github/actions/cache-platformio", self.workflow)
+        self.assertIn(
+            "pip install --require-hashes -r ci/requirements-platformio.txt",
+            self.workflow,
+        )
+        self.assertNotIn("pip install --upgrade platformio", self.workflow)
 
 
 if __name__ == "__main__":
