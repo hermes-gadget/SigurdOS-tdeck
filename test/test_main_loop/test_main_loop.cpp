@@ -7,6 +7,8 @@
 #include <iterator>
 #include <string>
 
+#include "app/gps_clock_handoff.h"
+
 namespace {
 
 std::string read_project_file(const char* path)
@@ -26,7 +28,7 @@ TEST(MainLoopDispatchTest, ServicesRemoteTestTelemetryAndDebugAfterGpsWork)
     const std::string source = read_project_file("src/main.cpp");
     ASSERT_FALSE(source.empty());
 
-    const size_t gps_pos = source.find("sigurdos_gps_mark_time_synced();");
+    const size_t gps_pos = source.find("serviceGpsClock(");
     const size_t mesh_pos = source.find("sigurdos::mesh::loop();");
     const size_t controller_pos = source.find("sigurdos_test_controller_loop();");
     const size_t telemetry_pos = source.find("sigurdos::telemetry::loop();");
@@ -144,6 +146,65 @@ TEST(MainLoopDispatchTest, EveryCriticalBatteryPathUsesOrderlyShutdown)
     ASSERT_NE(runtime_sleep_pos, std::string::npos);
     EXPECT_LT(runtime_guard_pos, runtime_sleep_pos);
     EXPECT_EQ(source.find("board.trySleep("), std::string::npos);
+
+TEST(GpsClockHandoffTest, AppliesSecondsAndMarksOnlyAfterClockAccepts)
+{
+    uint32_t last_poll = 0;
+    uint32_t applied = 0;
+    int loops = 0;
+    int marks = 0;
+    const bool synced = sigurdos::app::serviceGpsClock(
+        true, 1000, 1, last_poll, [&] { ++loops; },
+        [](SigurdOSGpsUtcTime* out) {
+            *out = {2024, 2, 29, 12, 35, 19};
+            return true;
+        },
+        [](int, int, int, int, int) { return 1709210100U; },
+        [&](uint32_t epoch) { applied = epoch; return true; },
+        [&] { ++marks; });
+    EXPECT_TRUE(synced);
+    EXPECT_EQ(applied, 1709210119U);
+    EXPECT_EQ(loops, 1);
+    EXPECT_EQ(marks, 1);
+    EXPECT_EQ(last_poll, 1000U);
+}
+
+TEST(GpsClockHandoffTest, FailedOrUninitializedClockLeavesPendingForRetry)
+{
+    uint32_t last_poll = 50;
+    int pending_reads = 0;
+    int marks = 0;
+    auto pending = [&](SigurdOSGpsUtcTime* out) {
+        ++pending_reads;
+        *out = {2026, 7, 22, 10, 20, 30};
+        return true;
+    };
+    auto epoch = [](int, int, int, int, int) { return 1000U; };
+    EXPECT_FALSE(sigurdos::app::serviceGpsClock(
+        true, 51, 1, last_poll, [] {}, pending, epoch,
+        [](uint32_t) { return false; }, [&] { ++marks; }));
+    EXPECT_TRUE(sigurdos::app::serviceGpsClock(
+        true, 52, 1, last_poll, [] {}, pending, epoch,
+        [](uint32_t) { return true; }, [&] { ++marks; }));
+    EXPECT_EQ(pending_reads, 2);
+    EXPECT_EQ(marks, 1);
+}
+
+TEST(GpsClockHandoffTest, DisabledAndPollBoundariesAreDeterministic)
+{
+    uint32_t last_poll = 0xFFFFFFF0U;
+    int loops = 0;
+    int pending_reads = 0;
+    auto pending = [&](SigurdOSGpsUtcTime*) { ++pending_reads; return false; };
+    auto epoch = [](int, int, int, int, int) { return 0U; };
+    EXPECT_FALSE(sigurdos::app::serviceGpsClock(
+        false, 0x20U, 0, last_poll, [&] { ++loops; }, pending, epoch,
+        [](uint32_t) { return true; }, [] {}));
+    EXPECT_EQ(pending_reads, 0);
+    EXPECT_FALSE(sigurdos::app::gpsPollDue(999, 0, 1));
+    EXPECT_TRUE(sigurdos::app::gpsPollDue(1000, 0, 1));
+    EXPECT_TRUE(sigurdos::app::gpsPollDue(0x3D8U, 0xFFFFFFF0U, 1));
+    EXPECT_FALSE(sigurdos::app::gpsPollDue(0x20U, 0xFFFFFFF0U, UINT32_MAX));
 }
 
 }  // anonymous namespace

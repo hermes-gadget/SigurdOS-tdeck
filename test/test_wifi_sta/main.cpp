@@ -2,6 +2,7 @@
 
 #include "hal/wifi_ota.h"
 #include "validation/gps_validation_wifi.h"
+#include "validation/gps_validation_status.h"
 
 using sigurdos::wifi_sta::Status;
 using sigurdos::wifi_sta::advanceConnectingStatus;
@@ -126,6 +127,43 @@ TEST(GpsValidationWifi, ResponseCleanupHandlesDisconnectTimeoutAndWrap) {
     EXPECT_FALSE(responseExpired(true, 0, 2000, 0));
     EXPECT_TRUE(responseExpired(true, 0, 2001, 0));
     EXPECT_TRUE(responseExpired(true, 0, 0x000007E1U, 0xFFFFFFF0U));
+
+TEST(GpsValidationStatus, ValidZeroAxesStillReportLocation) {
+    sigurdos::gps_validation::StatusFields fields{};
+    fields.has_fix = true;
+    fields.latitude = 0.0f;
+    fields.longitude = 12.5f;
+    char out[256];
+    ASSERT_TRUE(sigurdos::gps_validation::buildStatus(out, sizeof(out), fields, true));
+    EXPECT_NE(strstr(out, "|loc=1"), nullptr);
+    EXPECT_NE(strstr(out, "|lat=0.000000|lon=12.500000"), nullptr);
+
+    fields.latitude = 51.5f;
+    fields.longitude = 0.0f;
+    ASSERT_TRUE(sigurdos::gps_validation::buildStatus(out, sizeof(out), fields, true));
+    EXPECT_NE(strstr(out, "|loc=1"), nullptr);
+
+    fields.latitude = 0.0f;
+    ASSERT_TRUE(sigurdos::gps_validation::buildStatus(out, sizeof(out), fields, true));
+    EXPECT_NE(strstr(out, "|loc=1"), nullptr);
+}
+
+TEST(GpsValidationStatus, NoFixPrivacyAndTruncationAreExplicit) {
+    sigurdos::gps_validation::StatusFields fields{};
+    char out[256];
+    ASSERT_TRUE(sigurdos::gps_validation::buildStatus(out, sizeof(out), fields, true));
+    EXPECT_NE(strstr(out, "|loc=0"), nullptr);
+    EXPECT_EQ(strstr(out, "|lat="), nullptr);
+
+    fields.has_fix = true;
+    fields.latitude = 1.0f;
+    fields.longitude = 2.0f;
+    ASSERT_TRUE(sigurdos::gps_validation::buildStatus(out, sizeof(out), fields, false));
+    EXPECT_EQ(strstr(out, "|lat="), nullptr);
+
+    char tiny[12];
+    EXPECT_FALSE(sigurdos::gps_validation::buildStatus(tiny, sizeof(tiny), fields, true));
+    EXPECT_EQ(tiny[sizeof(tiny) - 1], '\0');
 }
 
 int main(int argc, char** argv) {

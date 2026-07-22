@@ -197,16 +197,33 @@ TEST(TestControllerRfParserTest, RxBoostedGainDefaultsToFalseWhenAbsent) {
     EXPECT_FALSE(out.rx_boosted_gain);
 }
 
-TEST(TestControllerRfParserTest, ExtraTrailingArgsIgnoredGracefully) {
+TEST(TestControllerRfParserTest, RejectsExtraTokensAndComments) {
     SigurdOSTestRfParams out{};
     int parsed = 0;
 
-    // sscanf only reads the 6 specifiers, ignoring trailing data.
-    // This is acceptable CLI behavior — parse what you need, ignore the rest.
     EXPECT_EQ(parse("869.525 10 250 5 22 1 999 extra junk", &out, &parsed),
-              SigurdOSTestRfParseResult::Ok);
+              SigurdOSTestRfParseResult::BadArgumentCount);
     EXPECT_EQ(parsed, 6);
-    EXPECT_TRUE(out.rx_boosted_gain);
+    EXPECT_EQ(parse("869.525 10 250 5 22 # comment", &out),
+              SigurdOSTestRfParseResult::BadArgumentCount);
+}
+
+TEST(TestControllerRfParserTest, AllowsTrailingWhitespaceOnly) {
+    SigurdOSTestRfParams out{};
+    EXPECT_EQ(parse("869.525 10 250 5 22 1 \t\r\n", &out),
+              SigurdOSTestRfParseResult::Ok);
+}
+
+TEST(TestControllerRfParserTest, RejectsInvalidBoostAndNonFiniteNumbers) {
+    SigurdOSTestRfParams out{};
+    EXPECT_EQ(parse("869.525 10 250 5 22 2", &out),
+              SigurdOSTestRfParseResult::RxBoostedGainOutOfRange);
+    EXPECT_EQ(parse("nan 10 250 5 22", &out),
+              SigurdOSTestRfParseResult::NonFiniteValue);
+    EXPECT_EQ(parse("869.525 10 inf 5 22", &out),
+              SigurdOSTestRfParseResult::NonFiniteValue);
+    EXPECT_EQ(parse("869MHz 10 250 5 22", &out),
+              SigurdOSTestRfParseResult::BadArgumentCount);
 }
 
 TEST(TestControllerBoundsTest, EmojiPageNeverExceedsObjectBudget) {
