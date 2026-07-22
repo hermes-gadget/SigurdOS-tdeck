@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -69,6 +70,37 @@ class DownloadMapsTests(unittest.TestCase):
                     download_maps.download_tile((0, 0, 1, config, str(root), False))[3]
                 )
             self.assertEqual(tile.read_bytes(), b"new")
+
+    def test_tile_index_records_only_valid_nonempty_tiles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative in ("8/100/80.png", "8/100/82.png", "8/103/81.png"):
+                tile = root / relative
+                tile.parent.mkdir(parents=True, exist_ok=True)
+                tile.write_bytes(b"png")
+            (root / "8/100/invalid.png").write_bytes(b"ignored")
+            (root / "8/100/83.png").write_bytes(b"")
+            out_of_world = root / "8" / "256" / "1.png"
+            out_of_world.parent.mkdir(parents=True)
+            out_of_world.write_bytes(b"ignored")
+
+            index = download_maps.write_tile_index(str(root))
+
+            self.assertEqual(index["version"], 1)
+            self.assertEqual(index["tile_size"], 256)
+            self.assertEqual(index["zooms"], [{
+                "z": 8,
+                "min_x": 100,
+                "max_x": 103,
+                "min_y": 80,
+                "max_y": 82,
+                "sample_x": 100,
+                "sample_y": 80,
+                "count": 3,
+            }])
+            self.assertEqual(
+                json.loads((root / "index.json").read_text()), index)
+            self.assertFalse((root / "index.json.tmp").exists())
 
 
 if __name__ == "__main__":
