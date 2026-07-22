@@ -267,6 +267,7 @@ void screens_clear_companion_icon()
 // Device PIN protection
 // ════════════════════════════════════════════════════════
 static uint32_t g_pin_last_unlock_ms = 0;
+static bool g_pin_has_unlock = false;
 static constexpr uint32_t PIN_GRACE_MS = 300000; // 5 minutes in milliseconds
 static lv_obj_t* g_pin_entry_root = nullptr;
 static uint32_t g_pin_entry_generation = 0;
@@ -298,14 +299,8 @@ bool pin_entry_handle_trackball(SigurdOSTrackballEvent event) {
 }
 
 bool pin_grace_active() {
-    if (g_pin_last_unlock_ms == 0) return false;
-    uint32_t now = millis();
-    // Handle millis() wraparound (~49 days): if now < last_unlock,
-    // the timer wrapped; grace is still valid if within the window.
-    if (now < g_pin_last_unlock_ms) {
-        return (UINT32_MAX - g_pin_last_unlock_ms + now) < PIN_GRACE_MS;
-    }
-    return (now - g_pin_last_unlock_ms) < PIN_GRACE_MS;
+    if (!g_pin_has_unlock) return false;
+    return static_cast<uint32_t>(millis() - g_pin_last_unlock_ms) < PIN_GRACE_MS;
 }
 
 struct PinEntryCtx {
@@ -318,13 +313,8 @@ static void pin_entry_success(Screen target) {
     g_pin_attempts.reset();
     g_pin_entry_root = nullptr;
     g_pin_last_unlock_ms = millis();
-    if (g_pin_last_unlock_ms == 0) g_pin_last_unlock_ms = 1;
-    // Direct load — bypass navigate_to's same-screen guard
-    if (target == Screen::Settings) {
-        settings_screen_show();
-    } else if (target == Screen::Terminal) {
-        terminal_screen_show();
-    }
+    g_pin_has_unlock = true;
+    navigation_pin_unlocked(target);
 }
 
 void pin_entry_show(Screen target_screen) {
@@ -382,6 +372,7 @@ void pin_entry_show(Screen target_screen) {
     lv_label_set_text(cancel_lbl, "Back to Home");
     lv_obj_center(cancel_lbl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t*) {
+        navigation_pin_cancelled();
         go_back();
     }, LV_EVENT_CLICKED, nullptr);
 
@@ -410,7 +401,6 @@ void pin_entry_show(Screen target_screen) {
             lv_textarea_set_text(ta_obj, "");
             if (g_pin_attempts.remaining() == 0) {
                 lv_label_set_text(ctx->attempts_label, "Locked; try again in 30 seconds");
-                go_back();
             } else {
                 char att_buf[32];
                 snprintf(att_buf, sizeof(att_buf), "%u attempts remaining",

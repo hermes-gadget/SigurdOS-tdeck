@@ -60,6 +60,11 @@ inline bool screen_refresh_matches(Screen expected, Screen active)
     return expected == active;
 }
 
+// Routes that expose device configuration, credentials, destructive actions,
+// or identity controls.  Authorization is enforced by the router for every
+// entry path rather than relying on individual screen renderers.
+bool is_pin_protected_route(Screen screen);
+
 // Navigate to a screen
 void navigate_to(Screen screen);
 
@@ -85,6 +90,17 @@ void refresh_current_screen();
 // Re-dispatch only when the caller's screen is still current. Deferred LVGL
 // callbacks use this to avoid replacing an unrelated screen generation.
 bool refresh_current_screen_if(Screen expected);
+
+// PIN-screen completion hooks.  The router keeps the denied operation pending
+// so a successful unlock resumes the exact forward/back/refresh request
+// without changing history before authorization.
+void navigation_pin_unlocked(Screen target_screen);
+void navigation_pin_cancelled();
+
+#ifdef SIGURDOS_NAVIGATION_TEST
+// Reset file-scope router state for production-router native tests only.
+void navigation_reset_for_test(Screen initial = Screen::Home);
+#endif
 
 // Universal back-swipe gesture (two-swipe commit).
 // Call this from the trackball dispatch loop for screens that don't have
