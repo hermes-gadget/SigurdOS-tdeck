@@ -714,7 +714,11 @@ diagnostic specialization, not merely the compiler optimization level.
 
 Every T-Deck environment inherits the merged-image post-build action unless it
 overrides the base scripts. Always inspect the requested environment's build
-directory and flash its own `firmware-merged.bin`.
+directory and flash its own `firmware-merged.bin`. Do not build pull-request code
+on the hardware workstation: PlatformIO build scripts are executable. Build an
+approved commit in isolated CI, bind the downloaded artifact to its reviewed
+SHA-256, and pass it to `scripts/hw_test/hw_flash.py`, which validates the
+ESP32-S3 image before any offset-zero write.
 
 ## Troubleshooting Guide
 

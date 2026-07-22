@@ -62,22 +62,19 @@ sha256sum \
 
 ## Phase 3 — Flash and smoke
 
-Only use the merged image at offset `0x0`:
+Only use the trusted flasher with the merged image and the digest recorded above.
+It validates ESP32-S3 structure, partition bounds, checksums, and provenance before
+writing offset `0x0`:
 
 ```bash
-scp .pio/build/SigurdOS_TDeck_remote_test_radio/firmware-merged.bin \
-  hermes-pi:/tmp/sigurdos-hw-test.bin
-
-sha256sum .pio/build/SigurdOS_TDeck_remote_test_radio/firmware-merged.bin
-ssh hermes-pi 'sha256sum /tmp/sigurdos-hw-test.bin'
-
-ssh hermes-pi \
-  "~/hermes-venv/bin/esptool --chip esp32s3 --port /dev/ttyACM0 \
-   --baud 921600 --before default-reset --after hard-reset \
-   write-flash 0x0 /tmp/sigurdos-hw-test.bin"
+python3 scripts/hw_test/hw_flash.py \
+  --firmware .pio/build/SigurdOS_TDeck_remote_test_radio/firmware-merged.bin \
+  --sha256 <test-merged-sha256-recorded-above> \
+  --pi-mode --port /dev/ttyACM0
 ```
 
-- [ ] Local and Pi artifact hashes match
+- [ ] Trusted flasher records the expected artifact SHA-256
+- [ ] Bootloader, partition table, boot_app0, and application validation passes
 - [ ] esptool verifies the write
 - [ ] If Launcher was active, USB was physically unplugged/replugged
 - [ ] Full radio boot wait completed before first command

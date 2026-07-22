@@ -61,9 +61,11 @@ Do not use the UK live mesh frequency (869.525 MHz) for automated test traffic.
 
 ## Build and flash
 
-`hw_flash.py` builds any PlatformIO environment and will only flash a file named
-`firmware-merged.bin`. It refuses `firmware.bin`, because that app-only image
-cannot boot when written at offset zero.
+`hw_flash.py` builds any PlatformIO environment and will only flash a structurally
+valid ESP32-S3 image named `firmware-merged.bin`. Before writing offset zero it
+validates the bootloader checksum/digest, partition-table MD5 and 16 MB bounds,
+boot_app0 layout, application checksum/digest, chip ID, and app-partition capacity.
+It refuses `firmware.bin`, because that app-only image cannot boot at offset zero.
 
 ```bash
 # Pi-connected device
@@ -77,6 +79,17 @@ python3 scripts/hw_test/hw_flash.py \
 # Build without flashing
 python3 scripts/hw_test/hw_flash.py \
   --env SigurdOS_TDeck_remote_test_radio --build-only --local
+```
+
+An externally built image also requires provenance from the reviewed build. Use
+either its exact lowercase SHA-256 or an evidence/metadata JSON whose `artifacts`
+mapping binds `firmware-merged.bin` to that digest:
+
+```bash
+python3 scripts/hw_test/hw_flash.py \
+  --firmware /tmp/reviewed/firmware-merged.bin \
+  --sha256 <reviewed-64-character-digest> \
+  --local --port /dev/ttyACM0
 ```
 
 The Pi path stages the merged image with `scp`, then runs:
@@ -109,18 +122,22 @@ python3 scripts/hw_test/hw_test_runner.py --smoke --pi-mode \
 
 ## Pull request testing
 
-`--pr N` fetches `refs/pull/N/head` from `origin`, creates a detached temporary
-git worktree, initializes its submodules, builds the selected environment, and
-flashes it before running the chosen tests. It does not switch or clean the
-developer's current checkout.
+The hardware workstation never checks out or builds a pull request. PlatformIO
+`extra_scripts` are executable Python, so a worktree is not a security boundary
+for untrusted PR code. Build the exact reviewed commit in an ephemeral CI worker
+with no hardware-host credentials, download its immutable artifact bundle, review
+the recorded SHA-256, then give that binary and digest to the runner:
 
 ```bash
-python3 scripts/hw_test/hw_test_runner.py --pr 123 --smoke --pi-mode \
+python3 scripts/hw_test/hw_test_runner.py --smoke --pi-mode --flash \
+  --firmware /tmp/pr-artifact/firmware-merged.bin \
+  --sha256 <reviewed-64-character-digest> \
   --env SigurdOS_TDeck_remote_test_radio \
-  --outdir /tmp/pr-123-hardware
+  --outdir /tmp/pr-hardware
 ```
 
-The temporary worktree is removed after the merged image has been flashed.
+The results JSON records the exact firmware SHA-256. Maintainer approval must bind
+that digest to the reviewed commit before the trusted flasher is invoked.
 
 ## Pi worker model
 

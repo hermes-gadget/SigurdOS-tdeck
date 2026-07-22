@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,8 +14,15 @@ PACKAGE_PARENT = Path(__file__).resolve().parents[2]
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
+import audit_launcher_artifact as artifact_format
+
 from hw_test.hw_constants import SCREENSHOT_TIMEOUT_S, CommandProtocol, boot_wait_for
-from hw_test.hw_flash import FlashError, HardwareFlasher, find_pi_host, validate_merged_firmware
+from hw_test.hw_flash import (
+    FlashError,
+    HardwareFlasher,
+    find_pi_host,
+    validate_merged_firmware,
+)
 from hw_test.hw_report import HardwareReport, TestResult, TestStatus, utc_now, write_report_bundle
 from hw_test.hw_serial import (
     DeviceInfo,
@@ -24,6 +33,79 @@ from hw_test.hw_serial import (
 )
 from hw_test.hw_test_runner import PhaseSelection, _check_variant, _merge_report_metadata
 from hw_test.hw_soak import SoakConfig
+
+
+def _partition_entry(partition_type, subtype, offset, size, label):
+    return struct.pack(
+        "<HBBII16sI",
+        artifact_format.ENTRY_MAGIC,
+        partition_type,
+        subtype,
+        offset,
+        size,
+        label.encode().ljust(16, b"\0"),
+        0,
+    )
+
+
+def _esp_image(segment: bytes) -> bytes:
+    common = struct.pack(
+        "<BBBBI", artifact_format.ESP_IMAGE_MAGIC, 1, 2, 0, 0x40370000
+    )
+    extended = struct.pack(
+        "<BBBBHBHHBBBBB",
+        0xEE, 0, 0, 0, artifact_format.ESP32S3_CHIP_ID, 0, 0, 0, 0, 0, 0, 0, 1,
+    )
+    image = common + extended + struct.pack("<II", 0x3FC80000, len(segment)) + segment
+    checksum = 0xEF
+    for value in segment:
+        checksum ^= value
+    checksum_end = artifact_format.align_up(len(image) + 1, 16)
+    image += b"\0" * (checksum_end - len(image) - 1)
+    image += bytes([checksum])
+    return image + hashlib.sha256(image).digest()
+
+
+def _valid_merged_fixture() -> bytes:
+    app = _esp_image(b"application!")
+    bootloader = _esp_image(b"boot" * 3)
+    entries = b"".join(
+        [
+            _partition_entry(artifact_format.DATA_TYPE, 0x02, 0x9000, 0x5000, "nvs"),
+            _partition_entry(
+                artifact_format.DATA_TYPE,
+                artifact_format.DATA_SUBTYPE_OTA,
+                artifact_format.BOOT_APP0_OFFSET,
+                artifact_format.BOOT_APP0_SIZE,
+                "otadata",
+            ),
+            _partition_entry(artifact_format.APP_TYPE, 0x10, 0x10000, 0x20000, "app0"),
+            _partition_entry(
+                artifact_format.DATA_TYPE,
+                artifact_format.DATA_SUBTYPE_SPIFFS,
+                0x30000,
+                0x10000,
+                "spiffs",
+            ),
+        ]
+    )
+    table = (
+        entries
+        + struct.pack("<H", artifact_format.MD5_MAGIC)
+        + b"\xFF" * 14
+        + hashlib.md5(entries).digest()  # nosec: ESP partition format
+    )
+    data = bytearray(b"\xFF" * (0x10000 + len(app)))
+    data[:len(bootloader)] = bootloader
+    start = artifact_format.PARTITION_TABLE_OFFSET
+    data[start:start + len(table)] = table
+    start = artifact_format.BOOT_APP0_OFFSET
+    data[start:start + 32] = (
+        struct.pack("<I", 1) + b"\xFF" * 24 + struct.pack("<I", 0x4743989A)
+    )
+    data[start + 0x1000:start + 0x1004] = b"\x00" * 4
+    data[0x10000:0x10000 + len(app)] = app
+    return bytes(data)
 
 
 class SerialParsingTests(unittest.TestCase):
@@ -144,6 +226,60 @@ class ConstantsAndFlashTests(unittest.TestCase):
             path.write_bytes(b"x" * 600_000)
             with self.assertRaises(FlashError):
                 validate_merged_firmware(path)
+
+    def test_renamed_random_data_is_refused_before_flashing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "firmware-merged.bin"
+            path.write_bytes(b"x" * 600_000)
+            with self.assertRaisesRegex(FlashError, "invalid merged ESP32-S3 image"):
+                validate_merged_firmware(path)
+
+    def test_external_firmware_requires_and_matches_reviewed_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "firmware-merged.bin"
+            path.write_bytes(_valid_merged_fixture())
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(FlashError, "requires --sha256 or --metadata"):
+                validate_merged_firmware(path, require_provenance=True)
+            self.assertEqual(
+                validate_merged_firmware(
+                    path, expected_sha256=digest, require_provenance=True
+                ),
+                path.resolve(),
+            )
+            with self.assertRaisesRegex(FlashError, "SHA-256 mismatch"):
+                validate_merged_firmware(
+                    path, expected_sha256="0" * 64, require_provenance=True
+                )
+
+    def test_release_evidence_metadata_binds_external_firmware(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            path = directory / "firmware-merged.bin"
+            path.write_bytes(_valid_merged_fixture())
+            metadata = directory / "release-evidence.json"
+            metadata.write_text(
+                json.dumps(
+                    {"artifacts": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()}}
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                validate_merged_firmware(
+                    path, metadata=metadata, require_provenance=True
+                ),
+                path.resolve(),
+            )
+
+    def test_runner_no_longer_accepts_untrusted_pr_build_mode(self) -> None:
+        runner = PACKAGE_PARENT / "hw_test" / "hw_test_runner.py"
+        result = subprocess.run(
+            [sys.executable, str(runner), "--pr", "123", "--local"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unrecognized arguments: --pr 123", result.stderr)
 
     def test_pi_host_discovery_falls_back_after_timeout(self) -> None:
         reachable = mock.Mock(returncode=0, stdout="", stderr="")

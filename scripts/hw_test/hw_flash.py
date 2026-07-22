@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
+import json
 import re
 import shlex
 import shutil
@@ -45,6 +47,8 @@ else:
         first_existing_local_port,
     )
 
+from audit_launcher_artifact import audit as audit_merged_artifact
+
 
 class FlashError(RuntimeError):
     """Raised for build, transfer, flash, or boot verification failure."""
@@ -56,6 +60,7 @@ class BuildResult:
     firmware: Path
     duration_s: float
     output: str
+    sha256: str
 
 
 @dataclass(slots=True)
@@ -67,6 +72,7 @@ class FlashResult:
     flash_output: str
     boot_log: str
     boot_verified: bool
+    sha256: str
     cold_boot_requested: bool = False
 
 
@@ -130,16 +136,83 @@ def resolve_esptool(explicit: str | None = None) -> str:
     raise FlashError("esptool was not found in PATH or the configured virtual environments")
 
 
-def validate_merged_firmware(firmware: Path) -> Path:
-    """Refuse the app-only image that cannot boot from offset zero."""
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def firmware_sha256(firmware: Path) -> str:
+    digest = hashlib.sha256()
+    with firmware.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def digest_from_metadata(metadata: Path, firmware: Path) -> str:
+    try:
+        payload = json.loads(metadata.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FlashError(f"cannot read artifact metadata {metadata}: {exc}") from exc
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise FlashError("artifact metadata has no artifacts mapping")
+
+    direct = artifacts.get(firmware.name)
+    if isinstance(direct, str) and SHA256_RE.fullmatch(direct):
+        return direct
+
+    aliases = {firmware.name}
+    if firmware.name == MERGED_FIRMWARE_NAME:
+        aliases.update({"sigurdos-tdeck-full.bin", "full", "merged"})
+    for key, record in artifacts.items():
+        if not isinstance(record, dict):
+            continue
+        filename = record.get("file")
+        digest = record.get("sha256")
+        if (key in aliases or filename in aliases) and isinstance(digest, str):
+            if SHA256_RE.fullmatch(digest):
+                return digest
+    raise FlashError(
+        f"artifact metadata has no lowercase SHA-256 for {firmware.name}"
+    )
+
+
+def validate_merged_firmware(
+    firmware: Path,
+    *,
+    expected_sha256: str | None = None,
+    metadata: Path | None = None,
+    require_provenance: bool = False,
+) -> Path:
+    """Validate structure and provenance before any offset-zero flash."""
 
     resolved = firmware.expanduser().resolve()
     if resolved.name != MERGED_FIRMWARE_NAME:
         raise FlashError(
             f"refusing {resolved.name}: offset-zero flashing requires {MERGED_FIRMWARE_NAME}"
         )
-    if not resolved.is_file() or resolved.stat().st_size < 512_000:
-        raise FlashError(f"merged firmware is missing or implausibly small: {resolved}")
+    if not resolved.is_file():
+        raise FlashError(f"merged firmware is missing: {resolved}")
+
+    result = audit_merged_artifact(resolved)
+    if not result.ok:
+        raise FlashError("invalid merged ESP32-S3 image: " + "; ".join(result.errors))
+
+    if expected_sha256 is not None and metadata is not None:
+        raise FlashError("choose either an expected SHA-256 or artifact metadata")
+    if metadata is not None:
+        expected_sha256 = digest_from_metadata(metadata.expanduser().resolve(), resolved)
+    if require_provenance and expected_sha256 is None:
+        raise FlashError(
+            "external firmware requires --sha256 or --metadata from the reviewed build"
+        )
+    if expected_sha256 is not None:
+        if not SHA256_RE.fullmatch(expected_sha256):
+            raise FlashError("expected SHA-256 must be 64 lowercase hexadecimal characters")
+        actual = firmware_sha256(resolved)
+        if actual != expected_sha256:
+            raise FlashError(
+                f"firmware SHA-256 mismatch: got {actual}, expected {expected_sha256}"
+            )
     return resolved
 
 
@@ -177,7 +250,13 @@ class HardwareFlasher:
         firmware = validate_merged_firmware(
             self.repo_root / ".pio" / "build" / environment / MERGED_FIRMWARE_NAME
         )
-        return BuildResult(environment, firmware, time.monotonic() - started, output)
+        return BuildResult(
+            environment,
+            firmware,
+            time.monotonic() - started,
+            output,
+            firmware_sha256(firmware),
+        )
 
     def _flash_local(self, firmware: Path) -> str:
         command = [
@@ -309,8 +388,17 @@ sys.stdout.buffer.write(bytes(data))
         environment: str | None = None,
         verify: bool = True,
         cold_boot: bool = False,
+        expected_sha256: str | None = None,
+        metadata: Path | None = None,
+        require_provenance: bool = False,
     ) -> FlashResult:
-        firmware = validate_merged_firmware(firmware)
+        firmware = validate_merged_firmware(
+            firmware,
+            expected_sha256=expected_sha256,
+            metadata=metadata,
+            require_provenance=require_provenance,
+        )
+        digest = firmware_sha256(firmware)
         started = time.monotonic()
         if self.pi_mode:
             host, flash_output = self._flash_pi(firmware)
@@ -335,6 +423,7 @@ sys.stdout.buffer.write(bytes(data))
             flash_output=flash_output,
             boot_log=boot_log,
             boot_verified=verified,
+            sha256=digest,
             cold_boot_requested=cold_boot,
         )
 
@@ -344,9 +433,12 @@ def repo_root() -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--env", default=DEFAULT_BUILD_ENV, help="PlatformIO environment")
     parser.add_argument("--firmware", type=Path, help="existing firmware-merged.bin (skip build)")
+    provenance = parser.add_mutually_exclusive_group()
+    provenance.add_argument("--sha256", help="reviewed lowercase SHA-256 for --firmware")
+    provenance.add_argument("--metadata", type=Path, help="reviewed artifact/evidence JSON")
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--pi-mode", action="store_true", help="flash through the Pi gateway")
     target.add_argument("--local", action="store_true", help="flash a directly attached T-Deck")
@@ -360,7 +452,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.firmware and not (args.sha256 or args.metadata):
+        parser.error("--firmware requires --sha256 or --metadata from the reviewed build")
+    if (args.sha256 or args.metadata) and not args.firmware:
+        parser.error("--sha256/--metadata require --firmware")
     pi_mode = bool(args.pi_mode)
     port = args.port or (PI_TDECK_PORT if pi_mode else first_existing_local_port())
     flasher = HardwareFlasher(
@@ -372,11 +469,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         if args.firmware:
-            firmware = validate_merged_firmware(args.firmware)
+            firmware = validate_merged_firmware(
+                args.firmware,
+                expected_sha256=args.sha256,
+                metadata=args.metadata,
+                require_provenance=True,
+            )
         else:
             build = flasher.build(args.env)
             firmware = build.firmware
-            print(f"BUILD PASS: {args.env} ({build.duration_s:.1f}s) -> {firmware}")
+            print(
+                f"BUILD PASS: {args.env} ({build.duration_s:.1f}s) -> {firmware} "
+                f"sha256={build.sha256}"
+            )
         if args.build_only:
             return 0
         result = flasher.flash(
@@ -384,10 +489,13 @@ def main(argv: list[str] | None = None) -> int:
             environment=args.env,
             verify=not args.no_verify,
             cold_boot=args.cold_boot,
+            expected_sha256=args.sha256,
+            metadata=args.metadata,
+            require_provenance=bool(args.firmware),
         )
         print(
             f"FLASH PASS: {result.target}:{result.port} ({result.duration_s:.1f}s) "
-            f"boot_verified={result.boot_verified}"
+            f"boot_verified={result.boot_verified} sha256={result.sha256}"
         )
     except FlashError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

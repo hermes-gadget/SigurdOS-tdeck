@@ -8,7 +8,6 @@ import re
 import shlex
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +30,7 @@ if __package__ in (None, ""):
     from hw_test.hw_flash import (  # type: ignore[import-not-found]
         FlashError,
         HardwareFlasher,
+        firmware_sha256,
         find_pi_host,
         validate_merged_firmware,
     )
@@ -64,7 +64,13 @@ else:
         capabilities_for,
         first_existing_local_port,
     )
-    from .hw_flash import FlashError, HardwareFlasher, find_pi_host, validate_merged_firmware
+    from .hw_flash import (
+        FlashError,
+        HardwareFlasher,
+        firmware_sha256,
+        find_pi_host,
+        validate_merged_firmware,
+    )
     from .hw_report import (
         HardwareReport,
         HeapSample,
@@ -605,97 +611,66 @@ def run_radio(
     )
 
 
-def _prepare_pr_worktree(pr_number: int) -> tuple[Path, str]:
-    root = repo_root()
-    temporary = Path(tempfile.mkdtemp(prefix=f"sigurdos-pr-{pr_number}-"))
-    ref = f"refs/hw-test/pr-{pr_number}"
-    fetched = _run(
-        ["git", "fetch", "origin", f"+pull/{pr_number}/head:{ref}"],
-        cwd=root,
-        timeout=300,
-        echo=True,
-    )
-    if fetched.returncode != 0:
-        raise RuntimeError(f"cannot fetch PR #{pr_number}: {(fetched.stdout + fetched.stderr)[-2000:]}")
-    added = _run(
-        ["git", "worktree", "add", "--detach", str(temporary), ref],
-        cwd=root,
-        timeout=120,
-        echo=True,
-    )
-    if added.returncode != 0:
-        raise RuntimeError(f"cannot create PR worktree: {(added.stdout + added.stderr)[-2000:]}")
-    submodules = _run(
-        ["git", "submodule", "update", "--init", "--recursive"],
-        cwd=temporary,
-        timeout=900,
-        echo=True,
-    )
-    if submodules.returncode != 0:
-        _remove_pr_worktree(temporary)
-        raise RuntimeError(f"cannot initialize PR submodules: {(submodules.stdout + submodules.stderr)[-2000:]}")
-    sha = _run(["git", "rev-parse", "HEAD"], cwd=temporary, timeout=20).stdout.strip()
-    return temporary, sha
-
-
-def _remove_pr_worktree(path: Path) -> None:
-    _run(
-        ["git", "worktree", "remove", "--force", str(path)],
-        cwd=repo_root(),
-        timeout=120,
-    )
-
-
 def _build_or_flash(args: argparse.Namespace, metadata: dict[str, Any]) -> None:
-    if not (args.pr or args.build or args.flash):
+    if not (args.build or args.flash):
         return
-    worktree: Path | None = None
     build_root = repo_root()
-    try:
-        if args.pr:
-            worktree, sha = _prepare_pr_worktree(args.pr)
-            build_root = worktree
-            metadata.update({"pr": args.pr, "pr_sha": sha})
-        pi_mode = bool(args.pi_mode)
-        port = args.port or (PI_TDECK_PORT if pi_mode else first_existing_local_port())
-        flasher = HardwareFlasher(
-            build_root,
-            pi_mode=pi_mode,
-            port=port,
-            pi_host=args.pi_host,
-            esptool=args.esptool,
+    pi_mode = bool(args.pi_mode)
+    port = args.port or (PI_TDECK_PORT if pi_mode else first_existing_local_port())
+    flasher = HardwareFlasher(
+        build_root,
+        pi_mode=pi_mode,
+        port=port,
+        pi_host=args.pi_host,
+        esptool=args.esptool,
+    )
+    if args.firmware:
+        firmware = validate_merged_firmware(
+            args.firmware,
+            expected_sha256=args.sha256,
+            metadata=args.metadata,
+            require_provenance=True,
         )
-        if args.firmware:
-            firmware = validate_merged_firmware(args.firmware)
-        else:
-            build = flasher.build(args.env)
-            firmware = build.firmware
-            metadata.update(
-                {
-                    "build_environment": build.environment,
-                    "build_duration_s": round(build.duration_s, 3),
-                }
-            )
-            print(f"BUILD PASS: {build.environment} -> {firmware}", flush=True)
-        if args.flash or args.pr:
-            flashed = flasher.flash(
-                firmware,
-                environment=args.env,
-                verify=not args.no_boot_verify,
-                cold_boot=args.cold_boot,
-            )
-            metadata.update(
-                {
-                    "flash_target": flashed.target,
-                    "flash_port": flashed.port,
-                    "flash_duration_s": round(flashed.duration_s, 3),
-                    "flash_boot_verified": flashed.boot_verified,
-                }
-            )
-            print(f"FLASH PASS: {flashed.target}:{flashed.port}", flush=True)
-    finally:
-        if worktree is not None:
-            _remove_pr_worktree(worktree)
+        digest = firmware_sha256(firmware)
+        metadata.update({"artifact_source": "reviewed", "firmware_sha256": digest})
+    else:
+        build = flasher.build(args.env)
+        firmware = build.firmware
+        metadata.update(
+            {
+                "artifact_source": "trusted_local_build",
+                "build_environment": build.environment,
+                "build_duration_s": round(build.duration_s, 3),
+                "firmware_sha256": build.sha256,
+            }
+        )
+        print(
+            f"BUILD PASS: {build.environment} -> {firmware} sha256={build.sha256}",
+            flush=True,
+        )
+    if args.flash:
+        flashed = flasher.flash(
+            firmware,
+            environment=args.env,
+            verify=not args.no_boot_verify,
+            cold_boot=args.cold_boot,
+            expected_sha256=args.sha256,
+            metadata=args.metadata,
+            require_provenance=bool(args.firmware),
+        )
+        metadata.update(
+            {
+                "flash_target": flashed.target,
+                "flash_port": flashed.port,
+                "flash_duration_s": round(flashed.duration_s, 3),
+                "flash_boot_verified": flashed.boot_verified,
+                "firmware_sha256": flashed.sha256,
+            }
+        )
+        print(
+            f"FLASH PASS: {flashed.target}:{flashed.port} sha256={flashed.sha256}",
+            flush=True,
+        )
 
 
 def _selection(args: argparse.Namespace) -> PhaseSelection:
@@ -931,6 +906,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        allow_abbrev=False,
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--smoke", action="store_true", help="quick commands, navigation, screenshots")
@@ -961,10 +937,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--radio-cr", type=int, default=TEST_RADIO_PARAMS.coding_rate)
     parser.add_argument("--radio-power", type=int, default=TEST_RADIO_PARAMS.tx_power_dbm)
 
-    parser.add_argument("--pr", type=int, help="build and flash an isolated GitHub PR worktree")
     parser.add_argument("--build", action="store_true", help="build --env before testing")
     parser.add_argument("--flash", action="store_true", help="flash before testing (builds unless --firmware)")
     parser.add_argument("--firmware", type=Path, help="existing firmware-merged.bin")
+    provenance = parser.add_mutually_exclusive_group()
+    provenance.add_argument("--sha256", help="reviewed lowercase SHA-256 for --firmware")
+    provenance.add_argument("--metadata", type=Path, help="reviewed artifact/evidence JSON")
     parser.add_argument("--cold-boot", action="store_true")
     parser.add_argument("--no-boot-verify", action="store_true")
     parser.add_argument("--esptool")
@@ -977,16 +955,16 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--iterations must be at least 1")
     if args.duration <= 0:
         parser.error("--duration must be positive")
-    if args.pr is not None and args.pr <= 0:
-        parser.error("--pr must be a positive issue number")
     if args.firmware and args.build:
         parser.error("--firmware and --build are mutually exclusive")
-    if args.pr is not None and args.firmware:
-        parser.error("--pr always builds the PR branch and cannot use --firmware")
     if args.firmware and not args.flash:
         parser.error("--firmware requires --flash")
-    if args.cold_boot and not (args.flash or args.pr):
-        parser.error("--cold-boot requires --flash or --pr")
+    if args.firmware and not (args.sha256 or args.metadata):
+        parser.error("--firmware requires --sha256 or --metadata from the reviewed build")
+    if (args.sha256 or args.metadata) and not args.firmware:
+        parser.error("--sha256/--metadata require --firmware")
+    if args.cold_boot and not args.flash:
+        parser.error("--cold-boot requires --flash")
     if not args.pi_mode and not args.local:
         # Explicit transport is safest around machines that also have a Heltec
         # on /dev/ttyUSB0. Direct Pi workers force --local internally.

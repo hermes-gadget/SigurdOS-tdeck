@@ -47,8 +47,11 @@ jobs:
         run: python -m pip install --require-hashes -r ci/requirements-platformio.txt
 
       - name: Update one exact pin and resolve the graph
+        env:
+          DEPENDENCY: ${{ inputs.dependency }}
+          VERSION: ${{ inputs.version }}
         run: |
-          python scripts/update_pio_dependency.py "${{ inputs.dependency }}" "${{ inputs.version }}"
+          python scripts/update_pio_dependency.py "$DEPENDENCY" "$VERSION"
           pio pkg install -e SigurdOS_TDeck
           python scripts/platformio_lock.py --write
 

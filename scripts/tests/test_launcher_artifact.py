@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import struct
 import subprocess
 import sys
@@ -34,15 +35,21 @@ def app_image(chip_id=MODULE.ESP32S3_CHIP_ID, segment=b"test", append_digest=Tru
         int(append_digest),
     )
     image = common + extended + struct.pack("<II", 0x3FC80000, len(segment)) + segment
-    image += b"\0" * (MODULE.align_up(len(image) + 1, 16) - len(image))
+    checksum = 0xEF
+    for value in segment:
+        checksum ^= value
+    checksum_end = MODULE.align_up(len(image) + 1, 16)
+    image += b"\0" * (checksum_end - len(image) - 1)
+    image += bytes([checksum])
     if append_digest:
-        image += b"\0" * 32
+        image += hashlib.sha256(image).digest()
     return image
 
 
 def merged_fixture(*, chip_id=MODULE.ESP32S3_CHIP_ID, app_partition_size=0x20000,
                    malformed_size=False, truncate_image=False):
     image = app_image(chip_id=chip_id)
+    bootloader = app_image(segment=b"boot")
     entries = [
         partition_entry(MODULE.DATA_TYPE, MODULE.DATA_SUBTYPE_OTA, 0xE000, 0x2000, "otadata"),
         partition_entry(
@@ -55,8 +62,21 @@ def merged_fixture(*, chip_id=MODULE.ESP32S3_CHIP_ID, app_partition_size=0x20000
         partition_entry(MODULE.DATA_TYPE, MODULE.DATA_SUBTYPE_SPIFFS, 0x30000, 0x10000, "spiffs"),
     ]
     data = bytearray(b"\xFF" * (0x10000 + len(image)))
-    table = b"".join(entries) + b"\xFF" * MODULE.PARTITION_ENTRY_SIZE
+    table_entries = b"".join(entries)
+    table = (
+        table_entries
+        + struct.pack("<H", MODULE.MD5_MAGIC)
+        + b"\xFF" * 14
+        + hashlib.md5(table_entries).digest()  # nosec: ESP partition format
+    )
+    data[:len(bootloader)] = bootloader
     data[MODULE.PARTITION_TABLE_OFFSET : MODULE.PARTITION_TABLE_OFFSET + len(table)] = table
+    data[MODULE.BOOT_APP0_OFFSET : MODULE.BOOT_APP0_OFFSET + 32] = (
+        struct.pack("<I", 1) + b"\xFF" * 24 + struct.pack("<I", 0x4743989A)
+    )
+    data[MODULE.BOOT_APP0_OFFSET + 0x1000 : MODULE.BOOT_APP0_OFFSET + 0x1004] = (
+        b"\x00" * 4
+    )
     data[0x10000 : 0x10000 + len(image)] = image
     return bytes(data[:-20] if truncate_image else data)
 
@@ -91,6 +111,42 @@ class LauncherArtifactAuditTests(unittest.TestCase):
         truncated = MODULE.audit(self.write_fixture(merged_fixture(truncate_image=True)))
         self.assertFalse(truncated.ok)
         self.assertIn("truncated", truncated.errors[0])
+
+    def test_checksum_digest_partition_md5_and_boot_app0_are_verified(self):
+        valid = bytearray(merged_fixture())
+        corrupt_bootloader = valid.copy()
+        corrupt_bootloader[32] ^= 1
+        self.assertIn(
+            "checksum mismatch",
+            MODULE.audit(self.write_fixture(corrupt_bootloader)).errors[0],
+        )
+
+        corrupt_partition = valid.copy()
+        corrupt_partition[MODULE.PARTITION_TABLE_OFFSET + 8] ^= 1
+        self.assertIn(
+            "MD5",
+            MODULE.audit(self.write_fixture(corrupt_partition)).errors[0],
+        )
+
+        corrupt_boot_app0 = valid.copy()
+        corrupt_boot_app0[MODULE.BOOT_APP0_OFFSET] = 2
+        self.assertIn(
+            "boot_app0",
+            MODULE.audit(self.write_fixture(corrupt_boot_app0)).errors[0],
+        )
+
+        corrupt_app_digest = valid.copy()
+        corrupt_app_digest[-1] ^= 1
+        self.assertIn(
+            "SHA-256",
+            MODULE.audit(self.write_fixture(corrupt_app_digest)).errors[0],
+        )
+
+    def test_file_and_partition_cannot_exceed_flash_capacity(self):
+        oversized = merged_fixture() + b"\xFF" * MODULE.FLASH_CAPACITY
+        result = MODULE.audit(self.write_fixture(oversized))
+        self.assertFalse(result.ok)
+        self.assertIn("exceeds 16 MB", result.errors[0])
 
     def test_oversized_app_and_malformed_entry_fail(self):
         oversized = MODULE.audit(

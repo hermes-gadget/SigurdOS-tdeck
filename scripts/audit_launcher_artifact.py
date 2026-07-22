@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import struct
 import sys
@@ -25,6 +26,9 @@ DATA_SUBTYPE_SPIFFS = 0x82
 ESP_IMAGE_MAGIC = 0xE9
 ESP32S3_CHIP_ID = 9
 MAX_IMAGE_SEGMENTS = 16
+FLASH_CAPACITY = 16 * 1024 * 1024
+BOOT_APP0_OFFSET = 0xE000
+BOOT_APP0_SIZE = 0x2000
 LAUNCHER_APP_ALIGNMENT = 0x10000
 LAUNCHER_DEFAULT_SPIFFS_SIZE = 0x100000
 
@@ -52,7 +56,9 @@ class AuditResult:
     path: str
     file_size: int
     entries: list[dict] = field(default_factory=list)
+    bootloader: ImageMetadata | None = None
     image: ImageMetadata | None = None
+    boot_app0_valid: bool = False
     flash_capacity: int = 0
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -117,9 +123,22 @@ def parse_partition_table(data: bytes) -> list[dict]:
     if len(data) < PARTITION_TABLE_OFFSET + 2:
         raise ArtifactError("file is truncated before the partition table")
     entries = []
+    md5_verified = False
     table_end = min(len(data), PARTITION_TABLE_OFFSET + PARTITION_TABLE_SIZE)
     position = PARTITION_TABLE_OFFSET
     while position + PARTITION_ENTRY_SIZE <= table_end:
+        raw_entry = data[position : position + PARTITION_ENTRY_SIZE]
+        magic = struct.unpack_from("<H", raw_entry)[0]
+        if magic == MD5_MAGIC:
+            if raw_entry[2:16] != b"\xff" * 14:
+                raise ArtifactError("partition-table MD5 record has invalid padding")
+            expected = hashlib.md5(  # nosec: ESP-IDF partition format mandates MD5
+                data[PARTITION_TABLE_OFFSET:position]
+            ).digest()
+            if raw_entry[16:] != expected:
+                raise ArtifactError("partition-table MD5 does not match its entries")
+            md5_verified = True
+            break
         entry = parse_partition_entry(data, position)
         if entry is None:
             break
@@ -127,6 +146,8 @@ def parse_partition_table(data: bytes) -> list[dict]:
         position += PARTITION_ENTRY_SIZE
     if not entries:
         raise ArtifactError(f"no partition table at file offset 0x{PARTITION_TABLE_OFFSET:x}")
+    if not md5_verified:
+        raise ArtifactError("partition table has no valid MD5 record")
 
     ordered = sorted(entries, key=lambda item: item["offset"])
     for previous, current in zip(ordered, ordered[1:]):
@@ -160,6 +181,7 @@ def parse_esp32s3_image(data: bytes, offset: int) -> ImageMetadata:
         raise ArtifactError(f"app image has invalid append-digest flag {append_digest}")
 
     position = offset + header_size
+    checksum = 0xEF
     for segment_index in range(segment_count):
         if position + 8 > len(data):
             raise ArtifactError(f"segment {segment_index} header is truncated")
@@ -169,12 +191,26 @@ def parse_esp32s3_image(data: bytes, offset: int) -> ImageMetadata:
         position += 8
         if position + segment_size > len(data):
             raise ArtifactError(f"segment {segment_index} data is truncated")
+        for value in data[position : position + segment_size]:
+            checksum ^= value
         position += segment_size
 
     checksum_end = align_up(position + 1, 16)
+    checksum_position = checksum_end - 1
+    if checksum_position >= len(data):
+        raise ArtifactError("app image checksum is truncated")
+    if data[checksum_position] != checksum:
+        raise ArtifactError(
+            f"app image checksum mismatch: got 0x{data[checksum_position]:02x}, "
+            f"expected 0x{checksum:02x}"
+        )
     image_end = checksum_end + (32 if append_digest else 0)
     if image_end > len(data):
         raise ArtifactError("app image checksum or digest is truncated")
+    if append_digest:
+        expected_digest = hashlib.sha256(data[offset:checksum_end]).digest()
+        if data[checksum_end:image_end] != expected_digest:
+            raise ArtifactError("app image SHA-256 digest does not match")
     image_size = image_end - offset
     return ImageMetadata(
         offset=offset,
@@ -186,17 +222,65 @@ def parse_esp32s3_image(data: bytes, offset: int) -> ImageMetadata:
     )
 
 
+def validate_boot_app0(data: bytes, entries: list[dict]) -> None:
+    ota = [
+        entry
+        for entry in entries
+        if entry["type"] == DATA_TYPE and entry["subtype"] == DATA_SUBTYPE_OTA
+    ]
+    if len(ota) != 1:
+        raise ArtifactError(f"expected exactly one OTA-data partition, found {len(ota)}")
+    partition = ota[0]
+    if partition["offset"] != BOOT_APP0_OFFSET or partition["size"] != BOOT_APP0_SIZE:
+        raise ArtifactError("OTA-data partition does not match the audited boot_app0 layout")
+    block = data[BOOT_APP0_OFFSET : BOOT_APP0_OFFSET + BOOT_APP0_SIZE]
+    if len(block) != BOOT_APP0_SIZE:
+        raise ArtifactError("boot_app0 data is truncated")
+    if struct.unpack_from("<I", block)[0] != 1:
+        raise ArtifactError("boot_app0 initial OTA sequence is invalid")
+    if block[4:28] != b"\xff" * 24:
+        raise ArtifactError("boot_app0 reserved bytes are invalid")
+    if block[28:32] in (b"\x00" * 4, b"\xff" * 4):
+        raise ArtifactError("boot_app0 checksum marker is invalid")
+    if any(value != 0xFF for value in block[32:0x1000]):
+        raise ArtifactError("boot_app0 padding contains unexpected data")
+    if block[0x1000:0x1004] != b"\x00" * 4:
+        raise ArtifactError("boot_app0 secondary OTA sequence is invalid")
+    if any(value != 0xFF for value in block[0x1004:]):
+        raise ArtifactError("boot_app0 secondary sector contains unexpected data")
+
+
 def audit(path: str | Path) -> AuditResult:
     artifact = Path(path)
     data = artifact.read_bytes()
     result = AuditResult(path=str(artifact), file_size=len(data))
+    if len(data) > FLASH_CAPACITY:
+        result.errors.append(
+            f"merged image is {len(data)} bytes; exceeds 16 MB flash capacity"
+        )
+        return result
+    try:
+        result.bootloader = parse_esp32s3_image(data, 0)
+    except ArtifactError as exc:
+        result.errors.append(f"bootloader: {exc}")
+        return result
     try:
         result.entries = parse_partition_table(data)
     except ArtifactError as exc:
         result.errors.append(str(exc))
         return result
 
+    try:
+        validate_boot_app0(data, result.entries)
+        result.boot_app0_valid = True
+    except ArtifactError as exc:
+        result.errors.append(str(exc))
+        return result
+
     result.flash_capacity = max(entry["offset"] + entry["size"] for entry in result.entries)
+    if result.flash_capacity > FLASH_CAPACITY:
+        result.errors.append("partition table exceeds 16 MB flash capacity")
+        return result
     app_sources = [
         entry
         for entry in result.entries
@@ -238,6 +322,13 @@ def audit(path: str | Path) -> AuditResult:
 def render(result: AuditResult) -> None:
     print(f"File: {result.path}")
     print(f"Size: {result.file_size:,} bytes")
+    if result.bootloader:
+        print(
+            f"Bootloader: ESP32-S3, {result.bootloader.segment_count} segments, "
+            f"{result.bootloader.image_size:,} bytes"
+        )
+    if result.boot_app0_valid:
+        print("boot_app0: validated")
     if result.entries:
         print("\nPartitions:")
         for entry in result.entries:
