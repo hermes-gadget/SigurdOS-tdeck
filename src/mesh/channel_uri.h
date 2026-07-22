@@ -21,7 +21,6 @@ inline bool parseChannelAddUri(const char* uri, ChannelUriFields& out)
     static constexpr char PREFIX[] = "meshcore://channel/add?";
     static constexpr size_t PREFIX_LEN = sizeof(PREFIX) - 1;
     if (!uri || std::strncmp(uri, PREFIX, PREFIX_LEN) != 0) return false;
-
     ChannelUriFields parsed{};
     bool have_name = false;
     bool have_secret = false;

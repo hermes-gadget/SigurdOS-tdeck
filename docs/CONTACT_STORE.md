@@ -27,7 +27,8 @@ The contact store persists the mesh contact list across reboots. It is used by `
 The two core functions — `contactStoreSave` and `contactStoreLoad` — do **not** know about any MeshCore type. Instead they accept function pointers (callbacks) that the caller provides:
 
 - `contactStoreSave(count, readFn, ctx)` iterates with `readFn(i, &contact, ctx)` to get each `StoredContact`.
-- `contactStoreLoad(writeFn, ctx)` calls `writeFn(contact, ctx)` for each successfully deserialised contact.
+- `contactStoreLoad(writeFn, ctx)` validates and stages the complete file before
+  calling `writeFn(contact, ctx)` for each contact.
 
 This decoupling means the store never includes `MeshCore.h` and is testable in isolation.
 
@@ -149,7 +150,7 @@ record shape. The current loader handles all three shapes:
    - Read VERSION byte.
    - Reject if `version == 0` or `version > CONTACT_STORE_VERSION`.
    - Read `int32 count`.
-   - Clamp `count` to `MAX_CONTACTS`.
+   - Reject `count` values outside `1..MAX_CONTACTS`.
    - Use 66-byte records for version 1 or 151-byte records for version 2.
 3. Else → **bare legacy format**:
    - Interpret `head` directly as a bare `int32 count`.
@@ -196,7 +197,7 @@ All symbols live in `sigurdos::mesh::`.
 | `contactStoreBegin` | `bool ()` | Initialise the underlying filesystem (SPIFFS `begin`). Call once at boot. Returns false if the FS cannot be mounted. |
 | `contactStoreClear` | `bool ()` | Delete the contact store file. Returns false if the FS is unavailable or the file cannot be removed. |
 | `contactStoreSave` | `bool (int count, ContactStoreReadFn read, void* ctx)` | Save `count` contacts via callback. If `count ≤ 0` the file is deleted (empty store). Writes versioned header, then iterates `read` to write records. |
-| `contactStoreLoad` | `int (ContactStoreWriteFn write, void* ctx)` | Load contacts from file, delivering each via `write` callback. Returns the number of contacts loaded (0 on failure or empty store). Auto-detects legacy vs versioned format. |
+| `contactStoreLoad` | `int (ContactStoreWriteFn write, void* ctx)` | Validate and stage the complete file, then deliver contacts via `write` callback. Returns the number of contacts loaded (0 on failure or empty store). Auto-detects legacy vs versioned format. |
 
 ### Convenience Wrappers
 
@@ -248,12 +249,12 @@ Tests live in `test/test_contact_store/test_contact_store.cpp` (native-only, no 
 | `VersionOneFileMigratesWithSafeDefaults` | A version-1 file loads with unknown route and zero metadata. |
 | `MagicParsesAsNegativeCountOnOldFirmware` | Versioned file's first 4 bytes, when interpreted as `int32` by legacy code, produce a negative value. |
 | `UnknownVersionRejected` | A file with `VERSION = CONTACT_STORE_VERSION + 1` is rejected (load returns 0). |
-| `VersionedCountClampedToMaxContacts` | If the file's record count exceeds `MAX_CONTACTS`, it is clamped to `MAX_CONTACTS` during load. |
-| `TruncatedVersionedFileKeepsCompleteRecords` | Read stops at first incomplete record — only fully-decodable records are returned. |
+| `VersionedCountAboveMaximumIsRejected` | A record count above `MAX_CONTACTS` rejects the whole file. |
+| `TruncatedVersionedFileAppliesNoRecords` | A truncated file is rejected before any contact reaches the live store. |
 | `RoundTripPreservesOrderAndTerminatesName` | Save then load preserves order/basic fields and terminates names. |
 | `VersionTwoRoundTripPreservesAllNonDerivedMetadata` | Flags, route, timestamps, GPS, and sync cursor round-trip. |
 | `InvalidRouteLength*` | Invalid stored or callback-provided route lengths are rejected safely. |
-| `TruncatedFileKeepsCompleteRecordsBeforeEof` | Same as the versioned truncation test, but for legacy-format files. |
+| `TruncatedLegacyFileAppliesNoRecords` | A truncated legacy file is rejected before any contact reaches the live store. |
 | `NonPositiveCountRejected` | Files containing count 0 or -3 are ignored (returns 0 contacts). |
 | `LoadAllStopsAtCallerCapacity` | `contactStoreLoadAll` returns at most `max` contacts even if the file has more. |
 

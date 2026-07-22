@@ -13,11 +13,6 @@ static constexpr size_t SIGURDOS_CONTACT_PUBKEY_LEN = 32;
 static constexpr size_t SIGURDOS_CONTACT_NAME_LEN = 32;
 static constexpr size_t SIGURDOS_CONTACT_PATH_LEN = 64;
 static constexpr uint8_t SIGURDOS_CONTACT_PATH_UNKNOWN = 0xFF;
-static constexpr uint8_t MESHCORE_ADV_TYPE_NONE = 0;
-static constexpr uint8_t MESHCORE_ADV_TYPE_CHAT = 1;
-static constexpr uint8_t MESHCORE_ADV_TYPE_REPEATER = 2;
-static constexpr uint8_t MESHCORE_ADV_TYPE_ROOM = 3;
-static constexpr uint8_t MESHCORE_ADV_TYPE_SENSOR = 4;
 
 // Lightweight names for MeshCore's AdvertDataHelpers.h wire constants. Keep
 // this storage/parser header independent of MeshCore's hardware-heavy graph.
