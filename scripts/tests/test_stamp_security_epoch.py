@@ -13,12 +13,14 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
 
 
-def make_image(epoch=0, hashed=True):
+def make_image(epoch=0, hashed=True, payload_size=40):
+    if payload_size < 8:
+        raise ValueError("payload must contain the application descriptor")
     header = bytearray(24)
     header[0] = MODULE.ESP_IMAGE_MAGIC
     header[1] = 1
     header[23] = int(hashed)
-    payload = bytearray(40)
+    payload = bytearray(payload_size)
     struct.pack_into("<I", payload, 0, MODULE.ESP_APP_DESC_MAGIC)
     struct.pack_into("<I", payload, 4, epoch)
     segment = struct.pack("<II", 0x3C000020, len(payload)) + payload
@@ -49,6 +51,18 @@ class StampSecurityEpochTests(unittest.TestCase):
         checksum_offset, checksum = MODULE._image_layout(stamped)
         self.assertEqual(stamped[checksum_offset], checksum)
         self.assertEqual(len(stamped), checksum_offset + 1)
+
+    def test_supports_segment_stream_ending_on_alignment_boundary(self):
+        # 24-byte image header + 8-byte segment header + 48-byte payload
+        # ends exactly on a 16-byte boundary. The checksum follows 15 bytes
+        # of padding in the next block.
+        original = make_image(epoch=0, hashed=True, payload_size=48)
+        stamped = MODULE.stamp_security_epoch(original, 3)
+
+        checksum_offset, checksum = MODULE._image_layout(stamped)
+        self.assertEqual(checksum_offset, 95)
+        self.assertEqual(stamped[checksum_offset], checksum)
+        self.assertEqual(stamped[-32:], hashlib.sha256(stamped[:-32]).digest())
 
     def test_rejects_malformed_or_out_of_range_input(self):
         with self.assertRaises(MODULE.SecurityEpochError):

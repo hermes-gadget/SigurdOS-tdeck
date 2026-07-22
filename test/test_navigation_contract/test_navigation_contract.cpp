@@ -29,6 +29,15 @@
 namespace {
 
 using sigurdos::ui::Screen;
+using sigurdos::ui::navigation_screen_valid;
+
+TEST(NavigationContractTest, RejectsSentinelAndOutOfRangeRoutes) {
+    EXPECT_TRUE(navigation_screen_valid(Screen::Home));
+    EXPECT_TRUE(navigation_screen_valid(Screen::CustomRadioSetup));
+    EXPECT_FALSE(navigation_screen_valid(Screen::COUNT));
+    EXPECT_FALSE(navigation_screen_valid(static_cast<Screen>(-1)));
+    EXPECT_FALSE(navigation_screen_valid(static_cast<Screen>(999)));
+}
 
 std::string read_project_file(const char* path)
 {

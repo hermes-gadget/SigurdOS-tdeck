@@ -60,13 +60,22 @@ inline bool screen_refresh_matches(Screen expected, Screen active)
     return expected == active;
 }
 
+inline bool navigation_screen_valid(Screen screen)
+{
+    const int value = static_cast<int>(screen);
+    return value >= 0 && value < static_cast<int>(Screen::COUNT);
+}
+
 // Routes that expose device configuration, credentials, destructive actions,
 // or identity controls.  Authorization is enforced by the router for every
 // entry path rather than relying on individual screen renderers.
 bool is_pin_protected_route(Screen screen);
-
 // Navigate to a screen
 void navigate_to(Screen screen);
+// Make first-boot Onboarding the navigation root until setup restarts the
+// device. Other destinations are rejected so this cannot bypass PIN gates.
+void navigate_to_forced(Screen screen);
+bool navigation_is_forced();
 
 // Parameterized nested routes. These retain the route arguments so Back can
 // re-dispatch a detail screen without bypassing navigation history.

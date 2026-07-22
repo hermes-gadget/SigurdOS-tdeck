@@ -116,7 +116,7 @@ void loop()
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
         // Show onboarding if: never saved prefs (fresh device) OR not yet configured
         if (!sigurdos::prefs_exists() || !p.configured) {
-            navigate_to(Screen::Onboarding);
+            navigate_to_forced(Screen::Onboarding);
         } else {
             home_screen_create();
         }
@@ -189,6 +189,9 @@ bool handle_trackball_event(SigurdOSTrackballEvent event)
         // Chat handles its own Left (channel list toggle); fall through
         // for non-messaging states where chat returns false
         if (chat_screen_handle_trackball(event)) return true;
+        // Modal input is intentionally forwarded to LVGL, never to the global
+        // two-swipe Back handler.
+        if (chat_screen_overlay_active()) return false;
     }
     if (current_screen() == Screen::Map) {
         if (map_screen_handle_trackball(event)) return true;

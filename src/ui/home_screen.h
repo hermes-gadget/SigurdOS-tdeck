@@ -34,6 +34,16 @@ inline bool home_screen_format_unread_badge(char* out, size_t out_size, int unre
     return written >= 0 && static_cast<size_t>(written) < out_size;
 }
 
+struct HomeTileFilters {
+    int chat_filter;
+    bool rooms_only;
+};
+
+inline HomeTileFilters home_tile_filters(int tile_index) {
+    // CHATS=0, DMs=1, ROOMS=2; every other tile resets both filters.
+    return {tile_index == 0 ? 1 : (tile_index == 1 ? 2 : 0), tile_index == 2};
+}
+
 void home_screen_create();
 void home_screen_show();
 void home_screen_handle_trackball(SigurdOSTrackballEvent event);

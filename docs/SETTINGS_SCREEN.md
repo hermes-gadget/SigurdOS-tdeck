@@ -157,6 +157,12 @@ Same +/- pattern. Steps by 16, clamped to `[CHAT_MSGS_MIN_CAP, CHAT_MSGS_MAX]` =
 
 Self-OTA rows refuse to start when the firmware detects it is running under bmorcelli/Launcher (see `docs/LAUNCHER_ROADMAP.md`) — updating must then go through Launcher instead.
 
+On an unconfigured device, boot enters Onboarding as a forced navigation root:
+history is cleared, no top-bar Back button is shown, and other routes are
+rejected until setup persists a valid radio profile and restarts. Opening the
+wizard later from System or the Home SETUP tile remains ordinary, reversible
+navigation.
+
 ### Date/Time dialog
 
 ```

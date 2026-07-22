@@ -41,7 +41,11 @@ def _image_layout(image: bytes | bytearray) -> tuple[int, int]:
             checksum ^= value
         cursor = segment_end
 
-    checksum_offset = ((cursor + 15) // 16) * 16 - 1
+    # The checksum is the last byte of the 16-byte block that follows the
+    # segment stream. When the stream already ends on a block boundary, ESP
+    # images contain 15 padding bytes before the checksum; rounding up with
+    # integer division would incorrectly select the byte before the stream.
+    checksum_offset = cursor | 0x0F
     hash_size = 32 if image[23] == 1 else 0
     expected_size = checksum_offset + 1 + hash_size
     if checksum_offset < cursor or len(image) != expected_size:

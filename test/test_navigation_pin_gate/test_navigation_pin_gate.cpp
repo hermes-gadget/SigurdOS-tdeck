@@ -197,6 +197,66 @@ TEST_F(NavigationPinGateTest, ParameterizedDetailRoutesRemainAvailable)
     EXPECT_EQ(g_last_dispatched, Screen::RepeaterDetail);
 }
 
+TEST_F(NavigationPinGateTest, InvalidAndArgumentlessRoutesDoNotMutateState)
+{
+    sigurdos::ui::navigate_to(Screen::COUNT);
+    sigurdos::ui::navigate_to(static_cast<Screen>(999));
+    sigurdos::ui::navigate_to(Screen::ContactDetail);
+    sigurdos::ui::navigate_to(Screen::RepeaterDetail);
+
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    EXPECT_FALSE(sigurdos::ui::can_go_back());
+    EXPECT_EQ(g_pin_prompt_count, 0);
+    EXPECT_EQ(g_dispatch_count, 0);
+}
+
+TEST_F(NavigationPinGateTest, ForcedOnboardingClearsHistoryAndRejectsEveryEscape)
+{
+    sigurdos::ui::navigate_to(Screen::Chat);
+    ASSERT_TRUE(sigurdos::ui::can_go_back());
+
+    sigurdos::ui::navigate_to_forced(Screen::Onboarding);
+    ASSERT_TRUE(sigurdos::ui::navigation_is_forced());
+    ASSERT_EQ(sigurdos::ui::current_screen(), Screen::Onboarding);
+    EXPECT_FALSE(sigurdos::ui::can_go_back());
+    EXPECT_EQ(g_last_dispatched, Screen::Onboarding);
+    const int dispatches_after_force = g_dispatch_count;
+
+    sigurdos::ui::navigate_to(Screen::Chat);
+    sigurdos::ui::navigate_to_contact_detail("Alice");
+    sigurdos::ui::navigate_to_repeater_detail("Repeater");
+    sigurdos::ui::go_back();
+    sigurdos::ui::navigation_pin_unlocked(Screen::Settings);
+
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Onboarding);
+    EXPECT_FALSE(sigurdos::ui::can_go_back());
+    EXPECT_EQ(g_dispatch_count, dispatches_after_force);
+}
+
+TEST_F(NavigationPinGateTest, ForcedNavigationCannotBypassProtectedRoutes)
+{
+    sigurdos::ui::navigate_to_forced(Screen::Settings);
+    sigurdos::ui::navigate_to_forced(Screen::COUNT);
+
+    EXPECT_FALSE(sigurdos::ui::navigation_is_forced());
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    EXPECT_FALSE(sigurdos::ui::can_go_back());
+    EXPECT_EQ(g_dispatch_count, 0);
+}
+
+TEST_F(NavigationPinGateTest, TestResetClearsForcedOnboardingState)
+{
+    sigurdos::ui::navigate_to_forced(Screen::Onboarding);
+    ASSERT_TRUE(sigurdos::ui::navigation_is_forced());
+
+    sigurdos::ui::navigation_reset_for_test();
+    EXPECT_FALSE(sigurdos::ui::navigation_is_forced());
+
+    sigurdos::ui::navigate_to(Screen::Chat);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Chat);
+    EXPECT_EQ(g_last_dispatched, Screen::Chat);
+}
+
 TEST_F(NavigationPinGateTest, BackToProtectedRouteDoesNotPopHistoryBeforeUnlock)
 {
     g_pin_grace = true;

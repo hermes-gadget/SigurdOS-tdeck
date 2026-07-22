@@ -178,25 +178,23 @@ static void apply_selection(int old_idx = -1)
 #endif
 }
 
-static void on_icon_click(lv_event_t* e)
+static void activate_icon(int idx)
 {
-    int idx = (int)(intptr_t)lv_event_get_user_data(e);
     if (idx >= 0 && idx < ICON_COUNT) {
-        // Reset filters to defaults
-        chat_screen_set_filter(0);
+        const HomeTileFilters filters = home_tile_filters(idx);
+        chat_screen_set_filter(filters.chat_filter);
         contacts_screen_set_filter(-1);
-
-        // Apply filter based on which icon was clicked
-        if (strcmp(icons[idx].label, "DMs") == 0) {
-            chat_screen_set_filter(2);       // DMs only
-        } else if (strcmp(icons[idx].label, "CHATS") == 0) {
-            chat_screen_set_filter(1);       // channels only
-        } else if (strcmp(icons[idx].label, "ROOMS") == 0) {
+        if (filters.rooms_only) {
             contacts_screen_set_filter(ADV_TYPE_ROOM);  // room servers only
         }
         // CONTACTS: default filter (CHAT + ROOM) — start DM from here
         navigate_to(icons[idx].target);
     }
+}
+
+static void on_icon_click(lv_event_t* e)
+{
+    activate_icon((int)(intptr_t)lv_event_get_user_data(e));
 }
 
 // ── Top bar ─────────────────────────────────────────────
@@ -486,9 +484,7 @@ void home_screen_handle_trackball(SigurdOSTrackballEvent event)
         break;
     }
     case SigurdOSTrackballEvent::Click:
-        if (selected_icon >= 0 && selected_icon < ICON_COUNT) {
-            navigate_to(icons[selected_icon].target);
-        }
+        activate_icon(selected_icon);
         break;
     case SigurdOSTrackballEvent::None:
     default:

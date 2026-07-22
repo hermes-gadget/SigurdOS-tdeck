@@ -30,6 +30,16 @@
 
 namespace {
 
+using sigurdos::ui::home_tile_filters;
+
+TEST(HomeScreenActivationTest, TouchAndTrackballShareStableFilterPolicy) {
+    EXPECT_EQ(home_tile_filters(0).chat_filter, 1);
+    EXPECT_EQ(home_tile_filters(1).chat_filter, 2);
+    EXPECT_TRUE(home_tile_filters(2).rooms_only);
+    EXPECT_EQ(home_tile_filters(3).chat_filter, 0);
+    EXPECT_FALSE(home_tile_filters(3).rooms_only);
+}
+
 // ── Replicate the home screen icon routing table for pure testing ──
 // Mirrors home_screen.cpp lines 53-73
 

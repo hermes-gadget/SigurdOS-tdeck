@@ -149,7 +149,7 @@ The 5-direction trackball provides full keyboard-less navigation of the icon gri
 | **Right** | Move selection to the next tile in the same row | Wraps to the first tile of that row |
 | **Up** | Move selection up one row (same column) | Wraps to the bottom row; skips past-the-end tiles if the last row has fewer columns |
 | **Down** | Move selection down one row (same column) | Wraps to the top row; skips past-the-end tiles if the last row has fewer columns |
-| **Click** | Activate the selected tile | Calls `navigate_to(icons[selected_icon].target)` |
+| **Click** | Activate the selected tile | Uses the same activation path as touch, applying the CHATS/DMs/ROOMS filter before navigation |
 
 ### Active Grid Dimensions
 
@@ -249,6 +249,8 @@ Both `create()` and `show()` call the internal `build_home_screen()` function, w
 ### `home_screen_handle_trackball(SigurdOSTrackballEvent event)`
 
 Routes a trackball event to the icon grid navigation. See [Trackball Navigation](#trackball-navigation). Called from `ui::handle_trackball_event()` in `ui.cpp`.
+Trackball Click and touch Click both call the shared tile activator, so neither
+input method can inherit a stale chat or contact filter.
 
 ### `home_screen_update_battery(int pct)`
 

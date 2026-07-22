@@ -460,16 +460,18 @@ void onboarding_screen_show()
     lv_obj_set_style_pad_all(top, 0, 0);
     lv_obj_set_style_border_width(top, 0, 0);
 
-    lv_obj_t* back = lv_btn_create(top);
-    lv_obj_set_size(back, 24, TOP_BAR_H - 4);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
-    apply_topbar_icon_btn(back);
-    lv_obj_add_event_cb(back, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* back_icon = lv_label_create(back);
-    lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(back_icon, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_text_font(back_icon, emoji_wrapped_montserrat_12, 0);
-    lv_obj_center(back_icon);
+    if (can_go_back()) {
+        lv_obj_t* back = lv_btn_create(top);
+        lv_obj_set_size(back, 24, TOP_BAR_H - 4);
+        lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
+        apply_topbar_icon_btn(back);
+        lv_obj_add_event_cb(back, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* back_icon = lv_label_create(back);
+        lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
+        lv_obj_set_style_text_color(back_icon, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_text_font(back_icon, emoji_wrapped_montserrat_12, 0);
+        lv_obj_center(back_icon);
+    }
 
     lv_obj_t* title_lbl = lv_label_create(top);
     lv_label_set_text(title_lbl, "Setup Wizard");
