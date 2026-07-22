@@ -30,6 +30,15 @@ static constexpr uint32_t MESSAGE_STORE_RECOVERY_MAX_RECORDS =
     MESSAGE_STORE_MAX_RECORDS + 1;
 static uint32_t g_companion_backlog_drop_count = 0;
 
+struct IdentityIndexEntry {
+    uint32_t hash;
+    uint32_t store_id;
+};
+
+static IdentityIndexEntry g_identity_index[MESSAGE_STORE_MAX_RECORDS];
+static uint32_t g_identity_index_count = 0;
+static bool g_identity_index_valid = false;
+
 #if !defined(ESP32_PLATFORM)
 static char g_native_path[160] = "/tmp/sigurdos_companion_msgs.bin";
 
@@ -72,6 +81,41 @@ static bool readHeader(uint32_t* out_count, uint32_t* out_next_id = nullptr);
 static bool writeHeaderIfNeeded();
 static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count,
                                uint32_t next_id = 0);
+
+static uint32_t identityHash(const StoredMessage& msg)
+{
+    uint32_t hash = 2166136261u;
+    auto add = [&hash](const void* data, size_t len) {
+        const uint8_t* bytes = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < len; ++i) {
+            hash ^= bytes[i];
+            hash *= 16777619u;
+        }
+    };
+    add(msg.conversation, strnlen(msg.conversation, sizeof(msg.conversation)));
+    add(msg.text, strnlen(msg.text, sizeof(msg.text)));
+    add(&msg.timestamp, sizeof(msg.timestamp));
+    add(&msg.txt_type, sizeof(msg.txt_type));
+    add(&msg.extra_len, sizeof(msg.extra_len));
+    add(msg.extra, msg.extra_len <= sizeof(msg.extra) ? msg.extra_len : sizeof(msg.extra));
+    const uint8_t direction = (msg.is_self ? 1u : 0u) |
+        (msg.is_channel ? 2u : 0u);
+    add(&direction, sizeof(direction));
+    return hash == 0 ? 1 : hash;
+}
+
+static void identityIndexClear()
+{
+    g_identity_index_count = 0;
+    g_identity_index_valid = true;
+}
+
+static void identityIndexAdd(const StoredMessage& msg)
+{
+    if (!g_identity_index_valid || msg.store_id == 0 ||
+        g_identity_index_count >= MESSAGE_STORE_MAX_RECORDS) return;
+    g_identity_index[g_identity_index_count++] = {identityHash(msg), msg.store_id};
+}
 
 #if defined(ESP32_PLATFORM)
 static bool ensureFs()
@@ -483,77 +527,51 @@ static int loadUnsentInternal(StoredMessage* out, int max)
     return n;
 }
 
-// Check whether a message with the same identity already exists in the store.
-// Opens the store file ONCE and streams all records sequentially — O(n) reads,
-// but O(1) file opens.  Previously called readRecordAt() per record, which
-// opened the file twice for each (readHeader + seek/read), giving O(n²) SPIFFS
-// opens repeatedly for every record on each incoming message. PERF-001.
+static bool rebuildIdentityIndex()
+{
+    uint32_t count = 0;
+    if (!readHeader(&count) || count > MESSAGE_STORE_MAX_RECORDS) {
+        g_identity_index_valid = false;
+        return false;
+    }
+    if (count == 0) {
+        identityIndexClear();
+        return true;
+    }
+    StoredMessage* messages = allocateMessages(count);
+    if (!messages) {
+        g_identity_index_valid = false;
+        return false;
+    }
+    const int loaded = loadAllInternal(messages, (int)count);
+    identityIndexClear();
+    if (loaded != (int)count) {
+        g_identity_index_valid = false;
+        freeMessages(messages);
+        return false;
+    }
+    for (int i = 0; i < loaded; ++i) identityIndexAdd(messages[i]);
+    freeMessages(messages);
+    return true;
+}
+
+// Normal appends consult only the bounded RAM index. A matching hash is
+// collision-checked against the durable record. Sender identity is omitted
+// from the hash so legacy zero-prefix records retain name-based comparison.
 static bool messageExists(const StoredMessage& msg, uint32_t* store_id_out)
 {
-    if (!ensureFs() || !existsStore()) return false;
-
-#if defined(ESP32_PLATFORM)
-    File f = SPIFFS.open(STORE_PATH, "r");
-    if (!f) return false;
-
-    // Read header inline (avoids a separate readHeader() open)
-    uint32_t magic = 0;
-    uint8_t version = 0;
-    uint32_t count = 0;
-    uint32_t next_id = 0;
-    bool header_ok = f.read((uint8_t*)&magic, 4) == 4 &&
-                     f.read(&version, 1) == 1 &&
-                     f.read((uint8_t*)&count, 4) == 4 &&
-                     f.read((uint8_t*)&next_id, 4) == 4 &&
-                     magic == detail::MESSAGE_STORE_MAGIC &&
-                     version == detail::MESSAGE_STORE_VERSION && next_id != 0;
-
-    if (!header_ok) { f.close(); return false; }
-
-    uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
-    StoredMessage existing;
-    bool found = false;
-    for (uint32_t i = 0; i < count && !found; i++) {
-        if (f.read(rec, sizeof(rec)) == sizeof(rec) &&
-            readRecordRaw(existing, rec, sizeof(rec)) &&
+    if (!g_identity_index_valid && !rebuildIdentityIndex()) return false;
+    const uint32_t hash = identityHash(msg);
+    for (uint32_t i = 0; i < g_identity_index_count; ++i) {
+        if (g_identity_index[i].hash != hash) continue;
+        StoredMessage existing{};
+        if (messageStoreGetById(g_identity_index[i].store_id, existing) &&
             detail::storedMessageSameIdentity(existing, msg)) {
             if (store_id_out) *store_id_out = existing.store_id;
-            found = true;
+            return true;
         }
     }
-    f.close();
-    return found;
-#else
-    FILE* f = std::fopen(g_native_path, "rb");
-    if (!f) return false;
-
-    uint32_t magic = 0;
-    uint8_t version = 0;
-    uint32_t count = 0;
-    uint32_t next_id = 0;
-    bool header_ok = std::fread(&magic, 1, 4, f) == 4 &&
-                     std::fread(&version, 1, 1, f) == 1 &&
-                     std::fread(&count, 1, 4, f) == 4 &&
-                     std::fread(&next_id, 1, 4, f) == 4 &&
-                     magic == detail::MESSAGE_STORE_MAGIC &&
-                     version == detail::MESSAGE_STORE_VERSION && next_id != 0;
-
-    if (!header_ok) { std::fclose(f); return false; }
-
-    uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
-    StoredMessage existing;
-    bool found = false;
-    for (uint32_t i = 0; i < count && !found; i++) {
-        if (std::fread(rec, 1, sizeof(rec), f) == sizeof(rec) &&
-            readRecordRaw(existing, rec, sizeof(rec)) &&
-            detail::storedMessageSameIdentity(existing, msg)) {
-            if (store_id_out) *store_id_out = existing.store_id;
-            found = true;
-        }
-    }
-    std::fclose(f);
-    return found;
-#endif
+    return false;
 }
 
 struct StoreWriteCtx {
@@ -982,14 +1000,16 @@ bool messageStoreBegin()
     if (!writeHeaderIfNeeded()) return false;
     uint32_t count = 0;
     if (readHeader(&count) && count > MESSAGE_STORE_MAX_RECORDS) {
-        return compactStoreToRecent(MESSAGE_STORE_MAX_RECORDS);
+        if (!compactStoreToRecent(MESSAGE_STORE_MAX_RECORDS)) return false;
     }
-    return true;
+    return rebuildIdentityIndex();
 }
 
 bool messageStoreClear()
 {
-    return atomicReplaceStore(nullptr, 0, 1);
+    if (!atomicReplaceStore(nullptr, 0, 1)) return false;
+    identityIndexClear();
+    return true;
 }
 
 bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out)
@@ -1030,6 +1050,9 @@ bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out)
     if (!writeHeaderState(new_count, nextAfter(next_id))) return false;
     if (new_count > MESSAGE_STORE_MAX_RECORDS) {
         if (!compactStoreToRecent(MESSAGE_STORE_COMPACT_TO_RECORDS)) return false;
+        if (!rebuildIdentityIndex()) return false;
+    } else {
+        identityIndexAdd(norm);
     }
     if (store_id_out) *store_id_out = norm.store_id;
     return true;
@@ -1125,68 +1148,27 @@ bool messageStoreMarkCompanionSent(uint32_t store_id)
     if (count == 0) return false;
     if (count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
 
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r+");
-    if (!file || !file.seek(detail::MESSAGE_STORE_HEADER_SIZE, SeekSet)) {
-        if (file) file.close();
+    StoredMessage* messages = allocateMessages(count);
+    if (!messages) return false;
+    const int loaded = messageStoreLoadAll(messages, (int)count);
+    if (loaded != (int)count) {
+        freeMessages(messages);
         return false;
     }
-#else
-    FILE* file = std::fopen(g_native_path, "r+b");
-    if (!file || std::fseek(file, (long)detail::MESSAGE_STORE_HEADER_SIZE,
-                            SEEK_SET) != 0) {
-        if (file) std::fclose(file);
-        return false;
-    }
-#endif
-
-    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
-    for (uint32_t index = 0; index < count; ++index) {
-#if defined(ESP32_PLATFORM)
-        const bool read_ok = file.read(record, sizeof(record)) == sizeof(record);
-#else
-        const bool read_ok =
-            std::fread(record, 1, sizeof(record), file) == sizeof(record);
-#endif
-        if (!read_ok) break;
-
-        uint32_t record_id = 0;
-        std::memcpy(&record_id, record, sizeof(record_id));
-        if (record_id != store_id) continue;
-
-        uint8_t& flags = record[detail::MESSAGE_STORE_RECORD_SIZE - 1];
-        if ((flags & 0x08) != 0) {
-#if defined(ESP32_PLATFORM)
-            file.close();
-#else
-            std::fclose(file);
-#endif
+    bool found = false;
+    for (int i = 0; i < loaded; ++i) {
+        if (messages[i].store_id != store_id) continue;
+        if (messages[i].companion_sent) {
+            freeMessages(messages);
             return true;
         }
-
-        flags |= 0x08;
-        const size_t flag_offset = detail::MESSAGE_STORE_HEADER_SIZE +
-            (size_t)index * detail::MESSAGE_STORE_RECORD_SIZE +
-            detail::MESSAGE_STORE_RECORD_SIZE - 1;
-#if defined(ESP32_PLATFORM)
-        const bool ok = file.seek(flag_offset, SeekSet) &&
-            file.write(&flags, 1) == 1;
-        file.close();
-        return ok;
-#else
-        bool ok = std::fseek(file, (long)flag_offset, SEEK_SET) == 0 &&
-            std::fwrite(&flags, 1, 1, file) == 1 && std::fflush(file) == 0;
-        if (std::fclose(file) != 0) ok = false;
-        return ok;
-#endif
+        messages[i].companion_sent = true;
+        found = true;
+        break;
     }
-
-#if defined(ESP32_PLATFORM)
-    file.close();
-#else
-    std::fclose(file);
-#endif
-    return false;
+    const bool ok = found && atomicReplaceStore(messages, count);
+    freeMessages(messages);
+    return ok;
 }
 
 uint32_t messageStoreCompanionBacklogDropCount()
@@ -1311,6 +1293,7 @@ void messageStoreSetNativePath(const char* path)
 {
     if (!path || !path[0]) return;
     copyZ(g_native_path, sizeof(g_native_path), path);
+    g_identity_index_valid = false;
 }
 #endif
 

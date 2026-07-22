@@ -671,6 +671,8 @@ public:
 
     bool sendGroupText(int idx, const char* text);
 
+    bool sendGroupText(int idx, const char* text, uint32_t fixed_ts);
+
 
     // ── Group data datagrams (Phase 4.8) ────────────
     // Standard group data types

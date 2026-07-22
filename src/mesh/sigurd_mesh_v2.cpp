@@ -1382,7 +1382,7 @@ namespace mesh {
         for (int i = 0; i < n; i++) {
             if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
                 uint32_t expected_ack = 0, est_timeout = 0;
-                uint32_t ts = getRTCClock()->getCurrentTime();
+                uint32_t ts = getRTCClock()->getCurrentTimeUnique();
                 int r = BaseChatMesh::sendMessage(tmp, ts, 0, safe_text,
                                                   expected_ack, est_timeout);
                 if (r != MSG_SEND_FAILED) {
@@ -1415,16 +1415,21 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::sendGroupText(int idx, const char* text) {
+        uint32_t ts = getRTCClock()->getCurrentTimeUnique();
+        if (ts == 0) ts = 1;
+        return sendGroupText(idx, text, ts);
+    }
+
+    bool SigurdMeshV2::sendGroupText(int idx, const char* text, uint32_t fixed_ts) {
         if (idx < 0 || idx >= getChannelCount() || !text || !text[0]) return false;
         ChannelDetails cd;
         if (!BaseChatMesh::getChannel(idx, cd)) return false;
-        uint32_t ts = getRTCClock()->getCurrentTime();
         const size_t prefix_len = strnlen(_own_name, MAX_TEXT_LEN) + 2;
         if (prefix_len >= MAX_TEXT_LEN) return false;
         char safe_text[MAX_TEXT_LEN + 1];
         const size_t text_len = sigurdos::utf8_copy_truncate(
             safe_text, MAX_TEXT_LEN - prefix_len + 1, text);
-        return BaseChatMesh::sendGroupMessage(ts, cd.channel, _own_name, safe_text,
+        return BaseChatMesh::sendGroupMessage(fixed_ts, cd.channel, _own_name, safe_text,
                                               (int)text_len);
     }
 

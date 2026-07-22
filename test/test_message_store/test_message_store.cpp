@@ -360,7 +360,7 @@ TEST_F(MessageStoreTest, MarkCompanionSentMarksOnlyOneRecord) {
     EXPECT_FALSE(out[2].companion_sent);
 }
 
-TEST_F(MessageStoreTest, MarkCompanionSentUpdatesOnlyTheTargetFlagByte) {
+TEST_F(MessageStoreTest, MarkCompanionSentUsesAtomicReplacement) {
     ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
         makeMsg("DM: Alice", "Alice", "one", 1, false, false)));
     ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
@@ -371,24 +371,16 @@ TEST_F(MessageStoreTest, MarkCompanionSentUpdatesOnlyTheTargetFlagByte) {
 
     sigurdos::storage::atomicFileSetNativeFault(
         sigurdos::storage::AtomicFileNativeFault::Write);
+    EXPECT_FALSE(sigurdos::mesh::messageStoreMarkCompanionSent(2));
+    EXPECT_EQ(readFile(path), before);
+    sigurdos::storage::atomicFileSetNativeFault(
+        sigurdos::storage::AtomicFileNativeFault::None);
     ASSERT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(2));
-    const auto after = readFile(path);
-    ASSERT_EQ(after.size(), before.size());
-
-    const size_t target = sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE +
-        sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE * 2 - 1;
-    ASSERT_LT(target, after.size());
-    for (size_t i = 0; i < before.size(); ++i) {
-        if (i == target) {
-            EXPECT_EQ(after[i], (uint8_t)(before[i] | 0x08));
-        } else {
-            EXPECT_EQ(after[i], before[i]) << "unexpected change at byte " << i;
-        }
-    }
-    EXPECT_TRUE(readFile((std::string(path) + ".tmp").c_str()).empty());
-
-    ASSERT_TRUE(sigurdos::mesh::messageStoreMarkCompanionSent(2));
-    EXPECT_EQ(readFile(path), after);
+    sigurdos::mesh::StoredMessage stored[3]{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(stored, 3), 3);
+    EXPECT_FALSE(stored[0].companion_sent);
+    EXPECT_TRUE(stored[1].companion_sent);
+    EXPECT_FALSE(stored[2].companion_sent);
 }
 
 TEST_F(MessageStoreTest, MarkCompanionSentNotFoundReturnsFalse) {

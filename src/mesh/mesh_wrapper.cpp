@@ -1222,7 +1222,7 @@ private:
 
 uint32_t sendMessage(const char* dest, const char* text) {
     if (!g_mesh) return 0;
-    uint32_t ts = getCurrentTime();
+    uint32_t ts = meshRtcTimeUnique();
     if (ts == 0) ts = 1;  // 0 means failure; use 1 as fallback so ACK matching still works
     // sendTextTo now takes a fixed timestamp so the UI and mesh layer agree
     // (see slop_mesh_v2.h sendTextTo overload)
@@ -1244,9 +1244,11 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
     for (int i = 0; i < g_mesh->getChannelCount(); i++) {
         auto* ch = g_mesh->getChannel(i);
         if (ch && strcmp(ch->name, channel_name) == 0) {
-            sent = g_mesh->sendGroupText(i, text);
+            uint32_t ts = meshRtcTimeUnique();
+            if (ts == 0) ts = 1;
+            sent = g_mesh->sendGroupText(i, text, ts);
             if (sent) {
-                meshStoreOutgoingMessage(channel_name, text, getCurrentTime(), true, true);
+                meshStoreOutgoingMessage(channel_name, text, ts, true, true);
                 pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
             }
             break;
