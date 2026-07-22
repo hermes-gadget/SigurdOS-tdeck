@@ -11,6 +11,7 @@
 #include "ota_allocation_policy.h"
 #include "ota_security_epoch.h"
 #include "prefs.h"
+#include "wifi_coordinator.h"
 #include "wifi_ota.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -192,8 +193,7 @@ static void fail(const char* msg) {
     Serial.printf("[gh-ota] FAIL: %s\n", msg);
     setStatus(GitHubOTAState::Failed, 0, "Failed", msg);
     cleanupTransfer(true);
-    WiFi.disconnect();
-    delay(10);
+    wifi::release(wifi::Owner::GitHubOta);
     s_active = false;
 }
 
@@ -267,6 +267,15 @@ bool startGitHubUpdate() {
         return false;
     }
 
+    if (!wifi::acquire(wifi::Owner::GitHubOta, wifi::RadioMode::Sta)) {
+        char error[80];
+        snprintf(error, sizeof(error), "WiFi busy: %s",
+                 wifi::ownerName(wifi::currentOwner()));
+        Serial.printf("[gh-ota] REFUSED: %s\n", error);
+        setStatus(GitHubOTAState::Failed, 0, "Failed", error);
+        return false;
+    }
+
     s_active = true;
     s_cancelled = false;
     s_downloaded = 0;
@@ -285,7 +294,6 @@ bool startGitHubUpdate() {
     setStatus(GitHubOTAState::Connecting, 0, "Connecting to WiFi...");
 
     if (!sigurdos::wifi_sta::isConnected()) {
-        WiFi.mode(WIFI_STA);
         WiFi.begin(p.wifi_ssid, p.wifi_password);
     } else {
         Serial.printf("[gh-ota] Reusing existing WiFi connection\n");
@@ -547,6 +555,9 @@ void loop() {
                                   s_downloaded);
                     setStatus(GitHubOTAState::Success, 100,
                               "Update complete — rebooting...");
+                    cleanupTransfer(false);
+                    s_active = false;
+                    wifi::release(wifi::Owner::GitHubOta);
                     SPIFFS.end();
                     delay(500);
                     ESP.restart();
