@@ -6,6 +6,7 @@
 
 #include "mesh_wrapper.h"
 #include "mesh_wrapper_internal.h"
+#include "mesh_safety_policy.h"
 #include "mesh_init_lifecycle.h"
 #include "companion_adapter.h"
 #include "channel_validation.h"
@@ -187,7 +188,7 @@ static bool presentIncomingMessage(void* raw)
         ? ctx->sender_timestamp : rtc_clock.getCurrentTime();
     m.store_id = ctx->store_id;
     m.is_self = false;
-    if (strcmp(ctx->sender, own_name) != 0) unread_count++;
+    unread_count++;
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     const char* ptype = (ctx->channel && ctx->channel[0]) ? "CHANNEL" : "DM";
@@ -247,7 +248,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
     m.store_id = 0;
     m.is_self = false;
     // Increment unread count for incoming messages (reset when chat is opened)
-    if (strcmp(sender, own_name) != 0) unread_count++;
+    unread_count++;
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     // Log as packet entry (accessible via Packets screen)
@@ -1510,28 +1511,31 @@ bool sendAdvert(bool apply_default_scope) {
     bool use_live_location = has_fix && p.advert_loc_policy != 0;
     bool use_manual_location = !use_live_location && p.advert_loc_policy != 0 &&
         p.advert_location_valid;
-    last_advert_time = getCurrentTime();
-    last_advert_used_gps = use_live_location;
-
     if (!g_mesh) {
         last_advert_success = false;
         return false;
     }
 
+    bool queued = false;
     if (use_live_location) {
-        g_mesh->broadcastAdvert(own_name,
+        queued = g_mesh->broadcastAdvert(own_name,
             sigurdos_gps_latitude(), sigurdos_gps_longitude(),
             p.advert_type, apply_default_scope);
     } else if (use_manual_location) {
-        g_mesh->broadcastAdvert(own_name,
+        queued = g_mesh->broadcastAdvert(own_name,
             (float)p.advert_lat / 1000000.0f,
             (float)p.advert_lon / 1000000.0f,
             p.advert_type, apply_default_scope);
     } else {
-        g_mesh->broadcastAdvert(own_name, p.advert_type, apply_default_scope);
+        queued = g_mesh->broadcastAdvert(
+            own_name, p.advert_type, apply_default_scope);
     }
 
-    last_advert_success = true;
+    last_advert_success = queued;
+    if (!queued) return false;
+
+    last_advert_time = getCurrentTime();
+    last_advert_used_gps = use_live_location;
     pushPacketLog(own_name, 0, 0.0f, "TX_ADV");
     last_advert_ms = now_ms;
     return true;
@@ -2065,12 +2069,11 @@ void setDutyCycle(uint8_t percent) {
         if (!g_mesh) return false;
         const ::sigurdos::mesh::SigurdMeshV2::GroupDataEntry* e = g_mesh->getGroupDataEntry(index);
         if (!e || !e->valid) return false;
-        if (data_type_out) *data_type_out = e->data_type;
         if (data_len_out) *data_len_out = e->data_len;
-        if (data_out && data_out_max > 0 && e->data_len > 0) {
-            int cp = (e->data_len < data_out_max) ? e->data_len : data_out_max;
-            memcpy(data_out, e->data, cp);
-        }
+        if (!receiveBufferFits(data_out, data_out_max, e->data_len)) return false;
+
+        if (data_type_out) *data_type_out = e->data_type;
+        if (e->data_len > 0) memcpy(data_out, e->data, e->data_len);
         if (channel_out && channel_sz > 0) {
             strncpy(channel_out, e->channel_name, channel_sz - 1);
             channel_out[channel_sz - 1] = '\0';

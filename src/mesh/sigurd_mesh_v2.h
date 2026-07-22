@@ -16,6 +16,7 @@
 #include "mesh_wrapper.h"
 #include "autoadd_policy.h"
 #include "pending_ack_policy.h"
+#include "mesh_safety_policy.h"
 #include "flood_scope_state.h"
 #include "login_session.h"
 #include "path_codec.h"
@@ -730,10 +731,10 @@ public:
 
 
     // ── Flood advert ────────────────────────────
-    void broadcastAdvert(const char* name, uint8_t adv_type = ADV_TYPE_CHAT,
+    bool broadcastAdvert(const char* name, uint8_t adv_type = ADV_TYPE_CHAT,
                          bool apply_default_scope = false);
 
-    void broadcastAdvert(const char* name, double lat, double lon,
+    bool broadcastAdvert(const char* name, double lat, double lon,
                          uint8_t adv_type = ADV_TYPE_CHAT,
                          bool apply_default_scope = false);
 
@@ -873,17 +874,19 @@ private:
         return mode + 1;
     }
 
-    void sendAdvertImpl(::mesh::Packet* pkt, bool apply_default_scope) {
-        if (!pkt) return;
+    bool sendAdvertImpl(::mesh::Packet* pkt, bool apply_default_scope) {
+        if (!pkt || !_mgr) return false;
+        const int queued_before = _mgr->getOutboundTotal();
         uint8_t key[16];
         if (!apply_default_scope || !_flood_scope.copyDefault(key)) {
             sendFlood(pkt, 0, pathHashSize());
-            return;
+            return outboundQueueAccepted(queued_before, _mgr->getOutboundTotal());
         }
         TransportKey scope;
         memcpy(scope.key, key, sizeof(scope.key));
         uint16_t codes[2] = {scope.calcTransportCode(pkt), 0};
         sendFlood(pkt, codes, 0, pathHashSize());
+        return outboundQueueAccepted(queued_before, _mgr->getOutboundTotal());
     }
 
     FloodScopeState _flood_scope;

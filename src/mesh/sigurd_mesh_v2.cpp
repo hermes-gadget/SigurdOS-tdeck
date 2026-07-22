@@ -5,6 +5,7 @@
 //
 #include "sigurd_mesh_v2.h"
 #include "companion_message_policy.h"
+#include "incoming_message_policy.h"
 #include "advert_blob.h"
 #include "path_discovery.h"
 #include "control_parser.h"
@@ -722,23 +723,24 @@ namespace mesh {
     }
 
     void SigurdMeshV2::onAnonDataRecv(::mesh::Packet* pkt, const uint8_t* secret, const ::mesh::Identity& sender, uint8_t* data, size_t len) {
-        if (len <= 4 || !data) return;
-        // Copy text to local buffer — do NOT modify the packet data in-place
-        // (the buffer may be shared between multiple callers).
+        uint32_t sender_timestamp = 0;
         char text[160];
-        sigurdos::utf8_copy_truncate_n(
-            text, sizeof(text), reinterpret_cast<const char*>(data + 4), len - 4);
+        if (!sigurdos::mesh::decodeAnonymousChat(
+                data, len, sender_timestamp, text, sizeof(text))) return;
 
         int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
+        uint8_t companion_path_len =
+            (pkt && pkt->isRouteFlood()) ? (uint8_t)pkt->path_len : 0xFF;
 
-        // Generate a fallback name from sender pubkey prefix (4 hex chars
-        // to reduce collision probability to ~1/65536 per sender pair)
         char fallback[20];
-        snprintf(fallback, sizeof(fallback), "anon_%02x%02x",
-                 sender.pub_key[0], sender.pub_key[1]);
+        sigurdos::mesh::formatAnonymousSender(
+            sender.pub_key, fallback, sizeof(fallback));
 
-        sigurdos::mesh::mesh_v2_queue_push(fallback, "", text, rssi, snr);
+        sigurdos::mesh::mesh_v2_queue_push(
+            fallback, "", text, rssi, snr, sender_timestamp,
+            companion_path_len, sender.pub_key,
+            sigurdos::mesh::COMPANION_TEXT_PLAIN);
     }
 
     void SigurdMeshV2::onSignedMessageRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt, uint32_t sender_timestamp, const uint8_t* sender_prefix, const char* text) {
@@ -768,19 +770,10 @@ namespace mesh {
             }
         }
 
-        // text arrives as "<sender_name>: <message>" (BaseChatMesh wire format)
-        const char* sender_name = text;
-        const char* msg_text = "";
-        const char* colon = strstr(text, ": ");
-        char sender_buf[32];  // hoisted: must outlive the if-block (used at queue_push below)
-        if (colon && colon > text) {
-            size_t nlen = colon - text;
-            if (nlen > 31) nlen = 31;
-            memcpy(sender_buf, text, nlen);
-            sender_buf[nlen] = '\0';
-            sender_name = sender_buf;
-            msg_text = colon + 2;
-        }
+        char sender_name[32];
+        char msg_text[160];
+        sigurdos::mesh::parseGroupText(
+            text, sender_name, sizeof(sender_name), msg_text, sizeof(msg_text));
         // Channel messages are flood-routed: forward the real hop path so the
         // app shows the true hop count (0xFF only for a direct/unknown route).
         uint8_t companion_path_len =
@@ -1562,22 +1555,22 @@ namespace mesh {
         return o;
     }
 
-    void SigurdMeshV2::broadcastAdvert(const char* name, uint8_t adv_type,
+    bool SigurdMeshV2::broadcastAdvert(const char* name, uint8_t adv_type,
                                        bool apply_default_scope) {
         AdvertDataBuilder builder(adv_type, name);
         uint8_t app[MAX_ADVERT_DATA_SIZE];
         uint8_t app_len = builder.encodeTo(app);
         ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
-        sendAdvertImpl(pkt, apply_default_scope);
+        return sendAdvertImpl(pkt, apply_default_scope);
     }
 
-    void SigurdMeshV2::broadcastAdvert(const char* name, double lat, double lon,
+    bool SigurdMeshV2::broadcastAdvert(const char* name, double lat, double lon,
                                        uint8_t adv_type, bool apply_default_scope) {
         AdvertDataBuilder builder(adv_type, name, lat, lon);
         uint8_t app[MAX_ADVERT_DATA_SIZE];
         uint8_t app_len = builder.encodeTo(app);
         ::mesh::Packet* pkt = createAdvert(self_id, app, app_len);
-        sendAdvertImpl(pkt, apply_default_scope);
+        return sendAdvertImpl(pkt, apply_default_scope);
     }
 
     float SigurdMeshV2::getPacketSNR() const {
