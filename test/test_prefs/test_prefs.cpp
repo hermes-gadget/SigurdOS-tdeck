@@ -74,6 +74,21 @@ TEST_F(PrefsTest, RxBoostedGainRoundTripsThroughPrefsSaveAndLoad) {
     EXPECT_TRUE(loaded.rx_boosted_gain);
 }
 
+TEST_F(PrefsTest, BleBondResetPendingRoundTripsWithReplacementPin) {
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.ble_pin = 654321;
+    saved.ble_bond_reset_pending = true;
+
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_EQ(654321u, loaded.ble_pin);
+    EXPECT_TRUE(loaded.ble_bond_reset_pending);
+}
+
 TEST_F(PrefsTest, DefaultPathHashModeIsOneByte) {
     sigurdos::NodePrefs prefs;
     prefs.set_defaults();
@@ -316,7 +331,7 @@ TEST(PrefsWritePolicyTest, EveryNvsSetFailureIsReturnedWithoutCommit) {
     sigurdos::detail::PrefsWriteFailure failure;
     ASSERT_TRUE(sigurdos::detail::prefsWriteAll(
         prefs, successful.ops(), sigurdos::detail::BlePrefsWriteMode::Write, &failure));
-    ASSERT_EQ(48, successful.write_calls);
+    ASSERT_EQ(49, successful.write_calls);
     ASSERT_EQ(3, successful.ble_write_calls);
     ASSERT_EQ(1, successful.commit_calls);
 
@@ -343,7 +358,7 @@ TEST(PrefsWritePolicyTest, CommitFailureIsReturned) {
 
     EXPECT_FALSE(sigurdos::detail::prefsWriteAll(
         prefs, failing.ops(), sigurdos::detail::BlePrefsWriteMode::Write, &failure));
-    EXPECT_EQ(48, failing.write_calls);
+    EXPECT_EQ(49, failing.write_calls);
     EXPECT_EQ(1, failing.commit_calls);
     EXPECT_STREQ("commit", failure.key);
     EXPECT_EQ(failing.error, failure.error);
@@ -358,7 +373,7 @@ TEST(PrefsWritePolicyTest, PreserveModeLeavesCrossVariantBleKeysUntouched) {
 
     EXPECT_TRUE(sigurdos::detail::prefsWriteAll(
         prefs, writer.ops(), sigurdos::detail::BlePrefsWriteMode::Preserve));
-    EXPECT_EQ(45, writer.write_calls);
+    EXPECT_EQ(46, writer.write_calls);
     EXPECT_EQ(0, writer.ble_write_calls);
     EXPECT_EQ(1, writer.commit_calls);
 }

@@ -161,6 +161,7 @@ bool prefs_load(NodePrefs& p) {
 #endif
     p.device_pin = nvs.getULong("dev_pin", 0);
     p.ble_pin = nvs.getULong("ble_pin", 0);
+    p.ble_bond_reset_pending = nvs.getBool("ble_bond_rst", false);
     p.telemetry_modes = nvs.getUChar("tele_mod", 0);
     p.manual_add_contacts = nvs.getUChar("man_add", 0);
     // default scope key (hex-encoded)

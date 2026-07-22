@@ -5,6 +5,7 @@
 #include "comms/ble_frame_queue.h"
 #include "comms/ble_init_gate.h"
 #include "comms/ble_auth_watchdog.h"
+#include "comms/ble_bond_rotation.h"
 #include "comms/ble_task_mutex.h"
 
 #include <atomic>
@@ -20,10 +21,40 @@ using sigurdos::comms::BleInitState;
 using sigurdos::comms::BleFrameQueuePushResult;
 using sigurdos::comms::BleRxAdmissionAction;
 using sigurdos::comms::BleAuthWatchdog;
+using sigurdos::comms::BleBondRotationState;
 using sigurdos::comms::BleTaskMutex;
 
 constexpr size_t MAX_LEN = 176;   // MAX_FRAME_SIZE on target
 constexpr size_t CAPACITY = 4;    // FRAME_QUEUE_SIZE on target
+
+TEST(BleBondRotationState, LiveRequestAllowsResponseGraceBeforePurge)
+{
+    BleBondRotationState state;
+    state.request(100, true);
+    EXPECT_TRUE(state.pending());
+    EXPECT_FALSE(state.actionDue(1099));
+    state.expedite(200);
+    EXPECT_TRUE(state.actionDue(200));
+    state.request(100, true);
+    EXPECT_TRUE(state.actionDue(1100));
+
+    state.purgeSubmitted(1100);
+    EXPECT_TRUE(state.purgeStarted());
+    EXPECT_FALSE(state.actionDue(1349));
+    EXPECT_TRUE(state.actionDue(1350));
+}
+
+TEST(BleBondRotationState, BootRequestIsImmediateAndWrapSafe)
+{
+    BleBondRotationState state;
+    state.request(0xFFFFFFF0u, false);
+    EXPECT_TRUE(state.actionDue(0xFFFFFFF0u));
+    state.retryLater(0xFFFFFFF0u);
+    EXPECT_FALSE(state.actionDue(0x00000020u));
+    EXPECT_TRUE(state.actionDue(0x000000EAu));
+    state.clear();
+    EXPECT_FALSE(state.pending());
+}
 
 using Queue = BleFrameQueue<MAX_LEN, CAPACITY>;
 

@@ -1407,10 +1407,13 @@ TEST(CompanionBlePinPrefs, UpdatesPairingPinWithoutChangingDeviceLockPin) {
     ASSERT_TRUE(sigurdos::mesh::applyCompanionBlePin(prefs, 654321));
     EXPECT_EQ(prefs.ble_pin, 654321u);
     EXPECT_EQ(prefs.device_pin, 4321u);
+    EXPECT_TRUE(prefs.ble_bond_reset_pending);
 
+    prefs.ble_bond_reset_pending = false;
     EXPECT_FALSE(sigurdos::mesh::applyCompanionBlePin(prefs, 99999));
     EXPECT_EQ(prefs.ble_pin, 654321u);
     EXPECT_EQ(prefs.device_pin, 4321u);
+    EXPECT_FALSE(prefs.ble_bond_reset_pending);
 }
 
 TEST_F(CompanionProtocolTest, RebootAndFactoryResetGuarded) {

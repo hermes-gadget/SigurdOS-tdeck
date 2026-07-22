@@ -4,6 +4,7 @@
 #include "observed_ble_interface.h"
 
 #include <cstring>
+#include <esp_gap_ble_api.h>
 
 #if defined(ESP32_PLATFORM) && defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 
@@ -161,6 +162,66 @@ size_t ObservedSerialBLEInterface::checkRecvFrame(uint8_t dest[])
     }
     refreshConnectionState();
     return len;
+}
+
+bool ObservedSerialBLEInterface::removeAllBonds()
+{
+    BleTaskMutex::Guard guard(_task_mutex);
+    if (!initializeConfigured()) return false;
+
+    // No old credential may remain reachable while the security database is
+    // being changed. Keep the service stopped even when a purge call fails.
+    if (SerialBLEInterface::isEnabled()) {
+        SerialBLEInterface::disable();
+        _stats.disable_count++;
+    }
+    refreshConnectionState();
+    _stats.bond_purge_attempt_count++;
+
+    int count = esp_ble_get_bond_device_num();
+    _stats.bonded_device_count = count;
+    if (count < 0) {
+        _stats.bond_purge_error_count++;
+        return false;
+    }
+    if (count == 0) return true;
+
+#if defined(CONFIG_BT_SMP_MAX_BONDS)
+    static constexpr int MAX_BONDS = CONFIG_BT_SMP_MAX_BONDS;
+#else
+    static constexpr int MAX_BONDS = 15;
+#endif
+    if (count > MAX_BONDS) {
+        _stats.bond_purge_error_count++;
+        return false;
+    }
+
+    esp_ble_bond_dev_t bonds[MAX_BONDS]{};
+    int listed = count;
+    if (esp_ble_get_bond_device_list(&listed, bonds) != ESP_OK ||
+        listed < 0 || listed > count) {
+        _stats.bond_purge_error_count++;
+        return false;
+    }
+
+    bool submitted_all = true;
+    for (int i = 0; i < listed; ++i) {
+        if (esp_ble_remove_bond_device(bonds[i].bd_addr) != ESP_OK) {
+            submitted_all = false;
+            _stats.bond_purge_error_count++;
+        }
+    }
+    return submitted_all;
+}
+
+int ObservedSerialBLEInterface::bondedDeviceCount()
+{
+    BleTaskMutex::Guard guard(_task_mutex);
+    if (!_init_gate.initialized()) return -1;
+    const int count = esp_ble_get_bond_device_num();
+    _stats.bonded_device_count = count;
+    if (count < 0) _stats.bond_purge_error_count++;
+    return count;
 }
 
 /*

@@ -90,6 +90,7 @@ inline bool prefsWriteAll(const NodePrefs& prefs, const PrefsNvsWriter& writer,
     }
     if (!wrote("dev_pin", writer.setU32(writer.context, "dev_pin", prefs.device_pin))) return false;
     if (!wrote("ble_pin", writer.setU32(writer.context, "ble_pin", prefs.ble_pin))) return false;
+    if (!wrote("ble_bond_rst", writer.setU8(writer.context, "ble_bond_rst", prefs.ble_bond_reset_pending ? 1 : 0))) return false;
     if (!wrote("tele_mod", writer.setU8(writer.context, "tele_mod", prefs.telemetry_modes))) return false;
     if (!wrote("man_add", writer.setU8(writer.context, "man_add", prefs.manual_add_contacts))) return false;
     if (!wrote("scope_key", writer.setString(writer.context, "scope_key", prefs.default_scope_key_hex))) return false;

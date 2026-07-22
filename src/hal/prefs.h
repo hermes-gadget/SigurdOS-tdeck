@@ -52,6 +52,7 @@ struct NodePrefs {
     bool     ble_user_set;            // true only after an explicit BLE user toggle
     uint32_t device_pin;               // 4-6 digit device PIN (0 = disabled)
     uint32_t ble_pin;                  // random per-device BLE pairing PIN (0 = not generated yet)
+    bool     ble_bond_reset_pending;   // block advertising until old BLE bonds are purged
     uint8_t  telemetry_modes;          // bitmask for companion telemetry modes
     uint8_t  manual_add_contacts;      // companion manual-add-contacts mode (0=auto, 1=prompt)
     char     default_scope_key_hex[33];  // hex-encoded 16-byte companion default flood-scope key
@@ -103,6 +104,7 @@ struct NodePrefs {
         ble_user_set = false;          // default may migrate; no explicit user choice yet
         device_pin = 0;               // default: no PIN
         ble_pin = 0;                  // default: not generated (will generate on first BLE boot)
+        ble_bond_reset_pending = false;
         telemetry_modes = 0;          // default: no telemetry sharing
         manual_add_contacts = 0;      // default: auto-add contacts
         default_scope_key_hex[0] = '\0';  // default: no companion flood scope

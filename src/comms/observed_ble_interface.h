@@ -38,6 +38,9 @@ struct BleSerialObserverStats {
     uint32_t rx_frame_count = 0;
     uint32_t tx_frame_count = 0;
     uint32_t tx_drop_count = 0;
+    uint32_t bond_purge_attempt_count = 0;
+    uint32_t bond_purge_error_count = 0;
+    int bonded_device_count = -1;
     uint16_t last_conn_id = 0;
     uint16_t last_mtu = 0;
     uint8_t last_rx_code = 0;
@@ -54,6 +57,11 @@ public:
     bool isConnected() const override;
     size_t writeFrame(const uint8_t src[], size_t len) override;
     size_t checkRecvFrame(uint8_t dest[]) override;
+
+    // Stops advertising/connections and asks Bluedroid to remove every bond.
+    // bondedDeviceCount() returns -1 when the security database is unavailable.
+    bool removeAllBonds();
+    int bondedDeviceCount();
 
     BleSerialObserverStats stats() const;
 

@@ -88,6 +88,14 @@ to keep binary frames uncorrupted. Use `firmware-merged.bin` for a direct flash.
 Hardware commands and host tooling are documented in
 [`COMPANION_BLE_TEST_ENV.md`](COMPANION_BLE_TEST_ENV.md).
 
+Changing `CMD_SET_DEVICE_PIN` is deliberately disruptive. SigurdOS atomically
+persists the replacement PIN with a bond-reset marker, allows a short interval
+for the `OK` response, stops BLE, removes every bonded peer, and restarts only
+after the security database is empty. If power is lost during rotation, the
+next boot withholds advertising and resumes the purge before enabling BLE. A
+PIN value of zero selects a newly generated six-digit PIN on restart. Every
+phone must pair again after this command.
+
 `client_repeat` matches stock companion behavior: when disabled the handheld
 does not forward packets; when enabled it forwards without applying
 repeater-oriented RegionMap deny-flood flags. Region selection controls the

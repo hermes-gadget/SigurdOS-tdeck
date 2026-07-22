@@ -25,6 +25,7 @@
 #include "telemetry_response_policy.h"
 #include "comms/companion_bridge.h"
 #include "comms/observed_ble_interface.h"
+#include "comms/ble_bond_rotation.h"
 #include "hal/tdeck_pins.h"
 #include "hal/prefs.h"
 #include "hal/radio_profiles.h"
@@ -105,6 +106,7 @@ static CompanionBridge* companionBridge()
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 static sigurdos::comms::ObservedSerialBLEInterface g_ble_serial;
+static sigurdos::comms::BleBondRotationState g_ble_bond_rotation;
 #elif defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
 #include <helpers/ArduinoSerialInterface.h>
 static ArduinoSerialInterface g_usb_serial;
@@ -554,7 +556,13 @@ public:
     bool setBlePin(uint32_t pin) override {
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         if (!sigurdos::mesh::applyCompanionBlePin(p, pin)) return false;
-        return sigurdos::prefs_set(p);
+        // Commit the replacement credential and crash-recovery marker
+        // together. Advertising stays blocked until every old bond is gone.
+        if (!sigurdos::prefs_set(p)) return false;
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+        g_ble_bond_rotation.request(millis(), true);
+#endif
+        return true;
     }
 
     bool exportPrivateKey(uint8_t* out64) const override {
@@ -1225,6 +1233,56 @@ static void bleValidationStartLog() {}
 static void bleValidationEmit(bool) {}
 #endif
 
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+static void serviceBleBondRotation()
+{
+    if (!g_ble_bond_rotation.pending()) return;
+    const uint32_t now = millis();
+    // If the initiating phone leaves before the response grace expires, purge
+    // immediately so the base transport's delayed advertising restart cannot
+    // admit a different device with an old bond.
+    if (!g_ble_bond_rotation.purgeStarted() && !g_ble_serial.isConnected()) {
+        g_ble_bond_rotation.expedite(now);
+    }
+    if (!g_ble_bond_rotation.actionDue(now)) return;
+
+    if (!g_ble_bond_rotation.purgeStarted()) {
+        if (g_ble_serial.removeAllBonds()) {
+            g_ble_bond_rotation.purgeSubmitted(now);
+        } else {
+            SIG_LOGW("[mesh] BLE bond purge could not start; retrying with advertising disabled");
+            g_ble_bond_rotation.retryLater(now);
+        }
+        return;
+    }
+
+    const int remaining = g_ble_serial.bondedDeviceCount();
+    if (remaining == 0) {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.ble_bond_reset_pending = false;
+        if (!sigurdos::prefs_set(p)) {
+            SIG_LOGW("[mesh] BLE bond purge complete but marker clear failed; retrying");
+            g_ble_bond_rotation.retryLater(now);
+            return;
+        }
+        g_ble_bond_rotation.clear();
+        SIG_LOGW("[mesh] BLE credential rotation complete; restarting");
+        delay(25);
+        ESP.restart();
+        return;
+    }
+
+    // Removal completion is asynchronous. Re-submit entries still in the
+    // security database and keep the service stopped until the count reaches 0.
+    if (remaining > 0 && g_ble_serial.removeAllBonds()) {
+        g_ble_bond_rotation.purgeSubmitted(now);
+    } else {
+        SIG_LOGW("[mesh] BLE bond purge incomplete; retrying with advertising disabled");
+        g_ble_bond_rotation.retryLater(now);
+    }
+}
+#endif
+
 // ── Adapter lifecycle (called from mesh_wrapper.cpp) ─────────────────
 
 void sigurdos::mesh::companionAdapterIdentityChanged()
@@ -1248,7 +1306,13 @@ void sigurdos::mesh::companionAdapterInit()
     g_ble_serial.configure("MeshCore-", ble_name, g_companion_host.blePin());
     if (CompanionBridge* b = companionBridge()) {
         b->begin(&g_ble_serial, &g_companion_host);
-        if (sigurdos::prefs_get().ble_enabled) {
+        const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
+        if (prefs.ble_bond_reset_pending) {
+            // Crash-safe resume: only the purge path initializes BLE, and it
+            // never starts advertising under a bond made with the old PIN.
+            g_ble_bond_rotation.request(millis(), false);
+            SIG_LOGW("[mesh] BLE bond purge pending; advertising withheld");
+        } else if (prefs.ble_enabled) {
             bool enabled = b->setEnabled(true);
 #if defined(SIGURDOS_DEBUG) || \
     (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
@@ -1280,6 +1344,9 @@ void sigurdos::mesh::companionAdapterInit()
 void sigurdos::mesh::companionAdapterLoop()
 {
     if (g_companion_bridge_ptr) g_companion_bridge_ptr->loop();
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    serviceBleBondRotation();
+#endif
     bleValidationEmit(false);
 }
 

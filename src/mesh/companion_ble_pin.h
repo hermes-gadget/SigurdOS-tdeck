@@ -13,6 +13,7 @@ inline bool applyCompanionBlePin(NodePrefs& prefs, uint32_t pin)
 {
     if (!sigurdos::comms::companionBlePinValid(pin)) return false;
     prefs.ble_pin = pin;
+    prefs.ble_bond_reset_pending = true;
     return true;
 }
 
