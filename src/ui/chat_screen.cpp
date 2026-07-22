@@ -1321,6 +1321,9 @@ static lv_obj_t* create_bubble(lv_obj_t* parent, const char* sender,
     }
 
     lv_obj_t* bubble = lv_obj_create(container);
+    // LV_OBJ_FLAG_USER_1 is reserved for diagnostic privacy: debug tree dumps
+    // must never expose sender or message text beneath this object.
+    lv_obj_add_flag(bubble, LV_OBJ_FLAG_USER_1);
     lv_obj_set_width(bubble, LV_PCT(78));
     lv_obj_set_height(bubble, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(bubble, 0, 0);

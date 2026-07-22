@@ -48,6 +48,12 @@
 #define SIGURDOS_DEBUG_DIAG SIGURDOS_DEBUG_ACTIVE
 #endif
 
+// UI text may contain private messages, node names, and command history.
+// Geometry/type dumps remain available while content capture is opt-in.
+#ifndef SIGURDOS_DEBUG_UI_TEXT
+#define SIGURDOS_DEBUG_UI_TEXT 0
+#endif
+
 #ifndef SIGURDOS_SERIAL_DEBUG_COMMANDS
 #define SIGURDOS_SERIAL_DEBUG_COMMANDS 0
 #endif
