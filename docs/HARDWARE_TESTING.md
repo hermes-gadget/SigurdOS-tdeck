@@ -384,6 +384,7 @@ inject Alice hello-from-alice
 inject Alice channel=hwtest channel-message
 opendm Alice
 sendmessage Alice reply-from-tdeck
+getrf
 addrepeater TestRepeater
 addroomserver TestRoom
 setlogin TestRoom 1
@@ -395,6 +396,13 @@ Use real RF-discovered contacts for persistence and interoperability claims.
 Injected test contacts prove UI paths, not radio discovery or durable contact
 storage. `term-submit` is not a supported controller command; Terminal screen
 commands must be typed with the physical keyboard.
+
+For a delivery transcript, record `getrf` immediately before `sendmessage`,
+immediately after its `QUEUED` response, and after the peer responds. The
+`ack_events` counter must not change merely because the command queued a DM; it
+may advance only after a real peer ACK reaches a radio-enabled build. Record the
+queued timestamp in the transcript so the UI result can be correlated with the
+send. Do not use a no-radio build as RF delivery evidence.
 
 #### Keyboard, trackball, and touch
 
@@ -584,7 +592,8 @@ widget first.
 |---|---|---|
 | `inject ...` or `msg ...` | Inject a DM or channel message | `inject Alice channel=hwtest hello` |
 | `sendchannel <channel> <text>` | Send a real channel message when mesh is active | `sendchannel hwtest hello` |
-| `sendmessage <contact> <text>` or `senddm ...` | Send a DM; quote a spaced name | `sendmessage "Test Room" hello` |
+| `sendmessage <contact> <text>` or `senddm ...` | Queue a DM and report its authoritative timestamp; delivery remains pending until a peer ACK | `sendmessage "Test Room" hello` |
+| `simulateack <contact> <timestamp>` | Inject a clearly labelled ACK in the no-radio profile only; unavailable in every radio profile | `simulateack Alice 1234` |
 | `opendm <contact>` | Open a DM conversation | `opendm Alice` |
 | `addchannel <name> [psk]` or `addchan ...` | Add a hashtag channel or PSK channel | `addchannel hwtest` |
 | `removechannel <index-or-name>` | Remove a channel | `removechannel hwtest` |
@@ -601,7 +610,8 @@ widget first.
 
 `SigurdOS_TDeck_remote_test` deliberately has no radio. Mesh sends and live
 login operations require `SigurdOS_TDeck_remote_test_radio` or another
-radio-enabled controller environment.
+radio-enabled controller environment. `simulateack` exists only for isolated
+no-radio UI checks and must never appear in a radio-build transcript.
 
 ### Remote-test controller: radio, system, BLE, and debug
 
