@@ -678,6 +678,28 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 - `rtc_gpio_deinit` on DIO1
 - Display re-initialised with rotation(1) and full black fill
 
+### Physical Deep-Sleep Validation
+
+Run this checklist after changes to the board power or sleep adapters. Record
+the firmware commit, supply voltage, active/sleep current, peripheral-rail
+voltage, and serial timestamps with the test evidence.
+
+1. Power the T-Deck from a current-limited supply through a current meter and
+   probe `PIN_PERIPH_PWR` (GPIO10) plus the switched peripheral rail.
+2. With the battery input above 3.2 V, request orderly sleep. Confirm the timer
+   is accepted before bus shutdown, GPIO10 and the switched rail fall low, and
+   sleep current remains stable for the full interval.
+3. Confirm the 15-minute timer wakes the board and that GPIO10 is driven high
+   before its hold is released; the peripheral rail must not show a low glitch.
+4. Repeat below 3.2 V. After the timer wake, confirm the early battery check
+   returns directly to orderly sleep before display, storage, or radio startup.
+5. While asleep, transmit a valid LoRa packet to the node. It must remain
+   asleep: DIO1 is GPIO45, outside the ESP32-S3 RTC GPIO range (0-21), so packet
+   wake is unavailable. Confirm the timer still wakes the board afterward.
+
+Do not infer packet-wake support from the non-zero GPIO45 bit mask; only an
+RTC-capable pad can be registered as an ESP-IDF deep-sleep wake source.
+
 ---
 
 ## Appendix A — Boot Sequence

@@ -103,6 +103,7 @@ test/
 |-- test_screen_lifetime/           Screen delete guard: tracked pointer nulling, timer teardown
 |-- test_storage/                   SPIFFS mount, erased-partition recovery, and failure policy
 |-- test_tdeck_board/               Board power thresholds and shutdown logic
+|-- test_tdeck_sleep/               Production-linked T-Deck sleep ordering and failures
 |-- test_telemetry_collectors/      Telemetry task watermark and buffer null-safety
 |-- test_telemetry_crash/           Crash backtrace capacity and bounded count
 |-- test_telemetry_drift/           Telemetry timing drift and rollover handling
