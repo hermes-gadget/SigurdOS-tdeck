@@ -127,6 +127,12 @@ The catalog is checked in CI against the target names produced by
 `pio test -e native_test --list-tests`. The success message reports the current
 derived count; do not add a hand-maintained total here.
 
+The sanitizer environment runs the same discovered suite with ASan, UBSan, and
+leak detection. Production coverage is gated at 90% line and 70% branch
+coverage. Every production translation unit must either appear in the native
+source filter or have a reviewed reason in `ci/native_coverage_policy.json`;
+`scripts/check_native_coverage_inventory.py` enforces that inventory in CI.
+
 ## Mocks
 
 The native environment uses `test/mocks` plus selected source files from
