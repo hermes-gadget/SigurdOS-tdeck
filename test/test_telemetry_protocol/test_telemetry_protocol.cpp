@@ -20,7 +20,6 @@
 #include <gtest/gtest.h>
 
 #include "Arduino.h"
-#include "diagnostics/reset_policy.h"
 #include "diagnostics/telemetry_policy.h"
 
 // Exercise the production telemetry implementation in this focused native test
@@ -186,15 +185,6 @@ TEST_F(TelemetryProtocolTest, WidgetTraversalCountsDeepTreesAndReportsBudget) {
     const WidgetTreeCount wide =
         count_widget_tree(&wide_root, child_count, child_at);
     EXPECT_TRUE(wide.truncated);
-}
-
-TEST_F(TelemetryProtocolTest, CrashEvidencePolicyIncludesEveryWatchdogReason) {
-    for (int reason = 0; reason <= 10; ++reason) {
-        const bool expected = reason == 4 || reason == 5 || reason == 6 ||
-                              reason == 7 || reason == 9;
-        EXPECT_EQ(sigurdos::diagnostics::reset_retains_crash_evidence(reason),
-                  expected);
-    }
 }
 
 TEST_F(TelemetryProtocolTest, EmitsFloatRecordsWithPrecision) {

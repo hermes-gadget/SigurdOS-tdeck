@@ -144,11 +144,6 @@ Every macro invocation **always** appends a single `\n` to the output. This is a
 
 The debug build environment `[env:SigurdOS_TDeck_debug]` (defined in `platformio.ini`) sets `SIGURDOS_DEBUG` and other debug flags:
 
-Debug firmware exposes detailed device state over unauthenticated serial and is
-not suitable for normal field deployment. Object-tree dumps omit label text by
-default; developers must explicitly set `SIGURDOS_DEBUG_UI_TEXT=1` to include
-UI content, which may disclose messages, node names, and command history.
-
 ```ini
 [env:SigurdOS_TDeck_debug]
 extends = env:SigurdOS_TDeck

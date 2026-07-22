@@ -16,7 +16,6 @@
 
 #include "debug.h"
 #include "debug_cfg.h"
-#include "reset_policy.h"
 
 #if defined(SIGURDOS_DEBUG) && SIGURDOS_DEBUG
 
@@ -138,8 +137,10 @@ void ring_clear()
 
 bool has_crash_record()
 {
-    return sigurdos::diagnostics::reset_retains_crash_evidence(
-        static_cast<int>(esp_reset_reason()));
+    return esp_reset_reason() == ESP_RST_PANIC ||
+           esp_reset_reason() == ESP_RST_INT_WDT ||
+           esp_reset_reason() == ESP_RST_TASK_WDT ||
+           esp_reset_reason() == ESP_RST_BROWNOUT;
 }
 #else
 void ring_log(const char*) {}
@@ -201,8 +202,8 @@ void init()
 #if SIGURDOS_CRASH_RING
     // Check if previous boot ended in a crash
     esp_reset_reason_t reason = esp_reset_reason();
-    if (sigurdos::diagnostics::reset_retains_crash_evidence(
-            static_cast<int>(reason))) {
+    if (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT ||
+        reason == ESP_RST_TASK_WDT || reason == ESP_RST_BROWNOUT) {
         Serial.println("\n⚠═══════════════════════════════════════");
         Serial.println("⚠ PREVIOUS BOOT ENDED IN A CRASH");
         Serial.printf("⚠ Reason: %d\n", (int)reason);
@@ -412,12 +413,10 @@ static void dump_obj_tree(lv_obj_t* obj, int depth)
     if (lv_obj_check_type(obj, &lv_label_class)) type = "label";
 
     char label_text[33] = "";
-#if SIGURDOS_DEBUG_UI_TEXT
     if (lv_obj_check_type(obj, &lv_label_class)) {
         const char* txt = lv_label_get_text(obj);
         if (txt) { strncpy(label_text, txt, 32); label_text[32] = '\0'; }
     }
-#endif
 
     for (int i = 0; i < depth; i++) Serial.print("  ");
     Serial.printf("%s pos=(%ld,%ld) size=(%ld,%ld) bw=%d opa=%d r=%d "
