@@ -15,12 +15,14 @@ struct ChannelUriFields {
 
 inline bool parseChannelAddUri(const char* uri, ChannelUriFields& out) {
     static constexpr char PREFIX[] = "meshcore://channel/add?";
-    if (!uri || std::strncmp(uri, PREFIX, sizeof(PREFIX) - 1) != 0) return false;
+    static constexpr size_t PREFIX_LEN = sizeof(PREFIX) - 1;
+    if (!uri || std::strncmp(uri, PREFIX, PREFIX_LEN) != 0) return false;
 
     ChannelUriFields parsed{};
     bool have_name = false;
     bool have_secret = false;
-    const char* cursor = uri + sizeof(PREFIX) - 1;
+    // Index rather than pointer+sizeof — CodeQL cpp/suspicious-add-with-sizeof.
+    const char* cursor = &uri[PREFIX_LEN];
     if (!*cursor) return false;
     while (*cursor) {
         const char* key = cursor;
@@ -61,10 +63,12 @@ inline bool parseChannelAddUri(const char* uri, ChannelUriFields& out) {
 inline bool parseRawContactUriHex(const char* uri, char* hex, size_t hex_cap,
                                   size_t& hex_len) {
     static constexpr char PREFIX[] = "meshcore://";
+    static constexpr size_t PREFIX_LEN = sizeof(PREFIX) - 1;
     hex_len = 0;
     if (!uri || !hex || hex_cap == 0 ||
-        std::strncmp(uri, PREFIX, sizeof(PREFIX) - 1) != 0) return false;
-    const char* value = uri + sizeof(PREFIX) - 1;
+        std::strncmp(uri, PREFIX, PREFIX_LEN) != 0) return false;
+    // Index rather than pointer+sizeof — CodeQL cpp/suspicious-add-with-sizeof.
+    const char* value = &uri[PREFIX_LEN];
     while (value[hex_len]) {
         if (!detail::uriHex(value[hex_len]) || hex_len + 1 >= hex_cap) return false;
         hex[hex_len] = value[hex_len];
