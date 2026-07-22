@@ -30,6 +30,7 @@
 
 #include "mesh/durable_fanout.h"
 #include "mesh/pending_ack_policy.h"
+#include "mesh/pending_operation_policy.h"
 #include "mesh/companion_message_policy.h"
 #include "mesh/incoming_message_policy.h"
 #include "mesh/mesh_safety_policy.h"
@@ -1186,6 +1187,50 @@ TEST_F(ReqResponseTest, NonMatchingTagDoesNotClearWrongPending) {
     }
 
     EXPECT_TRUE(pending.in_use) << "Non-matching tag should not clear pending request";
+}
+
+struct PendingOperationSlot {
+    bool in_use = false;
+    bool timed_out = false;
+};
+
+TEST(PendingOperationPolicy, LostResponsesBecomeReclaimableWithoutEvictingActive) {
+    PendingOperationSlot slots[2] = {{true, false}, {true, false}};
+    EXPECT_EQ(sigurdos::mesh::selectReusablePendingSlot(slots, 2), -1);
+
+    slots[0].in_use = false;
+    slots[0].timed_out = true;
+    EXPECT_EQ(sigurdos::mesh::selectReusablePendingSlot(slots, 2), 0);
+    EXPECT_TRUE(slots[1].in_use);
+}
+
+TEST(PendingOperationPolicy, CleanSlotPreservesRecentTimeoutForCaller) {
+    PendingOperationSlot slots[2] = {{false, true}, {false, false}};
+
+    EXPECT_EQ(sigurdos::mesh::selectReusablePendingSlot(slots, 2), 1);
+    EXPECT_TRUE(slots[0].timed_out);
+}
+
+TEST(PendingOperationPolicy, ExpiryIsWrapSafe) {
+    const uint32_t started = 0xFFFFFF00U;
+    const uint32_t timeout = 0x200U;
+
+    EXPECT_FALSE(sigurdos::mesh::pendingOperationElapsed(
+        started, timeout, 0x000000FFU));
+    EXPECT_TRUE(sigurdos::mesh::pendingOperationElapsed(
+        started, timeout, 0x00000100U));
+}
+
+TEST(PendingOperationPolicy, CompletedDiscoveryRetentionIsBounded) {
+    const uint32_t completed_at = 1000;
+    EXPECT_FALSE(sigurdos::mesh::pendingOperationElapsed(
+        completed_at,
+        sigurdos::mesh::DISCOVERY_COMPLETION_RETENTION_MS,
+        completed_at + sigurdos::mesh::DISCOVERY_COMPLETION_RETENTION_MS - 1));
+    EXPECT_TRUE(sigurdos::mesh::pendingOperationElapsed(
+        completed_at,
+        sigurdos::mesh::DISCOVERY_COMPLETION_RETENTION_MS,
+        completed_at + sigurdos::mesh::DISCOVERY_COMPLETION_RETENTION_MS));
 }
 
 // ═══════════════════════════════════════════════════════════════

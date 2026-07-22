@@ -751,6 +751,8 @@ bool requestStatus(const char* dest_name) {
             strcmp(contact.name, dest_name) == 0) { found = true; break; }
     }
     if (!found) return false;
+    _last_status_tag = 0;
+    _has_cached_status = false;
     uint32_t tag = 0;
     bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS, &tag);
     if (ok && tag != 0) {
@@ -778,6 +780,16 @@ bool hasStatusResponse() {
     return false;
 }
 
+bool statusRequestPending() {
+    return g_mesh && _last_status_tag != 0 &&
+           g_mesh->requestPending(_last_status_tag);
+}
+
+bool statusRequestTimedOut() {
+    return g_mesh && _last_status_tag != 0 &&
+           g_mesh->requestTimedOut(_last_status_tag);
+}
+
 bool getStatusResult(NodeStatus* out) {
     if (!out || !_has_cached_status) return false;
     memcpy(out, &_cached_status, sizeof(*out));
@@ -795,6 +807,8 @@ bool requestTelemetry(const char* dest_name) {
             strcmp(contact.name, dest_name) == 0) { found = true; break; }
     }
     if (!found) return false;
+    _last_telemetry_tag = 0;
+    _has_cached_telemetry = false;
     uint32_t tag = 0;
     bool ok = g_mesh->sendRequest(
         dest_name, REQ_TYPE_GET_TELEMETRY_DATA, &tag);
@@ -830,6 +844,16 @@ bool hasTelemetryResponse() {
     return false;
 }
 
+bool telemetryRequestPending() {
+    return g_mesh && _last_telemetry_tag != 0 &&
+           g_mesh->requestPending(_last_telemetry_tag);
+}
+
+bool telemetryRequestTimedOut() {
+    return g_mesh && _last_telemetry_tag != 0 &&
+           g_mesh->requestTimedOut(_last_telemetry_tag);
+}
+
 bool getTelemetryResult(TelemetryResult* out) {
     if (!out || !_has_cached_telemetry) return false;
     memcpy(out, &_cached_telemetry, sizeof(*out));
@@ -840,6 +864,14 @@ bool getTelemetryResult(TelemetryResult* out) {
 uint32_t discoverPath(const char* dest_name) {
     if (!g_mesh || !dest_name || !dest_name[0]) return 0;
     return g_mesh->sendPathDiscovery(dest_name);
+}
+
+bool pathDiscoveryPending(const char* dest_name) {
+    return g_mesh && dest_name && g_mesh->discoveryPending(dest_name);
+}
+
+bool pathDiscoveryTimedOut(const char* dest_name) {
+    return g_mesh && dest_name && g_mesh->discoveryTimedOut(dest_name);
 }
 
 bool hasPathTo(const char* dest_name) {

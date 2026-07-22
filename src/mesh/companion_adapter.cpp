@@ -1025,11 +1025,14 @@ private:
         uint8_t want = telemetry ? (uint8_t)REQ_TYPE_GET_TELEMETRY_DATA
                                  : (uint8_t)REQ_TYPE_GET_STATUS;
         uint32_t tag = 0;
-        if (!mesh_ptr()->sendRequest(*c, want, &tag) || tag == 0) return r;
+        uint32_t timeout = 0;
+        if (!mesh_ptr()->sendRequest(*c, want, &tag, &timeout) || tag == 0) {
+            return r;
+        }
         r.expected_ack = tag;
         r.ok = true;
         r.sent_flood = (c->out_path_len == 0xFF);
-        r.est_timeout = 0;
+        r.est_timeout = timeout;
         return r;
     }
 };
