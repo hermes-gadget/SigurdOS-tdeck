@@ -118,6 +118,7 @@ test/
 |-- test_transport_key_store/       Private-region transport key persistence and bounds
 |-- test_ui_contract/               UI screen show APIs and screen function stability
 |-- test_ui_lifecycle/              LVGL timer ownership and display timeout normalization
+|-- test_ui_screen_load/            Repeated Chat/Home loads and synchronous root deletion
 |-- test_ui_timing/                 Splash screen timing and millisecond rollover
 |-- test_wifi_scan/                 Wi-Fi scan AP count, sorting, and input validation
 |-- test_wifi_sta/                  Wi-Fi validation upload and reconnect state machines
