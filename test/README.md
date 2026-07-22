@@ -36,6 +36,7 @@ test/
 |-- test_advert_blob/               Advert persistence size and key-path invariants
 |-- test_atomic_file/               Validated atomic replacement and fault recovery
 |-- test_ble_frame_queue/           BLE host-to-loop frame handoff, incl. thread stress
+|-- test_boot_watchdog/             Setup/runtime watchdog policy and deadline bounds
 |-- test_build/                     Header inclusion and cross-module sanity checks
 |-- test_build_info/                Firmware version string and build info defaults
 |-- test_buzzer/                    Buzzer notification patterns and duration bounds
@@ -46,21 +47,29 @@ test/
 |-- test_chat_history_store/        Legacy `/msgs` migration, recovery, and unified-store dedup
 |-- test_chat_message_buffer/       Per-channel buffer alloc fallback, eviction, remap handoff
 |-- test_chat_truncation/           UTF-8 safe chat truncation
+|-- test_companion_mesh_policy/     Companion message filtering and routing policy
 |-- test_companion_protocol/        Companion protocol frame shapes and sync behavior
 |-- test_contact_paging/            Contact list paging bounds and page clamp logic
 |-- test_contact_store/             Contact persistence format, magic header, bounds checks
+|-- test_control_parser/            Strict terminal control-command tokenization
 |-- test_controller/                RF parameter parsing and validation
 |-- test_debug/                     Debug level bounds and stubs
+|-- test_display_buffer_policy/     LVGL render-buffer allocation and fallback policy
+|-- test_display_retry_state/       Deferred display/input initialization retry state
 |-- test_emoji/                     Emoji font, lookup, fallback, and data checks
 |-- test_emoji_fallback/            Emoji font fallback wrapper registration and writable copies
 |-- test_emoji_integrity/           Emoji font index coverage and uniqueness
+|-- test_flood_scope_state/         Flood-scope key and route selection state
 |-- test_github_ota_contract/       GitHub OTA state enum, buffer capacities, and plan fallback
 |-- test_gps/                       NMEA parsing, coordinates, checksums, fix fields
 |-- test_hal_contract/              HAL lifecycle, power, display, and GPS API stability
+|-- test_hal_oom/                   HAL allocation-failure and recovery behavior
 |-- test_home_screen/               Home tile routing contract
+|-- test_i2c_bus/                   Shared I2C probing, configuration, and bus recovery
 |-- test_identity_store/            Atomic, checksummed identity persistence
 |-- test_input_contract/            Trackball, keyboard, and input event encoding stability
 |-- test_keyboard/                  Keyboard scan, event, brightness, injection logic
+|-- test_keyboard_layouts/          Layout mappings, shifted digits, and cycle gestures
 |-- test_launcher_env/              Launcher detection, partition probing, false-positive guards
 |-- test_layout/                    Screen layout overlap regression checks
 |-- test_list_virtualization/       Bounded newest-first list window and page math
@@ -78,17 +87,24 @@ test/
 |-- test_navigation_contract/       Screen enum stability and screen inventory checks
 |-- test_notifications/             Alert priority, mention matching, expiry, and resource thresholds
 |-- test_onboarding/                Onboarding date/time validation and leap year rules
+|-- test_ota_auth/                  OTA authentication, URL, and certificate policy
+|-- test_ota_boot_health/           OTA boot-health confirmation and rollback deadlines
+|-- test_path_autoadd/              Received-path contact auto-add policy
+|-- test_path_codec/                Path byte encoding and decoding boundaries
 |-- test_pins/                      GPIO ranges, conflicts, and board pin sanity
 |-- test_prefs/                     Preferences defaults and native mock persistence
 |-- test_prefs_defaults/            Radio, identity, and UI preference default values
 |-- test_qr_show/                   QR code version sizing, buffer sizing, and scale fitting
+|-- test_radio_profiles/            Regional radio profile selection and persistence
 |-- test_regions/                   Region structs, binary layout, key derivation
 |-- test_responsive/                Responsive layout column offset distribution
 |-- test_sdcard/                    SD card state, path checks, size formatting
 |-- test_screen_lifetime/           Screen delete guard: tracked pointer nulling, timer teardown
+|-- test_storage/                   SPIFFS mount, erased-partition recovery, and failure policy
 |-- test_tdeck_board/               Board power thresholds and shutdown logic
 |-- test_telemetry_collectors/      Telemetry task watermark and buffer null-safety
 |-- test_telemetry_crash/           Crash backtrace capacity and bounded count
+|-- test_telemetry_drift/           Telemetry timing drift and rollover handling
 |-- test_telemetry_hb_ring/         Heartbeat ring buffer wrap, read, and retention
 |-- test_telemetry_input/           Telemetry input sampling and direction validation
 |-- test_telemetry_packet_log/      Telemetry packet log field formatting
@@ -98,11 +114,17 @@ test/
 |-- test_time_state/                UTC epoch vectors and time-source/age tracking
 |-- test_touch/                     GT911 coordinate parsing and screen mapping
 |-- test_trackball/                 Trackball debounce, direction, and click events
+|-- test_transport_key_store/       Private-region transport key persistence and bounds
 |-- test_ui_contract/               UI screen show APIs and screen function stability
 |-- test_ui_lifecycle/              LVGL timer ownership and display timeout normalization
 |-- test_ui_timing/                 Splash screen timing and millisecond rollover
 |-- test_wifi_scan/                 Wi-Fi scan AP count, sorting, and input validation
+|-- test_wifi_sta/                  Wi-Fi validation upload and reconnect state machines
 ```
+
+The catalog is checked in CI against the target names produced by
+`pio test -e native_test --list-tests`. The success message reports the current
+derived count; do not add a hand-maintained total here.
 
 ## Mocks
 

@@ -40,6 +40,9 @@ jobs:
       - name: Install PlatformIO
         run: python -m pip install --require-hashes -r ci/requirements-platformio.txt
 
+      - name: Verify documented test inventory
+        run: python scripts/check_test_inventory.py
+
       - name: Run native tests
         run: pio test -e native_test -v
 
