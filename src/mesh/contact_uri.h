@@ -61,13 +61,15 @@ inline bool decodeUriComponent(const char* src, size_t src_len,
 inline bool parseContactAddUri(const char* uri, ContactUriFields& out)
 {
     static constexpr char PREFIX[] = "meshcore://contact/add?";
-    if (!uri || std::strncmp(uri, PREFIX, sizeof(PREFIX) - 1) != 0) return false;
+    static constexpr size_t PREFIX_LEN = sizeof(PREFIX) - 1;
+    if (!uri || std::strncmp(uri, PREFIX, PREFIX_LEN) != 0) return false;
 
     ContactUriFields parsed{};
     bool have_name = false;
     bool have_key = false;
     bool have_type = false;
-    const char* cursor = uri + sizeof(PREFIX) - 1;
+    // Index rather than pointer+sizeof — CodeQL cpp/suspicious-add-with-sizeof.
+    const char* cursor = &uri[PREFIX_LEN];
     while (*cursor) {
         const char* key = cursor;
         while (*cursor && *cursor != '=' && *cursor != '&') cursor++;
