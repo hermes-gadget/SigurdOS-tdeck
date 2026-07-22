@@ -20,4 +20,5 @@ Libraries
 ├── MeshCore @ 1.10.0 (required: file://lib/meshcore)
 │   ├── RTClib @ 2.1.4 (required: adafruit/RTClib @ ^2.1.3)
 │   └── RadioLib @ 7.7.1 (required: jgromes/RadioLib @ ^7.6.0)
+├── WebServer @ 2.0.0 (required: file://lib/WebServer)
 └── lvgl @ 9.3.0 (required: lvgl/lvgl @ 9.3.0)
