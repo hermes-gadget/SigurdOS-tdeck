@@ -143,6 +143,11 @@ public:
             item.text[sizeof(item.text) - 1] = '\0';
         }
 
+        if (_active && same_item(_current, item)) return;
+        for (uint8_t i = 0; i < _count; ++i) {
+            if (same_item(_pending[i], item)) return;
+        }
+
         if (!_active) {
             activate(item, now_ms);
             return;
@@ -181,19 +186,41 @@ private:
 
     void enqueue(const NotificationItem& item)
     {
-        if (_count == CAPACITY - 1) {
-            for (uint8_t i = 1; i < _count; ++i) _pending[i - 1] = _pending[i];
-            --_count;
-        }
+        if (!make_room(item)) return;
         _pending[_count++] = item;
     }
 
     void enqueue_front(const NotificationItem& item)
     {
-        if (_count == CAPACITY - 1) --_count;
+        if (!make_room(item)) return;
         for (uint8_t i = _count; i > 0; --i) _pending[i] = _pending[i - 1];
         _pending[0] = item;
         ++_count;
+    }
+
+    static bool same_item(const NotificationItem& lhs, const NotificationItem& rhs)
+    {
+        return lhs.event == rhs.event && std::strcmp(lhs.text, rhs.text) == 0;
+    }
+
+    bool make_room(const NotificationItem& incoming)
+    {
+        if (_count < CAPACITY - 1) return true;
+        int victim = -1;
+        for (uint8_t i = 0; i < _count; ++i) {
+            if (_pending[i].sticky) continue;
+            if (victim < 0 || static_cast<uint8_t>(_pending[i].level) <
+                                static_cast<uint8_t>(_pending[victim].level)) {
+                victim = i;
+            }
+        }
+        if (victim < 0 || static_cast<uint8_t>(_pending[victim].level) >
+                              static_cast<uint8_t>(incoming.level)) return false;
+        for (uint8_t i = static_cast<uint8_t>(victim + 1); i < _count; ++i) {
+            _pending[i - 1] = _pending[i];
+        }
+        --_count;
+        return true;
     }
 
     void advance(uint32_t now_ms)

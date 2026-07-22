@@ -53,13 +53,26 @@ struct DisplayBrightnessCtx {
 
 struct ChatHistoryCapCtx {
     lv_obj_t* value_label;
+    lv_obj_t* warning_label;
     lv_obj_t* row_label;
     int       cap;
+    int       original_cap;
 };
+
+static void refresh_chat_cap_dialog(ChatHistoryCapCtx* ctx)
+{
+    if (!ctx) return;
+    char value[24];
+    snprintf(value, sizeof(value), "%d msgs", ctx->cap);
+    lv_label_set_text(ctx->value_label, value);
+    lv_label_set_text(ctx->warning_label,
+        chat_history_cap_reduces_history(ctx->original_cap, ctx->cap)
+            ? "Reducing deletes older history on Set" : "");
+}
 
 static void chat_message_cap_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 {
-    auto dlg_sz = dialog_size(220, 120);
+    auto dlg_sz = dialog_size(240, 140);
     lv_obj_t* dlg = lv_obj_create(parent);
     lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
     lv_obj_center(dlg);
@@ -81,7 +94,14 @@ static void chat_message_cap_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     lv_label_set_text(cap_lbl, cap_buf);
     lv_obj_set_style_text_color(cap_lbl, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(cap_lbl, emoji_wrapped_montserrat_12, 0);
-    lv_obj_align(cap_lbl, LV_ALIGN_CENTER, 0, -2);
+    lv_obj_align(cap_lbl, LV_ALIGN_CENTER, 0, -12);
+
+    lv_obj_t* warning_lbl = lv_label_create(dlg);
+    lv_obj_set_width(warning_lbl, dlg_sz.w - 16);
+    lv_obj_set_style_text_align(warning_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(warning_lbl, lv_color_hex(ACCENT_ORANGE), 0);
+    lv_obj_set_style_text_font(warning_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(warning_lbl, LV_ALIGN_CENTER, 0, 15);
 
     auto* minus_btn = lv_btn_create(dlg);
     lv_obj_set_size(minus_btn, 40, 28);
@@ -103,14 +123,22 @@ static void chat_message_cap_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 
     auto* set_btn = lv_btn_create(dlg);
     lv_obj_set_size(set_btn, 72, 24);
-    lv_obj_align(set_btn, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_align(set_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -4);
     lv_obj_set_style_bg_color(set_btn, lv_color_hex(ACCENT_GREEN), 0);
     lv_obj_set_style_radius(set_btn, 0, 0);
     lv_obj_t* sl = lv_label_create(set_btn);
     lv_label_set_text(sl, "Set");
     lv_obj_center(sl);
 
-    auto* ctx = new ChatHistoryCapCtx{ cap_lbl, row_label, cap };
+    auto* cancel_btn = lv_btn_create(dlg);
+    lv_obj_set_size(cancel_btn, 72, 24);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 12, -4);
+    apply_pixel_btn_outline(cancel_btn);
+    lv_obj_t* cl = lv_label_create(cancel_btn);
+    lv_label_set_text(cl, "Cancel");
+    lv_obj_center(cl);
+
+    auto* ctx = new ChatHistoryCapCtx{ cap_lbl, warning_lbl, row_label, cap, cap };
 
     lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
         delete (ChatHistoryCapCtx*)lv_event_get_user_data(e);
@@ -119,21 +147,15 @@ static void chat_message_cap_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     lv_obj_add_event_cb(minus_btn, [](lv_event_t* e) {
         auto* c = (ChatHistoryCapCtx*)lv_event_get_user_data(e);
         c->cap = c->cap > 16 ? c->cap - 16 : 8;
-        chat_screen_set_message_cap((uint16_t)c->cap);
-        c->cap = (int)chat_screen_get_message_cap();
-        char b[24];
-        snprintf(b, sizeof(b), "%d msgs", c->cap);
-        lv_label_set_text(c->value_label, b);
+        c->cap = chat_screen_normalize_message_cap((uint16_t)c->cap);
+        refresh_chat_cap_dialog(c);
     }, LV_EVENT_CLICKED, (void*)ctx);
 
     lv_obj_add_event_cb(plus_btn, [](lv_event_t* e) {
         auto* c = (ChatHistoryCapCtx*)lv_event_get_user_data(e);
         c->cap += 16;
-        chat_screen_set_message_cap((uint16_t)c->cap);
-        c->cap = (int)chat_screen_get_message_cap();
-        char b[24];
-        snprintf(b, sizeof(b), "%d msgs", c->cap);
-        lv_label_set_text(c->value_label, b);
+        c->cap = chat_screen_normalize_message_cap((uint16_t)c->cap);
+        refresh_chat_cap_dialog(c);
     }, LV_EVENT_CLICKED, (void*)ctx);
 
     lv_obj_add_event_cb(set_btn, [](lv_event_t* e) {
@@ -146,6 +168,10 @@ static void chat_message_cap_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 
         lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
     }, LV_EVENT_CLICKED, (void*)ctx);
+
+    lv_obj_add_event_cb(cancel_btn, [](lv_event_t* e) {
+        lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(e)));
+    }, LV_EVENT_CLICKED, nullptr);
 }
 
 static void backlight_dialog(lv_obj_t* parent, lv_obj_t* row_label)

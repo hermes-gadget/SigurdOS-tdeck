@@ -1609,6 +1609,7 @@ bool sendTrace(int contact_idx, uint32_t* out_tag) {
 }
 
 bool hasTraceResult()   { return g_mesh ? g_mesh->hasTraceResult() : false; }
+uint32_t getTraceResultTag() { return g_mesh ? g_mesh->getTraceResultTag() : 0; }
 uint8_t getTracePathLen() { return g_mesh ? g_mesh->getTracePathLen() : 0; }
 void getTracePath(uint8_t* snrs, uint8_t* hashes) {
     if (g_mesh) g_mesh->getTracePath(snrs, hashes);

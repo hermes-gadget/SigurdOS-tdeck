@@ -161,6 +161,7 @@ public:
 
 
     bool hasTraceResult() { return _has_trace_result; }
+    uint32_t getTraceResultTag() const { return _last_trace_tag; }
     uint8_t getTracePathLen() { return _last_trace_len; }
     void getTracePath(uint8_t* snrs_out, uint8_t* hashes_out);
 

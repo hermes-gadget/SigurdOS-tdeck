@@ -110,3 +110,43 @@ TEST(NotificationQueueTest, BurstCapacityRemainsFourIncludingCurrent)
     queue.dismiss(5);
     EXPECT_STREQ("C", queue.current().text);
 }
+
+TEST(NotificationQueueTest, DuplicateEventsAreCoalesced)
+{
+    NotificationQueue queue;
+    queue.post(NotificationEvent::DirectMessage, "same", 0);
+    queue.post(NotificationEvent::DirectMessage, "same", 1);
+    queue.post(NotificationEvent::Mention, "queued", 2);
+    queue.post(NotificationEvent::Mention, "queued", 3);
+    EXPECT_EQ(1, queue.pending_count());
+}
+
+TEST(NotificationQueueTest, OverflowEvictsOldestLowestPriorityItem)
+{
+    NotificationQueue queue;
+    queue.post(NotificationEvent::StorageFull, "critical active", 0);
+    queue.post(NotificationEvent::DirectMessage, "old info", 1);
+    queue.post(NotificationEvent::Mention, "important", 2);
+    queue.post(NotificationEvent::DirectMessage, "new info", 3);
+    queue.post(NotificationEvent::LoginFailure, "new important", 4);
+
+    queue.dismiss(5);
+    EXPECT_STREQ("important", queue.current().text);
+    queue.dismiss(6);
+    EXPECT_STREQ("new info", queue.current().text);
+    queue.dismiss(7);
+    EXPECT_STREQ("new important", queue.current().text);
+}
+
+TEST(NotificationQueueTest, LowerPriorityOverflowNeverDisplacesCritical)
+{
+    NotificationQueue queue;
+    queue.post(NotificationEvent::LowBattery, "active", 0);
+    queue.post(NotificationEvent::StorageFull, "critical one", 1);
+    queue.post(NotificationEvent::OtaFailure, "critical two", 2);
+    queue.post(NotificationEvent::LowBattery, "critical three", 3);
+    queue.post(NotificationEvent::DirectMessage, "drop me", 4);
+    EXPECT_EQ(3, queue.pending_count());
+    queue.dismiss(5);
+    EXPECT_STREQ("critical one", queue.current().text);
+}

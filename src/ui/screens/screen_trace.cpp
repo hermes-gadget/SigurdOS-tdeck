@@ -19,6 +19,7 @@
 #include "../screens.h"
 #include "../screens_common.h"
 #include "../screen_lifetime.h"
+#include "../trace_poll_policy.h"
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -38,6 +39,9 @@ using namespace responsive;
 static lv_obj_t* trace_result_label = nullptr;
 static lv_timer_t* g_trace_poll_timer = nullptr;
 static ScreenLifetime g_trace_lifetime;
+static uint32_t g_trace_expected_tag = 0;
+static uint32_t g_trace_deadline_ms = 0;
+static constexpr uint32_t TRACE_TIMEOUT_MS = 15000;
 
 void trace_screen_show()
 {
@@ -127,7 +131,10 @@ void trace_screen_show()
             lv_obj_add_event_cb(row, [](lv_event_t* e) {
                 int idx = (int)(intptr_t)lv_event_get_user_data(e);
                 uint32_t tag;
+                sigurdos::mesh::clearTraceResult();
                 if (sigurdos::mesh::sendTrace(idx, &tag)) {
+                    g_trace_expected_tag = tag;
+                    g_trace_deadline_ms = millis() + TRACE_TIMEOUT_MS;
                     lv_obj_t* scr_ref = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
                     lv_obj_t* result_lbl = lv_label_create(scr_ref);
                     lv_obj_set_style_text_color(result_lbl, lv_color_hex(ACCENT), 0);
@@ -152,7 +159,23 @@ void trace_screen_show()
                             if (g_trace_poll_timer == t) g_trace_poll_timer = nullptr;
                             return;
                         }
-                        if (sigurdos::mesh::hasTraceResult()) {
+                        const bool has_result = sigurdos::mesh::hasTraceResult();
+                        const TracePollDecision decision = trace_poll_decision(
+                            millis(), g_trace_deadline_ms, has_result,
+                            g_trace_expected_tag,
+                            has_result ? sigurdos::mesh::getTraceResultTag() : 0);
+                        if (decision == TracePollDecision::DiscardUnrelated) {
+                            sigurdos::mesh::clearTraceResult();
+                            return;
+                        }
+                        if (decision == TracePollDecision::TimedOut) {
+                            lv_label_set_text(trace_result_label,
+                                              "Trace timed out - tap contact to retry");
+                            lv_timer_del(t);
+                            if (g_trace_poll_timer == t) g_trace_poll_timer = nullptr;
+                            return;
+                        }
+                        if (decision == TracePollDecision::Accept) {
                             uint8_t len = sigurdos::mesh::getTracePathLen();
                             if (len > 64) len = 64;  // MAX_PATH_SIZE
                             uint8_t snrs[64], hashes[64];
