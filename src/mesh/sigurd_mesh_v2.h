@@ -48,7 +48,7 @@ public:
     SigurdMeshV2(::mesh::Radio& radio, ::mesh::MillisecondClock& clock, ::mesh::RNG& rng,
                ::mesh::RTCClock& rtc, ::mesh::PacketManager& pm, ::mesh::MeshTables& mt)
         : BaseChatMesh(radio, clock, rng, rtc, pm, mt) {}
-    ~SigurdMeshV2() {}
+    virtual ~SigurdMeshV2() = default;
 
     // ── Identity & contact lifecycle ────────────
     // Expose protected BaseChatMesh::resetContacts() for companion

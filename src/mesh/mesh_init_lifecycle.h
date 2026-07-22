@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <type_traits>
+
 namespace sigurdos {
 namespace mesh {
 namespace detail {
@@ -41,6 +43,12 @@ void cleanupMeshInitResources(MeshT*& mesh, DriverT*& driver,
                               RadioT*& radio, ModuleT*& module,
                               ModuleCleanupFn cleanup_module)
 {
+    static_assert(!std::is_polymorphic<MeshT>::value ||
+                      std::has_virtual_destructor<MeshT>::value,
+                  "owned polymorphic mesh type needs a virtual destructor");
+    static_assert(!std::is_polymorphic<DriverT>::value ||
+                      std::has_virtual_destructor<DriverT>::value,
+                  "owned polymorphic driver type needs a virtual destructor");
     delete mesh;
     mesh = nullptr;
     delete driver;

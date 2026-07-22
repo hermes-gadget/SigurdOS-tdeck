@@ -51,6 +51,21 @@
 
 using sigurdos::mesh::MeshMessage;
 
+namespace {
+
+// MeshCore's wrapper is polymorphic but lacks a virtual destructor. Keep the
+// dynamically owned instance behind a final local type whose destruction is
+// safe and enforceable by mesh_init_lifecycle.h.
+class OwnedSX1262Wrapper final : public CustomSX1262Wrapper {
+public:
+    OwnedSX1262Wrapper(CustomSX1262& radio, ::mesh::MainBoard& board)
+        : CustomSX1262Wrapper(radio, board) {}
+
+    virtual ~OwnedSX1262Wrapper() = default;
+};
+
+} // namespace
+
 // ════════════════════════════════════════════════════
 // Global objects
 // ════════════════════════════════════════════════════
@@ -58,7 +73,7 @@ using sigurdos::mesh::MeshMessage;
 static sigurdos::TDeckBoard        board;
 static Module*                   lora_mod = nullptr;
 static CustomSX1262*             radio_module = nullptr;
-static CustomSX1262Wrapper*      radio_driver = nullptr;
+static OwnedSX1262Wrapper*        radio_driver = nullptr;
 static bool                      radio_inited = false;
 static ESP32RTCClock             fallback_clock;
 static AutoDiscoverRTCClock      rtc_clock(fallback_clock);
@@ -926,7 +941,7 @@ bool init(bool spiffs_ok)
         cleanupMeshInit();
         return false;
     }
-    radio_driver = new (std::nothrow) CustomSX1262Wrapper(*radio_module, board);
+    radio_driver = new (std::nothrow) OwnedSX1262Wrapper(*radio_module, board);
     if (!radio_driver) {
         Serial.println("[mesh] FATAL: Radio driver allocation failed (OOM)");
         cleanupMeshInit();
