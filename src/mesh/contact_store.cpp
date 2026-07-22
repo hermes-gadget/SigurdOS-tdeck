@@ -400,7 +400,9 @@ bool contactCandidateValid(const char* name, const uint8_t* pub_key,
         const unsigned char c = (unsigned char)name[i];
         if (c < 0x20 || c == 0x7F) return false;
     }
-    if (type < 1 || type > 3) return false;
+    if (type < MESHCORE_ADV_TYPE_CHAT || type > MESHCORE_ADV_TYPE_SENSOR) {
+        return false;
+    }
     bool nonzero = false;
     for (size_t i = 0; i < SIGURDOS_CONTACT_PUBKEY_LEN; ++i) {
         nonzero = nonzero || pub_key[i] != 0;

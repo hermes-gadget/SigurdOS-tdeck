@@ -360,6 +360,24 @@ TEST_F(RegionStoreTest, AcceptsOnlyCompleteValidatedLegacyFiles) {
         REGION_LIVE, REGION_RAW));
 }
 
+TEST_F(RegionStoreTest, RejectsMultiNodeParentCycles) {
+    std::vector<uint8_t> raw(10 + 2 * 164, 0);
+    writeU16(raw, 8, 3);  // next id
+
+    writeU16(raw, 10, 1);
+    writeU16(raw, 12, 2);
+    std::memcpy(&raw[14], "#alpha", 7);
+
+    const size_t second = 10 + 164;
+    writeU16(raw, second, 2);
+    writeU16(raw, second + 2, 1);
+    std::memcpy(&raw[second + 4], "#beta", 6);
+
+    writeFile(REGION_RAW, raw);
+    EXPECT_FALSE(sigurdos::mesh::detail::regionStoreSaveLegacyFile(
+        REGION_LIVE, REGION_RAW));
+}
+
 TEST_F(RegionStoreTest, RejectsTruncatedOrCorruptCurrentFiles) {
     const std::vector<uint8_t> raw = legacyRegionFile("#valid");
     writeFile(REGION_RAW, raw);

@@ -481,4 +481,27 @@ TEST(ContactImportValidation, DetectsDuplicateNameOrFullKey) {
         "Alice", key_a, "Bob", key_b));
 }
 
+TEST(ContactImportValidation, CanonicalCandidateSupportsEveryAdvertRole) {
+    uint8_t key[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    key[0] = 1;
+    EXPECT_FALSE(sigurdos::mesh::contactCandidateValid(
+        "node", key, sigurdos::mesh::MESHCORE_ADV_TYPE_NONE));
+    for (uint8_t type = sigurdos::mesh::MESHCORE_ADV_TYPE_CHAT;
+         type <= sigurdos::mesh::MESHCORE_ADV_TYPE_SENSOR; ++type) {
+        EXPECT_TRUE(sigurdos::mesh::contactCandidateValid("node", key, type));
+    }
+    EXPECT_FALSE(sigurdos::mesh::contactCandidateValid(
+        "node", key, sigurdos::mesh::MESHCORE_ADV_TYPE_SENSOR + 1));
+}
+
+TEST(ContactRevision, AdvancesPastPeerAndClockValues) {
+    uint32_t revision = 0;
+    EXPECT_TRUE(sigurdos::mesh::nextContactRevision(100, 200, revision));
+    EXPECT_EQ(revision, 201U);
+    EXPECT_TRUE(sigurdos::mesh::nextContactRevision(300, revision, revision));
+    EXPECT_EQ(revision, 300U);
+    EXPECT_FALSE(sigurdos::mesh::nextContactRevision(
+        400, UINT32_MAX, revision));
+}
+
 } // namespace

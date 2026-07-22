@@ -15,6 +15,7 @@
 #include "mesh_wrapper_internal.h"
 #include "scope_key_hex.h"
 #include "message_store.h"
+#include "contact_store.h"
 #include "regions.h"
 #include "sigurd_mesh_v2.h"
 #include "advert_blob.h"
@@ -33,6 +34,7 @@
 #include <Arduino.h>
 #include <SPIFFS.h>
 #include <cstdlib>
+#include <cstring>
 #include <new>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -604,25 +606,65 @@ public:
         if (!mesh_ptr() || !sigurdos::mesh::path::storedLengthValid(c.out_path_len)) {
             return false;
         }
-        ::ContactInfo* existing = mesh_ptr()->lookupContactByPubKey((const uint8_t*)c.pub_key, 32);
+        if (!sigurdos::mesh::contactCandidateValid(c.name, c.pub_key, c.type)) {
+            return false;
+        }
+        // bit 0 is favourite and bits 1-2 are the MeshCore ACL.  Do not
+        // persist undefined peer-controlled flag bits.
+        if ((c.flags & 0xF8U) != 0) return false;
+
+        ::ContactInfo* existing = mesh_ptr()->lookupContactByPubKey(
+            (const uint8_t*)c.pub_key, 32);
+        uint32_t high_water = 0;
+        ::ContactInfo candidate;
+        for (int i = 0; i < mesh_ptr()->getNumContacts(); ++i) {
+            if (!mesh_ptr()->getContactByIdx((uint32_t)i, candidate)) continue;
+            if (candidate.lastmod > high_water) high_water = candidate.lastmod;
+            if (std::memcmp(candidate.id.pub_key, c.pub_key, 32) != 0 &&
+                sigurdos::mesh::contactCandidateDuplicates(
+                    c.name, c.pub_key, candidate.name, candidate.id.pub_key)) {
+                return false;
+            }
+        }
+        uint32_t local_revision = 0;
+        if (!sigurdos::mesh::nextContactRevision(
+                meshRtcTimeUnique(), high_water, local_revision)) return false;
+
         ::ContactInfo ci{};
         if (existing) ci = *existing;
         memcpy(ci.id.pub_key, c.pub_key, 32);
         ci.type = c.type;
         ci.flags = c.flags;
         ci.out_path_len = c.out_path_len;
-        memcpy(ci.out_path, c.out_path, sizeof(ci.out_path));
+        memset(ci.out_path, 0, sizeof(ci.out_path));
+        if (c.out_path_len != sigurdos::mesh::path::UNKNOWN &&
+            c.out_path_len > 0) {
+            const size_t encoded_len = sigurdos::mesh::path::byteCount(
+                c.out_path_len);
+            memcpy(ci.out_path, c.out_path, encoded_len);
+        }
         strncpy(ci.name, c.name, sizeof(ci.name) - 1);
         ci.name[sizeof(ci.name) - 1] = '\0';
         ci.last_advert_timestamp = c.last_advert_timestamp;
         ci.gps_lat = c.gps_lat;
         ci.gps_lon = c.gps_lon;
-        ci.lastmod = c.lastmod;
+        // The peer's lastmod is an import cursor, not authority over this
+        // device's mutation sequence.  Every accepted update receives a new
+        // strictly increasing local revision.
+        ci.lastmod = local_revision;
         bool ok;
-        if (existing) { *existing = ci; ok = true; }
-        else ok = mesh_ptr()->addContact(ci);
-        if (ok) sigurdos::mesh::saveContacts();
-        return ok;
+        if (existing) {
+            const ::ContactInfo previous = *existing;
+            *existing = ci;
+            ok = sigurdos::mesh::saveContacts();
+            if (!ok) *existing = previous;
+            return ok;
+        }
+        ok = mesh_ptr()->addContact(ci);
+        if (!ok) return false;
+        if (sigurdos::mesh::saveContacts()) return true;
+        mesh_ptr()->removeContactByPubKey(c.pub_key);
+        return false;
     }
     bool removeContactByPubKey(const uint8_t* pub_key) override {
         if (!mesh_ptr() || !pub_key) return false;

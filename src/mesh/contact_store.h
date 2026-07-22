@@ -13,6 +13,11 @@ static constexpr size_t SIGURDOS_CONTACT_PUBKEY_LEN = 32;
 static constexpr size_t SIGURDOS_CONTACT_NAME_LEN = 32;
 static constexpr size_t SIGURDOS_CONTACT_PATH_LEN = 64;
 static constexpr uint8_t SIGURDOS_CONTACT_PATH_UNKNOWN = 0xFF;
+static constexpr uint8_t MESHCORE_ADV_TYPE_NONE = 0;
+static constexpr uint8_t MESHCORE_ADV_TYPE_CHAT = 1;
+static constexpr uint8_t MESHCORE_ADV_TYPE_REPEATER = 2;
+static constexpr uint8_t MESHCORE_ADV_TYPE_ROOM = 3;
+static constexpr uint8_t MESHCORE_ADV_TYPE_SENSOR = 4;
 
 struct StoredContact {
     uint8_t pub_key[SIGURDOS_CONTACT_PUBKEY_LEN];
@@ -76,6 +81,15 @@ bool contactCandidateValid(const char* name, const uint8_t* pub_key,
 bool contactCandidateDuplicates(const char* name, const uint8_t* pub_key,
                                 const char* existing_name,
                                 const uint8_t* existing_pub_key);
+
+/// Returns a strictly increasing local contact revision, or false if the
+/// persisted high-water mark can no longer be advanced.
+inline bool nextContactRevision(uint32_t clock_value, uint32_t high_water,
+                                uint32_t& revision_out) {
+    if (high_water == UINT32_MAX) return false;
+    revision_out = clock_value > high_water ? clock_value : high_water + 1U;
+    return true;
+}
 
 #if !defined(ESP32_PLATFORM)
 void contactStoreSetNativePath(const char* path);

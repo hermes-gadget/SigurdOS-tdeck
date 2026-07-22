@@ -400,6 +400,20 @@ bool validateRegionStructure(sigurdos::storage::AtomicFileReader& reader,
     for (size_t i = 0; i < count; ++i) {
         if (parents[i] == ids[i] ||
             !regionIdPresent(parents[i], ids, count)) return false;
+
+        // Every parent chain must reach the wildcard root.  Parent existence
+        // and direct self-parent checks alone do not reject A -> B -> A.
+        uint16_t cursor = parents[i];
+        size_t depth = 0;
+        while (cursor != 0) {
+            if (depth++ >= count) return false;
+            size_t parent_index = 0;
+            while (parent_index < count && ids[parent_index] != cursor) {
+                ++parent_index;
+            }
+            if (parent_index == count) return false;
+            cursor = parents[parent_index];
+        }
     }
     return true;
 }
