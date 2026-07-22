@@ -42,6 +42,11 @@ static constexpr std::size_t SIGURDOS_MAP_PNG_IHDR_SIZE = 33;
 static constexpr std::size_t SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES =
     static_cast<std::size_t>(SIGURDOS_MAP_TILE_SIZE) *
     (SIGURDOS_MAP_TILE_SIZE * 4 + 1);
+static constexpr std::size_t SIGURDOS_MAP_INTERNAL_FALLBACK_MAX_BYTES = 32U * 1024U;
+
+inline bool sigurdos_map_internal_fallback_allowed(std::size_t size) {
+    return size <= SIGURDOS_MAP_INTERNAL_FALLBACK_MAX_BYTES;
+}
 
 inline std::uint32_t sigurdos_map_png_read_u32(const std::uint8_t* value) {
     return (static_cast<std::uint32_t>(value[0]) << 24) |
@@ -237,6 +242,31 @@ inline bool sigurdos_map_contact_args_valid(const void* contacts, int count) {
     return count >= 0 && (count == 0 || contacts != nullptr);
 }
 
+inline bool sigurdos_map_position_valid(bool has_fix, double lat, double lon) {
+    return has_fix && std::isfinite(lat) && std::isfinite(lon) &&
+           lat >= SIGURDOS_MAP_MIN_LAT && lat <= SIGURDOS_MAP_MAX_LAT &&
+           lon >= SIGURDOS_MAP_MIN_LON && lon <= SIGURDOS_MAP_MAX_LON;
+}
+
+inline bool sigurdos_map_bounds_valid(const double* bounds) {
+    if (!bounds) return false;
+    const double west = bounds[0];
+    const double south = bounds[1];
+    const double east = bounds[2];
+    const double north = bounds[3];
+    return std::isfinite(west) && std::isfinite(south) &&
+           std::isfinite(east) && std::isfinite(north) &&
+           west >= SIGURDOS_MAP_MIN_LON && east <= SIGURDOS_MAP_MAX_LON &&
+           south >= SIGURDOS_MAP_MIN_LAT && north <= SIGURDOS_MAP_MAX_LAT &&
+           west <= east && south <= north;
+}
+
+inline int sigurdos_map_marker_origin(int screen_coordinate,
+                                      int parent_screen_offset,
+                                      int marker_size) {
+    return screen_coordinate - parent_screen_offset - marker_size / 2;
+}
+
 template <typename T, typename FreeFn>
 inline bool sigurdos_map_release_owned_buffer(T*& buffer, FreeFn free_fn) {
     if (!buffer) return false;
@@ -248,6 +278,7 @@ inline bool sigurdos_map_release_owned_buffer(T*& buffer, FreeFn free_fn) {
 // Initialize the map renderer with LVGL parent object
 // Call after LVGL is initialized and SD card is mounted
 void sigurdos_map_init();
+bool sigurdos_map_initialized();
 
 // Discover available tile zoom levels (deferred from boot)
 void sigurdos_map_discover_tiles();
@@ -293,7 +324,7 @@ void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_
 
 // Contact marker overlay (pool of pre-allocated dots)
 // Call after map_init, before first render. parent = the non-null map overlay object.
-void sigurdos_map_contact_init(lv_obj_t* parent);
+void sigurdos_map_contact_init(lv_obj_t* parent, int parent_screen_y);
 // Reposition markers for contacts that have location data. contacts may be
 // null only when count is zero.
 void sigurdos_map_contact_render(const void* contacts, int count);

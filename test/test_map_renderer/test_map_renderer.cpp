@@ -68,6 +68,12 @@ TEST_F(MapRendererMathTest, ConstantsMatchTDeckMapContract) {
     EXPECT_DOUBLE_EQ(SIGURDOS_MAP_MAX_LON, 180.0);
 }
 
+TEST_F(MapRendererMathTest, InternalFallbackIsLimitedToSmallAllocations) {
+    EXPECT_TRUE(sigurdos_map_internal_fallback_allowed(32U * 1024U));
+    EXPECT_FALSE(sigurdos_map_internal_fallback_allowed(32U * 1024U + 1U));
+    EXPECT_FALSE(sigurdos_map_internal_fallback_allowed(320U * 240U * 2U));
+}
+
 TEST_F(MapRendererMathTest, CraftedRgbaTileIhdrIsAccepted) {
     const PngIhdrFixture png = make_png_ihdr(256, 256, 8, 6);
 
@@ -254,6 +260,32 @@ TEST_F(MapRendererMathTest, ContactApisRejectInvalidPointerCountCombinations) {
     EXPECT_FALSE(sigurdos_map_contact_args_valid(nullptr, 1));
     EXPECT_FALSE(sigurdos_map_contact_args_valid(nullptr, -1));
     EXPECT_FALSE(sigurdos_map_contact_args_valid(&contact_storage, -1));
+}
+
+TEST_F(MapRendererMathTest, PositionMarkerRequiresFiniteInRangeFix) {
+    EXPECT_TRUE(sigurdos_map_position_valid(true, 0.0, 0.0));
+    EXPECT_FALSE(sigurdos_map_position_valid(false, 51.5, -0.1));
+    EXPECT_FALSE(sigurdos_map_position_valid(true, NAN, -0.1));
+    EXPECT_FALSE(sigurdos_map_position_valid(true, 90.0, -0.1));
+    EXPECT_FALSE(sigurdos_map_position_valid(true, 51.5, 181.0));
+}
+
+TEST_F(MapRendererMathTest, MetadataBoundsMustBeFiniteOrderedAndGeographic) {
+    const double valid[] = {-1.0, 50.0, 1.0, 52.0};
+    const double nan_bounds[] = {-1.0, NAN, 1.0, 52.0};
+    const double reversed[] = {1.0, 52.0, -1.0, 50.0};
+    const double out_of_range[] = {-181.0, 50.0, 1.0, 52.0};
+
+    EXPECT_TRUE(sigurdos_map_bounds_valid(valid));
+    EXPECT_FALSE(sigurdos_map_bounds_valid(nan_bounds));
+    EXPECT_FALSE(sigurdos_map_bounds_valid(reversed));
+    EXPECT_FALSE(sigurdos_map_bounds_valid(out_of_range));
+    EXPECT_FALSE(sigurdos_map_bounds_valid(nullptr));
+}
+
+TEST_F(MapRendererMathTest, MarkerOriginAccountsForContentOffset) {
+    EXPECT_EQ(sigurdos_map_marker_origin(160, 0, 8), 156);
+    EXPECT_EQ(sigurdos_map_marker_origin(120, 22, 8), 94);
 }
 
 TEST_F(MapRendererMathTest, OwnedDiscoveryBufferIsFreedExactlyOnce) {

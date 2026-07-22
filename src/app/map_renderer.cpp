@@ -59,6 +59,7 @@ static constexpr double MIN_LON   = SIGURDOS_MAP_MIN_LON;
 
 static lv_obj_t* map_canvas = nullptr;
 static uint8_t*   canvas_pixels = nullptr;
+static void render_own_position();
 
 static double center_lat = 51.5074;  // London (fallback default)
 static double center_lon = -0.1278;
@@ -119,7 +120,9 @@ static double clamp_d(double val, double lo, double hi) {
 
 static void* map_alloc(size_t size) {
     void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!p) p = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!p && sigurdos_map_internal_fallback_allowed(size)) {
+        p = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
     return p;
 }
 
@@ -358,8 +361,8 @@ static TileLoadResult load_tile(int zoom, int tx, int ty,
         lodepng_free(rgba);
         return record_tile_failure(zoom, tx, ty, now_ms);
     }
-    uint16_t* decoded_pixels = tile_cache_reallocate_slot(
-        slot, TILE_SIZE * TILE_SIZE * sizeof(uint16_t), map_alloc, map_free);
+    uint16_t* decoded_pixels = tile_cache_prepare_slot(
+        slot, TILE_SIZE * TILE_SIZE * sizeof(uint16_t), map_alloc);
     if (!decoded_pixels) {
         set_tile_status("load:no tile buf");
         lodepng_free(rgba);
@@ -763,7 +766,8 @@ static void load_metadata() {
                                 p = end;
                                 n++;
                             }
-                            if (n >= 4) {
+                            while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') p++;
+                            if (n == 4 && *p == ']' && sigurdos_map_bounds_valid(bounds)) {
                                 center_lat = (bounds[1] + bounds[3]) / 2.0;
                                 center_lon = (bounds[0] + bounds[2]) / 2.0;
                                 clamp_view_to_coverage();
@@ -829,10 +833,8 @@ void sigurdos_map_init() {
     // stresses the heap. LVGL canvas draw ops work fine with PSRAM on ESP32-S3
     // (CPU-cacheable), matching the display's own draw buffer pattern.
     size_t buf_size = (size_t)TFT_WIDTH * TFT_HEIGHT * 2;
-    canvas_pixels = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!canvas_pixels) {
-        canvas_pixels = (uint8_t*)heap_caps_malloc(buf_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    }
+    canvas_pixels = (uint8_t*)heap_caps_malloc(
+        buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!canvas_pixels) return;
 
     // Canvas is created later in sigurdos_map_reparent() once we have a real
@@ -843,6 +845,7 @@ void sigurdos_map_init() {
     // boot with large SD card tile sets (30-120s on 2GB /tiles dir).
     initialized = true;
 }
+bool sigurdos_map_initialized() { return initialized; }
 void sigurdos_map_reparent(lv_obj_t* new_parent) {
     if (!initialized || !new_parent || !canvas_pixels) return;
 
@@ -1223,6 +1226,7 @@ void sigurdos_map_render() {
 
     lv_canvas_finish_layer(map_canvas, &layer);
     lv_obj_invalidate(map_canvas);
+    render_own_position();
 }
 
 bool sigurdos_map_tiles_available() {
@@ -1294,12 +1298,43 @@ struct ContactDot {
 
 static ContactDot g_contact_dots[MAX_CONTACT_DOTS];
 static bool g_contact_pool_init = false;
+static lv_obj_t* g_own_position_dot = nullptr;
+static int g_contact_parent_screen_y = 0;
 
-void sigurdos_map_contact_init(lv_obj_t* parent) {
+static void render_own_position() {
+    if (!g_own_position_dot) return;
+
+    const double own_lat = sigurdos_gps_latitude();
+    const double own_lon = sigurdos_gps_longitude();
+    if (!sigurdos_map_position_valid(
+            sigurdos_gps_has_fix(), own_lat, own_lon)) {
+        lv_obj_add_flag(g_own_position_dot, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    int own_px = 0;
+    int own_py = 0;
+    sigurdos_map_latlon_to_pixel(own_lat, own_lon, &own_px, &own_py);
+    if (own_px < -12 || own_px > TFT_WIDTH + 12 ||
+        own_py < g_contact_parent_screen_y - 12 || own_py > TFT_HEIGHT + 12) {
+        lv_obj_add_flag(g_own_position_dot, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_obj_set_pos(g_own_position_dot,
+                   sigurdos_map_marker_origin(own_px, 0, 12),
+                   sigurdos_map_marker_origin(
+                       own_py, g_contact_parent_screen_y, 12));
+    lv_obj_clear_flag(g_own_position_dot, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(g_own_position_dot, -1);
+}
+
+void sigurdos_map_contact_init(lv_obj_t* parent, int parent_screen_y) {
     if (!sigurdos_map_required_pointer_valid(parent)) {
         MAP_DEBUG_PRINTLN("[map] contact_init: null parent");
         return;
     }
+    g_contact_parent_screen_y = parent_screen_y;
     for (int i = 0; i < MAX_CONTACT_DOTS; i++) {
         lv_obj_t* dot = lv_obj_create(parent);
         lv_obj_set_size(dot, CONTACT_DOT_SIZE, CONTACT_DOT_SIZE);
@@ -1321,6 +1356,15 @@ void sigurdos_map_contact_init(lv_obj_t* parent) {
             }
         }, LV_EVENT_CLICKED, nullptr);
     }
+    g_own_position_dot = lv_obj_create(parent);
+    lv_obj_set_size(g_own_position_dot, 12, 12);
+    lv_obj_set_style_bg_color(
+        g_own_position_dot, lv_color_hex(sigurdos::theme::ACCENT), 0);
+    lv_obj_set_style_radius(g_own_position_dot, 6, 0);
+    lv_obj_set_style_border_width(g_own_position_dot, 2, 0);
+    lv_obj_set_style_border_color(
+        g_own_position_dot, lv_color_hex(sigurdos::theme::TEXT_PRIMARY), 0);
+    lv_obj_add_flag(g_own_position_dot, LV_OBJ_FLAG_HIDDEN);
     g_contact_pool_init = true;
 }
 
@@ -1344,7 +1388,11 @@ void sigurdos_map_contact_render(const void* contacts_ptr, int count) {
         if (px < -20 || px > TFT_WIDTH + 20 || py < -20 || py > TFT_HEIGHT + 20) continue;
 
         lv_obj_clear_flag(g_contact_dots[slot].obj, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_pos(g_contact_dots[slot].obj, px - CONTACT_DOT_SIZE/2, py - CONTACT_DOT_SIZE/2);
+        lv_obj_set_pos(
+            g_contact_dots[slot].obj,
+            sigurdos_map_marker_origin(px, 0, CONTACT_DOT_SIZE),
+            sigurdos_map_marker_origin(
+                py, g_contact_parent_screen_y, CONTACT_DOT_SIZE));
         strncpy(g_contact_dots[slot].name, contacts[i].name, sizeof(g_contact_dots[slot].name) - 1);
         g_contact_dots[slot].name[sizeof(g_contact_dots[slot].name) - 1] = '\0';
         slot++;
@@ -1358,6 +1406,10 @@ void sigurdos_map_contact_render(const void* contacts_ptr, int count) {
 }
 
 void sigurdos_map_contact_deinit() {
+    if (g_own_position_dot) {
+        lv_obj_del(g_own_position_dot);
+        g_own_position_dot = nullptr;
+    }
     for (int i = 0; i < MAX_CONTACT_DOTS; i++) {
         if (g_contact_dots[i].obj) {
             lv_obj_del(g_contact_dots[i].obj);
@@ -1365,4 +1417,5 @@ void sigurdos_map_contact_deinit() {
         }
     }
     g_contact_pool_init = false;
+    g_contact_parent_screen_y = 0;
 }

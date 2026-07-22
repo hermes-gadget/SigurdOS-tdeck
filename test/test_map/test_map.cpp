@@ -393,45 +393,41 @@ TEST_F(TileCacheTest, EvictDoesNotFreeMemory) {
     EXPECT_NE(slot->pixels, nullptr);
 }
 
-TEST_F(TileCacheTest, ReallocateSlotFreesVictimBeforeAllocatingReplacement) {
+TEST_F(TileCacheTest, PrepareSlotReusesVictimAllocation) {
     uint16_t old_pixel = 0;
     uint16_t replacement_pixel = 0;
     CachedTile slot = {10, 12, 34, &old_pixel, 99};
-    int sequence = 0;
+    int allocations = 0;
 
-    uint16_t* replacement = tile_cache_reallocate_slot(
+    uint16_t* replacement = tile_cache_prepare_slot(
         &slot, sizeof(uint16_t),
-        [&sequence, &replacement_pixel](std::size_t) -> void* {
-            EXPECT_EQ(sequence, 1);
-            sequence = 2;
+        [&allocations, &replacement_pixel](std::size_t) -> void* {
+            allocations++;
             return &replacement_pixel;
-        },
-        [&sequence, &old_pixel](void* allocation) {
-            EXPECT_EQ(allocation, &old_pixel);
-            EXPECT_EQ(sequence, 0);
-            sequence = 1;
         });
 
-    EXPECT_EQ(sequence, 2);
-    EXPECT_EQ(replacement, &replacement_pixel);
-    EXPECT_EQ(slot.pixels, &replacement_pixel);
+    EXPECT_EQ(allocations, 0);
+    EXPECT_EQ(replacement, &old_pixel);
+    EXPECT_EQ(slot.pixels, &old_pixel);
     EXPECT_EQ(slot.last_used, 0U);
 }
 
-TEST_F(TileCacheTest, ReallocateFailureLeavesReusableEmptySlot) {
-    uint16_t old_pixel = 0;
-    CachedTile slot = {10, 12, 34, &old_pixel, 99};
-    int frees = 0;
+TEST_F(TileCacheTest, PrepareEmptySlotAllocatesOnce) {
+    uint16_t replacement_pixel = 0;
+    CachedTile slot = {10, 12, 34, nullptr, 99};
+    int allocations = 0;
 
-    uint16_t* replacement = tile_cache_reallocate_slot(
+    uint16_t* replacement = tile_cache_prepare_slot(
         &slot, 128,
-        [](std::size_t) -> void* { return nullptr; },
-        [&frees](void*) { ++frees; });
+        [&allocations, &replacement_pixel](std::size_t) -> void* {
+            allocations++;
+            return &replacement_pixel;
+        });
 
-    EXPECT_EQ(replacement, nullptr);
-    EXPECT_EQ(slot.pixels, nullptr);
+    EXPECT_EQ(replacement, &replacement_pixel);
+    EXPECT_EQ(slot.pixels, &replacement_pixel);
     EXPECT_EQ(slot.last_used, 0U);
-    EXPECT_EQ(frees, 1);
+    EXPECT_EQ(allocations, 1);
 }
 
 TEST_F(TileCacheTest, SearchSmallerCache) {
