@@ -111,7 +111,10 @@ public:
     virtual int peek() { return -1; }
     virtual void flush() {}
     virtual size_t write(uint8_t) { return 1; }
-    size_t write(const uint8_t* buf, size_t len) { (void)buf; return len; }
+    virtual size_t write(const uint8_t* buf, size_t len) {
+        (void)buf;
+        return len;
+    }
 };
 
 class HardwareSerial : public Stream {
@@ -134,14 +137,16 @@ public:
     }
     int available() override { return (int)(_rx_len - _rx_pos); }
     int read() override {
-        if (_rx_pos < _rx_len) return _rx_buf[_rx_pos++];
+        if (_rx_pos < _rx_len) {
+            return static_cast<uint8_t>(_rx_buf[_rx_pos++]);
+        }
         return -1;
     }
     size_t write(uint8_t b) override {
         _tx_buf.push_back((char)b);
         return 1;
     }
-    size_t write(const uint8_t* buf, size_t len) {
+    size_t write(const uint8_t* buf, size_t len) override {
         if (!buf) return 0;
         _tx_buf.append((const char*)buf, len);
         return len;
@@ -181,6 +186,13 @@ public:
         if (!data) return;
         while (*data && _rx_len < sizeof(_rx_buf)) {
             _rx_buf[_rx_len++] = *data++;
+        }
+    }
+    void mock_queue_rx_bytes(const uint8_t* data, size_t len) {
+        if (!data) return;
+        size_t offset = 0;
+        while (offset < len && _rx_len < sizeof(_rx_buf)) {
+            _rx_buf[_rx_len++] = static_cast<char>(data[offset++]);
         }
     }
     void mock_clear_tx() { _tx_buf.clear(); }

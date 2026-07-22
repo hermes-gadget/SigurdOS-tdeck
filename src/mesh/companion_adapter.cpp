@@ -1222,7 +1222,9 @@ void sigurdos::mesh::companionAdapterInit()
         bleValidationStartLog();
     }
 #elif defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
-    g_usb_serial.begin(Serial);
+    // `Serial` is deliberately macro-redirected to the discard console in
+    // this build. Bind the binary protocol to the captured real USB CDC stream.
+    g_usb_serial.begin(sigurdos::diagnostics::companionUsbDataStream());
     if (CompanionBridge* b = companionBridge()) {
         b->begin(&g_usb_serial, &g_companion_host);
         b->setEnabled(true);
