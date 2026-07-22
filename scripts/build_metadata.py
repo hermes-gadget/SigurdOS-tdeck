@@ -29,7 +29,7 @@ def _git(args, cwd):
 def _git_dirty(cwd):
     try:
         completed = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
             cwd=str(cwd),
             check=True,
             stdout=subprocess.PIPE,
@@ -39,6 +39,10 @@ def _git_dirty(cwd):
     except (OSError, subprocess.CalledProcessError):
         return True
     return bool(completed.stdout.strip())
+
+
+def _bounded(value, limit):
+    return str(value)[:limit]
 
 
 def _git_describe(cwd):
@@ -72,6 +76,8 @@ git_sha = _git(["rev-parse", "--short=12", "HEAD"], project_dir)
 meshcore_sha = _git(["rev-parse", "--short=12", "HEAD"], meshcore_dir)
 git_dirty = _git_dirty(project_dir)
 git_tag = _git_describe(project_dir)
+if git_tag and git_dirty and not git_tag.endswith("-dirty"):
+    git_tag += "-dirty"
 
 build_source = "github_actions" if os.environ.get("GITHUB_ACTIONS") == "true" else "local"
 actions_run_id = os.environ.get("GITHUB_RUN_ID", "local")
@@ -83,6 +89,12 @@ if build_source == "github_actions":
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     if repository and actions_run_id:
         actions_run_url = f"{server_url}/{repository}/actions/runs/{actions_run_id}"
+
+build_source = _bounded(build_source, 32)
+actions_run_id = _bounded(actions_run_id, 32)
+actions_run_attempt = _bounded(actions_run_attempt, 16)
+actions_ref = _bounded(actions_ref, 128)
+actions_run_url = _bounded(actions_run_url, 256)
 
 # Set SIGURDOS_VERSION from git describe with tdeck_pins.h define as fallback
 sigurdos_version = _macro_string(git_tag) if git_tag else None

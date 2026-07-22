@@ -65,6 +65,7 @@ namespace key {
     extern const char RX[];       // pk_rx
     extern const char ERR_CNT[];  // err
     extern const char WIDGETS[];  // wt
+    extern const char WIDGETS_TRUNCATED[];  // wt_trunc
     extern const char RENDERS[];  // rd
     extern const char LOOP_US[];  // loop_us
     extern const char STACK[];    // stack HWM
@@ -125,6 +126,11 @@ namespace key {
     extern const char PART[];             // part    — partition table
     extern const char BOARD[];            // board   — PlatformIO board
     extern const char MCU[];              // mcu     — target MCU
+    extern const char BUILD_SOURCE[];     // source  — local/github_actions
+    extern const char RUN_ID[];           // run_id  — Actions run ID
+    extern const char RUN_ATTEMPT[];       // attempt — Actions run attempt
+    extern const char REF[];               // ref     — source ref
+    extern const char RUN_URL[];           // run_url — Actions run URL
 }
 
 // ── Serial emission helpers ───────────────────────────

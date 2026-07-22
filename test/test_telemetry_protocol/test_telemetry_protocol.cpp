@@ -20,6 +20,8 @@
 #include <gtest/gtest.h>
 
 #include "Arduino.h"
+#include "diagnostics/reset_policy.h"
+#include "diagnostics/telemetry_policy.h"
 
 // Exercise the production telemetry implementation in this focused native test
 // without changing the global native build source filter.
@@ -132,9 +134,67 @@ TEST_F(TelemetryProtocolTest, EmitsBuildIdentityRecordFields) {
     emit_kv_s(key::BOARD, "t-deck");
     emit_sep();
     emit_kv_s(key::MCU, "esp32s3");
+    emit_sep();
+    emit_kv_s(key::BUILD_SOURCE, "github_actions");
+    emit_sep();
+    emit_kv_s(key::RUN_ID, "1234");
+    emit_sep();
+    emit_kv_s(key::RUN_ATTEMPT, "2");
+    emit_sep();
+    emit_kv_s(key::REF, "feature|diagnostics");
+    emit_sep();
+    emit_kv_s(key::RUN_URL, "https://example.test/run=1234");
     emit_end();
 
-    expect_output("@build|fw=beta-0.1.39|git=abc123def456|dirty=1|mcore=9a888541efaf|env=SigurdOS_TDeck_telemetry|part=default_16MB.csv|board=t-deck|mcu=esp32s3\n");
+    expect_output("@build|fw=beta-0.1.39|git=abc123def456|dirty=1|mcore=9a888541efaf|env=SigurdOS_TDeck_telemetry|part=default_16MB.csv|board=t-deck|mcu=esp32s3|source=github_actions|run_id=1234|attempt=2|ref=feature%7Cdiagnostics|run_url=https://example.test/run%3D1234\n");
+}
+
+TEST_F(TelemetryProtocolTest, EveryDeclaredScreenHasATelemetryName) {
+    for (int value = 0;
+         value < static_cast<int>(sigurdos::ui::Screen::COUNT); ++value) {
+        EXPECT_STRNE(screen_name(static_cast<sigurdos::ui::Screen>(value)), "?");
+    }
+    EXPECT_STREQ(screen_name(sigurdos::ui::Screen::Bluetooth), "Bluetooth");
+}
+
+TEST_F(TelemetryProtocolTest, WidgetTraversalCountsDeepTreesAndReportsBudget) {
+    struct Node {
+        Node* children[65] = {};
+        uint32_t count = 0;
+    };
+    Node root;
+    Node child;
+    Node grandchild;
+    Node great_grandchild;
+    root.children[0] = &child;
+    root.count = 1;
+    child.children[0] = &grandchild;
+    child.count = 1;
+    grandchild.children[0] = &great_grandchild;
+    grandchild.count = 1;
+    auto child_count = [](Node* node) { return node->count; };
+    auto child_at = [](Node* node, uint32_t index) { return node->children[index]; };
+
+    const WidgetTreeCount deep = count_widget_tree(&root, child_count, child_at);
+    EXPECT_EQ(deep.count, 4);
+    EXPECT_FALSE(deep.truncated);
+
+    Node wide_root;
+    Node leaves[65];
+    wide_root.count = 65;
+    for (uint32_t i = 0; i < 65; ++i) wide_root.children[i] = &leaves[i];
+    const WidgetTreeCount wide =
+        count_widget_tree(&wide_root, child_count, child_at);
+    EXPECT_TRUE(wide.truncated);
+}
+
+TEST_F(TelemetryProtocolTest, CrashEvidencePolicyIncludesEveryWatchdogReason) {
+    for (int reason = 0; reason <= 10; ++reason) {
+        const bool expected = reason == 4 || reason == 5 || reason == 6 ||
+                              reason == 7 || reason == 9;
+        EXPECT_EQ(sigurdos::diagnostics::reset_retains_crash_evidence(reason),
+                  expected);
+    }
 }
 
 TEST_F(TelemetryProtocolTest, EmitsFloatRecordsWithPrecision) {
