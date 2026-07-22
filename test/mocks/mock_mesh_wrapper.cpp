@@ -3,6 +3,7 @@
 
 #include "mesh/mesh_wrapper.h"
 #include "mesh/regions.h"
+#include "mocks/mock_mesh_state.h"
 #include <cstring>
 
 namespace sigurdos::mesh {
@@ -138,6 +139,25 @@ static MockAckedMsg mock_lost_msgs[MOCK_MAX_ACKED];
 static int mock_lost_head = 0;
 static int mock_lost_count = 0;
 static int mock_delivery_counter = 0;
+
+void mock_reset_all() {
+    std::memset(mock_msgs, 0, sizeof(mock_msgs));
+    mock_msg_count = 0;
+    mock_drop_count = 0;
+    std::strcpy(mock_own_name, "MockNode");
+    mock_noise = -120;
+    mock_rssi = -80;
+    mock_snr = 5.0f;
+    mock_clear_packets();
+    mock_acked_head = 0;
+    mock_acked_count = 0;
+    mock_ack_counter = 0;
+    mock_lost_head = 0;
+    mock_lost_count = 0;
+    mock_delivery_counter = 0;
+    std::memset(mock_acked_msgs, 0, sizeof(mock_acked_msgs));
+    std::memset(mock_lost_msgs, 0, sizeof(mock_lost_msgs));
+}
 
 void registerAckedMessage(const char* dest_name, uint32_t timestamp) {
     if (!dest_name) return;

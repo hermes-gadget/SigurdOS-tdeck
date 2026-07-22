@@ -296,6 +296,29 @@ public:
 
     // ── Test control ──────────────────────────────────
     void mock_set_error(uint8_t err) { _end_error = err; }
+    void mock_reset() {
+        _begun = false;
+        _begin_count = 0;
+        _begin_sda = -1;
+        _begin_scl = -1;
+        _clock = 0;
+        _timeout_ms = 0;
+        _tx_addr = 0;
+        std::memset(_tx_buf, 0, sizeof(_tx_buf));
+        _tx_len = 0;
+        _end_error = 0;
+        _nack_count = 0;
+        _nack_remaining = 0;
+        _end_count = 0;
+        std::memset(_address_history, 0, sizeof(_address_history));
+        _address_count = 0;
+        _rx_addr = 0;
+        std::memset(_rx_buf, 0, sizeof(_rx_buf));
+        _rx_pos = 0;
+        _rx_len = 0;
+        std::memset(_q_buf, 0, sizeof(_q_buf));
+        _q_len = 0;
+    }
     // How many endTransmission calls to NACK before allowing success.
     // Used to test warm-handoff retry logic after Launcher handoff.
     void mock_set_nack_count(uint8_t n) { _nack_count = n; _nack_remaining = n; }

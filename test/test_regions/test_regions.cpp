@@ -35,6 +35,7 @@
 #include "mesh/mesh_wrapper.h"
 #include "mesh/persistence_store.h"
 #include "hal/atomic_file.h"
+#include "mocks/unique_temp_dir.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -45,10 +46,10 @@
 
 namespace {
 
-static constexpr const char* REGION_LIVE =
-    "/tmp/sigurdos_region_store_test.bin";
-static constexpr const char* REGION_RAW =
-    "/tmp/sigurdos_region_store_test.raw";
+static const auto REGION_LIVE =
+    sigurdos::test::processTempDir().file("region_store.bin");
+static const auto REGION_RAW =
+    sigurdos::test::processTempDir().file("region_store.raw");
 
 static void writeU16(std::vector<uint8_t>& data, size_t offset,
                      uint16_t value) {

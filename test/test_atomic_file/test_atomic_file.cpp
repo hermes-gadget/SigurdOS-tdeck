@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include "hal/atomic_file.h"
+#include "mocks/unique_temp_dir.h"
 
 #include <cstdio>
 #include <cstring>
@@ -13,7 +14,10 @@ namespace {
 using namespace sigurdos::storage;
 
 static constexpr uint32_t MAGIC = 0x53414631;
-static constexpr const char* LIVE_PATH = "/tmp/sigurdos_atomic_file_test.bin";
+static const auto LIVE_PATH =
+    sigurdos::test::processTempDir().file("atomic_file.bin");
+static const auto TEMP_PATH =
+    sigurdos::test::processTempDir().file("atomic_file.bin.tmp");
 
 struct Payload {
     const char* text;
@@ -71,14 +75,14 @@ protected:
     {
         atomicFileSetNativeFault(AtomicFileNativeFault::None);
         std::remove(LIVE_PATH);
-        std::remove("/tmp/sigurdos_atomic_file_test.bin.tmp");
+        std::remove(TEMP_PATH);
     }
 
     void TearDown() override
     {
         atomicFileSetNativeFault(AtomicFileNativeFault::None);
         std::remove(LIVE_PATH);
-        std::remove("/tmp/sigurdos_atomic_file_test.bin.tmp");
+        std::remove(TEMP_PATH);
     }
 
     void save(const char* value)
@@ -129,7 +133,7 @@ TEST_F(AtomicFileTest, ValidationFailureDiscardsTempAndPreservesLive)
     EXPECT_FALSE(atomicFileReplace(LIVE_PATH, writePayload, &replacement,
                                    validatePayload, nullptr));
     EXPECT_EQ(readPayload(LIVE_PATH), "old");
-    EXPECT_EQ(std::fopen("/tmp/sigurdos_atomic_file_test.bin.tmp", "rb"), nullptr);
+    EXPECT_EQ(std::fopen(TEMP_PATH, "rb"), nullptr);
 }
 
 TEST_F(AtomicFileTest, RenameFailureLeavesValidatedTempForRecovery)
@@ -141,12 +145,12 @@ TEST_F(AtomicFileTest, RenameFailureLeavesValidatedTempForRecovery)
                                    validatePayload, nullptr));
     // The live file was cleared for the SPIFFS rename, so only the validated
     // temp survives the interrupted commit — recovery must finish it.
-    EXPECT_EQ(readPayload("/tmp/sigurdos_atomic_file_test.bin.tmp"), "new");
+    EXPECT_EQ(readPayload(TEMP_PATH), "new");
 
     atomicFileSetNativeFault(AtomicFileNativeFault::None);
     EXPECT_TRUE(atomicFileRecover(LIVE_PATH, validatePayload, nullptr));
     EXPECT_EQ(readPayload(LIVE_PATH), "new");
-    EXPECT_EQ(std::fopen("/tmp/sigurdos_atomic_file_test.bin.tmp", "rb"), nullptr);
+    EXPECT_EQ(std::fopen(TEMP_PATH, "rb"), nullptr);
 }
 
 TEST_F(AtomicFileTest, RecoverPromotesValidTempOverExistingLive)
@@ -156,22 +160,22 @@ TEST_F(AtomicFileTest, RecoverPromotesValidTempOverExistingLive)
     // recovery must clear it before promoting the temp.
     save("old");
     Payload staged{"new", false};
-    ASSERT_TRUE(atomicFileReplace("/tmp/sigurdos_atomic_file_test.bin.tmp",
+    ASSERT_TRUE(atomicFileReplace(TEMP_PATH,
                                   writePayload, &staged,
                                   validatePayload, nullptr));
 
     EXPECT_TRUE(atomicFileRecover(LIVE_PATH, validatePayload, nullptr));
     EXPECT_EQ(readPayload(LIVE_PATH), "new");
-    EXPECT_EQ(std::fopen("/tmp/sigurdos_atomic_file_test.bin.tmp", "rb"), nullptr);
+    EXPECT_EQ(std::fopen(TEMP_PATH, "rb"), nullptr);
 }
 
 TEST_F(AtomicFileTest, InvalidTempNeverReplacesValidLive)
 {
     save("old");
-    writeRaw("/tmp/sigurdos_atomic_file_test.bin.tmp", "partial");
+    writeRaw(TEMP_PATH, "partial");
     EXPECT_TRUE(atomicFileRecover(LIVE_PATH, validatePayload, nullptr));
     EXPECT_EQ(readPayload(LIVE_PATH), "old");
-    EXPECT_EQ(std::fopen("/tmp/sigurdos_atomic_file_test.bin.tmp", "rb"), nullptr);
+    EXPECT_EQ(std::fopen(TEMP_PATH, "rb"), nullptr);
 }
 
 TEST_F(AtomicFileTest, TempPathRejectsTruncation)

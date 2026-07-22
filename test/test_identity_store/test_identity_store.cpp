@@ -5,6 +5,7 @@
 
 #include "hal/atomic_file.h"
 #include "mesh/persistence_store.h"
+#include "mocks/unique_temp_dir.h"
 
 #include <cstdio>
 #include <fstream>
@@ -13,8 +14,9 @@
 
 namespace {
 
-static constexpr const char* PATH = "/tmp/sigurdos_identity_store.bin";
-static constexpr const char* TEMP_PATH = "/tmp/sigurdos_identity_store.bin.tmp";
+static const auto PATH = sigurdos::test::processTempDir().file("identity_store.bin");
+static const auto TEMP_PATH =
+    sigurdos::test::processTempDir().file("identity_store.bin.tmp");
 
 std::vector<uint8_t> bytes(uint8_t seed, size_t length = 64)
 {

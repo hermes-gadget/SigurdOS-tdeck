@@ -6,10 +6,15 @@
 // can compile and link without real NVS (Preferences) hardware.
 
 #include "hal/prefs.h"
+#include "mocks/mock_state.h"
 
 namespace sigurdos {
 
 static NodePrefs g_prefs;
+
+void prefs_mock_reset() {
+    g_prefs = NodePrefs{};
+}
 
 bool prefs_load(NodePrefs& p) {
     p = g_prefs;
