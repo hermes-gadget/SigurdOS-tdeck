@@ -95,6 +95,17 @@ after the security database is empty. If power is lost during rotation, the
 next boot withholds advertising and resumes the purge before enabling BLE. A
 PIN value of zero selects a newly generated six-digit PIN on restart. Every
 phone must pair again after this command.
+Command responses have a bridge-owned reserved
+retry slot: when the transport queue is congested, the bridge stops consuming
+commands until the response is admitted. Unsolicited live-event pushes are
+best-effort and may be dropped under congestion; durable messages remain in the
+message store and are retried by offline sync.
+
+Protocol target version and encoded offline pages are connection-scoped and
+cleared on disconnect. Clients must complete `CMD_DEVICE_QUERY` before
+`CMD_SYNC_NEXT_MESSAGE` after reconnecting; an early sync returns
+`ERR_CODE_BAD_STATE`. `CMD_APP_START` may still precede negotiation, and any
+page it primes is discarded and rebuilt after the version query.
 
 `client_repeat` matches stock companion behavior: when disabled the handheld
 does not forward packets; when enabled it forwards without applying

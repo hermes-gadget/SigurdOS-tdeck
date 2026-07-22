@@ -403,6 +403,7 @@ public:
     bool setEnabled(bool enabled);
     uint32_t lastSyncTime() const { return _last_sync_time; }
     uint8_t appTargetVersion() const { return _app_target_ver; }
+    uint32_t pushDropCount() const { return _push_drop_count; }
 
     bool enqueueMessage(const sigurdos::mesh::StoredMessage& msg);
     bool enqueueChannelData(uint8_t channel_index,
@@ -455,8 +456,13 @@ private:
     void writeDisabledFrame();
     // RESP_CODE_SENT (10 bytes) on success, else an error frame.
     void writeSentOrErr(const CompanionSendResult& r);
-    void writeContactFrame(uint8_t code, const CompanionContact& contact);
+    bool writeContactFrame(uint8_t code, const CompanionContact& contact,
+                           bool command_response = true);
     void writeNoMoreMessages();
+    bool sendResponseFrame(const uint8_t* frame, size_t len);
+    bool sendPushFrame(const uint8_t* frame, size_t len);
+    bool flushPendingResponse();
+    void resetConnectionSession();
     bool offlineFrameExists(const uint8_t* frame, size_t len) const;
     bool addToOfflineQueue(uint32_t store_id, bool persistent,
                            const uint8_t* frame, size_t len);
@@ -482,6 +488,7 @@ private:
     BaseSerialInterface* _serial = nullptr;
     CompanionBridgeHost* _host = nullptr;
     uint8_t _app_target_ver = 3;
+    bool _version_negotiated = true;
     uint32_t _last_sync_time = 0;
     uint32_t _iter_filter_since = 0;
     uint32_t _most_recent_lastmod = 0;
@@ -492,6 +499,9 @@ private:
     PendingBinaryRequest _pending_binary[MAX_PENDING_BINARY_REQUESTS]{};
     uint8_t _cmd_frame[MAX_FRAME_SIZE + 1];
     uint8_t _out_frame[MAX_FRAME_SIZE + 1];
+    uint8_t _pending_response[MAX_FRAME_SIZE];
+    uint8_t _pending_response_len = 0;
+    uint32_t _push_drop_count = 0;
 
     // CMD_SIGN_START/DATA/FINISH accumulate data here between frames.
     uint8_t _sign_buf[SIGURDOS_COMPANION_MAX_SIGN_DATA];

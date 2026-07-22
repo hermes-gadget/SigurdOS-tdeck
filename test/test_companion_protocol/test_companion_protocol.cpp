@@ -615,6 +615,81 @@ TEST_F(CompanionProtocolTest, DeviceTimeRejectsBackwardUpdates) {
               (std::vector<uint8_t>{sigurdos::comms::RESP_CODE_OK}));
 }
 
+TEST_F(CompanionProtocolTest, CongestedCommandResponseIsRetriedBeforeNextCommand) {
+    serial.enabled = true;
+    serial.fail_writes = 1;
+    const uint8_t first[] = {sigurdos::comms::CMD_SET_ADVERT_NAME,
+                             'f', 'i', 'r', 's', 't'};
+    ASSERT_TRUE(bridge.handleFrame(first, sizeof(first)));
+    EXPECT_TRUE(host.set_advert_name_called);
+    EXPECT_STREQ(host.advert_name, "first");
+    EXPECT_TRUE(serial.writes.empty());
+
+    host.set_advert_name_called = false;
+    const uint8_t second[] = {sigurdos::comms::CMD_SET_ADVERT_NAME,
+                              's', 'e', 'c', 'o', 'n', 'd'};
+    EXPECT_FALSE(bridge.handleFrame(second, sizeof(second)));
+    EXPECT_FALSE(host.set_advert_name_called);
+
+    bridge.loop();
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0],
+              (std::vector<uint8_t>{sigurdos::comms::RESP_CODE_OK}));
+
+    ASSERT_TRUE(bridge.handleFrame(second, sizeof(second)));
+    EXPECT_TRUE(host.set_advert_name_called);
+    EXPECT_STREQ(host.advert_name, "second");
+}
+
+TEST_F(CompanionProtocolTest, CongestedLowPriorityPushReportsDrop) {
+    serial.busy = true;
+    EXPECT_FALSE(bridge.pushContactsFull());
+    EXPECT_EQ(bridge.pushDropCount(), 1u);
+
+    serial.busy = false;
+    EXPECT_TRUE(bridge.pushContactsFull());
+    EXPECT_EQ(bridge.pushDropCount(), 1u);
+}
+
+TEST_F(CompanionProtocolTest, DisconnectResetsVersionAndPreencodedOfflineFrames) {
+    serial.enabled = true;
+    bridge.loop();  // observe the connected session
+
+    const uint8_t legacy_query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 2};
+    ASSERT_TRUE(bridge.handleFrame(legacy_query, sizeof(legacy_query)));
+    EXPECT_EQ(bridge.appTargetVersion(), 2);
+
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "new session", sizeof(msg.text) - 1);
+    msg.timestamp = 77;
+    for (int i = 0; i < 6; ++i) msg.sender_prefix[i] = (uint8_t)(0xA0 + i);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+
+    const uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    serial.connected = false;
+    bridge.loop();
+    EXPECT_EQ(bridge.appTargetVersion(), 3);
+
+    serial.connected = true;
+    serial.writes.clear();
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_FALSE(serial.writes.empty());
+    EXPECT_EQ(serial.writes.back(), (std::vector<uint8_t>{
+        sigurdos::comms::RESP_CODE_ERR, sigurdos::comms::ERR_CODE_BAD_STATE}));
+
+    const uint8_t v3_query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
+    ASSERT_TRUE(bridge.handleFrame(v3_query, sizeof(v3_query)));
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_FALSE(serial.writes.empty());
+    EXPECT_EQ(serial.writes.back()[0],
+              sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+}
+
 TEST_F(CompanionProtocolTest, UndersizedKnownCommandsReturnIllegalArgument) {
     namespace cc = sigurdos::comms;
     const uint8_t commands[] = {

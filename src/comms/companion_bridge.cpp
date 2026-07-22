@@ -114,12 +114,15 @@ void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* ho
     _serial = serial;
     _host = host;
     _app_target_ver = 3;
+    _version_negotiated = true;
     _last_sync_time = 0;
     _contact_iter = -1;
     _offline_len = 0;
     _sign_active = false;
     _sign_len = 0;
     _was_connected = false;
+    _pending_response_len = 0;
+    _push_drop_count = 0;
     clearPendingBinary();
 }
 
@@ -139,10 +142,8 @@ bool CompanionBridge::setEnabled(bool enabled)
     if (enabled) _serial->enable();
     else {
         _serial->disable();
-        _sign_active = false;
-        _sign_len = 0;
+        resetConnectionSession();
         _was_connected = false;
-        clearPendingBinary();
         if (_host) _host->cancelBinaryReqs();
     }
     return _serial->isEnabled() == enabled;
@@ -183,6 +184,52 @@ void CompanionBridge::clearPendingBinary()
     std::memset(_pending_binary, 0, sizeof(_pending_binary));
 }
 
+void CompanionBridge::resetConnectionSession()
+{
+    _app_target_ver = 3;
+    _version_negotiated = false;
+    _contact_iter = -1;
+    _iter_filter_since = 0;
+    _most_recent_lastmod = 0;
+    _offline_len = 0;
+    _sign_active = false;
+    _sign_len = 0;
+    _pending_response_len = 0;
+    clearPendingBinary();
+}
+
+bool CompanionBridge::sendResponseFrame(const uint8_t* frame, size_t len)
+{
+    if (!_serial || !frame || len == 0 || len > MAX_FRAME_SIZE ||
+        _pending_response_len != 0) {
+        return false;
+    }
+    if (_serial->writeFrame(frame, len) == len) return true;
+    std::memcpy(_pending_response, frame, len);
+    _pending_response_len = static_cast<uint8_t>(len);
+    return true;
+}
+
+bool CompanionBridge::flushPendingResponse()
+{
+    if (_pending_response_len == 0) return true;
+    if (!_serial || !_serial->isConnected()) return false;
+    const size_t len = _pending_response_len;
+    if (_serial->writeFrame(_pending_response, len) != len) return false;
+    _pending_response_len = 0;
+    return true;
+}
+
+bool CompanionBridge::sendPushFrame(const uint8_t* frame, size_t len)
+{
+    if (!_serial || !frame || len == 0 || len > MAX_FRAME_SIZE ||
+        _serial->writeFrame(frame, len) != len) {
+        ++_push_drop_count;
+        return false;
+    }
+    return true;
+}
+
 void CompanionBridge::loop()
 {
     if (!_serial || !_host || !_serial->isEnabled()) return;
@@ -194,12 +241,11 @@ void CompanionBridge::loop()
     // consume frames so a disconnect + reconnect + malicious FINISH
     // sees a clean slate.
     if (_was_connected && !_serial->isConnected()) {
-        _sign_active = false;
-        _sign_len = 0;
-        clearPendingBinary();
+        resetConnectionSession();
         _host->cancelBinaryReqs();
     }
     _was_connected = _serial->isConnected();
+    if (!flushPendingResponse()) return;
     size_t len = _serial->checkRecvFrame(_cmd_frame);
     if (len > 0) {
         handleFrame(_cmd_frame, len);
@@ -220,7 +266,7 @@ void CompanionBridge::loop()
         _out_frame[i++] = RESP_CODE_END_OF_CONTACTS;
         std::memcpy(&_out_frame[i], &_most_recent_lastmod, 4);
         i += 4;
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         _contact_iter = -1;
     }
 }
@@ -228,22 +274,23 @@ void CompanionBridge::loop()
 void CompanionBridge::writeOKFrame()
 {
     uint8_t b = RESP_CODE_OK;
-    if (_serial) _serial->writeFrame(&b, 1);
+    sendResponseFrame(&b, 1);
 }
 
 void CompanionBridge::writeErrFrame(uint8_t err)
 {
     uint8_t b[2] = { RESP_CODE_ERR, err };
-    if (_serial) _serial->writeFrame(b, 2);
+    sendResponseFrame(b, 2);
 }
 
 void CompanionBridge::writeDisabledFrame()
 {
     uint8_t b = RESP_CODE_DISABLED;
-    if (_serial) _serial->writeFrame(&b, 1);
+    sendResponseFrame(&b, 1);
 }
 
-void CompanionBridge::writeContactFrame(uint8_t code, const CompanionContact& contact)
+bool CompanionBridge::writeContactFrame(uint8_t code, const CompanionContact& contact,
+                                        bool command_response)
 {
     int i = 0;
     _out_frame[i++] = code;
@@ -264,13 +311,14 @@ void CompanionBridge::writeContactFrame(uint8_t code, const CompanionContact& co
     i += 4;
     std::memcpy(&_out_frame[i], &contact.lastmod, 4);
     i += 4;
-    if (_serial) _serial->writeFrame(_out_frame, i);
+    if (command_response) return sendResponseFrame(_out_frame, i);
+    return sendPushFrame(_out_frame, i);
 }
 
 void CompanionBridge::writeNoMoreMessages()
 {
     uint8_t b = RESP_CODE_NO_MORE_MESSAGES;
-    if (_serial) _serial->writeFrame(&b, 1);
+    sendResponseFrame(&b, 1);
 }
 
 bool CompanionBridge::offlineFrameExists(const uint8_t* frame, size_t len) const
@@ -424,7 +472,7 @@ bool CompanionBridge::refillOfflineQueueFromStore(bool notify_waiting)
     // app (see the SYNC_NEXT_MESSAGE handler below).
     if (added_any && notify_waiting && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
-        _serial->writeFrame(&tickle, 1);
+        sendPushFrame(&tickle, 1);
     }
     return added_any;
 }
@@ -444,7 +492,7 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
         // prevents data loss if the app disconnects before draining the queue.
         if (isConnected()) {
             uint8_t tickle = PUSH_CODE_MSG_WAITING;
-            _serial->writeFrame(&tickle, 1);
+            sendPushFrame(&tickle, 1);
         }
     }
     // A persistent record rejected because the in-memory page is full is still
@@ -481,7 +529,7 @@ bool CompanionBridge::enqueueChannelData(uint8_t channel_index,
     bool added = addToOfflineQueue(0, false, _out_frame, (size_t)i);
     if (added && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
-        _serial->writeFrame(&tickle, 1);
+        sendPushFrame(&tickle, 1);
     }
     return added;
 }
@@ -496,7 +544,7 @@ bool CompanionBridge::notifySendConfirmed(uint32_t ack, uint32_t trip_time_ms)
     i += 4;
     std::memcpy(&frame[i], &trip_time_ms, 4);
     i += 4;
-    return _serial->writeFrame(frame, i) == (size_t)i;
+    return sendPushFrame(frame, i);
 }
 
 void CompanionBridge::onIdentityChanged()
@@ -524,20 +572,20 @@ void CompanionBridge::writeSentOrErr(const CompanionSendResult& r)
     _out_frame[1] = r.sent_flood ? 1 : 0;
     std::memcpy(&_out_frame[2], &r.expected_ack, 4);
     std::memcpy(&_out_frame[6], &r.est_timeout, 4);
-    _serial->writeFrame(_out_frame, 10);
+    sendResponseFrame(_out_frame, 10);
 }
 
 bool CompanionBridge::pushAdvert(const CompanionContact& contact, bool is_new)
 {
     if (!isConnected()) return false;
     if (is_new) {
-        writeContactFrame(PUSH_CODE_NEW_ADVERT, contact);
+        return writeContactFrame(PUSH_CODE_NEW_ADVERT, contact, false);
     } else {
         _out_frame[0] = PUSH_CODE_ADVERT;
         std::memcpy(&_out_frame[1], contact.pub_key, SIGURDOS_COMPANION_PUB_KEY_SIZE);
-        _serial->writeFrame(_out_frame, 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE);
+        return sendPushFrame(_out_frame,
+                             1 + SIGURDOS_COMPANION_PUB_KEY_SIZE);
     }
-    return true;
 }
 
 bool CompanionBridge::pushPathUpdated(const CompanionContact& contact)
@@ -545,8 +593,8 @@ bool CompanionBridge::pushPathUpdated(const CompanionContact& contact)
     if (!isConnected()) return false;
     _out_frame[0] = PUSH_CODE_PATH_UPDATED;
     std::memcpy(&_out_frame[1], contact.pub_key, SIGURDOS_COMPANION_PUB_KEY_SIZE);
-    _serial->writeFrame(_out_frame, 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE);
-    return true;
+    return sendPushFrame(_out_frame,
+                         1 + SIGURDOS_COMPANION_PUB_KEY_SIZE);
 }
 
 bool CompanionBridge::pushPathDiscoveryResponse(
@@ -583,7 +631,7 @@ bool CompanionBridge::pushPathDiscoveryResponse(
         std::memcpy(&_out_frame[i], in_path, in_bytes);
         i += (int)in_bytes;
     }
-    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+    return sendPushFrame(_out_frame, i);
 }
 
 bool CompanionBridge::pushContactDeleted(const uint8_t* pub_key)
@@ -591,16 +639,15 @@ bool CompanionBridge::pushContactDeleted(const uint8_t* pub_key)
     if (!isConnected() || !pub_key) return false;
     _out_frame[0] = PUSH_CODE_CONTACT_DELETED;
     std::memcpy(&_out_frame[1], pub_key, SIGURDOS_COMPANION_PUB_KEY_SIZE);
-    _serial->writeFrame(_out_frame, 1 + SIGURDOS_COMPANION_PUB_KEY_SIZE);
-    return true;
+    return sendPushFrame(_out_frame,
+                         1 + SIGURDOS_COMPANION_PUB_KEY_SIZE);
 }
 
 bool CompanionBridge::pushContactsFull()
 {
     if (!isConnected()) return false;
     uint8_t b = PUSH_CODE_CONTACTS_FULL;
-    _serial->writeFrame(&b, 1);
-    return true;
+    return sendPushFrame(&b, 1);
 }
 
 bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success,
@@ -622,7 +669,7 @@ bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success
         _out_frame[i++] = acl_permissions;
         _out_frame[i++] = firmware_level;
     }
-    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+    return sendPushFrame(_out_frame, i);
 }
 
 bool CompanionBridge::pushStatusResponse(const uint8_t* pubkey_prefix,
@@ -639,7 +686,7 @@ bool CompanionBridge::pushStatusResponse(const uint8_t* pubkey_prefix,
         std::memcpy(&_out_frame[i], blob, blob_len);
         i += (int)blob_len;
     }
-    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+    return sendPushFrame(_out_frame, i);
 }
 
 bool CompanionBridge::pushTelemetryResponse(const uint8_t* pubkey_prefix,
@@ -656,7 +703,7 @@ bool CompanionBridge::pushTelemetryResponse(const uint8_t* pubkey_prefix,
         std::memcpy(&_out_frame[i], blob, blob_len);
         i += (int)blob_len;
     }
-    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+    return sendPushFrame(_out_frame, i);
 }
 
 bool CompanionBridge::pushBinaryResponse(uint32_t tag,
@@ -677,7 +724,7 @@ bool CompanionBridge::pushBinaryResponse(uint32_t tag,
         std::memcpy(&_out_frame[i], blob, blob_len);
         i += (int)blob_len;
     }
-    const bool written = _serial->writeFrame(_out_frame, i) == (size_t)i;
+    const bool written = sendPushFrame(_out_frame, i);
     if (written) _pending_binary[pending] = {};
     return written;
 }
@@ -696,7 +743,7 @@ bool CompanionBridge::pushRawData(int8_t snr_quarters, int8_t rssi,
         std::memcpy(&_out_frame[i], payload, payload_len);
         i += (int)payload_len;
     }
-    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+    return sendPushFrame(_out_frame, i);
 }
 
 bool CompanionBridge::pushControlData(int8_t snr_quarters, int8_t rssi,
@@ -714,7 +761,7 @@ bool CompanionBridge::pushControlData(int8_t snr_quarters, int8_t rssi,
         std::memcpy(&_out_frame[i], payload, payload_len);
         i += (int)payload_len;
     }
-    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+    return sendPushFrame(_out_frame, i);
 }
 
 bool CompanionBridge::pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
@@ -741,12 +788,16 @@ bool CompanionBridge::pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
     if (path_len && path_hashes) { std::memcpy(&_out_frame[i], path_hashes, path_len); i += path_len; }
     if (snr_count && path_snrs) { std::memcpy(&_out_frame[i], path_snrs, snr_count); i += (int)snr_count; }
     _out_frame[i++] = (uint8_t)final_snr_quarters;
-    return _serial->writeFrame(_out_frame, i) == (size_t)i;
+    return sendPushFrame(_out_frame, i);
 }
 
 bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 {
     if (!_serial || !_host || !frame || len == 0 || len > MAX_FRAME_SIZE) return false;
+    // One slot is reserved exclusively for the current command response. If
+    // it is occupied, do not execute another command (especially a
+    // non-idempotent one) until the prior response is transport-admitted.
+    if (_pending_response_len != 0) return false;
     expirePendingBinary();
     std::memcpy(_cmd_frame, frame, len);
     _cmd_frame[len] = 0;
@@ -759,6 +810,11 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     }
     if (cmd == CMD_DEVICE_QUERY && len >= 2) {
         _app_target_ver = _cmd_frame[1];
+        _version_negotiated = true;
+        // Frames encoded before negotiation must never survive a version
+        // change. Durable records remain in the message store and are rebuilt
+        // on the next sync request.
+        _offline_len = 0;
         int i = 0;
         _out_frame[i++] = RESP_CODE_DEVICE_INFO;
         _out_frame[i++] = SIGURDOS_COMPANION_FIRMWARE_VER_CODE;
@@ -776,7 +832,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         i += 20;
         _out_frame[i++] = _host->clientRepeat();
         _out_frame[i++] = _host->pathHashMode();
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         return true;
     }
 
@@ -809,7 +865,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         if (i + nlen > MAX_FRAME_SIZE) nlen = MAX_FRAME_SIZE - i;
         std::memcpy(&_out_frame[i], si.node_name, nlen);
         i += (int)nlen;
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         refillOfflineQueueFromStore(true);
         return true;
     }
@@ -824,7 +880,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         uint32_t count = (uint32_t)_host->contactCount();
         _out_frame[0] = RESP_CODE_CONTACTS_START;
         std::memcpy(&_out_frame[1], &count, 4);
-        _serial->writeFrame(_out_frame, 5);
+        sendResponseFrame(_out_frame, 5);
         _contact_iter = 0;
         _most_recent_lastmod = 0;
         return true;
@@ -832,6 +888,10 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 
     if (cmd == CMD_SYNC_NEXT_MESSAGE) {
         _last_sync_time = _host->currentTime();
+        if (!_version_negotiated) {
+            writeErrFrame(ERR_CODE_BAD_STATE);
+            return true;
+        }
         if (_offline_len == 0) {
             // APP_START primes only one bounded page. Refill synchronously so
             // this same request returns the next persisted message instead of
@@ -880,7 +940,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         _out_frame[1] = result.sent_flood ? 1 : 0;
         std::memcpy(&_out_frame[2], &result.expected_ack, 4);
         std::memcpy(&_out_frame[6], &result.est_timeout, 4);
-        _serial->writeFrame(_out_frame, 10);
+        sendResponseFrame(_out_frame, 10);
         return true;
     }
 
@@ -946,7 +1006,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         _out_frame[0] = RESP_CODE_CURR_TIME;
         uint32_t now = _host->currentTime();
         std::memcpy(&_out_frame[1], &now, 4);
-        _serial->writeFrame(_out_frame, 5);
+        sendResponseFrame(_out_frame, 5);
         return true;
     }
 
@@ -967,7 +1027,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         std::memcpy(&_out_frame[i], &mv, 2); i += 2;
         std::memcpy(&_out_frame[i], &used, 4); i += 4;
         std::memcpy(&_out_frame[i], &total, 4); i += 4;
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         return true;
     }
 
@@ -1049,7 +1109,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         i += 4;
         std::memcpy(&_out_frame[i], &airtime_factor_x1000, 4);
         i += 4;
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         return true;
     }
 
@@ -1074,7 +1134,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         i += 32;
         std::memcpy(&_out_frame[i], ch.secret, 16);
         i += 16;
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         return true;
     }
 
@@ -1110,7 +1170,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         }
         _out_frame[0] = RESP_CODE_PRIVATE_KEY;
         std::memcpy(&_out_frame[1], key, sizeof(key));
-        _serial->writeFrame(_out_frame, 1 + sizeof(key));
+        sendResponseFrame(_out_frame, 1 + sizeof(key));
 #else
         writeDisabledFrame();
 #endif
@@ -1162,7 +1222,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         _out_frame[i++] = RESP_CODE_AUTOADD_CONFIG;
         _out_frame[i++] = cfg;
         _out_frame[i++] = max_hops;
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         return true;
     }
 
@@ -1232,7 +1292,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         int out_len = _host->exportContactByPubKey(pub_key, &_out_frame[1], MAX_FRAME_SIZE - 1);
         if (out_len > 0) {
             _out_frame[0] = RESP_CODE_EXPORT_CONTACT;
-            _serial->writeFrame(_out_frame, (size_t)out_len + 1);
+            sendResponseFrame(_out_frame, (size_t)out_len + 1);
         } else {
             writeErrFrame(pub_key ? ERR_CODE_NOT_FOUND : ERR_CODE_TABLE_FULL);
         }
@@ -1286,7 +1346,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             std::memcpy(&_out_frame[i], &s.uptime_secs, 4); i += 4;
             std::memcpy(&_out_frame[i], &s.err_flags, 2); i += 2;
             _out_frame[i++] = s.queue_len;
-            _serial->writeFrame(_out_frame, i);
+            sendResponseFrame(_out_frame, i);
         } else if (stats_type == STATS_TYPE_RADIO) {
             CompanionRadioStats s{};
             _host->radioStats(s);
@@ -1297,7 +1357,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             _out_frame[i++] = (uint8_t)s.last_snr_quarters;
             std::memcpy(&_out_frame[i], &s.tx_air_secs, 4); i += 4;
             std::memcpy(&_out_frame[i], &s.rx_air_secs, 4); i += 4;
-            _serial->writeFrame(_out_frame, i);
+            sendResponseFrame(_out_frame, i);
         } else if (stats_type == STATS_TYPE_PACKETS) {
             CompanionPacketStats s{};
             _host->packetStats(s);
@@ -1310,7 +1370,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             std::memcpy(&_out_frame[i], &s.recv_flood, 4); i += 4;
             std::memcpy(&_out_frame[i], &s.recv_direct, 4); i += 4;
             std::memcpy(&_out_frame[i], &s.recv_errors, 4); i += 4;
-            _serial->writeFrame(_out_frame, i);
+            sendResponseFrame(_out_frame, i);
         } else {
             writeErrFrame(ERR_CODE_ILLEGAL_ARG);
         }
@@ -1325,14 +1385,14 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         for (size_t k = 0; k < n * 2 && i + 4 <= MAX_FRAME_SIZE; k++) {
             std::memcpy(&_out_frame[i], &pairs[k], 4); i += 4;
         }
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         return true;
     }
 
     if (cmd == CMD_GET_CUSTOM_VARS) {
         int n = _host->getCustomVars((char*)_out_frame + 1, MAX_FRAME_SIZE - 1);
         _out_frame[0] = RESP_CODE_CUSTOM_VARS;
-        _serial->writeFrame(_out_frame, (size_t)(1 + ((n > 0) ? n : 0)));
+        sendResponseFrame(_out_frame, (size_t)(1 + ((n > 0) ? n : 0)));
         return true;
     }
 
@@ -1377,7 +1437,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             std::memcpy(&_out_frame[i], path_buf, path_bytes);
             i += (int)path_bytes;
         }
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         return true;
     }
 
@@ -1399,9 +1459,9 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         if (_host->getDefaultFloodScope(name, key)) {
             std::memcpy(&_out_frame[1], name, 31);
             std::memcpy(&_out_frame[1 + 31], key, 16);
-            _serial->writeFrame(_out_frame, 1 + 31 + 16);
+            sendResponseFrame(_out_frame, 1 + 31 + 16);
         } else {
-            _serial->writeFrame(_out_frame, 1);  // null scope
+            sendResponseFrame(_out_frame, 1);  // null scope
         }
         return true;
     }
@@ -1454,7 +1514,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         _out_frame[i++] = 0;  // reserved
         uint32_t maxlen = SIGURDOS_COMPANION_MAX_SIGN_DATA;
         std::memcpy(&_out_frame[i], &maxlen, 4); i += 4;
-        _serial->writeFrame(_out_frame, i);
+        sendResponseFrame(_out_frame, i);
         return true;
     }
 
@@ -1481,7 +1541,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         _sign_len = 0;
         if (sig_len > 0) {
             _out_frame[0] = RESP_CODE_SIGNATURE;
-            _serial->writeFrame(_out_frame, 1 + (size_t)sig_len);
+            sendResponseFrame(_out_frame, 1 + (size_t)sig_len);
         } else {
             writeErrFrame(ERR_CODE_BAD_STATE);
         }
@@ -1597,7 +1657,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             _out_frame[1] = 0;
             std::memcpy(&_out_frame[2], &tag, 4);
             std::memcpy(&_out_frame[6], &r.est_timeout, 4);
-            _serial->writeFrame(_out_frame, 10);
+            sendResponseFrame(_out_frame, 10);
         } else {
             writeErrFrame(ERR_CODE_TABLE_FULL);
         }
