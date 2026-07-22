@@ -120,7 +120,7 @@ int loadLegacy(detail::ChannelStoreKv& kv, ChannelLoadFn load, void* ctx)
     if (count > CHANNEL_STORE_MAX) return 0;
     int loaded = 0;
     for (int i = 0; i < count; ++i) {
-        char key[16];
+        char key[24];
         char name[32] = {};
         uint8_t secret[32] = {};
         uint8_t hash[32] = {};

@@ -37,6 +37,7 @@ PROFILES = {
         "SigurdOS_TDeck_gps_validation",
     ],
 }
+ALL_FIRMWARE_PROFILE = "all-firmware"
 
 
 @dataclass
@@ -84,6 +85,11 @@ def selected_envs(args: argparse.Namespace) -> list[str]:
     explicit = split_env_args(args.env)
     if explicit:
         return explicit
+    if args.profile == ALL_FIRMWARE_PROFILE:
+        return [
+            env for env in discover_platformio_envs(Path(args.project_dir))
+            if not env.startswith("native")
+        ]
     return list(PROFILES[args.profile])
 
 
@@ -112,6 +118,7 @@ def print_list(project_dir: Path) -> None:
     for name, envs in PROFILES.items():
         marker = " (default)" if name == DEFAULT_PROFILE else ""
         print(f"  {name}{marker}: {', '.join(envs)}")
+    print(f"  {ALL_FIRMWARE_PROFILE}: dynamically discovered non-native environments")
 
     discovered = discover_platformio_envs(project_dir)
     if discovered:
@@ -138,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--profile",
-        choices=sorted(PROFILES),
+        choices=sorted([*PROFILES, ALL_FIRMWARE_PROFILE]),
         default=DEFAULT_PROFILE,
         help=f"named build profile to run when --env is not provided (default: {DEFAULT_PROFILE})",
     )

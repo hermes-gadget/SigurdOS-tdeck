@@ -1,9 +1,16 @@
 name: Build Validation Matrix
 
-on:
+"on":
+  pull_request:
+    branches:
+      - dev
+  push:
+    branches:
+      - dev
   schedule:
     - cron: '0 4 * * 1'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -67,7 +74,15 @@ jobs:
           SIGURDOS_GPS_VALIDATION_WIFI_SSID: ci-compile-only
           SIGURDOS_GPS_VALIDATION_WIFI_PASS: ci-not-a-secret
           SIGURDOS_GPS_VALIDATION_WIFI_HOST: 192.0.2.1
-        run: pio run -e ${{ matrix.env }}
+        run: |
+          set -o pipefail
+          pio run -e ${{ matrix.env }} 2>&1 | tee "build-${{ matrix.env }}.log"
+      - name: Enforce first-party warning budget for ${{ matrix.env }}
+        run: >-
+          python scripts/check_first_party_warnings.py
+          --log "build-${{ matrix.env }}.log"
+          --baseline ci/first_party_warnings.json
+          --summary "$GITHUB_STEP_SUMMARY"
       - name: Verify resolved PlatformIO graph
         if: matrix.env == 'SigurdOS_TDeck'
         run: python scripts/platformio_lock.py --check
@@ -77,3 +92,4 @@ jobs:
           name: firmware-${{ matrix.env }}
           path: .pio/build/${{ matrix.env }}/firmware*.bin
           if-no-files-found: error
+          retention-days: 7

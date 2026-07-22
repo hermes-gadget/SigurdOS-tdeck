@@ -1525,7 +1525,7 @@ static void cmd_sendmessage(const char* arg) {
                   name, (int)strlen(text));
 
     char dm_channel[64];
-    snprintf(dm_channel, sizeof(dm_channel), "DM: %s", name);
+    snprintf(dm_channel, sizeof(dm_channel), "DM: %.59s", name);
     const char* own = sigurdos::mesh::getOwnName();
     sigurdos::ui::chat_screen_add_msg_at(
         dm_channel, own ? own : "self", text, send_ts, true);

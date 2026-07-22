@@ -6,6 +6,10 @@ name: Build & Release
   workflow_dispatch:
 
 jobs:
+  full-matrix:
+    name: Full firmware environment gate
+    uses: ./.github/workflows/build-validation-matrix.yml
+
   test:
     name: Native tests
     runs-on: ubuntu-latest
@@ -54,7 +58,7 @@ jobs:
   build:
     name: Build firmware
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, full-matrix]
     permissions:
       attestations: write
       contents: read
@@ -211,6 +215,7 @@ jobs:
           name: sigurdos-tdeck-firmware
           path: artifacts/
           if-no-files-found: error
+          retention-days: 30
 
   release:
     name: Create Release

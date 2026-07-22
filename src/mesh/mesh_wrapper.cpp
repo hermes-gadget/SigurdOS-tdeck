@@ -293,7 +293,7 @@ namespace sigurdos { namespace mesh { bool sendChannelMessage(const char* channe
 // Identity persistence
 // ════════════════════════════════════════════════════
 
-static bool loadIdentity(::mesh::LocalIdentity& id) {
+static bool __attribute__((unused)) loadIdentity(::mesh::LocalIdentity& id) {
     uint8_t buf[128];
     size_t len = 0;
     if (!sigurdos::mesh::identityStoreLoad(buf, sizeof(buf), &len)) return false;
@@ -491,7 +491,7 @@ bool hasPublicChannel()
     return false;
 }
 
-bool ensurePublicChannelPresent(bool persist)
+bool __attribute__((unused)) ensurePublicChannelPresent(bool persist)
 {
     if (!g_mesh) return false;
     if (hasPublicChannel()) return true;

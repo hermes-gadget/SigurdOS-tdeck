@@ -264,6 +264,7 @@ jobs:
             coverage.*.html
             coverage-summary.txt
             coverage-summary.json
+          retention-days: 14
 
   lint:
     name: Static analysis + logging policy
