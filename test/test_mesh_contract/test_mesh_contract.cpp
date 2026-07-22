@@ -28,6 +28,8 @@
 #include "mesh/public_channel.h"
 #include "mesh/response_copy.h"
 #include "mesh/client_repeat_policy.h"
+#include "mesh/capacity_policy.h"
+#include "mesh/scope_activation_policy.h"
 
 namespace {
 
@@ -51,6 +53,27 @@ TEST(MeshContractTest, ClientRepeatMatchesUpstreamCompanionSemantics) {
     EXPECT_FALSE(sigurdos::mesh::clientRepeatAllowsForward(0));
     EXPECT_TRUE(sigurdos::mesh::clientRepeatAllowsForward(1));
     EXPECT_TRUE(sigurdos::mesh::clientRepeatAllowsForward(255));
+}
+
+TEST(MeshContractTest, SignedOutputCapacityRejectsNonPositiveValues) {
+    size_t converted = 99;
+    EXPECT_FALSE(sigurdos::mesh::positiveOutputCapacity(-1, converted));
+    EXPECT_EQ(converted, 0U);
+    EXPECT_FALSE(sigurdos::mesh::positiveOutputCapacity(0, converted));
+    EXPECT_TRUE(sigurdos::mesh::positiveOutputCapacity(16, converted));
+    EXPECT_EQ(converted, 16U);
+}
+
+TEST(MeshContractTest, ScopeActivationUsesCanonicalRegionGrammar) {
+    uint8_t key[16]{};
+    key[0] = 1;
+    EXPECT_TRUE(sigurdos::mesh::scopeActivationInputsValid("#public", nullptr));
+    EXPECT_TRUE(sigurdos::mesh::scopeActivationInputsValid("$private", key));
+    EXPECT_FALSE(sigurdos::mesh::scopeActivationInputsValid("#bad/name", nullptr));
+    EXPECT_FALSE(sigurdos::mesh::scopeActivationInputsValid("$private", nullptr));
+    uint8_t zero_key[16]{};
+    EXPECT_FALSE(sigurdos::mesh::scopeActivationInputsValid(
+        "$private", zero_key));
 }
 
 TEST(MeshContractTest, PublicChannelDefaultsStayStable) {

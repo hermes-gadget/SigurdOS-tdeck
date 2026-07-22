@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Ben
 
 #include "persistence_store.h"
+#include "region_name.h"
 
 #include "hal/atomic_file.h"
 
@@ -331,12 +332,6 @@ uint32_t regionCrcUpdate(uint32_t crc, const uint8_t* data, size_t length)
     return crc;
 }
 
-bool regionNameChar(uint8_t c)
-{
-    return c == '-' || c == '$' || c == '#' ||
-           (c >= '0' && c <= '9') || c >= 'A';
-}
-
 bool regionIdPresent(uint16_t id, const uint16_t* ids, size_t count)
 {
     if (id == 0) return true;
@@ -381,11 +376,7 @@ bool validateRegionStructure(sigurdos::storage::AtomicFileReader& reader,
         const uint8_t* name = &record[4];
         const void* terminator = std::memchr(name, '\0', 31);
         if (id == 0 || !terminator || name[0] == '\0') return false;
-        const size_t name_len =
-            (size_t)(static_cast<const uint8_t*>(terminator) - name);
-        for (size_t j = 0; j < name_len; ++j) {
-            if (!regionNameChar(name[j])) return false;
-        }
+        if (!regionNameValid(reinterpret_cast<const char*>(name))) return false;
         for (size_t j = 0; j < i; ++j) {
             if (ids[j] == id) return false;
         }

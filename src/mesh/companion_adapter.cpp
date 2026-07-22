@@ -780,7 +780,10 @@ public:
             // Check if a persisted private key exists (for $private scopes)
             const sigurdos::NodePrefs& p = sigurdos::prefs_get();
             if (p.default_scope_key_hex[0] != '\0' && active[0] == '$') {
-                sigurdos::mesh::scopeKeyHexDecode(p.default_scope_key_hex, key_out);
+                if (!sigurdos::mesh::scopeKeyHexDecode(
+                        p.default_scope_key_hex, key_out)) {
+                    memcpy(key_out, keys[0].key, 16);
+                }
             } else {
                 memcpy(key_out, keys[0].key, 16);
             }

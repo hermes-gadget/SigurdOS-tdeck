@@ -52,6 +52,20 @@ TEST(AutoAddPolicy, OverwriteRequiresExplicitConfigBit)
     EXPECT_TRUE(sm::shouldOverwriteAutoAddContact(0x1F));
 }
 
+TEST(AutoAddPolicy, CompatibilityApiDelegatesToCanonicalPolicy)
+{
+    EXPECT_EQ(sm::autoAddEnabled(0), sm::auto_add_policy::enabled(0));
+    EXPECT_EQ(sm::autoAddEnabled(1), sm::auto_add_policy::enabled(1));
+    EXPECT_EQ(sm::shouldAutoAddType(1, sm::AUTO_ADD_ROOM_SERVER,
+                                    sm::AUTOADD_ADV_TYPE_ROOM),
+              sm::auto_add_policy::typeAllowed(
+                  1, sm::auto_add_policy::ADD_ROOM,
+                  sm::AUTOADD_ADV_TYPE_ROOM));
+    EXPECT_EQ(sm::shouldOverwriteAutoAddContact(sm::AUTO_ADD_OVERWRITE_OLDEST),
+              sm::auto_add_policy::overwriteWhenFull(
+                  sm::auto_add_policy::OVERWRITE_OLDEST));
+}
+
 int main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);

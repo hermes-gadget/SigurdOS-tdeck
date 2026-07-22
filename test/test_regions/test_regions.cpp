@@ -34,6 +34,7 @@
 #include "mesh/regions.h"
 #include "mesh/mesh_wrapper.h"
 #include "mesh/persistence_store.h"
+#include "mesh/region_name.h"
 #include "hal/atomic_file.h"
 #include "mocks/unique_temp_dir.h"
 
@@ -171,6 +172,28 @@ TEST(RegionsTest, AddRegionRejectsNullName) {
 
 TEST(RegionsTest, AddRegionRejectsEmptyName) {
     EXPECT_EQ(sigurdos::mesh::addRegion("", nullptr), nullptr);
+}
+
+TEST(RegionsTest, CanonicalNameGrammarIsStrictAscii)
+{
+    using sigurdos::mesh::regionNameValid;
+    EXPECT_TRUE(regionNameValid("#public-zone_2"));
+    EXPECT_TRUE(regionNameValid("$private_key"));
+    EXPECT_TRUE(regionNameValid("implicit"));
+    EXPECT_FALSE(regionNameValid("#"));
+    EXPECT_FALSE(regionNameValid("$"));
+    EXPECT_FALSE(regionNameValid("#has space"));
+    EXPECT_FALSE(regionNameValid("#bad/slash"));
+    EXPECT_FALSE(regionNameValid("#bad\xC3\xA9"));
+    EXPECT_FALSE(regionNameValid("#abcdefghijklmnopqrstuvwxyz12345"));
+}
+
+TEST(RegionsTest, CrudRejectsNamesOutsideCanonicalGrammar)
+{
+    EXPECT_EQ(sigurdos::mesh::addRegion("#bad name", nullptr), nullptr);
+    EXPECT_EQ(sigurdos::mesh::addRegion("#bad/slash", nullptr), nullptr);
+    EXPECT_EQ(sigurdos::mesh::addRegion("#", nullptr), nullptr);
+    EXPECT_FALSE(sigurdos::mesh::setActiveRegionName("#bad name"));
 }
 
 TEST(RegionsTest, PrivateRegionKeyCanBeAddedAndReloaded) {
@@ -359,6 +382,11 @@ TEST_F(RegionStoreTest, AcceptsOnlyCompleteValidatedLegacyFiles) {
     writeFile(REGION_RAW, malformed);
     EXPECT_FALSE(sigurdos::mesh::detail::regionStoreSaveLegacyFile(
         REGION_LIVE, REGION_RAW));
+
+    const std::vector<uint8_t> invalid_name = legacyRegionFile("#bad/name");
+    writeFile(REGION_LIVE, invalid_name);
+    EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+              sigurdos::mesh::detail::RegionStoreFormat::Invalid);
 }
 
 TEST_F(RegionStoreTest, RejectsMultiNodeParentCycles) {

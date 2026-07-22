@@ -64,9 +64,33 @@ void formatTimeSyncStatus(const TimeSyncStatus& status,
     }
 }
 
-uint32_t utcToEpoch(int year, int month, int day,
-                    int hour, int minute, int second)
+namespace {
+
+bool leapYear(int year)
 {
+    return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+}
+
+int daysInMonth(int year, int month)
+{
+    static constexpr uint8_t days[] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month < 1 || month > 12) return 0;
+    return month == 2 && leapYear(year) ? 29 : days[month - 1];
+}
+
+} // namespace
+
+bool utcToEpochChecked(int year, int month, int day,
+                       int hour, int minute, int second,
+                       uint32_t* epoch_out)
+{
+    if (!epoch_out || month < 1 || month > 12 || day < 1 ||
+        day > daysInMonth(year, month) || hour < 0 || hour > 23 ||
+        minute < 0 || minute > 59 || second < 0 || second > 59) {
+        return false;
+    }
+
     // Howard Hinnant's civil-calendar algorithm. It does not depend on the
     // process timezone and remains valid throughout the 32-bit Unix range.
     int y = year;
@@ -81,10 +105,20 @@ uint32_t utcToEpoch(int year, int month, int day,
         + static_cast<unsigned>(day - 1);
     const unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
     const int days = era * 146097 + static_cast<int>(doe) - 719468;
-    return static_cast<uint32_t>(days) * 86400u
-        + static_cast<uint32_t>(hour) * 3600u
-        + static_cast<uint32_t>(minute) * 60u
-        + static_cast<uint32_t>(second);
+    const int64_t epoch = static_cast<int64_t>(days) * 86400
+        + static_cast<int64_t>(hour) * 3600
+        + static_cast<int64_t>(minute) * 60 + second;
+    if (epoch < 0 || epoch > UINT32_MAX) return false;
+    *epoch_out = static_cast<uint32_t>(epoch);
+    return true;
+}
+
+uint32_t utcToEpoch(int year, int month, int day,
+                    int hour, int minute, int second)
+{
+    uint32_t epoch = 0;
+    return utcToEpochChecked(
+        year, month, day, hour, minute, second, &epoch) ? epoch : 0;
 }
 
 } // namespace sigurdos::mesh

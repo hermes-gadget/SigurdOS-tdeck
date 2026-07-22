@@ -36,8 +36,11 @@ const char* timeSourceName(TimeSource source);
 void formatTimeSyncStatus(const TimeSyncStatus& status,
                           char* out, size_t out_size);
 
-// Convert a UTC calendar value into a Unix epoch. This is the single date
-// arithmetic implementation used by GPS, onboarding, and manual time entry.
+// Convert a validated UTC calendar value into a Unix epoch. The checked form
+// distinguishes the valid epoch value zero from malformed/out-of-range input.
+bool utcToEpochChecked(int year, int month, int day,
+                       int hour, int minute, int second,
+                       uint32_t* epoch_out);
 uint32_t utcToEpoch(int year, int month, int day,
                     int hour, int minute, int second = 0);
 

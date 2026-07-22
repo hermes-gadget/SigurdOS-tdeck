@@ -4,6 +4,7 @@
 #include "regions.h"
 #include "persistence_store.h"
 #include "scope_key_hex.h"
+#include "region_name.h"
 #include "../hal/prefs.h"
 #include <SPIFFS.h>
 #include <cstring>
@@ -83,10 +84,25 @@ bool regionsLoad() {
         regionsSave();
     }
 
+    NodePrefs np = prefs_get();
+    bool prefs_quarantined = false;
+    if (np.active_region[0] && !regionNameValid(np.active_region)) {
+        np.active_region[0] = '\0';
+        np.default_scope_key_hex[0] = '\0';
+        prefs_quarantined = true;
+    }
+    if (np.default_scope_key_hex[0]) {
+        uint8_t checked_key[16];
+        if (!scopeKeyHexDecode(np.default_scope_key_hex, checked_key)) {
+            np.default_scope_key_hex[0] = '\0';
+            prefs_quarantined = true;
+        }
+    }
+    if (prefs_quarantined) prefs_set(np);
+
     // RegionMap's default is the canonical persisted scope. Migrate the older
     // active_region-only model once, then keep the compatibility preference in
     // lockstep with the canonical name.
-    NodePrefs np = prefs_get();
     ::RegionEntry* canonical = g_region_map->getDefaultRegion();
     if (!canonical && np.active_region[0]) {
         canonical = g_region_map->findByName(np.active_region);
@@ -106,8 +122,9 @@ bool regionsLoad() {
     if (canonical && canonical->name[0] == '$' &&
         strlen(np.default_scope_key_hex) == SCOPE_KEY_HEX_LEN) {
         uint8_t key[16];
-        scopeKeyHexDecode(np.default_scope_key_hex, key);
-        installPrivateRegionKey(*canonical, key);
+        if (scopeKeyHexDecode(np.default_scope_key_hex, key)) {
+            installPrivateRegionKey(*canonical, key);
+        }
     }
 
     if (strcmp(np.active_region, g_active_name) != 0) {
@@ -142,7 +159,10 @@ bool regionsPersistenceDirty() {
 // ── CRUD ────────────────────────────────────────────────
 
 ::RegionEntry* addRegion(const char* name, const char* parent_name) {
-    if (!g_region_map || !name || !name[0]) return nullptr;
+    if (!g_region_map || !regionNameValid(name) ||
+        (parent_name && parent_name[0] && !regionNameValid(parent_name))) {
+        return nullptr;
+    }
 
     const RegionMap previous = *g_region_map;
     const bool previous_dirty = g_regions_dirty;
@@ -251,7 +271,7 @@ bool getPrivateRegionKey(const char* name, uint8_t key_out[16]) {
 }
 
 bool removeRegion(const char* name) {
-    if (!g_region_map || !name || !name[0]) return false;
+    if (!g_region_map || !regionNameValid(name)) return false;
 
     ::RegionEntry* region = g_region_map->findByName(name);
     if (!region) return false;
@@ -303,7 +323,7 @@ bool removeRegion(const char* name) {
 }
 
 ::RegionEntry* findRegion(const char* name) {
-    if (!g_region_map || !name) return nullptr;
+    if (!g_region_map || !regionNameValid(name)) return nullptr;
     return g_region_map->findByName(name);
 }
 
@@ -401,6 +421,7 @@ static bool setDefaultScopeInMemory(const char* name) {
     if (!name || !name[0] || strcmp(name, "<null>") == 0) {
         g_region_map->setDefaultRegion(nullptr);
     } else {
+        if (!regionNameValid(name)) return false;
         // Auto-create the region if it doesn't exist (matches upstream CLI)
         ::RegionEntry* def = g_region_map->findByName(name);
         if (!def) {
@@ -431,7 +452,12 @@ const char* getActiveRegion() {
 
 static bool commitActiveRegionPrefs(const char* name, const char* key_hex,
                                     bool replace_key) {
-    if (name && strlen(name) >= sizeof(g_active_name)) return false;
+    if (name && name[0] && !regionNameValid(name)) return false;
+    uint8_t checked_key[16];
+    if (replace_key && key_hex &&
+        (!name || name[0] != '$' || !scopeKeyHexDecode(key_hex, checked_key))) {
+        return false;
+    }
     const NodePrefs previous_prefs = prefs_get();
     NodePrefs np = previous_prefs;
     const RegionMap previous_map = *g_region_map;

@@ -22,6 +22,8 @@
 #include "persistence_store.h"
 #include "response_copy.h"
 #include "telemetry_lpp_parser.h"
+#include "capacity_policy.h"
+#include "region_name.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/boot_watchdog.h"
@@ -1399,7 +1401,8 @@ void syncRegionsFromChannels() {
         if (ch->name[0] != '#') continue;
 
         // Skip if this channel already has a matching region
-        if (map->findByName(ch->name)) continue;
+        if (!sigurdos::mesh::regionNameValid(ch->name) ||
+            map->findByName(ch->name)) continue;
 
         // Create region from channel name via RegionMap
         RegionEntry* r = map->putRegion(ch->name, 0);
@@ -2131,7 +2134,9 @@ void clearCmdResponses() {
 
 // ── Hex-to-bytes helper ─────────────────────────
 int hexToBytes(const char* hex, uint8_t* out, int out_max) {
-    return SigurdMeshV2::hexToBytes(hex, out, (size_t)out_max);
+    size_t capacity = 0;
+    if (!positiveOutputCapacity(out_max, capacity)) return 0;
+    return SigurdMeshV2::hexToBytes(hex, out, capacity);
 }
 
 // ── Advert path (inbound) ─────────────────────

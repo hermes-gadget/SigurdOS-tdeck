@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Ben
 
 #include "mesh/mesh_wrapper.h"
+#include "mesh/region_name.h"
 #include "mesh/regions.h"
 #include "mocks/mock_mesh_state.h"
 #include <cstring>
@@ -274,8 +275,9 @@ bool regionsSave() { return true; }
 RegionMap* getRegionMap() { return nullptr; }
 
 ::RegionEntry* addRegion(const char* name, const char* parent_name) {
-    (void)parent_name;
-    if (!name || !name[0] || mock_region_count >= MAX_REGION_ENTRIES) return nullptr;
+    if (!regionNameValid(name) ||
+        (parent_name && parent_name[0] && !regionNameValid(parent_name)) ||
+        mock_region_count >= MAX_REGION_ENTRIES) return nullptr;
     // reject duplicates
     for (int i = 0; i < mock_region_count; i++) {
         if (strcmp(mock_region_entries[i].name, name) == 0) return nullptr;
@@ -322,7 +324,7 @@ bool getPrivateRegionKey(const char* name, uint8_t key_out[16]) {
 }
 
 bool removeRegion(const char* name) {
-    if (!name || !name[0]) return false;
+    if (!regionNameValid(name)) return false;
     for (int i = 0; i < mock_region_count; i++) {
         if (strcmp(mock_region_entries[i].name, name) == 0) {
             memmove(&mock_region_entries[i], &mock_region_entries[i + 1],
@@ -340,7 +342,7 @@ bool removeRegion(const char* name) {
 }
 
 ::RegionEntry* findRegion(const char* name) {
-    if (!name || !name[0]) return nullptr;
+    if (!regionNameValid(name)) return nullptr;
     for (int i = 0; i < mock_region_count; i++) {
         if (strcmp(mock_region_entries[i].name, name) == 0)
             return &mock_region_entries[i];
@@ -404,6 +406,7 @@ const char* getActiveRegion() {
 }
 
 bool setActiveRegionName(const char* name) {
+    if (name && name[0] && !regionNameValid(name)) return false;
     if (name && name[0]) {
         strncpy(mock_active_region, name, sizeof(mock_active_region) - 1);
         mock_active_region[sizeof(mock_active_region) - 1] = '\0';

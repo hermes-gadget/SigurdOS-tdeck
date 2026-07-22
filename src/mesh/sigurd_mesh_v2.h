@@ -14,7 +14,6 @@
 #include <helpers/TransportKeyStore.h>
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
-#include "autoadd_policy.h"
 #include "pending_ack_policy.h"
 #include "mesh_safety_policy.h"
 #include "flood_scope_state.h"
