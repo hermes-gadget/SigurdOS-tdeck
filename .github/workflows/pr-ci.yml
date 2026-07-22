@@ -343,6 +343,21 @@ jobs:
           [ "$status" -eq 0 ] && echo "Doc references: OK"
           exit "$status"
 
+      - name: Markdown table lint
+        if: ${{ hashFiles('scripts/check_doc_links.py') != '' }}
+        run: |
+          malformed=$(grep -RIn '^||' docs --include='*.md' || true)
+          if [ -n "$malformed" ]; then
+            echo "Malformed Markdown table rows (doubled leading pipes):"
+            echo "$malformed"
+            exit 1
+          fi
+          echo "Markdown table structure: OK"
+
+      - name: Documentation links and source-symbol contracts
+        if: ${{ hashFiles('scripts/check_doc_links.py') != '' }}
+        run: python scripts/check_doc_links.py
+
       - name: AGENTS.md / CLAUDE.md mirror check
         run: |
           # Both files must be byte-identical in their shared content sections
