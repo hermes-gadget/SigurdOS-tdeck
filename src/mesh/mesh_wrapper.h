@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <helpers/RegionMap.h>  // for RegionEntry (must be before namespace)
+#include "status_response.h"
 #include "time_state.h"
 
 // Node type identifiers pinned to MeshCore's AdvertDataHelpers protocol.
@@ -306,29 +307,6 @@ int getLoggedInRoomServerCount();
 const char* getLoggedInRoomServerName(int index);
 
 // ── Status request (Phase 4.2) ────────────────
-#define NODE_STATUS_RESPONSE_SIZE  56  // size of RepeaterStats binary blob
-
-struct NodeStatus {
-    uint16_t batt_milli_volts;       // battery voltage in mV
-    uint16_t curr_tx_queue_len;      // current TX queue length
-    int16_t  noise_floor;            // noise floor (dBm)
-    int16_t  last_rssi;              // last received RSSI (dBm)
-    uint32_t n_packets_recv;         // total packets received
-    uint32_t n_packets_sent;         // total packets sent
-    uint32_t total_air_time_secs;    // total TX air time (seconds)
-    uint32_t total_up_time_secs;     // node uptime (seconds)
-    uint32_t n_sent_flood;           // flood messages sent
-    uint32_t n_sent_direct;          // direct messages sent
-    uint32_t n_recv_flood;           // flood messages received
-    uint32_t n_recv_direct;          // direct messages received
-    uint16_t err_events;             // error event count
-    int16_t  last_snr;               // last SNR (value/4 = dB)
-    uint16_t n_direct_dups;          // duplicate direct packets
-    uint16_t n_flood_dups;           // duplicate flood packets
-    uint32_t total_rx_air_time_secs; // total RX air time (seconds)
-    uint32_t n_recv_errors;          // receive errors
-};
-
 bool requestStatus(const char* dest_name);
 bool hasStatusResponse();
 bool getStatusResult(NodeStatus* out);

@@ -33,6 +33,7 @@
 #include "mesh/companion_message_policy.h"
 #include "mesh/incoming_message_policy.h"
 #include "mesh/mesh_safety_policy.h"
+#include "mesh/status_response.h"
 
 namespace {
 
@@ -1411,101 +1412,63 @@ TEST(PendingAckTest, ExpirationMakesRoomBeforeOverflowEviction) {
 // 52      4     n_recv_errors
 // Total: 56 bytes
 
-struct StatusTestResult {
-    uint16_t batt_milli_volts;
-    uint16_t curr_tx_queue_len;
-    int16_t  noise_floor;
-    int16_t  last_rssi;
-    uint32_t n_packets_recv;
-    uint32_t n_packets_sent;
-    uint32_t total_air_time_secs;
-    uint32_t total_up_time_secs;
-    uint32_t n_sent_flood;
-    uint32_t n_sent_direct;
-    uint32_t n_recv_flood;
-    uint32_t n_recv_direct;
-    uint16_t err_events;
-    int16_t  last_snr;
-    uint16_t n_direct_dups;
-    uint16_t n_flood_dups;
-    uint32_t total_rx_air_time_secs;
-    uint32_t n_recv_errors;
-};
-
-// Parse a 56-byte RepeaterStats blob (after the 4-byte tag prefix)
-static void parse_status_test(const uint8_t* data, uint8_t len, StatusTestResult* out) {
-    if (!data || !out) return;
-    memset(out, 0, sizeof(*out));
-    const uint8_t* blob = data + 4;  // skip 4-byte tag
-    unsigned ofs = 0;
-    auto r16 = [&](int16_t* d) { if (ofs + 2 <= len - 4) { memcpy(d, blob + ofs, 2); ofs += 2; } };
-    auto ru16 = [&](uint16_t* d) { if (ofs + 2 <= len - 4) { memcpy(d, blob + ofs, 2); ofs += 2; } };
-    auto ru32 = [&](uint32_t* d) { if (ofs + 4 <= len - 4) { memcpy(d, blob + ofs, 4); ofs += 4; } };
-    ru16(&out->batt_milli_volts);
-    ru16(&out->curr_tx_queue_len);
-    r16(&out->noise_floor);
-    r16(&out->last_rssi);
-    ru32(&out->n_packets_recv);
-    ru32(&out->n_packets_sent);
-    ru32(&out->total_air_time_secs);
-    ru32(&out->total_up_time_secs);
-    ru32(&out->n_sent_flood);
-    ru32(&out->n_sent_direct);
-    ru32(&out->n_recv_flood);
-    ru32(&out->n_recv_direct);
-    ru16(&out->err_events);
-    r16(&out->last_snr);
-    ru16(&out->n_direct_dups);
-    ru16(&out->n_flood_dups);
-    ru32(&out->total_rx_air_time_secs);
-    ru32(&out->n_recv_errors);
-}
-
 class StatusParseTest : public ::testing::Test {};
 
-TEST_F(StatusParseTest, ParsesFullBlob) {
-    // Build a 60-byte response: 4-byte tag + 56-byte RepeaterStats
-    static constexpr int TAG_SIZE = 4;
-    static constexpr int BLOB_SIZE = 56;
-    uint8_t resp[TAG_SIZE + BLOB_SIZE];
+TEST_F(StatusParseTest, ParsesEveryFieldAtDocumentedOffset) {
+    uint8_t resp[sigurdos::mesh::NODE_STATUS_WIRE_SIZE]{};
+    uint8_t* blob = resp + sigurdos::mesh::NODE_STATUS_TAG_SIZE;
+    auto w16 = [&](size_t offset, uint16_t value) {
+        blob[offset] = static_cast<uint8_t>(value);
+        blob[offset + 1] = static_cast<uint8_t>(value >> 8);
+    };
+    auto w32 = [&](size_t offset, uint32_t value) {
+        blob[offset] = static_cast<uint8_t>(value);
+        blob[offset + 1] = static_cast<uint8_t>(value >> 8);
+        blob[offset + 2] = static_cast<uint8_t>(value >> 16);
+        blob[offset + 3] = static_cast<uint8_t>(value >> 24);
+    };
 
-    // Set tag (4 bytes)
-    uint32_t tag = 0x12345678;
-    memcpy(resp, &tag, TAG_SIZE);
+    const uint16_t batt = 4100;
+    const uint16_t queue = 3;
+    const int16_t nf = -112;
+    const int16_t rssi = -78;
+    const uint32_t pkt_recv = 15234;
+    const uint32_t pkt_sent = 9821;
+    const uint32_t air_tx = 8432;
+    const uint32_t uptime = 172800;
+    const uint32_t sf = 450;
+    const uint32_t sd = 9371;
+    const uint32_t rf = 320;
+    const uint32_t rd = 14901;
+    const uint16_t err = 2;
+    const int16_t snr = -38;
+    const uint16_t dd = 4;
+    const uint16_t fd = 12;
+    const uint32_t air_rx = 15600;
+    const uint32_t rx_err = 0xC0DEF00D;
 
-    // Fill status blob with known values
-    uint16_t batt     = 4100;  // 4.1V
-    uint16_t queue    = 3;
-    int16_t  nf       = -112;
-    int16_t  rssi     = -78;
-    uint32_t pkt_recv = 15234;
-    uint32_t pkt_sent = 9821;
-    uint32_t air_tx   = 8432;  // seconds
-    uint32_t uptime   = 172800; // 48 hours
-    uint32_t sf       = 450;
-    uint32_t sd       = 9371;
-    uint32_t rf       = 320;
-    uint32_t rd       = 14901;
-    uint16_t err      = 2;
-    int16_t  snr      = 38;    // 38/4 = 9.5 dB
-    uint16_t dd       = 4;
-    uint16_t fd       = 12;
-    uint32_t air_rx   = 15600;
-    uint32_t rx_err   = 0;
+    w16(0, batt);
+    w16(2, queue);
+    w16(4, static_cast<uint16_t>(nf));
+    w16(6, static_cast<uint16_t>(rssi));
+    w32(8, pkt_recv);
+    w32(12, pkt_sent);
+    w32(16, air_tx);
+    w32(20, uptime);
+    w32(24, sf);
+    w32(28, sd);
+    w32(32, rf);
+    w32(36, rd);
+    w16(40, err);
+    w16(42, static_cast<uint16_t>(snr));
+    w16(44, dd);
+    w16(46, fd);
+    w32(48, air_rx);
+    w32(52, rx_err);
 
-    unsigned o = 0;
-    auto w16 = [&](auto v) { memcpy(resp + TAG_SIZE + o, &v, 2); o += 2; };
-    auto w32 = [&](auto v) { memcpy(resp + TAG_SIZE + o, &v, 4); o += 4; };
-    w16(batt); w16(queue); w16(nf); w16(rssi);
-    w32(pkt_recv); w32(pkt_sent); w32(air_tx); w32(uptime);
-    w32(sf); w32(sd); w32(rf); w32(rd);
-    w16(err); w16(snr); w16(dd); w16(fd);
-    w32(air_rx); w32(rx_err);
-    ASSERT_EQ(o, (unsigned)BLOB_SIZE);
-
-    // Parse
-    StatusTestResult r;
-    parse_status_test(resp, sizeof(resp), &r);
+    sigurdos::mesh::NodeStatus r{};
+    ASSERT_TRUE(sigurdos::mesh::detail::parseNodeStatusResponse(
+        resp, sizeof(resp), &r));
 
     EXPECT_EQ(r.batt_milli_volts, batt);
     EXPECT_EQ(r.curr_tx_queue_len, queue);
@@ -1527,35 +1490,20 @@ TEST_F(StatusParseTest, ParsesFullBlob) {
     EXPECT_EQ(r.n_recv_errors, rx_err);
 }
 
-TEST_F(StatusParseTest, HandlesShortBlob) {
-    uint8_t resp[8] = {0};  // tag (4) + only 4 bytes of blob
-    uint32_t tag = 42;
-    memcpy(resp, &tag, 4);
-    // LE uint16: AB CD => 0xCDAB = 52651
-    resp[4] = 0xAB;
-    resp[5] = 0xCD;
+TEST_F(StatusParseTest, RejectsTruncatedOversizedAndNullResponses) {
+    uint8_t resp[sigurdos::mesh::NODE_STATUS_WIRE_SIZE + 1]{};
+    sigurdos::mesh::NodeStatus result{};
+    result.n_recv_errors = 0x12345678;
 
-    StatusTestResult r;
-    parse_status_test(resp, sizeof(resp), &r);
-
-    EXPECT_EQ(r.batt_milli_volts, 0xCDABu);
-    // Remaining fields should be zero (not touched by parse)
-    EXPECT_EQ(r.curr_tx_queue_len, 0u);
-    EXPECT_EQ(r.noise_floor, 0);
-    EXPECT_EQ(r.n_packets_recv, 0u);
-}
-
-TEST_F(StatusParseTest, HandlesNullInput) {
-    StatusTestResult r;
-    r.batt_milli_volts = 0xFFFF;
-    parse_status_test(nullptr, 0, &r);
-    // Null data returns without modifying output — original value preserved
-    EXPECT_EQ(r.batt_milli_volts, (uint16_t)0xFFFF);
-}
-
-TEST_F(StatusParseTest, StatusResponseSizeConstant) {
-    // Verify NODE_STATUS_RESPONSE_SIZE matches the expected blob size
-    EXPECT_EQ(56, 56) << "RepeaterStats should be 56 bytes";
+    EXPECT_FALSE(sigurdos::mesh::detail::parseNodeStatusResponse(
+        resp, sigurdos::mesh::NODE_STATUS_WIRE_SIZE - 1, &result));
+    EXPECT_FALSE(sigurdos::mesh::detail::parseNodeStatusResponse(
+        resp, sigurdos::mesh::NODE_STATUS_WIRE_SIZE + 1, &result));
+    EXPECT_FALSE(sigurdos::mesh::detail::parseNodeStatusResponse(
+        nullptr, sigurdos::mesh::NODE_STATUS_WIRE_SIZE, &result));
+    EXPECT_FALSE(sigurdos::mesh::detail::parseNodeStatusResponse(
+        resp, sigurdos::mesh::NODE_STATUS_WIRE_SIZE, nullptr));
+    EXPECT_EQ(result.n_recv_errors, 0x12345678u);
 }
 
 // ═══════════════════════════════════════════════════════════════
