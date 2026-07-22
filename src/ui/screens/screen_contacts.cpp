@@ -29,6 +29,7 @@
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/qr_show.h"
+#include "../../diagnostics/log.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -1150,7 +1151,7 @@ void show_fetch_msgs_dialog(const char* contact_name)
 void contact_detail_screen_show(const char* contact_name)
 {
     if (!contact_name || !contact_name[0]) {
-        Serial.println("[ui] contact_detail: empty name");
+        SIG_LOGW("UI: contact detail requested without a name");
         return;
     }
 
@@ -1538,7 +1539,13 @@ void contact_detail_screen_show(const char* contact_name)
             // Get public key hex for this contact
             char pubkey_hex[65] = {0};
             if (!sigurdos::mesh::getContactPubkeyHex(name, pubkey_hex, sizeof(pubkey_hex))) {
-                Serial.println("[qr] Failed to get pubkey for contact");
+                SIG_LOGW("QR: failed to get public key for contact");
+                lv_obj_t* label = lv_obj_get_child(btn, 0);
+                if (label) {
+                    lv_label_set_text(label, "QR unavailable");
+                    lv_obj_set_style_text_color(label, lv_color_hex(BG_PRIMARY), 0);
+                }
+                lv_obj_set_style_bg_color(btn, lv_color_hex(ACCENT_RED), 0);
                 return;
             }
 

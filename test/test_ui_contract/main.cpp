@@ -18,6 +18,42 @@
 
 #include <gtest/gtest.h>
 
+#include <fstream>
+#include <iterator>
+#include <string>
+
+namespace {
+
+std::string read_project_file(const char* path)
+{
+    const char* prefixes[] = {"", "../", "../../", "../../../", "../../../../"};
+    for (const char* prefix : prefixes) {
+        std::ifstream in(std::string(prefix) + path);
+        if (in.good()) {
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        }
+    }
+    return {};
+}
+
+TEST(UiContractTest, QrFailuresUseLoggingAndVisibleFeedback)
+{
+    const std::string channels = read_project_file("src/ui/screens/screen_channels.cpp");
+    const std::string contacts = read_project_file("src/ui/screens/screen_contacts.cpp");
+    ASSERT_FALSE(channels.empty());
+    ASSERT_FALSE(contacts.empty());
+
+    EXPECT_EQ(channels.find("Serial.print"), std::string::npos);
+    EXPECT_EQ(contacts.find("Serial.print"), std::string::npos);
+    EXPECT_NE(channels.find("SIG_LOGW(\"QR:"), std::string::npos);
+    EXPECT_NE(contacts.find("SIG_LOGW(\"QR:"), std::string::npos);
+    EXPECT_NE(channels.find("lv_label_set_text(label, \"ERR\")"), std::string::npos);
+    EXPECT_NE(contacts.find("lv_label_set_text(label, \"QR unavailable\")"),
+              std::string::npos);
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

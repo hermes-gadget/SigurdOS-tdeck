@@ -24,6 +24,7 @@
 #include "../../mesh/channel_validation.h"
 #include "../../mesh/public_channel.h"
 #include "../../app/qr_show.h"
+#include "../../diagnostics/log.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -282,7 +283,13 @@ void channels_screen_show()
 
                         char secret_hex[65] = {0};
                         if (!sigurdos::mesh::getChannelSecretHex(idx, secret_hex, sizeof(secret_hex))) {
-                            Serial.println("[qr] Failed to get channel secret");
+                            SIG_LOGW("QR: failed to get channel secret");
+                            lv_obj_t* label = lv_obj_get_child(btn, 0);
+                            if (label) {
+                                lv_label_set_text(label, "ERR");
+                                lv_obj_set_style_text_color(label, lv_color_hex(BG_PRIMARY), 0);
+                            }
+                            lv_obj_set_style_bg_color(btn, lv_color_hex(ACCENT_RED), 0);
                             return;
                         }
                         char uri[512];
