@@ -19,8 +19,47 @@
 #include <gtest/gtest.h>
 
 #include "test/test_controller.h"
+#include "test/test_controller_command.h"
 
 namespace {
+
+TEST(TestControllerCommandTest, EveryDispatchedCommandAndAliasIsRecognized) {
+    const char* commands[] = {
+        "help", "?", "nav home", "navigate settings", "back", "tb up", "trackball c",
+        "type hello world", "picker a", "press enter", "inject bob hi", "msg bob hi",
+        "sendchannel Public hi", "sendmessage bob hi", "senddm bob hi", "opendm bob",
+        "addchannel Public", "addchan Public", "removechannel 1", "rmchannel 1",
+        "removechan 1", "rmchan 1", "addrepeater node", "addroomserver room",
+        "login node pass", "setlogin node", "setloginguest node", "screen", "status",
+        "stresschat", "keydiag", "kbddiag", "inputdiag", "touchdiag", "trackballdiag",
+        "tbdiag", "gpsdiag", "contactstats", "ble status", "debug level", "emoji",
+        "emoji-ac a", "capture", "acmd node", "loginstat node", "tree", "widgets",
+        "telemetry on", "query crash", "crash report", "drift", "scrolllist 1",
+        "tap 1 2", "backlight on", "fetchmsgs node 0", "getrf", "setrf args",
+        "reboot", "restart", "factoryreset", "wipe", "advert"};
+    for (const char* line : commands) {
+        SigurdOSTestCommandLine parsed{};
+        EXPECT_EQ(sigurdos_test_controller_parse_command(line, &parsed),
+                  SigurdOSTestCommandParseResult::Ok) << line;
+    }
+}
+
+TEST(TestControllerCommandTest, SplitsArgumentsAndRejectsMalformedInput) {
+    SigurdOSTestCommandLine parsed{};
+    EXPECT_EQ(sigurdos_test_controller_parse_command("  type  hello world  ", &parsed),
+              SigurdOSTestCommandParseResult::Ok);
+    EXPECT_STREQ(parsed.command, "type");
+    EXPECT_STREQ(parsed.arguments, "hello world");
+    EXPECT_EQ(sigurdos_test_controller_parse_command(" # comment", &parsed),
+              SigurdOSTestCommandParseResult::Empty);
+    EXPECT_EQ(sigurdos_test_controller_parse_command("unknown thing", &parsed),
+              SigurdOSTestCommandParseResult::Unknown);
+    char oversized[300];
+    memset(oversized, 'x', sizeof(oversized));
+    oversized[sizeof(oversized) - 1] = '\0';
+    EXPECT_EQ(sigurdos_test_controller_parse_command(oversized, &parsed),
+              SigurdOSTestCommandParseResult::TooLong);
+}
 
 SigurdOSTestRfParseResult parse(const char* arg, SigurdOSTestRfParams* out,
                                 int* parsed_fields = nullptr) {

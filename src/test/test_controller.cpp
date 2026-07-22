@@ -22,6 +22,7 @@
 //   stresschat [cycles]           Stress Chat/Home lifecycle (default 50)
 
 #include "test_controller.h"
+#include "test_controller_command.h"
 #include "hal/display.h"
 #include "hal/trackball.h"
 #include "hal/touch.h"
@@ -2044,22 +2045,16 @@ static void service_stress_chat() {
 
 // ── Command parsing ──────────────────────────────────────
 static bool dispatch(const char* line) {
-    // Skip empty lines and comments
-    if (!line || line[0] == '\0' || line[0] == '#' || line[0] == ';') return false;
-
-    char buf[CMD_BUF_SIZE];
-    strncpy(buf, line, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';
-
-    char* cmd = strtok(buf, " ");
-    if (!cmd) return false;
-
-    char* arg = strtok(nullptr, "");  // rest of line after command
-    if (arg) {
-        // Trim leading whitespace
-        while (*arg == ' ') arg++;
-        if (*arg == '\0') arg = nullptr;
+    SigurdOSTestCommandLine parsed{};
+    const SigurdOSTestCommandParseResult parse_result =
+        sigurdos_test_controller_parse_command(line, &parsed);
+    if (parse_result == SigurdOSTestCommandParseResult::Empty) return false;
+    if (parse_result != SigurdOSTestCommandParseResult::Ok) {
+        Serial.printf("[test] unknown or malformed command (try 'help')\n");
+        return false;
     }
+    const char* cmd = parsed.command;
+    char* arg = parsed.arguments[0] ? parsed.arguments : nullptr;
 
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
         print_help();

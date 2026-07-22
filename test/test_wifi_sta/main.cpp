@@ -11,6 +11,12 @@ using sigurdos::gps_validation::UPLOAD_QUEUE_CAPACITY;
 using sigurdos::gps_validation::UploadQueue;
 using sigurdos::gps_validation::pollConnect;
 using sigurdos::gps_validation::reconnectDue;
+using sigurdos::gps_validation::advanceWifiState;
+using sigurdos::gps_validation::advanceWriteOffset;
+using sigurdos::gps_validation::boundedWriteSize;
+using sigurdos::gps_validation::parseHttpStatusLine;
+using sigurdos::gps_validation::responseExpired;
+using sigurdos::gps_validation::WifiState;
 
 TEST(WifiStaState, ConnectingSucceedsWhenHardwareConnects) {
     EXPECT_EQ(advanceConnectingStatus(Status::Connecting, true, 1),
@@ -80,6 +86,46 @@ TEST(GpsValidationWifi, UploadQueueRejectsOversizedRecords) {
     EXPECT_EQ(queue.dropped(), 1U);
     EXPECT_FALSE(queue.push(nullptr));
     EXPECT_EQ(queue.dropped(), 1U);
+}
+
+TEST(GpsValidationWifi, WifiTransitionsCoverLossTimeoutAndReconnect) {
+    EXPECT_EQ(advanceWifiState(WifiState::Connecting, true, 1, false),
+              WifiState::Connected);
+    EXPECT_EQ(advanceWifiState(WifiState::Connecting, false, 15001, false),
+              WifiState::Disconnected);
+    EXPECT_EQ(advanceWifiState(WifiState::Connected, false, 0, false),
+              WifiState::Disconnected);
+    EXPECT_EQ(advanceWifiState(WifiState::Disconnected, false, 0, true),
+              WifiState::Connecting);
+}
+
+TEST(GpsValidationWifi, PartialWritesAreBoundedAndRejectInvalidProgress) {
+    EXPECT_EQ(boundedWriteSize(150, 0, 64), 64U);
+    EXPECT_EQ(boundedWriteSize(150, 128, 64), 22U);
+    EXPECT_EQ(boundedWriteSize(150, 150, 64), 0U);
+    size_t offset = 0;
+    EXPECT_TRUE(advanceWriteOffset(10, 4, &offset));
+    EXPECT_EQ(offset, 4U);
+    EXPECT_TRUE(advanceWriteOffset(10, 6, &offset));
+    EXPECT_EQ(offset, 10U);
+    EXPECT_FALSE(advanceWriteOffset(10, 1, &offset));
+    EXPECT_FALSE(advanceWriteOffset(10, 0, &offset));
+}
+
+TEST(GpsValidationWifi, HttpStatusParsingIsStrict) {
+    EXPECT_EQ(parseHttpStatusLine("HTTP/1.1 204 No Content"), 204);
+    EXPECT_EQ(parseHttpStatusLine("HTTP/1.0 500"), 500);
+    EXPECT_EQ(parseHttpStatusLine("garbage"), 0);
+    EXPECT_EQ(parseHttpStatusLine("HTTP/1.1 99 nope"), 0);
+    EXPECT_EQ(parseHttpStatusLine("HTTP/1.1 200x"), 0);
+}
+
+TEST(GpsValidationWifi, ResponseCleanupHandlesDisconnectTimeoutAndWrap) {
+    EXPECT_TRUE(responseExpired(false, 0, 1, 0));
+    EXPECT_FALSE(responseExpired(false, 1, 1, 0));
+    EXPECT_FALSE(responseExpired(true, 0, 2000, 0));
+    EXPECT_TRUE(responseExpired(true, 0, 2001, 0));
+    EXPECT_TRUE(responseExpired(true, 0, 0x000007E1U, 0xFFFFFFF0U));
 }
 
 int main(int argc, char** argv) {
