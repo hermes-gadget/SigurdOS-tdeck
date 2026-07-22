@@ -266,12 +266,10 @@ void screens_clear_companion_icon()
 // ════════════════════════════════════════════════════════
 // Device PIN protection
 // ════════════════════════════════════════════════════════
-static uint32_t g_pin_last_unlock_ms = 0;
-static bool g_pin_has_unlock = false;
+static PinGateState g_pin_gate;
 static constexpr uint32_t PIN_GRACE_MS = 300000; // 5 minutes in milliseconds
 static lv_obj_t* g_pin_entry_root = nullptr;
 static uint32_t g_pin_entry_generation = 0;
-static PinAttemptState g_pin_attempts;
 
 bool is_pin_entry_active() {
     if (g_pin_entry_root && !lv_obj_is_valid(g_pin_entry_root)) g_pin_entry_root = nullptr;
@@ -299,9 +297,10 @@ bool pin_entry_handle_trackball(SigurdOSTrackballEvent event) {
 }
 
 bool pin_grace_active() {
-    if (!g_pin_has_unlock) return false;
-    return static_cast<uint32_t>(millis() - g_pin_last_unlock_ms) < PIN_GRACE_MS;
+    return pinGateGraceActive(g_pin_gate, millis(), PIN_GRACE_MS);
 }
+
+void pin_clear_grace() { pinGateClearGrace(g_pin_gate); }
 
 struct PinEntryCtx {
     lv_obj_t* attempts_label;
@@ -310,10 +309,8 @@ struct PinEntryCtx {
 };
 
 static void pin_entry_success(Screen target) {
-    g_pin_attempts.reset();
     g_pin_entry_root = nullptr;
-    g_pin_last_unlock_ms = millis();
-    g_pin_has_unlock = true;
+    pinGateRecordSuccess(g_pin_gate, millis());
     navigation_pin_unlocked(target);
 }
 
@@ -333,7 +330,7 @@ void pin_entry_show(Screen target_screen) {
 
     // Subtitle
     lv_obj_t* sub = lv_label_create(scr);
-    lv_label_set_text(sub, "4-digit PIN to unlock");
+    lv_label_set_text(sub, "4-6 digit PIN to unlock");
     lv_obj_set_style_text_color(sub, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(sub, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 60);
@@ -345,7 +342,7 @@ void pin_entry_show(Screen target_screen) {
     lv_obj_set_style_text_align(ta, LV_TEXT_ALIGN_CENTER, 0);
     lv_textarea_set_password_mode(ta, true);
     lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_max_length(ta, 4);
+    lv_textarea_set_max_length(ta, 6);
     lv_textarea_set_accepted_chars(ta, "0123456789");
     lv_textarea_set_placeholder_text(ta, "----");
     lv_obj_set_style_text_font(ta, emoji_wrapped_montserrat_14, 0);
@@ -353,12 +350,16 @@ void pin_entry_show(Screen target_screen) {
 
     // Attempts remaining label
     lv_obj_t* attempts_label = lv_label_create(scr);
-    const bool can_attempt = g_pin_attempts.can_attempt(millis());
-    char initial_attempts[40];
-    if (can_attempt) snprintf(initial_attempts, sizeof(initial_attempts), "%u attempts remaining",
-                              static_cast<unsigned>(g_pin_attempts.remaining()));
-    else snprintf(initial_attempts, sizeof(initial_attempts), "Locked; try again in 30 seconds");
-    lv_label_set_text(attempts_label, initial_attempts);
+    const uint32_t lockout_remaining = pinGateRemaining(g_pin_gate, millis());
+    char initial_status[48];
+    if (lockout_remaining) {
+        snprintf(initial_status, sizeof(initial_status), "Locked: retry in %lus",
+                 (unsigned long)((lockout_remaining + 999) / 1000));
+    } else {
+        snprintf(initial_status, sizeof(initial_status), "%u failed attempts",
+                 (unsigned)g_pin_gate.failures);
+    }
+    lv_label_set_text(attempts_label, initial_status);
     lv_obj_set_style_text_color(attempts_label, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(attempts_label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(attempts_label, LV_ALIGN_BOTTOM_MID, 0, -20);
@@ -379,16 +380,25 @@ void pin_entry_show(Screen target_screen) {
     // Allocate context
     PinEntryCtx* ctx = new PinEntryCtx{attempts_label, target_screen, g_pin_entry_generation};
 
-    // Value change callback — auto-submit on 4 digits
+    // Value change callback — submit when the configured 4-6 digit length is reached.
     lv_obj_add_event_cb(ta, [](lv_event_t* e) {
         PinEntryCtx* ctx = (PinEntryCtx*)lv_event_get_user_data(e);
         lv_obj_t* ta_obj = (lv_obj_t*)lv_event_get_target(e);
 
         const char* text = lv_textarea_get_text(ta_obj);
-        if (strlen(text) == 4) {
-            if (!g_pin_attempts.can_attempt(millis())) {
+        char expected[7];
+        snprintf(expected, sizeof(expected), "%lu",
+                 (unsigned long)sigurdos::prefs_get().device_pin);
+        if (strlen(text) == strlen(expected)) {
+            const uint32_t now = millis();
+            const uint32_t lockout_remaining =
+                pinGateRemaining(g_pin_gate, now);
+            if (lockout_remaining != 0) {
                 lv_textarea_set_text(ta_obj, "");
-                lv_label_set_text(ctx->attempts_label, "Locked; try again in 30 seconds");
+                char status[48];
+                snprintf(status, sizeof(status), "Locked: retry in %lus",
+                         (unsigned long)((lockout_remaining + 999) / 1000));
+                lv_label_set_text(ctx->attempts_label, status);
                 return;
             }
             uint32_t entered = (uint32_t)atoi(text);
@@ -397,14 +407,18 @@ void pin_entry_show(Screen target_screen) {
                 return;
             }
             // Wrong PIN
-            g_pin_attempts.record_failure(millis());
+            pinGateRecordFailure(g_pin_gate, now);
             lv_textarea_set_text(ta_obj, "");
-            if (g_pin_attempts.remaining() == 0) {
-                lv_label_set_text(ctx->attempts_label, "Locked; try again in 30 seconds");
+            const uint32_t delay_ms = pinGateRemaining(g_pin_gate, now);
+            if (delay_ms != 0) {
+                char lockout[48];
+                snprintf(lockout, sizeof(lockout), "Locked: retry in %lus",
+                         (unsigned long)((delay_ms + 999) / 1000));
+                lv_label_set_text(ctx->attempts_label, lockout);
             } else {
                 char att_buf[32];
-                snprintf(att_buf, sizeof(att_buf), "%u attempts remaining",
-                         static_cast<unsigned>(g_pin_attempts.remaining()));
+                snprintf(att_buf, sizeof(att_buf), "%u failed attempts",
+                         (unsigned)g_pin_gate.failures);
                 lv_label_set_text(ctx->attempts_label, att_buf);
             }
         }

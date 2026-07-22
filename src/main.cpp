@@ -21,6 +21,7 @@
 #include "app/gps_clock_handoff.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/ui.h"
+#include "ui/screens_common.h"
 #include "ui/theme.h"
 #include "diagnostics/debug_cfg.h"
 #include "diagnostics/diagnostic_io.h"
@@ -57,6 +58,7 @@ static const char* BOOT_TAG = "boot";
 
 [[noreturn]] static void enter_orderly_sleep()
 {
+    sigurdos::ui::pin_clear_grace();
     // The mesh shutdown coordinator stops new work, persists every available
     // store, quiesces buses, and retries checked deep-sleep preparation. It is
     // valid before mesh init and skips persistence when no store is usable.

@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../identity_command_guard.h"
 #include "../navigation.h"
 #include "../theme.h"
 #include "../responsive.h"
@@ -26,6 +27,7 @@
 #include "../../hal/prefs.h"
 #include "../../hal/atomic_file.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../comms/secure_wipe.h"
 #include "../../fonts/emoji_font.h"
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -128,6 +130,7 @@ static uint32_t term_classify_line(const char* text)
 }
 
 // ── Terminal line cap — prevent unbounded label accumulation ──
+static IdentityCommandGuard g_identity_command_guard;
 static constexpr uint32_t MAX_TERM_COMMAND_LENGTH = 255;
 static constexpr size_t MAX_TERM_VAR_KEY_LENGTH = 31;
 static constexpr size_t MAX_TERM_VAR_VALUE_LENGTH = 127;
@@ -175,6 +178,10 @@ void terminal_screen_show()
         return;
     }
     lv_obj_t* scr = make_screen_full("Terminal");
+    g_identity_command_guard = {};
+    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+        g_identity_command_guard = {};
+    }, LV_EVENT_DELETE, nullptr);
 
     static constexpr int TERM_INPUT_H = 28;
     static constexpr int TERM_LOG_H   = CONTENT_H - TERM_INPUT_H - DIVIDER_H;  // 167
@@ -240,7 +247,11 @@ void terminal_screen_show()
 
         // Echo the command
         static char echo[280];
-        snprintf(echo, sizeof(echo), "> %s", cmd);
+        if (strncmp(cmd, "importkey ", 10) == 0) {
+            snprintf(echo, sizeof(echo), "> importkey [REDACTED]");
+        } else {
+            snprintf(echo, sizeof(echo), "> %s", cmd);
+        }
         term_add_line(log_cont, echo);
 
         static char result[256];
@@ -479,28 +490,67 @@ void terminal_screen_show()
             term_add_line(log_cont, "--- End emoji list ---");
             lv_textarea_set_text(ta, "");
             return;
-        } else if (strcmp(cmd, "exportkey") == 0) {
-            char hex[PRV_KEY_SIZE * 2 + 1] = {0};
-            if (sigurdos::mesh::exportIdentity(hex, sizeof(hex))) {
-                term_add_line(log_cont, "Private key (keep secret!):");
-                snprintf(result, sizeof(result), "%s", hex);
+        } else if (strcmp(cmd, "exportkey") == 0 ||
+                   strcmp(cmd, "exportkey CONFIRM") == 0) {
+            const bool confirmed = strcmp(cmd, "exportkey CONFIRM") == 0;
+            const IdentityGuardResult auth = authorizeIdentityCommand(
+                g_identity_command_guard, sigurdos::prefs_get().device_pin,
+                IdentityOperation::Export, confirmed, millis());
+            if (auth == IdentityGuardResult::ConfirmationRequired) {
+                snprintf(result, sizeof(result),
+                         "Physical confirmation required: type exportkey CONFIRM within 15s");
+            } else if (auth == IdentityGuardResult::ConfirmationRejected) {
+                snprintf(result, sizeof(result), "Export confirmation missing or expired");
             } else {
-                snprintf(result, sizeof(result), "Export failed (mesh not ready?)");
+                char hex[PRV_KEY_SIZE * 2 + 1] = {0};
+                sigurdos::comms::ScopedWipe wipe(hex, sizeof(hex));
+                if (sigurdos::mesh::exportIdentity(hex, sizeof(hex))) {
+                    term_add_line(log_cont, "Private key chunks (keep secret!):");
+                    for (size_t offset = 0; offset < sizeof(hex) - 1; offset += 32) {
+                        char chunk[33]{};
+                        sigurdos::comms::ScopedWipe chunk_wipe(chunk, sizeof(chunk));
+                        memcpy(chunk, hex + offset, 32);
+                        term_add_line(log_cont, chunk);
+                    }
+                    snprintf(result, sizeof(result),
+                             "Export complete; leave Terminal to clear view");
+                } else {
+                    snprintf(result, sizeof(result),
+                             "Export failed (mesh not ready?)");
+                }
             }
         } else if (strncmp(cmd, "importkey ", 10) == 0) {
             const char* hex_in = cmd + 10;
             while (*hex_in == ' ' || *hex_in == '\t') hex_in++;
-            size_t hlen = strlen(hex_in);
-            if (hlen != PRV_KEY_SIZE * 2) {
+            bool confirmed = false;
+            if (strncmp(hex_in, "CONFIRM ", 8) == 0) {
+                confirmed = true;
+                hex_in += 8;
+                while (*hex_in == ' ' || *hex_in == '\t') hex_in++;
+            }
+            const IdentityGuardResult auth = authorizeIdentityCommand(
+                g_identity_command_guard, sigurdos::prefs_get().device_pin,
+                IdentityOperation::Import, confirmed, millis());
+            if (auth == IdentityGuardResult::ConfirmationRequired) {
                 snprintf(result, sizeof(result),
-                    "Bad key length: got %zu hex, need %d",
-                    hlen, PRV_KEY_SIZE * 2);
-            } else if (sigurdos::mesh::importIdentity(hex_in)) {
-                term_add_line(log_cont, "Identity imported. Reboot for contacts to re-pair.");
-                lv_textarea_set_text(ta, "");
-                return;
+                         "Physical confirmation required: repeat as importkey CONFIRM <key> within 15s");
+            } else if (auth == IdentityGuardResult::ConfirmationRejected) {
+                snprintf(result, sizeof(result), "Import confirmation missing or expired");
             } else {
-                snprintf(result, sizeof(result), "Import failed (invalid key?)");
+                size_t hlen = strlen(hex_in);
+                if (hlen != PRV_KEY_SIZE * 2) {
+                    snprintf(result, sizeof(result),
+                        "Bad key length: got %zu hex, need %d",
+                        hlen, PRV_KEY_SIZE * 2);
+                } else if (sigurdos::mesh::importIdentity(hex_in)) {
+                    term_add_line(log_cont,
+                        "Identity imported. Reboot for contacts to re-pair.");
+                    lv_textarea_set_text(ta, "");
+                    return;
+                } else {
+                    snprintf(result, sizeof(result),
+                             "Import failed (invalid key?)");
+                }
             }
         } else {
             snprintf(result, sizeof(result), "Unknown: %s  (type 'help')", cmd);

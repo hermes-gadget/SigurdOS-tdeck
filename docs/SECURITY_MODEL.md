@@ -7,9 +7,22 @@ aid, not a claim that physical possession of the device is harmless.
 
 | Boundary | Protection | Important limitation |
 |---|---|---|
-| BLE companion | ESP32 BLE Secure Connections bonding, a locally opened two-minute new-pairing window, and the displayed pairing passkey | A bonded phone is an administrator. Known bonds may reconnect outside the pairing window. Remove stale bonds before transferring the device. The four-digit device PIN is not the BLE authenticator. |
+| BLE companion | ESP32 BLE Secure Connections bonding, a locally opened two-minute new-pairing window, and the displayed pairing passkey | A bonded phone is an administrator. Known bonds may reconnect outside the pairing window. Remove stale bonds before transferring the device. The 4–6 digit device PIN is not the BLE authenticator. |
 | USB companion | Physical access to the USB data port | Companion USB is a diagnostic/trusted-host transport and has no protocol authentication. Do not connect it to an untrusted host. |
 | Device PIN | Local LVGL Settings and identity-administration gates | The PIN is a short UI access-control mechanism, not disk encryption and not a companion-protocol credential. It does not protect USB administration. |
+
+The local PIN gate retains failed attempts when its screen is recreated and
+applies wrap-safe escalating delays up to five minutes. A successful unlock
+resets failures and starts a five-minute privileged grace window; orderly sleep,
+shutdown, and PIN changes clear that grace. PINs are 4–6 digits, cannot begin
+with zero, and must be entered twice when configured.
+
+When no device PIN is configured, local Terminal identity import/export uses a
+fresh 15-second, operation-specific confirmation. The confirmation is
+single-use, is cleared when Terminal closes, and an import command is redacted
+from the on-screen transcript. Exported key bytes are displayed in short chunks
+and temporary buffers are wiped after use. This local confirmation does not
+change the BLE or USB companion trust boundaries below.
 
 Companion commands can change configuration and, where enabled, import or
 export identity material. Private-key import/export can be removed at compile

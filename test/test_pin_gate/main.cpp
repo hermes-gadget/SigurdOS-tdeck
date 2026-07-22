@@ -10,48 +10,33 @@ int main(int argc, char** argv) {
     return RUN_ALL_TESTS();
 }
 
-TEST(PinAttemptStateTest, ReentryDoesNotResetFailures) {
-    PinAttemptState state;
-    state.record_failure(10);
-    state.record_failure(20);
-    EXPECT_EQ(state.remaining(), 1);
-    EXPECT_TRUE(state.can_attempt(25));
-    EXPECT_EQ(state.remaining(), 1);
-}
+TEST(PinGatePolicyTest, EscalationPersistsUntilSuccessfulUnlock) {
+    PinGateState state;
+    pinGateRecordFailure(state, 10);
+    pinGateRecordFailure(state, 20);
+    EXPECT_EQ(state.failures, 2);
+    EXPECT_EQ(state.lockout_ms, 1000U);
+    EXPECT_TRUE(pinGateLocked(state, 25));
+    EXPECT_FALSE(pinGateLocked(state, 1020));
+    EXPECT_EQ(state.failures, 2);
 
-TEST(PinAttemptStateTest, ThirdFailureLocksUntilCooldown) {
-    PinAttemptState state;
-    state.record_failure(10);
-    state.record_failure(20);
-    state.record_failure(30);
-    EXPECT_FALSE(state.can_attempt(30 + PIN_LOCKOUT_MS - 1));
-    EXPECT_TRUE(state.can_attempt(30 + PIN_LOCKOUT_MS));
-    EXPECT_EQ(state.remaining(), PIN_MAX_FAILURES);
-}
-
-TEST(PinAttemptStateTest, CooldownComparisonHandlesMillisWrap) {
-    PinAttemptState state;
-    state.record_failure(UINT32_MAX - 20);
-    state.record_failure(UINT32_MAX - 10);
-    state.record_failure(UINT32_MAX - 5);
-    EXPECT_FALSE(state.can_attempt(10));
-    EXPECT_TRUE(state.can_attempt(PIN_LOCKOUT_MS));
-}
-
-TEST(PinAttemptStateTest, SuccessResetRestoresBudget) {
-    PinAttemptState state;
-    state.record_failure(1);
-    state.reset();
-    EXPECT_EQ(state.remaining(), PIN_MAX_FAILURES);
+    pinGateRecordSuccess(state, 1021);
+    EXPECT_EQ(state.failures, 0);
+    EXPECT_TRUE(pinGateGraceActive(state, 1022, 300000));
 }
 
 TEST(PinValuePolicyTest, RejectsZeroPinAndRequiresConfirmation) {
     EXPECT_FALSE(pin_value_valid("0000"));
+    EXPECT_FALSE(pin_value_valid("0123"));
     EXPECT_FALSE(pin_value_valid("123"));
+    EXPECT_FALSE(pin_value_valid("1234567"));
     EXPECT_FALSE(pin_value_valid("12a4"));
     EXPECT_TRUE(pin_value_valid("1234"));
+    EXPECT_TRUE(pin_value_valid("12345"));
+    EXPECT_TRUE(pin_value_valid("123456"));
     EXPECT_FALSE(pin_confirmation_valid("1234", "1235"));
     EXPECT_TRUE(pin_confirmation_valid("1234", "1234"));
+    EXPECT_TRUE(pin_confirmation_valid("123456", "123456"));
 }
 
 TEST(PinModalInputTest, TrackballNavigatesAndActivatesModalControls) {

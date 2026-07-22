@@ -768,7 +768,7 @@ void settings_system_show()
             lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
             lv_obj_t* msg = lv_label_create(dlg);
-            lv_label_set_text(msg, "Enter and confirm a 4-digit PIN");
+            lv_label_set_text(msg, "Enter and confirm a 4-6 digit PIN");
             lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
             lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(msg, LV_ALIGN_TOP_LEFT, 8, 24);
@@ -778,7 +778,7 @@ void settings_system_show()
             lv_obj_align(pin_ta, LV_ALIGN_TOP_MID, 0, 44);
             lv_textarea_set_password_mode(pin_ta, true);
             lv_textarea_set_one_line(pin_ta, true);
-            lv_textarea_set_max_length(pin_ta, 4);
+            lv_textarea_set_max_length(pin_ta, 6);
             lv_textarea_set_accepted_chars(pin_ta, "0123456789");
             lv_obj_set_style_text_align(pin_ta, LV_TEXT_ALIGN_CENTER, 0);
             apply_pixel_input(pin_ta);
@@ -788,7 +788,7 @@ void settings_system_show()
             lv_obj_align(confirm_ta, LV_ALIGN_TOP_MID, 0, 80);
             lv_textarea_set_password_mode(confirm_ta, true);
             lv_textarea_set_one_line(confirm_ta, true);
-            lv_textarea_set_max_length(confirm_ta, 4);
+            lv_textarea_set_max_length(confirm_ta, 6);
             lv_textarea_set_accepted_chars(confirm_ta, "0123456789");
             lv_textarea_set_placeholder_text(confirm_ta, "Confirm");
             lv_obj_set_style_text_align(confirm_ta, LV_TEXT_ALIGN_CENTER, 0);
@@ -814,9 +814,9 @@ void settings_system_show()
                 if (!pin_confirmation_valid(pin_str, confirm_str)) {
                     if (feedback) {
                         lv_label_set_text(feedback,
-                            pin_str && strcmp(pin_str, "0000") == 0
-                                ? "0000 is reserved for disabled; use Clear PIN"
-                                : "PINs must be 4 digits and match");
+                            pin_str && pin_str[0] == '0'
+                                ? "PIN cannot start with zero; use Clear to disable"
+                                : "PINs must be 4-6 digits and match");
                         lv_obj_set_style_text_color(feedback, lv_color_hex(ACCENT_RED), 0);
                     }
                     return;
@@ -827,6 +827,7 @@ void settings_system_show()
                     if (feedback) lv_label_set_text(feedback, "PIN could not be saved");
                     return;
                 }
+                pin_clear_grace();
                 lv_obj_del_async(dlg);
             }, LV_EVENT_CLICKED, pin_ta);
 
@@ -857,6 +858,7 @@ void settings_system_show()
                     auto p = sigurdos::prefs_get();
                     p.device_pin = 0;
                     sigurdos::prefs_set(p);
+                    pin_clear_grace();
                     lv_obj_del_async(dlg);
                 }, LV_EVENT_CLICKED, nullptr);
             }
@@ -1275,6 +1277,7 @@ void settings_system_show()
         lv_label_set_text(cfl, "Shut down");
         lv_obj_center(cfl);
         lv_obj_add_event_cb(confirm_btn, [](lv_event_t*) {
+            pin_clear_grace();
             sigurdos::mesh::shutdown();
         }, LV_EVENT_CLICKED, nullptr);
     }, LV_EVENT_CLICKED, nullptr);

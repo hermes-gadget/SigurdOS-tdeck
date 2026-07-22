@@ -42,6 +42,8 @@ void update_companion_status();
 
 // Device PIN gate — true while a previous unlock is within the grace window.
 bool pin_grace_active();
+// Clear any privileged grace window before sleep, shutdown, or explicit lock.
+void pin_clear_grace();
 // Show the PIN entry screen; loads target_screen on successful entry.
 void pin_entry_show(Screen target_screen);
 bool is_pin_entry_active();
