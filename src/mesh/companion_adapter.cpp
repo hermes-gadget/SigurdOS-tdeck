@@ -726,8 +726,7 @@ public:
         ESP.restart();
     }
     bool factoryReset() override {
-        sigurdos::mesh::factoryReset();  // formats + reboots; does not return
-        return true;
+        return sigurdos::mesh::factoryReset();  // reboots on success
     }
 
     // ── Stats ────────────────────────────────────────────────
@@ -1280,6 +1279,20 @@ static void serviceBleBondRotation()
 void sigurdos::mesh::companionAdapterIdentityChanged()
 {
     if (g_companion_bridge_ptr) g_companion_bridge_ptr->onIdentityChanged();
+}
+
+bool sigurdos::mesh::companionAdapterPrepareFactoryReset()
+{
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    // Schedule deletion even if disabling reports a transport error. The
+    // service loop then retries removeAllBonds() with advertising withheld.
+    g_ble_bond_rotation.request(millis(), false);
+    CompanionBridge* bridge = companionBridge();
+    if (bridge && bridge->isEnabled() && !bridge->setEnabled(false)) {
+        return false;
+    }
+#endif
+    return true;
 }
 
 void sigurdos::mesh::companionAdapterInit()

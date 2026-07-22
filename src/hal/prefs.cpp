@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Ben
 
 #include "prefs.h"
+#include "factory_reset_policy.h"
 #include "gps_demand.h"
 #include "prefs_write_policy.h"
 #include "mesh/airtime_policy.h"
@@ -13,7 +14,7 @@
 
 namespace sigurdos {
 
-static constexpr const char* NVS_NS = "sigurdos";
+static constexpr const char* NVS_NS = hal::factory_reset::PREFS_NAMESPACE;
 static NodePrefs g_prefs;
 
 namespace {
@@ -71,6 +72,38 @@ bool persistBleMigration(bool enabled, bool user_set) {
     return error == ESP_OK;
 }
 #endif
+
+bool writePrefsToNvs(const NodePrefs& prefs, detail::BlePrefsWriteMode ble_mode,
+                     bool erase_first)
+{
+    nvs_handle_t handle = 0;
+    esp_err_t error = nvs_open(NVS_NS, NVS_READWRITE, &handle);
+    if (error != ESP_OK) {
+        SIG_LOGE("[prefs] nvs_open failed: %s", esp_err_to_name(error));
+        return false;
+    }
+    if (erase_first) {
+        error = nvs_erase_all(handle);
+        if (error != ESP_OK) {
+            SIG_LOGE("[prefs] factory reset erase failed: %s", esp_err_to_name(error));
+            nvs_close(handle);
+            return false;
+        }
+    }
+
+    NvsWriterContext context{handle};
+    const detail::PrefsNvsWriter writer{
+        &context, setI8, setU8, setU16, setI32, setU32, setBlob, setString, commit
+    };
+    detail::PrefsWriteFailure failure;
+    const bool saved = detail::prefsWriteAll(prefs, writer, ble_mode, &failure);
+    nvs_close(handle);
+    if (!saved) {
+        SIG_LOGE("[prefs] NVS write failed at %s: %s", failure.key,
+                 esp_err_to_name((esp_err_t)failure.error));
+    }
+    return saved;
+}
 
 } // namespace
 
@@ -207,30 +240,12 @@ bool prefs_load(NodePrefs& p) {
 }
 
 bool prefs_save(const NodePrefs& p) {
-    nvs_handle_t handle = 0;
-    esp_err_t error = nvs_open(NVS_NS, NVS_READWRITE, &handle);
-    if (error != ESP_OK) {
-        SIG_LOGE("[prefs] nvs_open failed: %s", esp_err_to_name(error));
-        return false;
-    }
-
-    NvsWriterContext context{handle};
-    const detail::PrefsNvsWriter writer{
-        &context, setI8, setU8, setU16, setI32, setU32, setBlob, setString, commit
-    };
-    detail::PrefsWriteFailure failure;
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
     constexpr detail::BlePrefsWriteMode ble_mode = detail::BlePrefsWriteMode::Write;
 #else
     constexpr detail::BlePrefsWriteMode ble_mode = detail::BlePrefsWriteMode::Preserve;
 #endif
-    const bool saved = detail::prefsWriteAll(p, writer, ble_mode, &failure);
-    nvs_close(handle);
-    if (!saved) {
-        SIG_LOGE("[prefs] NVS write failed at %s: %s", failure.key,
-                 esp_err_to_name((esp_err_t)failure.error));
-    }
-    return saved;
+    return writePrefsToNvs(p, ble_mode, false);
 }
 
 bool prefs_exists() {
@@ -239,6 +254,45 @@ bool prefs_exists() {
     bool exists = nvs.isKey("cfg");
     nvs.end();
     return exists;
+}
+
+bool prefs_arm_factory_reset()
+{
+    // Load the cached snapshot before modifying its security fields.
+    (void)prefs_get();
+    nvs_handle_t handle = 0;
+    esp_err_t error = nvs_open(NVS_NS, NVS_READWRITE, &handle);
+    if (error != ESP_OK) {
+        SIG_LOGE("[prefs] factory reset interlock open failed: %s",
+                 esp_err_to_name(error));
+        return false;
+    }
+    NvsWriterContext context{handle};
+    const detail::PrefsNvsWriter writer{
+        &context, setI8, setU8, setU16, setI32, setU32, setBlob, setString, commit
+    };
+    detail::PrefsWriteFailure failure;
+    const bool saved = detail::prefsWriteFactoryResetInterlock(writer, &failure);
+    nvs_close(handle);
+    if (!saved) {
+        SIG_LOGE("[prefs] factory reset interlock failed at %s: %s", failure.key,
+                 esp_err_to_name((esp_err_t)failure.error));
+        return false;
+    }
+    g_prefs.ble_enabled = false;
+    g_prefs.ble_user_set = true;
+    g_prefs.ble_bond_reset_pending = true;
+    return true;
+}
+
+bool prefs_commit_factory_reset()
+{
+    NodePrefs reset;
+    reset.set_factory_reset_defaults();
+    if (!writePrefsToNvs(
+            reset, detail::BlePrefsWriteMode::Write, true)) return false;
+    g_prefs = reset;
+    return true;
 }
 
 const NodePrefs& prefs_get() {
@@ -283,7 +337,8 @@ bool clearSavedNetworkCredentials() {
 // ── Repeater password storage ─────────────────────────────────────────
 
 // ── Named chat routing scopes ──────────────────────────────────────────
-static constexpr const char* CHAT_SCOPE_NS = "chat_scopes";
+static constexpr const char* CHAT_SCOPE_NS =
+    hal::factory_reset::CHAT_SCOPES_NAMESPACE;
 static constexpr int MAX_CHAT_SCOPES = 32;
 
 static void makeChatScopeKey(char* out, size_t out_size, int slot) {
@@ -382,7 +437,8 @@ bool removeChatScopePreference(const char* conversation) {
 }
 
 // ── Saved repeater passwords ──
-static constexpr const char* PW_NS = "sigurdos_pw";
+static constexpr const char* PW_NS =
+    hal::factory_reset::PASSWORDS_NAMESPACE;
 static constexpr int MAX_SAVED_PWS = 8;
 
 static uint8_t clampPasswordStoreCount(uint8_t count) {

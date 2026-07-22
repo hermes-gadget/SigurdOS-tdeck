@@ -300,7 +300,7 @@ TEST_F(MeshWrapperTest, ResetPathToSignature) {
 }
 
 TEST_F(MeshWrapperTest, FactoryResetSignature) {
-    using fn = void (*)();
+    using fn = bool (*)();
     (void)static_cast<fn>(sigurdos::mesh::factoryReset);
     SUCCEED();
 }

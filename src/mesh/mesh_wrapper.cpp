@@ -31,6 +31,7 @@
 #include "hal/boot_watchdog.h"
 #include "hal/gps.h"
 #include "hal/prefs.h"
+#include "hal/factory_reset_policy.h"
 #include "hal/github_ota.h"
 #include "hal/wifi_ota.h"
 #include "sigurd_mesh_v2.h"
@@ -1817,49 +1818,55 @@ void shutdown()
         });
 }
 
-void factoryReset()
+bool factoryReset()
 {
-    // Save identity in case we need it for rollback, then wipe everything
-    if (g_mesh) saveIdentity(g_mesh->self_id);
-    saveChannels();
-    saveContacts();
+    // Commit the security interlock before any destructive operation. If
+    // power fails from this point onward, the next boot withholds advertising
+    // and resumes supported ESP-IDF bond deletion.
+    if (!sigurdos::prefs_arm_factory_reset()) {
+        Serial.println("[factory-reset] failed to persist BLE revocation interlock");
+        return false;
+    }
+    if (!companionAdapterPrepareFactoryReset()) {
+        Serial.println("[factory-reset] failed to stop BLE; bond purge remains pending");
+        return false;
+    }
 
-    // Close SPIFFS before reformatting
+    using namespace sigurdos::hal::factory_reset;
+    auto apply_target = [](const NvsTarget& target, void*) -> bool {
+        if (target.action == NvsAction::ReplaceWithSafePrefs) {
+            return sigurdos::prefs_commit_factory_reset();
+        }
+        Preferences nvs;
+        if (!nvs.begin(target.name, false)) return false;
+        const bool cleared = nvs.clear();
+        nvs.end();
+        return cleared;
+    };
+    const NvsTarget* failed_target = nullptr;
+    if (!applyNvsTargets(apply_target, nullptr, &failed_target)) {
+        Serial.printf("[factory-reset] failed to reset NVS namespace: %s\n",
+                      failed_target ? failed_target->name : "unknown");
+        return false;
+    }
+
+    // Reformat only the application filesystem. Do not erase the complete NVS
+    // partition: PHY calibration is system-owned, while BLE bonds are revoked
+    // through esp_ble_get_bond_device_list()/esp_ble_remove_bond_device().
     SPIFFS.end();
-
-    // Erase known NVS namespaces (prefs + channels, repeater passwords)
-    {
-        Preferences nvs;
-        if (nvs.begin("sigurdos", false)) {
-            nvs.clear();
-            nvs.end();
-        }
+    if (!SPIFFS.format()) {
+        Serial.println("[factory-reset] SPIFFS format failed; BLE remains disabled");
+        return false;
     }
-    {
-        Preferences nvs;
-        if (nvs.begin("sigurdos_pw", false)) {
-            nvs.clear();
-            nvs.end();
-        }
-    }
-
-    // Reformat SPIFFS to wipe identity, contacts, and any other files
-    SPIFFS.format();
-
-    // Only erase SigurdOS-owned NVS namespaces — do NOT erase the full
-    // NVS partition (which would destroy PHY calibration data, BLE bonding
-    // keys, and other ESP-IDF system state). A full NVS erase requires an
-    // explicit "deep reset" action with user confirmation.
-    //
-    // Namespace-scoped erase is already done above for 'sigurdos' and
-    // 'sigurdos_pw'. No nvs_flash_erase() here — it was too broad.
 
     // Give flash writes time to complete before restart
     delay(200);
 
-    // Reboot — on next boot, init() will find no prefs and no identity,
-    // so it will use defaults and generate a fresh identity
+    // Reboot — on next boot, init() will find safe reset prefs but no identity,
+    // purge old bonds, and generate a fresh identity. BLE remains off until
+    // the new owner enables pairing.
     ESP.restart();
+    return true;
 }
 
 int getPacketLogCount() { return pkt_log_count; }

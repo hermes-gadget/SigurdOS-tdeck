@@ -1872,7 +1872,9 @@ static void cmd_reboot() {
 static void cmd_factoryreset() {
     Serial.println(F("[test] factory reset: erasing all data and rebooting..."));
     Serial.flush();
-    sigurdos::mesh::factoryReset();
+    if (!sigurdos::mesh::factoryReset()) {
+        Serial.println(F("[test] factory reset: FAILED; BLE remains disabled"));
+    }
 }
 
 // ── Cmd: advert ───────────────────────────────────────────

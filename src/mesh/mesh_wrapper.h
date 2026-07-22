@@ -170,7 +170,7 @@ bool saveState();
 bool saveChannels();
 void loadChannels();
 void shutdown();
-void factoryReset();
+bool factoryReset();
 
 // Companion BLE bridge
 bool companionBleAvailable();

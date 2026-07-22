@@ -23,6 +23,7 @@
 #include "../pin_gate_policy.h"
 #include "../responsive.h"
 #include "../lv_timer_owner.h"
+#include "../notifications.h"
 #include "../system_action_policy.h"
 #include "../home_screen.h"
 #include "../../hal/keyboard.h"
@@ -1497,7 +1498,10 @@ void settings_system_show()
         lv_label_set_text(cfl, "Reset");
         lv_obj_center(cfl);
         lv_obj_add_event_cb(confirm_btn, [](lv_event_t*) {
-            sigurdos::mesh::factoryReset();
+            if (!sigurdos::mesh::factoryReset()) {
+                notifications_post(NotificationEvent::UiError,
+                                   "Factory reset failed; BLE remains disabled");
+            }
         }, LV_EVENT_CLICKED, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
     row++;

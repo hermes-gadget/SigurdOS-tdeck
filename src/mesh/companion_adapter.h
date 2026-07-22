@@ -28,6 +28,11 @@ void companionAdapterInit();
 // Per-loop bridge servicing (frame pump + BLE validation telemetry).
 void companionAdapterLoop();
 
+// Stops companion BLE immediately and schedules supported ESP-IDF bond
+// deletion. Factory reset calls this only after its persistent purge marker is
+// committed, so a failure leaves advertising disabled and retryable.
+bool companionAdapterPrepareFactoryReset();
+
 // Persist an incoming mesh message to the message store and mirror it to a
 // connected companion app. Returns false if the store rejected it.
 // txt_type is a COMPANION_TXT_* value (0 = plain text); extra carries up to

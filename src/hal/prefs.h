@@ -116,6 +116,16 @@ struct NodePrefs {
         ota_allow_prerelease = false;
         radio_profile[0] = '\0';        // empty = not set / custom
     }
+
+    // Factory reset is intentionally stricter than first-boot defaults: no
+    // bonded phone may reconnect until the new owner explicitly enables BLE
+    // and opens a local pairing window.
+    void set_factory_reset_defaults() {
+        set_defaults();
+        ble_enabled = false;
+        ble_user_set = true;
+        ble_bond_reset_pending = true;
+    }
 };
 
 namespace detail {
@@ -218,6 +228,12 @@ inline BlePrefsState resolveBlePrefs(bool value_present, bool stored_value,
 bool prefs_load(NodePrefs& p);
 bool prefs_save(const NodePrefs& p);
 bool prefs_exists();
+
+// Crash-safe factory-reset preference phases. The interlock is committed
+// before destructive work. The final replacement erases only the SigurdOS
+// prefs namespace and writes safe reset defaults in the same NVS commit.
+bool prefs_arm_factory_reset();
+bool prefs_commit_factory_reset();
 
 // Expose loaded prefs globally (read-only after boot)
 const NodePrefs& prefs_get();
