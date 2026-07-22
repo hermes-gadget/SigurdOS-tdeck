@@ -20,6 +20,7 @@
 
 #include <lvgl.h>
 #include "navigation.h"
+#include "../hal/trackball.h"
 
 namespace sigurdos::ui {
 
@@ -43,6 +44,8 @@ void update_companion_status();
 bool pin_grace_active();
 // Show the PIN entry screen; loads target_screen on successful entry.
 void pin_entry_show(Screen target_screen);
+bool is_pin_entry_active();
+bool pin_entry_handle_trackball(SigurdOSTrackballEvent event);
 
 // Contact-list helpers shared by the Contacts and Repeaters screens
 // (implemented in screens/screen_contacts.cpp).

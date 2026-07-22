@@ -21,6 +21,7 @@
 #include "navigation.h"
 #include "theme.h"
 #include "responsive.h"
+#include "pin_gate_policy.h"
 #include "../hal/battery.h"
 #include "../hal/wifi_ota.h"
 #include "../hal/prefs.h"
@@ -265,9 +266,34 @@ void screens_clear_companion_icon()
 // ════════════════════════════════════════════════════════
 static uint32_t g_pin_last_unlock_ms = 0;
 static constexpr uint32_t PIN_GRACE_MS = 300000; // 5 minutes in milliseconds
-static bool g_pin_entry_active = false;  // set while PIN entry screen is displayed
+static lv_obj_t* g_pin_entry_root = nullptr;
+static uint32_t g_pin_entry_generation = 0;
+static PinAttemptState g_pin_attempts;
 
-bool is_pin_entry_active() { return g_pin_entry_active; }
+bool is_pin_entry_active() {
+    if (g_pin_entry_root && !lv_obj_is_valid(g_pin_entry_root)) g_pin_entry_root = nullptr;
+    return g_pin_entry_root != nullptr;
+}
+
+bool pin_entry_handle_trackball(SigurdOSTrackballEvent event) {
+    if (!is_pin_entry_active()) return false;
+    lv_group_t* group = lv_group_get_default();
+    if (!group) return true;
+    switch (pin_modal_action(event)) {
+    case PinModalAction::FocusPrevious:
+        lv_group_focus_prev(group);
+        break;
+    case PinModalAction::FocusNext:
+        lv_group_focus_next(group);
+        break;
+    case PinModalAction::Activate:
+        lv_group_send_data(group, LV_KEY_ENTER);
+        break;
+    default:
+        break;
+    }
+    return true;
+}
 
 bool pin_grace_active() {
     if (g_pin_last_unlock_ms == 0) return false;
@@ -281,13 +307,14 @@ bool pin_grace_active() {
 }
 
 struct PinEntryCtx {
-    int attempts;
     lv_obj_t* attempts_label;
     Screen target;
+    uint32_t generation;
 };
 
 static void pin_entry_success(Screen target) {
-    g_pin_entry_active = false;
+    g_pin_attempts.reset();
+    g_pin_entry_root = nullptr;
     g_pin_last_unlock_ms = millis();
     if (g_pin_last_unlock_ms == 0) g_pin_last_unlock_ms = 1;
     // Direct load — bypass navigate_to's same-screen guard
@@ -299,8 +326,10 @@ static void pin_entry_success(Screen target) {
 }
 
 void pin_entry_show(Screen target_screen) {
-    g_pin_entry_active = true;
+    ++g_pin_entry_generation;
+    if (g_pin_entry_generation == 0) ++g_pin_entry_generation;
     lv_obj_t* scr = lv_obj_create(nullptr);
+    g_pin_entry_root = scr;
     apply_dark_bg(scr);
 
     // Title
@@ -332,7 +361,12 @@ void pin_entry_show(Screen target_screen) {
 
     // Attempts remaining label
     lv_obj_t* attempts_label = lv_label_create(scr);
-    lv_label_set_text(attempts_label, "3 attempts remaining");
+    const bool can_attempt = g_pin_attempts.can_attempt(millis());
+    char initial_attempts[40];
+    if (can_attempt) snprintf(initial_attempts, sizeof(initial_attempts), "%u attempts remaining",
+                              static_cast<unsigned>(g_pin_attempts.remaining()));
+    else snprintf(initial_attempts, sizeof(initial_attempts), "Locked; try again in 30 seconds");
+    lv_label_set_text(attempts_label, initial_attempts);
     lv_obj_set_style_text_color(attempts_label, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(attempts_label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(attempts_label, LV_ALIGN_BOTTOM_MID, 0, -20);
@@ -346,12 +380,11 @@ void pin_entry_show(Screen target_screen) {
     lv_label_set_text(cancel_lbl, "Back to Home");
     lv_obj_center(cancel_lbl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t*) {
-        g_pin_entry_active = false;
         go_back();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Allocate context
-    PinEntryCtx* ctx = new PinEntryCtx{3, attempts_label, target_screen};
+    PinEntryCtx* ctx = new PinEntryCtx{attempts_label, target_screen, g_pin_entry_generation};
 
     // Value change callback — auto-submit on 4 digits
     lv_obj_add_event_cb(ta, [](lv_event_t* e) {
@@ -360,20 +393,26 @@ void pin_entry_show(Screen target_screen) {
 
         const char* text = lv_textarea_get_text(ta_obj);
         if (strlen(text) == 4) {
+            if (!g_pin_attempts.can_attempt(millis())) {
+                lv_textarea_set_text(ta_obj, "");
+                lv_label_set_text(ctx->attempts_label, "Locked; try again in 30 seconds");
+                return;
+            }
             uint32_t entered = (uint32_t)atoi(text);
             if (entered == sigurdos::prefs_get().device_pin) {
                 pin_entry_success(ctx->target);
                 return;
             }
             // Wrong PIN
-            ctx->attempts--;
+            g_pin_attempts.record_failure(millis());
             lv_textarea_set_text(ta_obj, "");
-            if (ctx->attempts <= 0) {
-                g_pin_entry_active = false;
+            if (g_pin_attempts.remaining() == 0) {
+                lv_label_set_text(ctx->attempts_label, "Locked; try again in 30 seconds");
                 go_back();
             } else {
                 char att_buf[32];
-                snprintf(att_buf, sizeof(att_buf), "%d attempts remaining", ctx->attempts);
+                snprintf(att_buf, sizeof(att_buf), "%u attempts remaining",
+                         static_cast<unsigned>(g_pin_attempts.remaining()));
                 lv_label_set_text(ctx->attempts_label, att_buf);
             }
         }
@@ -382,7 +421,10 @@ void pin_entry_show(Screen target_screen) {
     // Store ctx on screen for cleanup
     lv_obj_set_user_data(scr, ctx);
     lv_obj_add_event_cb(scr, [](lv_event_t* e) {
-        PinEntryCtx* c = (PinEntryCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+        lv_obj_t* deleted = (lv_obj_t*)lv_event_get_target(e);
+        PinEntryCtx* c = (PinEntryCtx*)lv_obj_get_user_data(deleted);
+        if (c && g_pin_entry_root == deleted && c->generation == g_pin_entry_generation)
+            g_pin_entry_root = nullptr;
         delete c;
     }, LV_EVENT_DELETE, nullptr);
 
@@ -390,6 +432,7 @@ void pin_entry_show(Screen target_screen) {
     lv_group_t* g = lv_group_get_default();
     if (g) {
         lv_group_add_obj(g, ta);
+        lv_group_add_obj(g, cancel_btn);
         lv_group_focus_obj(ta);
     }
 

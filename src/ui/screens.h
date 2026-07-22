@@ -64,7 +64,8 @@ void screens_clear_back_btn();
 // dereference a freed label after screen transitions.
 void screens_clear_wifi_icon();
 void screens_clear_companion_icon();
-// Returns true while the PIN entry overlay screen is displayed.
-// Used by the trackball handler to block back-swipe navigation.
+// PIN modal owns trackball navigation while displayed, preventing global
+// back-swipe bypass while keeping its own controls usable.
 bool is_pin_entry_active();
+bool pin_entry_handle_trackball(SigurdOSTrackballEvent event);
 } // namespace sigurdos::ui

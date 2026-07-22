@@ -20,6 +20,7 @@
 #include "../screens_common.h"
 #include "../navigation.h"
 #include "../theme.h"
+#include "../pin_gate_policy.h"
 #include "../responsive.h"
 #include "../lv_timer_owner.h"
 #include "../home_screen.h"
@@ -689,7 +690,7 @@ void settings_system_show()
         lv_obj_set_style_text_color(btn_pin, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_pin, [](lv_event_t* e) {
             lv_obj_t* scr_pin = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
-            auto dlg_sz = dialog_size(260, 160);
+            auto dlg_sz = dialog_size(260, 190);
             lv_obj_t* dlg = lv_obj_create(scr_pin);
             lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
             lv_obj_center(dlg);
@@ -706,20 +707,33 @@ void settings_system_show()
             lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
             lv_obj_t* msg = lv_label_create(dlg);
-            lv_label_set_text(msg, "Enter new 4-digit PIN:");
+            lv_label_set_text(msg, "Enter and confirm a 4-digit PIN");
             lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
             lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(msg, LV_ALIGN_TOP_LEFT, 8, 24);
 
             lv_obj_t* pin_ta = lv_textarea_create(dlg);
             lv_obj_set_size(pin_ta, 120, 30);
-            lv_obj_align(pin_ta, LV_ALIGN_TOP_MID, 0, 48);
+            lv_obj_align(pin_ta, LV_ALIGN_TOP_MID, 0, 44);
             lv_textarea_set_password_mode(pin_ta, true);
             lv_textarea_set_one_line(pin_ta, true);
             lv_textarea_set_max_length(pin_ta, 4);
             lv_textarea_set_accepted_chars(pin_ta, "0123456789");
             lv_obj_set_style_text_align(pin_ta, LV_TEXT_ALIGN_CENTER, 0);
             apply_pixel_input(pin_ta);
+
+            lv_obj_t* confirm_ta = lv_textarea_create(dlg);
+            lv_obj_set_size(confirm_ta, 120, 30);
+            lv_obj_align(confirm_ta, LV_ALIGN_TOP_MID, 0, 80);
+            lv_textarea_set_password_mode(confirm_ta, true);
+            lv_textarea_set_one_line(confirm_ta, true);
+            lv_textarea_set_max_length(confirm_ta, 4);
+            lv_textarea_set_accepted_chars(confirm_ta, "0123456789");
+            lv_textarea_set_placeholder_text(confirm_ta, "Confirm");
+            lv_obj_set_style_text_align(confirm_ta, LV_TEXT_ALIGN_CENTER, 0);
+            apply_pixel_input(confirm_ta);
+            lv_obj_set_user_data(pin_ta, confirm_ta);
+            lv_obj_set_user_data(confirm_ta, msg);
 
             // Save button
             lv_obj_t* save_btn = lv_btn_create(dlg);
@@ -733,10 +747,24 @@ void settings_system_show()
                 lv_obj_t* ta = (lv_obj_t*)lv_event_get_user_data(ev);
                 lv_obj_t* dlg = lv_obj_get_parent(ta);
                 const char* pin_str = lv_textarea_get_text(ta);
-                if (pin_str && strlen(pin_str) >= 4) {
-                    auto p = sigurdos::prefs_get();
-                    p.device_pin = (uint32_t)atoi(pin_str);
-                    sigurdos::prefs_set(p);
+                lv_obj_t* confirm = (lv_obj_t*)lv_obj_get_user_data(ta);
+                const char* confirm_str = confirm ? lv_textarea_get_text(confirm) : nullptr;
+                lv_obj_t* feedback = confirm ? (lv_obj_t*)lv_obj_get_user_data(confirm) : nullptr;
+                if (!pin_confirmation_valid(pin_str, confirm_str)) {
+                    if (feedback) {
+                        lv_label_set_text(feedback,
+                            pin_str && strcmp(pin_str, "0000") == 0
+                                ? "0000 is reserved for disabled; use Clear PIN"
+                                : "PINs must be 4 digits and match");
+                        lv_obj_set_style_text_color(feedback, lv_color_hex(ACCENT_RED), 0);
+                    }
+                    return;
+                }
+                auto p = sigurdos::prefs_get();
+                p.device_pin = (uint32_t)atoi(pin_str);
+                if (!sigurdos::prefs_set(p)) {
+                    if (feedback) lv_label_set_text(feedback, "PIN could not be saved");
+                    return;
                 }
                 lv_obj_del_async(dlg);
             }, LV_EVENT_CLICKED, pin_ta);
