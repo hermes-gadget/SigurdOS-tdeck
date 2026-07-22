@@ -25,12 +25,14 @@
 #include "response_copy.h"
 #include "telemetry_lpp_parser.h"
 #include "capacity_policy.h"
+#include "radio_config_policy.h"
 #include "region_name.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/boot_watchdog.h"
 #include "hal/gps.h"
 #include "hal/prefs.h"
+#include "hal/radio_profiles.h"
 #include "hal/github_ota.h"
 #include "hal/wifi_ota.h"
 #include "sigurd_mesh_v2.h"
@@ -87,6 +89,10 @@ static Module*                   lora_mod = nullptr;
 static CustomSX1262*             radio_module = nullptr;
 static OwnedSX1262Wrapper*        radio_driver = nullptr;
 static bool                      radio_inited = false;
+static sigurdos::mesh::RadioConfig active_radio_config{};
+static bool                      active_radio_config_valid = false;
+static bool                      radio_config_tx_enabled = false;
+static int16_t                   last_radio_config_error = RADIOLIB_ERR_NONE;
 static ESP32RTCClock             fallback_clock;
 static AutoDiscoverRTCClock      rtc_clock(fallback_clock);
 using ProductionMeshRng = sigurdos::mesh::Esp32HardwareRng;
@@ -121,7 +127,127 @@ static void cleanupMeshInit()
     sigurdos::mesh::detail::cleanupMeshInitResources(
         g_mesh, radio_driver, radio_module, lora_mod, cleanupRadioModule);
     radio_inited = false;
+    active_radio_config_valid = false;
+    radio_config_tx_enabled = false;
     init_state = sigurdos::mesh::detail::MeshInitState::Stopped;
+}
+
+static sigurdos::mesh::RadioConfig makeRadioConfig(
+    float frequency_mhz, float bandwidth_khz, int spreading_factor,
+    int coding_rate, int tx_power_dbm, bool rx_boosted_gain)
+{
+    sigurdos::mesh::RadioConfig config{};
+    config.frequency_mhz = frequency_mhz;
+    config.bandwidth_khz = bandwidth_khz;
+    config.spreading_factor = spreading_factor;
+    config.coding_rate = coding_rate;
+    config.tx_power_dbm = tx_power_dbm;
+    config.rx_boosted_gain = rx_boosted_gain;
+    return config;
+}
+
+static sigurdos::mesh::RadioConfig radioConfigFromPrefs(
+    const sigurdos::NodePrefs& prefs)
+{
+    return makeRadioConfig(prefs.freq, prefs.bw, prefs.sf, prefs.cr,
+                           prefs.tx_power_dbm, prefs.rx_boosted_gain);
+}
+
+static bool radioPrefsSupported(const sigurdos::NodePrefs& prefs)
+{
+    return prefs.configured &&
+           sigurdos::mesh::sx1262RadioConfigSupported(
+               radioConfigFromPrefs(prefs)) &&
+           sigurdos::radio_profile_configuration_valid(prefs);
+}
+
+static void disableRadioPrefs(sigurdos::NodePrefs& prefs)
+{
+    prefs.configured = false;
+    prefs.freq = 0.0f;
+    prefs.bw = 0.0f;
+    prefs.sf = 0;
+    prefs.cr = 0;
+    prefs.tx_power_dbm = 0;
+    prefs.radio_profile[0] = '\0';
+}
+
+static sigurdos::mesh::RadioApplyResult applyRadioHardware(
+    const sigurdos::mesh::RadioConfig& config)
+{
+    using sigurdos::mesh::RadioConfigField;
+    if (!radio_module || !radio_inited) {
+        sigurdos::mesh::RadioApplyResult result;
+        result.ok = false;
+        result.driver_error = -1;
+        return result;
+    }
+
+    sigurdos::mesh::RadioApplyResult result =
+        sigurdos::mesh::applyRadioConfigFields(
+            config,
+            [](RadioConfigField field,
+               const sigurdos::mesh::RadioConfig& requested) -> int16_t {
+                switch (field) {
+                    case RadioConfigField::Frequency:
+                        return radio_module->setFrequency(
+                            requested.frequency_mhz);
+                    case RadioConfigField::Bandwidth:
+                        return radio_module->setBandwidth(
+                            requested.bandwidth_khz);
+                    case RadioConfigField::SpreadingFactor:
+                        return radio_module->setSpreadingFactor(
+                            requested.spreading_factor);
+                    case RadioConfigField::CodingRate:
+                        return radio_module->setCodingRate(
+                            requested.coding_rate);
+                    case RadioConfigField::TxPower:
+                        return radio_module->setOutputPower(
+                            requested.tx_power_dbm);
+                    case RadioConfigField::RxBoostedGain:
+                        return radio_module->setRxBoostedGainMode(
+                            requested.rx_boosted_gain);
+                }
+                return -1;
+            });
+    last_radio_config_error = result.driver_error;
+    if (!result.ok) {
+        Serial.printf("[mesh] ERROR: radio %s failed (%d)\n",
+                      sigurdos::mesh::radioConfigFieldName(
+                          result.failed_field),
+                      result.driver_error);
+    }
+    return result;
+}
+
+static bool applyRadioConfigAtomically(
+    const sigurdos::mesh::RadioConfig& requested)
+{
+    if (!radio_module || !radio_inited || !active_radio_config_valid ||
+        !sigurdos::mesh::sx1262RadioConfigSupported(requested)) {
+        return false;
+    }
+
+    const sigurdos::mesh::RadioTransactionResult result =
+        sigurdos::mesh::applyRadioConfigTransaction(
+            requested, active_radio_config, applyRadioHardware);
+    if (result.applied) {
+        active_radio_config = requested;
+        active_radio_config_valid = true;
+        last_radio_config_error = RADIOLIB_ERR_NONE;
+        return true;
+    }
+
+    last_radio_config_error = result.apply_result.driver_error;
+    active_radio_config_valid = result.rollback_succeeded;
+    if (!result.rollback_succeeded) {
+        last_radio_config_error = result.rollback_result.driver_error;
+        Serial.printf("[mesh] FATAL: radio rollback failed at %s (%d)\n",
+                      sigurdos::mesh::radioConfigFieldName(
+                          result.rollback_result.failed_field),
+                      result.rollback_result.driver_error);
+    }
+    return false;
 }
 
 // formatDmConversation moved to mesh_wrapper_internal.h (shared with the
@@ -132,7 +258,7 @@ static bool sigurdos_mesh_radio_tx_allowed()
 #if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
     return false;
 #else
-    return true;
+    return active_radio_config_valid && radio_config_tx_enabled;
 #endif
 }
 
@@ -920,7 +1046,16 @@ bool init(bool spiffs_ok)
     }
 
     // ── Radio configuration: use compile-time defaults if not configured ──
-    const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+    sigurdos::NodePrefs p = sigurdos::prefs_get();
+    if (p.configured && !radioPrefsSupported(p)) {
+        Serial.println(
+            "[mesh] ERROR: stored radio configuration violates hardware/profile policy; radio disabled");
+        disableRadioPrefs(p);
+        if (!sigurdos::prefs_set(p)) {
+            Serial.println(
+                "[mesh] ERROR: could not persist disabled radio fallback");
+        }
+    }
     float   freq     = p.configured ? p.freq  : LORA_FREQ;
     float   bw       = p.configured ? p.bw    : LORA_BW;
     int     sf       = p.configured ? p.sf    : LORA_SF;
@@ -947,6 +1082,15 @@ bool init(bool spiffs_ok)
 #endif
     }
 
+    const sigurdos::mesh::RadioConfig default_radio = makeRadioConfig(
+        LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, LORA_TX_PWR, false);
+    if (!sigurdos::mesh::sx1262RadioConfigSupported(default_radio)) {
+        Serial.println(
+            "[mesh] FATAL: compile-time radio defaults are unsupported by SX1262");
+        cleanupMeshInit();
+        return false;
+    }
+
     // If still not configured (non-debug builds), keep SX1262 off.
     // In debug/remote_test builds we init the radio anyway — debug for diagnostic
     // access, remote_test because the FORCE_RADIO_PARAMS block below writes
@@ -960,7 +1104,7 @@ bool init(bool spiffs_ok)
     // until the user/app saves real prefs; do not TX-hold the entire mesh stack.
 #if !SIGURDOS_DEBUG
     {
-        const auto& cp = sigurdos::prefs_get();
+        const auto& cp = p;
         const bool companion_usb =
 #if defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
             true;
@@ -1013,19 +1157,41 @@ bool init(bool spiffs_ok)
     }
     radio_inited = true;
 
-    radio_module->setFrequency(freq);
-    radio_module->setBandwidth(bw);
-    radio_module->setSpreadingFactor(sf);
-    radio_module->setCodingRate(cr);   // denominator (5–8); RadioLib rejects the SX126X enum constants
-    radio_module->setOutputPower(tx_power);
-    
-    // Apply RX boosted gain mode if configured
-    if (p.rx_boosted_gain) {
-        radio_driver->setRxBoostedGainMode(true);
+    // std_init() leaves the hardware at compile-time defaults. Treat that as
+    // the first known-good rollback point before applying persisted settings.
+    active_radio_config = default_radio;
+    active_radio_config_valid = true;
+    const sigurdos::mesh::RadioConfig requested_radio = makeRadioConfig(
+        freq, bw, sf, cr, tx_power, p.rx_boosted_gain);
+    if (!applyRadioConfigAtomically(requested_radio)) {
+        if (!active_radio_config_valid) {
+            cleanupMeshInit();
+            return false;
+        }
+        Serial.printf(
+            "[mesh] ERROR: radio configuration failed (%d); restored defaults and disabled TX\n",
+            last_radio_config_error);
+        radio_config_tx_enabled = false;
+        if (p.configured) {
+            disableRadioPrefs(p);
+            if (!sigurdos::prefs_set(p)) {
+                Serial.println(
+                    "[mesh] ERROR: could not persist radio fallback state");
+            }
+        }
+    } else {
+        radio_config_tx_enabled = p.configured;
+#if SIGURDOS_DEBUG || defined(SIGURDOS_DEBUG_FORCE_RADIO_PARAMS)
+        radio_config_tx_enabled = true;
+#endif
     }
 #if SIGURDOS_DEBUG_MESH
     Serial.printf("[mesh] Radio: %.3f MHz / %.1f kHz / SF%d / CR4/%d / %d dBm\n",
-                  freq, bw, sf, cr, tx_power);
+                  active_radio_config.frequency_mhz,
+                  active_radio_config.bandwidth_khz,
+                  active_radio_config.spreading_factor,
+                  active_radio_config.coding_rate,
+                  active_radio_config.tx_power_dbm);
 #endif
 
     g_mesh = new (std::nothrow) mesh_impl_t(
@@ -1874,36 +2040,69 @@ bool getPacketLogEntry(int index, PacketLogEntry* out) {
 
 // ── Live radio config (no NVS write) ──────────
 bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool rx_gain) {
-    if (!radio_module || !radio_inited) return false;
-    radio_module->setFrequency(freq);
-    radio_module->setBandwidth(bw);
-    radio_module->setSpreadingFactor(sf);
-    radio_module->setCodingRate(cr);
-    radio_module->setOutputPower(tx_power);
-    if (radio_driver) {
-        radio_driver->setRxBoostedGainMode(rx_gain);
+    const sigurdos::mesh::RadioConfig requested = makeRadioConfig(
+        freq, bw, sf, cr, tx_power, rx_gain);
+    if (!sigurdos::mesh::sx1262RadioConfigSupported(requested)) {
+        Serial.println(
+            "[mesh] ERROR: rejected unsupported SX1262 radio configuration");
+        return false;
     }
-    return true;
+    return applyRadioConfigAtomically(requested);
+}
+
+bool applyAndPersistRadioPrefs(const sigurdos::NodePrefs& proposed) {
+    if (!radioPrefsSupported(proposed) || !active_radio_config_valid) {
+        Serial.println(
+            "[mesh] ERROR: rejected radio configuration outside hardware/profile policy");
+        return false;
+    }
+
+    const sigurdos::mesh::RadioConfig previous = active_radio_config;
+    const bool previous_tx_enabled = radio_config_tx_enabled;
+    const sigurdos::mesh::RadioConfig requested =
+        radioConfigFromPrefs(proposed);
+    const sigurdos::mesh::RadioCommitResult result =
+        sigurdos::mesh::applyAndCommitRadioConfig(
+            requested, previous,
+            [](const sigurdos::mesh::RadioConfig& config) {
+                return applyRadioConfigAtomically(config);
+            },
+            [&proposed]() { return sigurdos::prefs_set(proposed); });
+    if (result.committed) {
+        radio_config_tx_enabled = true;
+        return true;
+    }
+
+    if (!result.applied) return false;
+
+    Serial.println(
+        "[mesh] ERROR: radio preferences commit failed; restoring previous hardware configuration");
+    if (!result.restore_succeeded) {
+        radio_config_tx_enabled = false;
+        Serial.println(
+            "[mesh] FATAL: radio restore after NVS failure failed; TX disabled");
+    } else {
+        radio_config_tx_enabled = previous_tx_enabled;
+    }
+    return false;
 }
 
 bool revertRadioParams() {
-    if (!radio_module || !radio_inited) return false;
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-    float freq = p.configured ? p.freq : LORA_FREQ;
-    float bw   = p.configured ? p.bw   : LORA_BW;
-    int   sf   = p.configured ? p.sf   : LORA_SF;
-    int   cr   = p.configured ? p.cr   : LORA_CR;
-    int   pwr  = p.configured ? p.tx_power_dbm : LORA_TX_PWR;
-    radio_module->setFrequency(freq);
-    radio_module->setBandwidth(bw);
-    radio_module->setSpreadingFactor(sf);
-    radio_module->setCodingRate(cr);
-    radio_module->setOutputPower(pwr);
-    if (radio_driver) {
-        radio_driver->setRxBoostedGainMode(p.rx_boosted_gain);
+    sigurdos::mesh::RadioConfig target = p.configured
+        ? radioConfigFromPrefs(p)
+        : makeRadioConfig(
+              LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, LORA_TX_PWR, false);
+    if ((p.configured && !radioPrefsSupported(p)) ||
+        !sigurdos::mesh::sx1262RadioConfigSupported(target)) {
+        Serial.println(
+            "[mesh] ERROR: cannot revert to unsupported persisted radio configuration");
+        return false;
     }
-    return true;
+    return applyRadioConfigAtomically(target);
 }
+
+int16_t getLastRadioConfigError() { return last_radio_config_error; }
 
 // ── Duty cycle ────────────────────────────────
 unsigned long getRemainingTxBudget() {

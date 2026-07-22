@@ -25,6 +25,7 @@
 #define PERM_ACL_ADMIN      3
 
 namespace sigurdos {
+struct NodePrefs;
 namespace mesh {
 
 // Forward declarations from mesh_wrapper.cpp
@@ -248,7 +249,11 @@ float getSignalHistorySNR(int idx);
 
 // ── Live radio config (no NVS write) ──────────
 bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool rx_gain);
+// Apply the radio transaction first, then commit the complete preference
+// snapshot. An NVS failure restores the previous hardware configuration.
+bool applyAndPersistRadioPrefs(const ::sigurdos::NodePrefs& prefs);
 bool revertRadioParams();
+int16_t getLastRadioConfigError();
 
 // ── REQ/RESPONSE framework (Phase 4.1) ────────
 bool sendRequest(const char* dest_name, uint8_t req_type);

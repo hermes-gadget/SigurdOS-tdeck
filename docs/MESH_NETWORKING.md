@@ -107,11 +107,9 @@ main.cpp
        │    ├─ RST HIGH then 10ms wait (TCXO stabilization)
        ├─ sigurdos_shared_spi_begin(SCK, MISO, MOSI)
        ├─ radio_module.std_init(&sigurdos_shared_spi())
-       ├─ radio_module.setFrequency(freq)
-       ├─ radio_module.setBandwidth(bw)
-       ├─ radio_module.setSpreadingFactor(sf)
-       ├─ radio_module.setCodingRate(cr)
-       ├─ radio_module.setOutputPower(tx_power)
+       ├─ Validate SX1262 values and named regional profile
+       ├─ Apply all RadioLib setters, including RX gain
+       │    └─ On any error, restore every previous known-good field
        ├─ fast_rng.begin(radio_module.random(...))
        ├─ new SigurdMeshV2(...)
        │    └─ SigurdMeshV2::SigurdMeshV2(...)
@@ -723,15 +721,27 @@ These are defined in `src/hal/tdeck_pins.h`.
 
 Radio parameters are stored in `NodePrefs` (NVS-backed) and can be changed via the **Radio Setup** screen (accessible through Settings):
 
-| Parameter | Range | Description |
-|-----------|-------|-------------|
-| Frequency | 860–930 MHz | Centre frequency |
-| Bandwidth | 7.8–500 kHz | LoRa bandwidth |
+| Parameter | SX1262 acceptance | Description |
+|-----------|--------------------|-------------|
+| Frequency | 150–960 MHz | Centre frequency; named profiles additionally enforce their configured regional band |
+| Bandwidth | 7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, or 500 kHz | RadioLib-supported LoRa bandwidths |
 | Spreading Factor | 5–12 | SF (higher = longer range, slower) |
 | Coding Rate | 5–8 | CR denominator (4/5 — 4/8) |
-| TX Power | 2–22 dBm | Transmission power |
+| TX Power | -9–22 dBm | Transmission power; named profiles enforce their configured maximum |
 
 See `src/hal/prefs.h` for the full `NodePrefs` struct.
+
+The US/Canada profiles are bounded to 902–928 MHz and the EU/UK profiles to
+863–870 MHz. Named profiles must retain their full preset tuple; changed values
+must be marked custom. The local custom editor deliberately offers a narrower
+400–930 MHz, SF6–12, and 2–22 dBm range.
+
+Radio changes are transactional across hardware and persistence. Every
+RadioLib setter result is checked; a partial hardware failure restores the full
+previous known-good configuration. Preferences are committed only after all
+setters succeed, and an NVS failure restores the prior hardware configuration.
+At boot, invalid stored values are cleared and defaults are restored with TX
+disabled rather than starting with a partial or unsupported configuration.
 
 ### Debug/Test Override: `SIGURDOS_DEBUG_FORCE_RADIO_PARAMS`
 

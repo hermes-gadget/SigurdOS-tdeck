@@ -10,6 +10,7 @@
 #include "companion_adapter.h"
 #include "utils/utf8_util.h"
 #include "companion_message_policy.h"
+#include "radio_config_policy.h"
 #include "companion_ble_pin.h"
 #include "channel_validation.h"
 #include "mesh_wrapper.h"
@@ -473,8 +474,8 @@ public:
                         uint8_t sf,
                         uint8_t cr,
                         uint8_t client_repeat) override {
-        if (freq_khz < 150000 || freq_khz > 2500000) return false;
-        if (bw_hz < 7800 || bw_hz > 500000) return false;
+        if (freq_khz < 150000 || freq_khz > 960000) return false;
+        if (!sigurdos::mesh::sx1262BandwidthSupportedHz(bw_hz)) return false;
         if (sf < 5 || sf > 12) return false;
         if (cr < 5 || cr > 8) return false;
         if (client_repeat > 1) return false;
@@ -507,31 +508,22 @@ public:
             return false;
         }
 
-        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
-                                              tx_power, proposed.rx_boosted_gain)) {
-            return false;
-        }
-
-        sigurdos::prefs_set(proposed);
-        return true;
+        return sigurdos::mesh::applyAndPersistRadioPrefs(proposed);
     }
 
     bool setRadioTxPower(int8_t tx_power_dbm) override {
         if (tx_power_dbm < -9 || tx_power_dbm > 22) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
-
-        const float freq = p.configured ? p.freq : LORA_FREQ;
-        const float bw = p.configured ? p.bw : LORA_BW;
-        const int sf = p.configured ? p.sf : LORA_SF;
-        const int cr = p.configured ? p.cr : LORA_CR;
-        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
-                                              tx_power_dbm, p.rx_boosted_gain)) {
-            return false;
-        }
-
+        if (!p.configured) return false;
         p.tx_power_dbm = tx_power_dbm;
-        sigurdos::prefs_set(p);
-        return true;
+        const sigurdos::RadioProfile* matched =
+            sigurdos::radio_profile_match(p);
+        if (matched) {
+            sigurdos::radio_profile_apply(*matched, p);
+        } else {
+            sigurdos::radio_profile_set_custom(p);
+        }
+        return sigurdos::mesh::applyAndPersistRadioPrefs(p);
     }
 
     void tuningParams(uint32_t& rx_delay_base_x1000,

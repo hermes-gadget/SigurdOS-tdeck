@@ -577,13 +577,19 @@ same pins for compatibility.
 
 Radio parameters are configurable at runtime via NVS (`NodePrefs`):
 
-| Field             | Type    | Range          |
-|-------------------|---------|----------------|
-| `freq`            | float   | MHz            |
-| `bw`              | float   | kHz            |
-| `sf`              | uint8_t | 6–12           |
+| Field             | Type    | SX1262 acceptance |
+|-------------------|---------|-------------------|
+| `freq`            | float   | 150–960 MHz       |
+| `bw`              | float   | 7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5, 125, 250, or 500 kHz |
+| `sf`              | uint8_t | 5–12              |
 | `cr`              | uint8_t | 5–8 (denominator) |
-| `tx_power_dbm`    | int8_t  | 2–22 dBm       |
+| `tx_power_dbm`    | int8_t  | -9–22 dBm         |
+
+Named product profiles add their configured regional band constraint (902–928
+MHz for the US/Canada profiles and 863–870 MHz for the EU/UK profiles). A named
+profile must retain its complete preset tuple; edited values are treated as a
+custom configuration. The on-device custom editor intentionally exposes a
+narrower 400–930 MHz, SF6–12, and 2–22 dBm range.
 
 > **Safety:** `NodePrefs.configured` must be `true` before the radio transmits.
 > Until the user explicitly saves settings in the UI, radio defaults are used
@@ -596,8 +602,15 @@ Radio parameters are configurable at runtime via NVS (`NodePrefs`):
    previous crash.
 2. Initialise SPI bus via `sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI)`
 3. Call `radio_module.std_init(&sigurdos_shared_spi())`
-4. Apply radio parameters: `setFrequency`, `setBandwidth`, `setSpreadingFactor`,
-   `setCodingRate`, `setOutputPower`
+4. Validate the complete hardware/profile configuration, then apply
+   `setFrequency`, `setBandwidth`, `setSpreadingFactor`, `setCodingRate`,
+   `setOutputPower`, and `setRxBoostedGainMode`, checking every RadioLib result.
+   A partial failure reapplies every field from the previous known-good
+   configuration. Invalid stored values fall back to defaults with TX disabled.
+
+Runtime changes follow the same transaction: hardware is applied first and the
+complete `NodePrefs` snapshot is committed only after success. An NVS commit
+failure restores the previous hardware configuration and reports failure.
 
 ### Deep Sleep Wake
 
