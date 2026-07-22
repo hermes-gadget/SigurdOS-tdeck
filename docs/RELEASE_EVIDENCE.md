@@ -4,22 +4,27 @@ Every release PR uses `.github/PULL_REQUEST_TEMPLATE/release.md`. The machine-re
 
 ## Publication gate
 
-A tag is publishable only when `release-evidence/<tag>.json` exists at the tagged commit and passes `scripts/verify_release_evidence.py`. The bundle must name the exact full commit SHA and tag, contain a fresh passing record for every requirement, link to the reviewed evidence, identify firmware and peer versions for hardware checks, and record SHA-256 digests for the release artifact set. The tag workflow validates this bundle before building, carries it through the immutable workflow artifact, and publishes it with the prerelease.
+A tag is publishable only when `release-evidence/<tag>.json` exists at the tagged
+commit and passes `scripts/verify_release_evidence.py`. This checked-in source
+evidence names the tag, contains a fresh passing record for every requirement,
+links to reviewed evidence, and identifies firmware and peer versions for
+hardware checks.
+
+The tag workflow then builds once, validates the complete artifact directory,
+and generates `release-evidence.json` as a post-build attestation. That published
+attestation adds the exact tagged commit, the SHA-256 of the checked-in source
+evidence, and hashes of every release artifact. CI validates those hashes against
+the actual bytes immediately before upload. Keeping commit and artifact hashes
+out of the checked-in schema avoids an impossible self-reference: editing a
+tracked evidence file changes the commit it would claim to identify.
 
 Use this shape (repeat the requirement object for every ID in the requirements inventory):
 
 ```json
 {
-  "schema_version": 1,
-  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "schema_version": 2,
   "tag": "beta-0.1.44-RC6",
   "generated_at": "2026-07-14T18:00:00Z",
-  "artifacts": {
-    "firmware.bin": "<lowercase SHA-256>",
-    "firmware-merged.bin": "<lowercase SHA-256>",
-    "SigurdOS-tdeck-launcher.bin": "<lowercase SHA-256>",
-    "manifest.json": "<lowercase SHA-256>"
-  },
   "requirements": [
     {
       "id": "INT-BLE",
@@ -33,13 +38,34 @@ Use this shape (repeat the requirement object for every ID in the requirements i
 }
 ```
 
-Validate a completed bundle locally with the full commit SHA:
+Validate checked-in source evidence before building:
 
 ```bash
 python3 scripts/verify_release_evidence.py \
   --evidence release-evidence/<tag>.json \
-  --commit "$(git rev-parse HEAD)" --tag "<tag>"
+  --tag "<tag>"
 ```
+
+After flattening the release build into `artifacts/`, generate and immediately
+recheck the byte-bound attestation:
+
+```bash
+python3 scripts/verify_release_evidence.py \
+  --evidence release-evidence/<tag>.json \
+  --commit "$(git rev-parse HEAD)" --tag "<tag>" \
+  --artifacts-dir artifacts \
+  --write-attestation artifacts/release-evidence.json
+python3 scripts/verify_release_evidence.py \
+  --attestation artifacts/release-evidence.json \
+  --commit "$(git rev-parse HEAD)" --tag "<tag>" \
+  --artifacts-dir artifacts
+```
+
+The attestation covers `firmware.bin`, both release-level merged/Launcher
+images, `firmware-debug.bin`, the ESP Web Tools manifest, build metadata, and
+all six web-flasher component/full/Launcher binaries. Legacy schema-1 evidence
+is still parsed, but any declared hashes must cover and exactly match this full
+set during post-build verification.
 
 ## Companion interop and golden frames
 
@@ -84,4 +110,10 @@ Follow `docs/LAUNCHER.md` with the final Launcher artifact. Verify environment d
 
 ## Release artifacts and warnings
 
-The tag workflow validates the evidence contracts before building. Confirm manifest offsets, artifact names, version strings, and SHA-256 sums in the release PR. The first-party warning gate parses only compiler warnings whose paths start with `src/`; third-party warnings do not spend this budget. When a warning is fixed, reduce `ci/first_party_warnings.json` in the same PR so the debt cannot return.
+The tag workflow validates source evidence before building, runs native
+sanitizers, verifies the resolved PlatformIO graph, and validates the generated
+manifest, image layouts, exact aliases, offsets, provenance, and SHA-256 values
+before promotion. Confirm those results in the release PR. The first-party
+warning gate parses only compiler warnings whose paths start with `src/`;
+third-party warnings do not spend this budget. When a warning is fixed, reduce
+`ci/first_party_warnings.json` in the same PR so the debt cannot return.

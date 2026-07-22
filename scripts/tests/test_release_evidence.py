@@ -8,6 +8,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable
+REQUIRED_ARTIFACTS = {
+    "firmware.bin",
+    "firmware-merged.bin",
+    "SigurdOS-tdeck-launcher.bin",
+    "firmware-debug.bin",
+    "manifest.json",
+    "build-metadata.json",
+    "sigurdos-tdeck-bootloader.bin",
+    "sigurdos-tdeck-partitions.bin",
+    "sigurdos-tdeck-boot_app0.bin",
+    "sigurdos-tdeck-firmware.bin",
+    "sigurdos-tdeck-full.bin",
+    "sigurdos-tdeck-launcher.bin",
+}
 
 
 class ReleaseEvidenceTests(unittest.TestCase):
@@ -51,10 +65,9 @@ class ReleaseEvidenceTests(unittest.TestCase):
             "tag": tag,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "artifacts": {
-                "firmware.bin": "a" * 64,
-                "firmware-merged.bin": "b" * 64,
-                "SigurdOS-tdeck-launcher.bin": "c" * 64,
-                "manifest.json": "d" * 64,
+                name: f"{index:064x}" for index, name in enumerate(
+                    sorted(REQUIRED_ARTIFACTS), start=1
+                )
             },
             "requirements": records,
         }

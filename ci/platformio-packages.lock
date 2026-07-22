@@ -4,8 +4,8 @@ MeshCore submodule @ 3e62b51667973ea61d0467cbe828309e011321ba
 
 Resolving SigurdOS_TDeck dependencies...
 Platform espressif32 @ 7.0.1 (required: platformio/espressif32 @ 7.0.1)
-├── framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b (required: platformio/framework-arduinoespressif32 @ ~3.20017.0)
-├── tool-esptoolpy @ 2.41100.0 (required: platformio/tool-esptoolpy @ ~2.41100.0)
+├── framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b (required: platformio/framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b)
+├── tool-esptoolpy @ 2.41100.0 (required: platformio/tool-esptoolpy @ 2.41100.0)
 ├── toolchain-riscv32-esp @ 8.4.0+2021r2-patch5 (required: espressif/toolchain-riscv32-esp @ 8.4.0+2021r2-patch5)
 └── toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5 (required: espressif/toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5)
 

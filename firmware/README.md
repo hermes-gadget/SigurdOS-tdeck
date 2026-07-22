@@ -32,7 +32,9 @@ post-build action (configured in `platformio.ini` for the `SigurdOS_TDeck` envir
 After a successful firmware build, `merge_bin.py`:
 
 1.  Uses `esptool.py merge_bin` to combine **bootloader**, **partition table**,
-    **boot_app0**, and the **firmware app** into one binary named `sigurdos-tdeck-merged.bin`.
+    **boot_app0**, and the **firmware app** into `${PROGNAME}-merged.bin`. Missing
+    inputs, overlapping parts, merge failures, stale output, or an app-slice
+    mismatch fail the PlatformIO build.
 2.  Copies each component to `webflasher/` as separate files (for web-based flashers
     that download individual binaries):
     - `sigurdos-tdeck-bootloader.bin`
@@ -41,8 +43,10 @@ After a successful firmware build, `merge_bin.py`:
     - `sigurdos-tdeck-firmware.bin`
     - `sigurdos-tdeck-full.bin` (identical to `sigurdos-tdeck-merged.bin`)
     - `sigurdos-tdeck-launcher.bin` (identical to `sigurdos-tdeck-merged.bin` — the Launcher install artifact)
-3.  Generates `webflasher/manifest.json` containing firmware version, Git SHA,
-    artifact SHA-256 checksums, flash offsets, and build metadata.
+3.  Generates a standard ESP Web Tools `webflasher/manifest.json` with the
+    `ESP32-S3` component paths and numeric flash offsets.
+4.  Writes provenance, deterministic source timestamp, component sizes, and
+    SHA-256 checksums separately to `webflasher/build-metadata.json`.
 
 The canonical PlatformIO environment builds the ESP32-S3 bootloader for DIO
 flash mode at 80 MHz with 16 MB flash. The merge preserves that header instead
@@ -56,7 +60,8 @@ of applying the board JSON's QIO default.
 | `firmware/sigurdos-tdeck.bin` | App-only update — flash at 0x10000 |
 | `webflasher/sigurdos-tdeck-full.bin` | Same as `sigurdos-tdeck-merged.bin` — for web flashers |
 | `webflasher/sigurdos-tdeck-*.bin` | Individual components — for web-based or custom flashing |
-| `webflasher/manifest.json` | Build manifest (version, hashes, offsets, metadata) |
+| `webflasher/manifest.json` | ESP Web Tools install manifest |
+| `webflasher/build-metadata.json` | Build provenance, component sizes, offsets, and SHA-256 hashes |
 
 ## Flash with esptool (no PlatformIO needed)
 
