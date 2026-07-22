@@ -59,10 +59,10 @@ bool boot_watchdog_begin(int reset_reason) {
     boot_watchdog_record_progress(s_record, BootStage::Starting, millis());
 
     if (previous_stall) {
-        const BootStage stage = static_cast<BootStage>(previous.stage);
         SIG_LOGW(
             "[boot] Previous loopTask watchdog reset: stage=%s progress=%u last=+%lums",
-            boot_watchdog_stage_name(stage), previous.progress_count,
+            boot_watchdog_stage_name(static_cast<BootStage>(previous.stage)),
+            previous.progress_count,
             static_cast<unsigned long>(previous.last_progress_ms));
     }
 

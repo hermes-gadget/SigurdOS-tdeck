@@ -141,6 +141,7 @@ static void touch_attempt_reinit(uint32_t now)
     }
     touch_reinit_attempts++;
     const uint8_t attempt = touch_reinit_attempts;
+    (void)attempt;  // Logging can compile out in quiet release variants.
 
     touch_release(now);
 

@@ -112,6 +112,7 @@ static sigurdos::comms::BleBondRotationState g_ble_bond_rotation;
 static ArduinoSerialInterface g_usb_serial;
 #endif
 
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 static void generate_random_ble_pin() {
     sigurdos::NodePrefs p = sigurdos::prefs_get();
     if (p.ble_pin != 0) return;  // already generated
@@ -122,6 +123,7 @@ static void generate_random_ble_pin() {
     p.ble_pin = pin;
     sigurdos::prefs_set(p);
 }
+#endif
 
 static void fillStoredPrefixForName(const char* name, uint8_t* out)
 {
