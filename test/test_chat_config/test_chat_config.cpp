@@ -7,6 +7,7 @@
 #include <cstdio>
 
 #include "ui/chat_screen.h"
+#include "ui/chat_unread_store.h"
 #include "ui/message_detail.h"
 
 namespace {
@@ -15,6 +16,7 @@ using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_DEFAULT;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MAX;
 using sigurdos::ui::CHAT_SCREEN_MESSAGE_CAP_MIN;
 using sigurdos::ui::chat_screen_filter_accepts_channel;
+using sigurdos::ui::chat_screen_dm_reservation_index;
 using sigurdos::ui::chat_screen_is_dm_name;
 using sigurdos::ui::chat_screen_normalize_message_cap;
 using sigurdos::ui::chat_screen_resolve_message_timestamp;
@@ -74,6 +76,37 @@ TEST(ChatConfig, DmFilterKeepsOnlyDmConversations) {
     EXPECT_TRUE(chat_screen_filter_accepts_channel(2, "DM: Alice"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "Public"));
     EXPECT_FALSE(chat_screen_filter_accepts_channel(2, "#general"));
+}
+
+TEST(ChatConfig, DmReservationFailsBeforeNavigationAtCapacity) {
+    EXPECT_EQ(chat_screen_dm_reservation_index(-1, 16, 16), -1);
+    EXPECT_EQ(chat_screen_dm_reservation_index(-1, 15, 16), 15);
+    EXPECT_EQ(chat_screen_dm_reservation_index(7, 16, 16), 7);
+}
+
+TEST(ChatUnreadStore, FilterIndependentCountsRemainPerConversation) {
+    sigurdos::ui::ChatUnreadStore store;
+    EXPECT_TRUE(store.increment("#general", true));
+    EXPECT_TRUE(store.increment("DM: Alice", false));
+    EXPECT_TRUE(store.increment("DM: Alice", false));
+    EXPECT_EQ(store.count("#general"), 1);
+    EXPECT_EQ(store.count("DM: Alice"), 2);
+    EXPECT_EQ(store.total(), 3);
+    EXPECT_TRUE(store.has_mentions());
+
+    store.clear("#general");
+    EXPECT_EQ(store.total(), 2);
+    EXPECT_FALSE(store.has_mentions());
+    store.clear("DM: Alice");
+    EXPECT_EQ(store.total(), 0);
+}
+
+TEST(ChatUnreadStore, RejectsInvalidAndOversizedConversationNames) {
+    sigurdos::ui::ChatUnreadStore store;
+    EXPECT_FALSE(store.increment(nullptr, false));
+    EXPECT_FALSE(store.increment("", false));
+    EXPECT_FALSE(store.increment("1234567890123456789012345678901234567", false));
+    EXPECT_EQ(store.total(), 0);
 }
 
 TEST(MessageDetail, FormatsRouteSignalTypeAndPrefix) {

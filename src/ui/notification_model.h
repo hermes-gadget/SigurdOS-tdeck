@@ -21,6 +21,7 @@ enum class NotificationEvent : uint8_t {
     LowBattery,
     StorageFull,
     OtaFailure,
+    UiError,
 };
 
 enum class NotificationLevel : uint8_t { Info, Important, Critical };
@@ -68,6 +69,7 @@ inline NotificationPolicy notification_policy(NotificationEvent event)
     switch (event) {
         case NotificationEvent::Mention:
         case NotificationEvent::LoginFailure:
+        case NotificationEvent::UiError:
             return {NotificationLevel::Important, 6000, false};
         case NotificationEvent::LowBattery:
         case NotificationEvent::StorageFull:

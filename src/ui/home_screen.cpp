@@ -21,7 +21,6 @@
 #include "screens.h"
 #include "screens_common.h"
 #include "screen_lifetime.h"
-#include "notifications.h"
 #include "chat_screen.h"
 #include "navigation.h"
 #include "theme.h"
@@ -525,10 +524,10 @@ void home_screen_update_channels()
 void home_screen_update_badges()
 {
     if (!badge_obj) return;
-    int n = sigurdos::mesh::getUnreadMessageCount();
+    int n = chat_screen_get_unread_count();
     if (n > 0) {
         lv_obj_set_style_bg_color(badge_obj,
-            lv_color_hex(notifications_has_unread_mention() ? ACCENT_ORANGE : ACCENT_RED), 0);
+            lv_color_hex(chat_screen_has_unread_mentions() ? ACCENT_ORANGE : ACCENT_RED), 0);
         lv_obj_clear_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);
         lv_obj_t* lbl = lv_obj_get_child(badge_obj, 0);
         if (lbl) {

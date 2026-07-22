@@ -57,6 +57,15 @@ inline uint32_t chat_screen_resolve_message_timestamp(
     return authoritative_timestamp ? authoritative_timestamp : fallback_now;
 }
 
+inline int chat_screen_dm_reservation_index(int existing_index,
+                                            int conversation_count,
+                                            int capacity)
+{
+    if (existing_index >= 0 && existing_index < conversation_count) return existing_index;
+    return conversation_count >= 0 && conversation_count < capacity
+        ? conversation_count : -1;
+}
+
 // Create and show the chat screen
 void chat_screen_show();
 
@@ -65,6 +74,11 @@ void chat_screen_open_dm(const char* contact_name);
 
 // Set which conversations to show: 0=all, 1=channels only, 2=DMs only
 void chat_screen_set_filter(int mode);
+
+// Aggregate unread state is derived from stable per-conversation entries, not
+// from whichever filtered channel list happens to be visible.
+int  chat_screen_get_unread_count();
+bool chat_screen_has_unread_mentions();
 
 // Add a message to the chat display
 void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self);

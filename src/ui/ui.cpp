@@ -162,7 +162,12 @@ void loop()
                                        msgs[i].text, msgs[i].timestamp,
                                        msgs[i].is_self);
             }
-            if (n > 0) home_screen_update_badges();
+            if (n > 0) {
+                // The UI now owns stable per-conversation unread state. Drain
+                // the legacy mesh aggregate so it cannot grow indefinitely.
+                sigurdos::mesh::resetUnreadMessageCount();
+                home_screen_update_badges();
+            }
             // Refresh ACK status on the current chat screen
             chat_screen_refresh_acks();
         }

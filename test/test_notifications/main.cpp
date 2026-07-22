@@ -66,6 +66,14 @@ TEST(NotificationPolicyTest, LoginFailureTextReportsTruncation)
     EXPECT_EQ(text[sizeof(text) - 1], '\0');
 }
 
+TEST(NotificationPolicyTest, UiErrorsUseImportantTimedPolicy)
+{
+    const NotificationPolicy policy = notification_policy(NotificationEvent::UiError);
+    EXPECT_EQ(policy.level, NotificationLevel::Important);
+    EXPECT_EQ(policy.duration_ms, 6000U);
+    EXPECT_FALSE(policy.sticky);
+}
+
 TEST(NotificationQueueTest, HigherPriorityAlertPreemptsAndThenResumes)
 {
     NotificationQueue queue;

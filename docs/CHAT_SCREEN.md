@@ -62,7 +62,9 @@ Each row in the list shows:
 - **Channel name** — from mesh, e.g. `#general`, `DM: Alice`
 - **Last message preview** — truncated with `LV_LABEL_LONG_DOT`
 - **Timestamp** — 24h format `HH:MM` or `--:--` if no time available
-- **Unread badge** — accent-cyan square with count (capped at `9+`)
+- **Unread badge** — accent-cyan square with count (capped at `9+`). Counts
+  live in a stable conversation-keyed registry, so opening a channels-only or
+  DMs-only list cannot clear unread state for conversations hidden by that filter.
 - Alternating row backgrounds: even = `BG_TERTIARY` (`0x1e1e1e`), odd = `BG_INPUT` (`0x252525`)
 
 #### Top Bar (List View)
@@ -231,7 +233,9 @@ In the messaging view's top bar, channels are rendered as clickable pills in a h
 
 DMs are synthetic channels prefixed with `"DM: "` followed by the contact name.
 
-- **Creation**: `chat_screen_open_dm(contact_name)` checks if a DM channel already exists; if not, appends one to the channel list and opens its messaging view
+- **Creation**: `chat_screen_open_dm(contact_name)` resolves or reserves a DM
+  slot before changing navigation. If all 16 conversation slots are occupied,
+  the current screen remains active and a bounded error toast is shown.
 - **Routing**: When sending, the prefix is stripped and `mesh::sendMessage(dest, text)` is called instead of `mesh::sendChannelMessage()`
 - **Incoming DM routing**: When a message arrives with an empty channel field, the sender's name is wrapped as `"DM: sender"` to map it to the correct conversation
 - **Signal indicator**: DM conversations show the contact's RSSI-based signal bars inline in the top bar

@@ -20,6 +20,7 @@
 #include "chat_screen.h"
 #include "chat_message_buffer.h"
 #include "chat_conversation_view.h"
+#include "chat_unread_store.h"
 #include "channel_menu.h"
 #include "navigation.h"
 #include "screens.h"
@@ -167,6 +168,7 @@ struct ChannelMeta {
     int      unread;
 };
 static ChannelMeta ch_meta[MAX_CONVERSATIONS];
+static ChatUnreadStore g_chat_unread;
 
 // ChannelMessage and the per-channel buffer mechanics live in
 // chat_message_buffer.h (issue #820) so they are testable off-target.
@@ -313,7 +315,9 @@ static lv_obj_t* create_channel_pill(lv_obj_t* parent, int idx)
     lv_obj_add_event_cb(pill, [](lv_event_t* e) {
         int ch = (int)(intptr_t)lv_event_get_user_data(e);
         active_channel = ch;
+        g_chat_unread.clear(dyn_channels[ch]);
         ch_meta[ch].unread = 0;
+        if (!g_chat_unread.has_mentions()) notifications_clear_unread_mentions();
         rebuild_channel_ribbon();
         render_active_messages();
     }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);
@@ -421,6 +425,12 @@ static void refresh_channels()
     // released here.
     for (int i = 0; i < old_count; i++) {
         old_bufs[i].release();
+    }
+
+    // Unread state belongs to stable conversation names. Rebuilding a filtered
+    // view must never inherit, clear, or lose another conversation's count.
+    for (int i = 0; i < dyn_count; ++i) {
+        ch_meta[i].unread = g_chat_unread.count(dyn_channels[i]);
     }
 
     // ── Update active_channel by name, not by index ──────
@@ -1884,6 +1894,10 @@ static void create_bottom_bar()
 // ════════════════════════════════════════════════════
 static void open_channel_messaging(int idx)
 {
+    if (idx < 0 || idx >= dyn_count) return;
+    g_chat_unread.clear(dyn_channels[idx]);
+    ch_meta[idx].unread = 0;
+    if (!g_chat_unread.has_mentions()) notifications_clear_unread_mentions();
     active_channel = idx;
     chat_render_channel = idx;
     chat_render_offset = 0;
@@ -2207,7 +2221,9 @@ static void channel_menu_action_cb(lv_event_t* e) {
     }
 
     if (action == ChannelAction::MarkRead) {
+        g_chat_unread.clear(channel);
         ch_meta[idx].unread = 0;
+        if (!g_chat_unread.has_mentions()) notifications_clear_unread_mentions();
         rebuild_channel_ribbon();
         if (feedback) {
             lv_label_set_text(feedback, "Marked all read");
@@ -2503,6 +2519,14 @@ void chat_screen_set_filter(int mode) {
     rebuild_conversation_view();
 }
 
+int chat_screen_get_unread_count() {
+    return g_chat_unread.total();
+}
+
+bool chat_screen_has_unread_mentions() {
+    return g_chat_unread.has_mentions();
+}
+
 bool chat_screen_overlay_active() {
     return channel_menu != nullptr && lv_obj_is_valid(channel_menu);
 }
@@ -2512,48 +2536,53 @@ void chat_screen_show()
     screens_clear_back_btn();
     screens_clear_wifi_icon();
     screens_clear_companion_icon();
-    notifications_clear_unread_mentions();
     // Skip channel list when DM is being opened directly —
     // open_channel_messaging() will create the messaging screen instead.
     if (g_skip_channel_list) {
         g_skip_channel_list = false;
-        // Reset unread badge counter when the user opens chat
-        sigurdos::mesh::resetUnreadMessageCount();
         return;
     }
     show_channel_list();
-    // Reset unread badge counter when the user opens chat
-    sigurdos::mesh::resetUnreadMessageCount();
 }
 
 void chat_screen_open_dm(const char* contact_name)
 {
     if (!contact_name || !contact_name[0]) return;
 
-    // Signal chat_screen_show() to skip the channel-list screen
-    // so we go directly to the messaging view without a wasteful
-    // intermediate lv_scr_load_anim that causes a crash when
-    // open_channel_messaging() triggers a second screen load.
-    g_skip_channel_list = true;
-    navigate_to(Screen::Chat);
+    // Resolve capacity before committing navigation. A failed reservation must
+    // leave the caller's visible screen and navigation history untouched.
+    chat_filter_mode = 0;
     refresh_channels();
 
     // Buffer must fit "DM: " (4) + max contact name (31) + null (1) = 36
     char dm_name[CHANNEL_NAME_CAP];
-    snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
+    const int written = snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
+    if (written < 0 || static_cast<size_t>(written) >= sizeof(dm_name)) {
+        notifications_post(NotificationEvent::UiError, "Cannot open DM: name too long");
+        return;
+    }
 
-    int idx = find_channel_idx(dm_name);
-    if (idx < 0 && dyn_count < MAX_CONVERSATIONS) {
-        idx = dyn_count;
+    const int existing_idx = find_channel_idx(dm_name);
+    const int idx = chat_screen_dm_reservation_index(
+        existing_idx, dyn_count, MAX_CONVERSATIONS);
+    if (existing_idx < 0 && idx >= 0) {
         strncpy(dyn_channels[idx], dm_name, sizeof(dyn_channels[idx]) - 1);
         dyn_channels[idx][sizeof(dyn_channels[idx]) - 1] = '\0';
         dyn_count++;
         rebuild_conversation_view();
     }
 
-    if (idx >= 0 && idx < MAX_CONVERSATIONS) {
-        open_channel_messaging(idx);
+    if (idx < 0) {
+        notifications_post(NotificationEvent::UiError,
+                           "Cannot open DM: conversation list full");
+        return;
     }
+
+    // Signal chat_screen_show() to skip the channel-list screen so direct DM
+    // entry performs only one screen load.
+    g_skip_channel_list = true;
+    navigate_to(Screen::Chat);
+    open_channel_messaging(idx);
 }
 
 void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self)
@@ -2591,7 +2620,12 @@ void chat_screen_add_msg_at(const char* channel, const char* sender, const char*
 
     append_channel_message(idx, sender, text, message_time, is_self);
     bool visible = msg_list && idx == active_channel && current_screen() == Screen::Chat;
-    if (!is_self && !visible) ch_meta[idx].unread++;
+    if (!is_self && !visible) {
+        const bool mention = !chat_screen_is_dm_name(channel) &&
+            notification_contains_mention(text, sigurdos::mesh::getOwnName());
+        g_chat_unread.increment(channel, mention);
+        ch_meta[idx].unread = g_chat_unread.count(channel);
+    }
     if (!visible) return;
 
     // Check if user is at the bottom BEFORE adding the new bubble

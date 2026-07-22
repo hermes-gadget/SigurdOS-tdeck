@@ -128,7 +128,12 @@ Each tile is created by `create_icon_tile()` in `home_screen.cpp`:
 
 ### Badge (CHATS Tile)
 
-Only the CHATS tile has `badge = true`. This creates an **18×12px red unread counter** in the top-right corner of the tile. `home_screen_update_badges()` reads `sigurdos::mesh::getUnreadMessageCount()`, hides the badge when the count is zero, and shows a capped numeric count (`99` max) when unread messages exist. Opening Chat resets the mesh unread counter.
+Only the CHATS tile has `badge = true`. This creates an **18×12px red unread
+counter** in the top-right corner of the tile. `home_screen_update_badges()`
+reads the aggregate of the chat UI's stable per-conversation unread registry,
+hides the badge when the count is zero, and caps the displayed count. A
+conversation is cleared only when its messaging view is opened or it is
+explicitly marked read; opening a filtered list does not clear hidden chats.
 
 ---
 
