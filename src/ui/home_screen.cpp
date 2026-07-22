@@ -332,7 +332,7 @@ static lv_obj_t* create_icon_tile(lv_obj_t* parent, const IconDef& icon, int idx
 
         lv_obj_t* cnt_lbl = lv_label_create(badge_obj);
         lv_label_set_text(cnt_lbl, "0");
-        lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
         lv_obj_set_style_text_font(cnt_lbl, emoji_wrapped_montserrat_10, 0);
         lv_obj_center(cnt_lbl);
     }

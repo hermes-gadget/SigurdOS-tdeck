@@ -132,6 +132,32 @@ TEST_F(ThemeTest, AccentForegroundMeetsNormalTextContrastForEveryTheme) {
     }
 }
 
+TEST_F(ThemeTest, SemanticForegroundsMeetNormalTextContrast)
+{
+    using namespace sigurdos::theme;
+    auto channel = [](uint8_t value) {
+        const double c = value / 255.0;
+        return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+    };
+    auto luminance = [&](uint32_t color) {
+        return 0.2126 * channel((color >> 16) & 0xff) +
+               0.7152 * channel((color >> 8) & 0xff) +
+               0.0722 * channel(color & 0xff);
+    };
+    auto contrast = [&](uint32_t foreground, uint32_t background) {
+        const double first = luminance(foreground);
+        const double second = luminance(background);
+        const double high = first > second ? first : second;
+        const double low = first > second ? second : first;
+        return (high + 0.05) / (low + 0.05);
+    };
+    const uint32_t backgrounds[] = {
+        ACCENT_GREEN, ACCENT_RED, ACCENT_ORANGE, ACCENT_YELLOW, 0x0088cc};
+    for (uint32_t background : backgrounds) {
+        EXPECT_GE(contrast(semantic_foreground(background), background), 4.5);
+    }
+}
+
 // ── All constants are non-zero ──────────────────────────
 TEST_F(ThemeTest, AllConstantsNonZero) {
     using namespace sigurdos::theme;

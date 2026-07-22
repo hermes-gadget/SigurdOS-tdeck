@@ -859,7 +859,7 @@ void show_admin_cmd_dialog(const char* contact_name)
     lv_obj_t* x_lbl = lv_label_create(close_btn);
     lv_label_set_text(x_lbl, LV_SYMBOL_CLOSE);
     lv_obj_center(x_lbl);
-    lv_obj_set_style_text_color(x_lbl, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(x_lbl, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
     lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
         lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
         lv_obj_t* top = lv_obj_get_parent(btn);
@@ -1087,7 +1087,7 @@ void show_fetch_msgs_dialog(const char* contact_name)
     lv_obj_t* fb = lv_label_create(fetch_btn);
     lv_label_set_text(fb, "Fetch");
     lv_obj_center(fb);
-    lv_obj_set_style_text_color(fb, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(fb, lv_color_hex(semantic_foreground(0x0088cc)), 0);
     lv_obj_set_user_data(fetch_btn, fd);
 
     lv_obj_add_event_cb(fetch_btn, [](lv_event_t* le) {
@@ -1575,7 +1575,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_set_style_radius(remove_btn, 0, 0);
         lv_obj_t* rl = lv_label_create(remove_btn);
         lv_label_set_text(rl, LV_SYMBOL_CLOSE " Remove");
-        lv_obj_set_style_text_color(rl, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_text_color(rl, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
         lv_obj_center(rl);
         char* name_dup = strdup(remove_name);
         lv_obj_set_user_data(remove_btn, name_dup);
@@ -1662,7 +1662,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_set_style_radius(rp_btn, 0, 0);
         lv_obj_t* rp_lbl = lv_label_create(rp_btn);
         lv_label_set_text(rp_lbl, LV_SYMBOL_REFRESH " Reset Path");
-        lv_obj_set_style_text_color(rp_lbl, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_text_color(rp_lbl, lv_color_hex(semantic_foreground(ACCENT_ORANGE)), 0);
         lv_obj_center(rp_lbl);
         lv_obj_set_user_data(rp_btn, rp_name);
         lv_obj_add_event_cb(rp_btn, [](lv_event_t* e) {
@@ -1722,7 +1722,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_set_style_radius(dp_btn, 0, 0);
         lv_obj_t* dp_lbl = lv_label_create(dp_btn);
         lv_label_set_text(dp_lbl, LV_SYMBOL_DIRECTORY " Discover");
-        lv_obj_set_style_text_color(dp_lbl, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_text_color(dp_lbl, lv_color_hex(semantic_foreground(0x0088cc)), 0);
         lv_obj_center(dp_lbl);
         lv_obj_set_user_data(dp_btn, dp_name);
         lv_obj_add_event_cb(dp_btn, [](lv_event_t* e) {
@@ -1781,7 +1781,7 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* lo_lbl = lv_label_create(lo_btn);
             lv_label_set_text(lo_lbl, LV_SYMBOL_REFRESH " Logout");
             lv_obj_center(lo_lbl);
-            lv_obj_set_style_text_color(lo_lbl, lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_text_color(lo_lbl, lv_color_hex(semantic_foreground(ACCENT_ORANGE)), 0);
             lv_obj_set_user_data(lo_btn, lo_name);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
                 lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
@@ -1817,7 +1817,7 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* fm_lbl = lv_label_create(fm_btn);
             lv_label_set_text(fm_lbl, LV_SYMBOL_LIST " Fetch Msgs");
             lv_obj_center(fm_lbl);
-            lv_obj_set_style_text_color(fm_lbl, lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_text_color(fm_lbl, lv_color_hex(semantic_foreground(0x0088cc)), 0);
             lv_obj_set_user_data(fm_btn, fm_name);
             lv_obj_add_event_cb(fm_btn, [](lv_event_t* e) {
                 lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);

@@ -205,6 +205,9 @@ inline lv_obj_t* lv_scr_act() {
 }
 inline void lv_scr_load(lv_obj_t*) {}
 inline void lv_scr_load_anim(lv_obj_t*, int, int, int, bool) {}
+inline lv_display_t* lv_display_get_default() { static lv_display_t d; return &d; }
+inline int32_t lv_display_get_horizontal_resolution(const lv_display_t*) { return 320; }
+inline int32_t lv_display_get_vertical_resolution(const lv_display_t*) { return 240; }
 
 // ── Object creation ──────────────────────────────────────
 inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {

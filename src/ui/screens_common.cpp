@@ -77,12 +77,13 @@ void update_companion_status()
 // ════════════════════════════════════════════════════════
 lv_obj_t* make_screen_full(const char* title)
 {
+    const DisplayGeometry geometry = runtime_geometry();
     lv_obj_t* scr = lv_obj_create(nullptr);
     apply_dark_bg(scr);
 
     // ── Top bar ──────────────────────────────────────────
     lv_obj_t* top = lv_obj_create(scr);
-    lv_obj_set_size(top, LV_PCT(100), TOP_BAR_H);
+    lv_obj_set_size(top, LV_PCT(100), geometry.top_bar_h);
     lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_color(top, lv_color_hex(BG_SECONDARY), 0);
     lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
@@ -90,7 +91,7 @@ lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_style_border_width(top, 0, 0);
 
     lv_obj_t* back = lv_btn_create(top);
-    lv_obj_set_size(back, 24, TOP_BAR_H - 4);
+    lv_obj_set_size(back, 24, geometry.top_bar_h - 4);
     lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
     apply_topbar_icon_btn(back);
     s_back_btn = back; // store for back-swipe highlight
@@ -146,14 +147,14 @@ lv_obj_t* make_screen_full(const char* title)
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(scr);
     lv_obj_set_size(tdiv, LV_PCT(100), DIVIDER_H);
-    lv_obj_align(tdiv, LV_ALIGN_TOP_MID, 0, TOP_BAR_H);
+    lv_obj_align(tdiv, LV_ALIGN_TOP_MID, 0, geometry.top_bar_h);
     lv_obj_set_style_bg_color(tdiv, lv_color_hex(DIVIDER), 0);
     lv_obj_set_style_bg_opa(tdiv, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(tdiv, 0, 0);
 
     // ── Bottom bar ───────────────────────────────────────
     lv_obj_t* bot = lv_obj_create(scr);
-    lv_obj_set_size(bot, LV_PCT(100), BOT_BAR_H);
+    lv_obj_set_size(bot, LV_PCT(100), geometry.bottom_bar_h);
     lv_obj_align(bot, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(bot, lv_color_hex(BG_SECONDARY), 0);
     lv_obj_set_style_bg_opa(bot, LV_OPA_COVER, 0);
@@ -165,7 +166,7 @@ lv_obj_t* make_screen_full(const char* title)
     lv_label_set_text(dev, sigurdos::mesh::getOwnName());
     lv_obj_set_style_text_color(dev, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(dev, emoji_wrapped_montserrat_10, 0);
-    lv_obj_set_width(dev, 200);
+    lv_obj_set_width(dev, std::max(60, geometry.width - 120));
     lv_label_set_long_mode(dev, LV_LABEL_LONG_DOT);
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
 
@@ -199,7 +200,8 @@ lv_obj_t* make_screen_full(const char* title)
     // Bottom divider
     lv_obj_t* bdiv = lv_obj_create(scr);
     lv_obj_set_size(bdiv, LV_PCT(100), DIVIDER_H);
-    lv_obj_align(bdiv, LV_ALIGN_TOP_MID, 0, DISPLAY_H - BOT_BAR_H - DIVIDER_H);
+    lv_obj_align(bdiv, LV_ALIGN_TOP_MID, 0,
+                 geometry.height - geometry.bottom_bar_h - DIVIDER_H);
     lv_obj_set_style_bg_color(bdiv, lv_color_hex(DIVIDER), 0);
     lv_obj_set_style_bg_opa(bdiv, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(bdiv, 0, 0);

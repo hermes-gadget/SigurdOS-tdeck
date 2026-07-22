@@ -543,7 +543,7 @@ static void populate_channel_rows(lv_obj_t* list) {
 
         lv_obj_t* hash = lv_label_create(avatar);
         lv_label_set_text(hash, "#");
-        lv_obj_set_style_text_color(hash, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_text_color(hash, lv_color_hex(semantic_foreground(CHANNEL_HASH)), 0);
         lv_obj_set_style_text_font(hash, emoji_wrapped_montserrat_12, 0);
         lv_obj_center(hash);
 
@@ -1639,7 +1639,7 @@ static void show_emoji_picker(lv_obj_t* parent)
     lv_obj_t* close_lbl = lv_label_create(close_btn);
     lv_label_set_text(close_lbl, "X");
     lv_obj_set_style_text_font(close_lbl, emoji_wrapped_montserrat_10, 0);
-    lv_obj_set_style_text_color(close_lbl, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(close_lbl, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
     lv_obj_center(close_lbl);
     lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
         lv_obj_t* d = lv_obj_get_parent((lv_obj_t*)lv_event_get_current_target(e));

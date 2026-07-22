@@ -799,7 +799,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Reboot", "!!");
             lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_RED), 0);
             lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_text_color(r, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
             lv_obj_set_user_data(r, n);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {
                 const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
@@ -827,7 +827,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                     lv_obj_t* yl = lv_label_create(yb);
                     lv_label_set_text(yl, "Reboot");
                     lv_obj_center(yl);
-                    lv_obj_set_style_text_color(yl, lv_color_hex(0xffffff), 0);
+                    lv_obj_set_style_text_color(yl, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
                     lv_obj_add_event_cb(yb, [](lv_event_t* ce) {
                         lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce));
                         const char* cn = (const char*)lv_obj_get_user_data(dlg);
@@ -864,7 +864,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_t* r = lv_list_add_btn(list, LV_SYMBOL_REFRESH "  Logout", ">");
             lv_obj_set_style_bg_color(r, lv_color_hex(ACCENT_ORANGE), 0);
             lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-            lv_obj_set_style_text_color(r, lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_text_color(r, lv_color_hex(semantic_foreground(ACCENT_ORANGE)), 0);
             lv_obj_set_user_data(r, n);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {
                 const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
