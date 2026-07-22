@@ -107,6 +107,13 @@ cleared on disconnect. Clients must complete `CMD_DEVICE_QUERY` before
 `ERR_CODE_BAD_STATE`. `CMD_APP_START` may still precede negotiation, and any
 page it primes is discarded and rebuilt after the version query.
 
+The server requests a 517-byte ATT MTU and admits a protocol frame only when it
+fits the negotiated peer payload (`ATT_MTU - 3`). Failed notifications stay in
+the bounded transport queue for retry. Offline message sync is at-least-once:
+a durable record remains in flight until the same authenticated connection
+requests the next record. Disconnecting before that request causes the record
+to be replayed after reconnect, so clients must tolerate duplicate delivery.
+
 `client_repeat` matches stock companion behavior: when disabled the handheld
 does not forward packets; when enabled it forwards without applying
 repeater-oriented RegionMap deny-flood flags. Region selection controls the

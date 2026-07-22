@@ -43,6 +43,7 @@ struct BleSerialObserverStats {
     int bonded_device_count = -1;
     uint16_t last_conn_id = 0;
     uint16_t last_mtu = 0;
+    uint32_t connection_generation = 0;
     uint8_t last_rx_code = 0;
     uint8_t last_tx_code = 0;
 };
@@ -55,6 +56,7 @@ public:
     void disable() override;
     bool isEnabled() const override;
     bool isConnected() const override;
+    uint32_t connectionGeneration() const override;
     size_t writeFrame(const uint8_t src[], size_t len) override;
     size_t checkRecvFrame(uint8_t dest[]) override;
 

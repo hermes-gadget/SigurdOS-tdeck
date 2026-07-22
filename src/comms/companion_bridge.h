@@ -467,8 +467,8 @@ private:
     bool addToOfflineQueue(uint32_t store_id, bool persistent,
                            const uint8_t* frame, size_t len);
     bool refillOfflineQueueFromStore(bool notify_waiting);
-    // Peek does not dequeue. removeFirstOfflineFrame() is called only after the
-    // transport accepts the complete frame.
+    // Peek does not dequeue. Durable records remain at the head while in-flight
+    // and leave only after the same authenticated session's implicit ACK.
     int  peekOfflineQueue(uint8_t* frame, uint32_t* store_id, bool* persistent);
     void removeFirstOfflineFrame();
     bool buildMessageFrame(const sigurdos::mesh::StoredMessage& msg,
@@ -477,6 +477,8 @@ private:
     int findFreePendingBinary() const;
     void expirePendingBinary();
     void clearPendingBinary();
+    void refreshConnectionSession();
+    void clearInflightMessage();
 
     struct PendingBinaryRequest {
         uint32_t tag = 0;
@@ -508,6 +510,9 @@ private:
     size_t  _sign_len = 0;
     bool    _sign_active = false;
     bool    _was_connected = false;  // detect BLE disconnect to clear signing state (#712)
+    uint32_t _connection_generation = 0;
+    uint32_t _inflight_store_id = 0;
+    uint32_t _inflight_generation = 0;
 
 };
 

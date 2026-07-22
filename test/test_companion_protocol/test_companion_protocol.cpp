@@ -15,6 +15,7 @@ public:
     bool enabled = false;
     bool connected = true;
     bool busy = false;
+    uint32_t generation = 1;
     int fail_writes = 0;
     std::vector<std::vector<uint8_t>> writes;
 
@@ -22,6 +23,9 @@ public:
     void disable() override { enabled = false; }
     bool isEnabled() const override { return enabled; }
     bool isConnected() const override { return connected; }
+    uint32_t connectionGeneration() const override {
+        return connected ? generation : 0;
+    }
     bool isWriteBusy() const override { return busy; }
     size_t writeFrame(const uint8_t src[], size_t len) override {
         if (!connected || busy || fail_writes > 0) {
@@ -791,6 +795,11 @@ TEST_F(CompanionProtocolTest, AppStartSeedsPersistedMessagesForSync) {
     sigurdos::mesh::StoredMessage stored{};
     ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
     EXPECT_EQ(stored.store_id, 1U);
+    EXPECT_FALSE(stored.companion_sent);
+
+    // The next request from this authenticated session acknowledges the frame.
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
     EXPECT_TRUE(stored.companion_sent);
 }
 
@@ -878,6 +887,7 @@ TEST_F(CompanionProtocolTest,
 
     const uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
     const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    const uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
     ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
 
     uint32_t sequence = 0x5EED1234u;
@@ -904,22 +914,34 @@ TEST_F(CompanionProtocolTest,
         if (sequence & 0x04u) {
             const size_t before = serial.writes.size();
             serial.connected = false;
-            ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+            bridge.loop();
             EXPECT_EQ(serial.writes.size(), before);
             serial.connected = true;
+            serial.generation++;
+            ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
+            ASSERT_EQ(serial.writes.size(), before + 1);
+            EXPECT_EQ(serial.writes.back()[0],
+                      sigurdos::comms::RESP_CODE_DEVICE_INFO);
             ++reconnect_count;
         }
 
-        const size_t before = serial.writes.size();
-        ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
-        ASSERT_EQ(serial.writes.size(), before + 1);
-        const auto& frame = serial.writes.back();
-        ASSERT_GE(frame.size(), 16U);
-        EXPECT_EQ(frame[0],
-                  sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
-        uint32_t timestamp = 0;
-        std::memcpy(&timestamp, &frame[12], sizeof(timestamp));
-        EXPECT_EQ(timestamp, 5000u + expected);
+        // A reconnect before the next SYNC deliberately replays the prior
+        // in-flight record. Consume that at-least-once duplicate, then require
+        // the next unique record to remain in strict order.
+        for (;;) {
+            const size_t before = serial.writes.size();
+            ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+            ASSERT_EQ(serial.writes.size(), before + 1);
+            const auto& frame = serial.writes.back();
+            ASSERT_GE(frame.size(), 16U);
+            EXPECT_EQ(frame[0],
+                      sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+            uint32_t timestamp = 0;
+            std::memcpy(&timestamp, &frame[12], sizeof(timestamp));
+            if (timestamp == 5000u + expected) break;
+            ASSERT_GT(expected, 0U);
+            EXPECT_EQ(timestamp, 5000u + expected - 1U);
+        }
     }
 
     EXPECT_GT(retry_count, 0U);
@@ -1073,22 +1095,36 @@ TEST_F(CompanionProtocolTest, MarkFailureRetainsDeliveredFrameForRetry) {
     EXPECT_EQ(serial.writes[0], serial.writes[1]);
 }
 
-TEST_F(CompanionProtocolTest, DisconnectDuringDrainKeepsFrameForReconnect) {
+TEST_F(CompanionProtocolTest, DisconnectDuringInflightDeliveryRetriesForNewSession) {
     sigurdos::mesh::StoredMessage msg{};
     std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
     std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
     std::strncpy(msg.text, "reconnect", sizeof(msg.text) - 1);
     msg.timestamp = 78;
-    msg.store_id = 43;
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg, &msg.store_id));
     ASSERT_TRUE(bridge.enqueueMessage(msg));
     uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
 
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 2U); // tickle + first-session frame
+
     serial.connected = false;
-    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    bridge.loop();
     serial.connected = true;
+    serial.generation++;
+    const uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
+    ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
-    ASSERT_EQ(serial.writes.size(), 2U); // tickle + retried frame
-    EXPECT_EQ(serial.writes[1][0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+    ASSERT_EQ(serial.writes.size(), 4U); // query response + durable retry
+    EXPECT_EQ(serial.writes[1], serial.writes[3]);
+
+    sigurdos::mesh::StoredMessage stored{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
+    EXPECT_FALSE(stored.companion_sent);
+
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
+    EXPECT_TRUE(stored.companion_sent);
 }
 
 TEST_F(CompanionProtocolTest, ChannelFrameCarriesRealPathLenAndTimestamp) {
@@ -2769,6 +2805,13 @@ TEST_F(CompanionProtocolTest, SyncDrainMarksPerRecordNotAll) {
     sigurdos::mesh::StoredMessage verify[4]{};
     n = sigurdos::mesh::messageStoreLoadAll(verify, 4);
     ASSERT_EQ(n, 2);
+    EXPECT_FALSE(verify[0].companion_sent);
+    EXPECT_FALSE(verify[1].companion_sent);
+
+    // Asking for the next record acknowledges only the prior in-flight one.
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    n = sigurdos::mesh::messageStoreLoadAll(verify, 4);
+    ASSERT_EQ(n, 2);
     EXPECT_TRUE(verify[0].companion_sent);
     EXPECT_FALSE(verify[1].companion_sent);
 }
@@ -2880,6 +2923,9 @@ TEST_F(CompanionProtocolTest, PersistedCliDataSurvivesOfflineV3Sync) {
     sigurdos::mesh::StoredMessage stored{};
     ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
     EXPECT_EQ(stored.txt_type, sigurdos::comms::COMPANION_TXT_CLI_DATA);
+    EXPECT_FALSE(stored.companion_sent);
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
     EXPECT_TRUE(stored.companion_sent);
 }
 

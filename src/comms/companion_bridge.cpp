@@ -123,6 +123,8 @@ void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* ho
     _was_connected = false;
     _pending_response_len = 0;
     _push_drop_count = 0;
+    _connection_generation = 0;
+    clearInflightMessage();
     clearPendingBinary();
 }
 
@@ -144,6 +146,7 @@ bool CompanionBridge::setEnabled(bool enabled)
         _serial->disable();
         resetConnectionSession();
         _was_connected = false;
+        _connection_generation = 0;
         if (_host) _host->cancelBinaryReqs();
     }
     return _serial->isEnabled() == enabled;
@@ -195,6 +198,7 @@ void CompanionBridge::resetConnectionSession()
     _sign_active = false;
     _sign_len = 0;
     _pending_response_len = 0;
+    clearInflightMessage();
     clearPendingBinary();
 }
 
@@ -230,21 +234,40 @@ bool CompanionBridge::sendPushFrame(const uint8_t* frame, size_t len)
     return true;
 }
 
+void CompanionBridge::clearInflightMessage()
+{
+    _inflight_store_id = 0;
+    _inflight_generation = 0;
+}
+
+void CompanionBridge::refreshConnectionSession()
+{
+    if (!_serial) return;
+    const bool connected = _serial->isConnected();
+    const uint32_t generation = connected ? _serial->connectionGeneration() : 0;
+    const bool session_changed =
+        _connection_generation != 0 &&
+        (!connected || generation != _connection_generation);
+
+    if (_was_connected && session_changed) {
+        // Protocol negotiation, signing input, queued response state, and
+        // durable-message delivery claims are all connection-scoped.
+        resetConnectionSession();
+        if (_host) _host->cancelBinaryReqs();
+    }
+
+    _connection_generation = generation;
+    _was_connected = connected;
+}
+
 void CompanionBridge::loop()
 {
-    if (!_serial || !_host || !_serial->isEnabled()) return;
+    if (!_serial || !_host) return;
+
+    refreshConnectionSession();
+    if (!_serial->isEnabled()) return;
 
     expirePendingBinary();
-
-    // Clear in-progress signing state on BLE disconnect to prevent
-    // cross-session signature injection (#712).  Check before we
-    // consume frames so a disconnect + reconnect + malicious FINISH
-    // sees a clean slate.
-    if (_was_connected && !_serial->isConnected()) {
-        resetConnectionSession();
-        _host->cancelBinaryReqs();
-    }
-    _was_connected = _serial->isConnected();
     if (!flushPendingResponse()) return;
     size_t len = _serial->checkRecvFrame(_cmd_frame);
     if (len > 0) {
@@ -467,9 +490,9 @@ bool CompanionBridge::refillOfflineQueueFromStore(bool notify_waiting)
             added_any = true;
         }
     }
-    // Do NOT mark any records as sent here. Records are marked individually
-    // only when CMD_SYNC_NEXT_MESSAGE successfully writes the frame to the
-    // app (see the SYNC_NEXT_MESSAGE handler below).
+    // Do NOT mark any records as sent here. A record is marked only when the
+    // same authenticated session asks for the message after it (see the
+    // SYNC_NEXT_MESSAGE handler below).
     if (added_any && notify_waiting && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
         sendPushFrame(&tickle, 1);
@@ -487,9 +510,8 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
     if (!buildMessageFrame(msg, frame, &len)) return false;
     bool added = addToOfflineQueue(msg.store_id, msg.store_id != 0, frame, len);
     if (added) {
-        // The record is NOT marked companion_sent here — that happens only when
-        // CMD_SYNC_NEXT_MESSAGE successfully writes the frame to the app. This
-        // prevents data loss if the app disconnects before draining the queue.
+        // The record is NOT marked companion_sent here. The same authenticated
+        // session must ask for its successor after the frame is written.
         if (isConnected()) {
             uint8_t tickle = PUSH_CODE_MSG_WAITING;
             sendPushFrame(&tickle, 1);
@@ -794,6 +816,7 @@ bool CompanionBridge::pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
 bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 {
     if (!_serial || !_host || !frame || len == 0 || len > MAX_FRAME_SIZE) return false;
+    refreshConnectionSession();
     // One slot is reserved exclusively for the current command response. If
     // it is occupied, do not execute another command (especially a
     // non-idempotent one) until the prior response is transport-admitted.
@@ -892,6 +915,24 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             writeErrFrame(ERR_CODE_BAD_STATE);
             return true;
         }
+
+        if (_inflight_store_id != 0) {
+            const bool same_session =
+                _connection_generation != 0 &&
+                _inflight_generation == _connection_generation;
+            const bool same_record =
+                _offline_len > 0 && _offline[0].persistent &&
+                _offline[0].store_id == _inflight_store_id;
+            if (same_session && same_record &&
+                sigurdos::mesh::messageStoreMarkCompanionSent(
+                    _inflight_store_id)) {
+                removeFirstOfflineFrame();
+            }
+            // If marking failed, fall through and replay the same head record.
+            // If the session changed, the old delivery was not acknowledged.
+            clearInflightMessage();
+        }
+
         if (_offline_len == 0) {
             // APP_START primes only one bounded page. Refill synchronously so
             // this same request returns the next persisted message instead of
@@ -902,11 +943,15 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         bool persistent = false;
         int out_len = peekOfflineQueue(_out_frame, &store_id, &persistent);
         if (out_len > 0) {
-            // Dequeue only after the transport accepts the complete frame.
+            // Volatile frames can leave after queue admission. Durable records
+            // remain at the queue head until the same authenticated session's
+            // next SYNC request implicitly acknowledges receipt.
             size_t written = _serial->writeFrame(_out_frame, out_len);
             if (written == (size_t)out_len) {
-                if (!persistent ||
-                    sigurdos::mesh::messageStoreMarkCompanionSent(store_id)) {
+                if (persistent) {
+                    _inflight_store_id = store_id;
+                    _inflight_generation = _connection_generation;
+                } else {
                     removeFirstOfflineFrame();
                 }
             }

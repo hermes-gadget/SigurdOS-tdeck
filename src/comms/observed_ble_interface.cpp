@@ -113,6 +113,14 @@ bool ObservedSerialBLEInterface::isConnected() const
     return _init_gate.initialized() && SerialBLEInterface::isConnected();
 }
 
+uint32_t ObservedSerialBLEInterface::connectionGeneration() const
+{
+    BleTaskMutex::Guard guard(_task_mutex);
+    return (_init_gate.initialized() && SerialBLEInterface::isConnected())
+               ? _stats.connection_generation
+               : 0;
+}
+
 bool ObservedSerialBLEInterface::isEnabled() const
 {
     BleTaskMutex::Guard guard(_task_mutex);
@@ -259,6 +267,8 @@ void ObservedSerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cm
     _auth_watchdog.cancel();
     if (cmpl.success) {
         _stats.auth_success_count++;
+        _stats.connection_generation++;
+        if (_stats.connection_generation == 0) _stats.connection_generation = 1;
     } else {
         _stats.auth_failure_count++;
     }
@@ -282,6 +292,7 @@ void ObservedSerialBLEInterface::onConnect(BLEServer* server,
     _stats.connect_count++;
     if (param) {
         _stats.last_conn_id = param->connect.conn_id;
+        if (server) _stats.last_mtu = server->getPeerMTU(param->connect.conn_id);
         _auth_watchdog.arm(param->connect.conn_id, millis());
     }
     SerialBLEInterface::onConnect(server, param);

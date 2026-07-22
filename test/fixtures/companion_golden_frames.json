@@ -3,7 +3,7 @@
   "source": {
     "path": "lib/meshcore/examples/companion_radio/MyMesh.cpp",
     "sha256": "a363d3fcc8c0529bbc0a58577924d964d5f11b174d729543be69c3a7ab26208d",
-    "submodule_commit": "9e78a595deb92f3aa38a06cbbd21648062337c88",
+    "submodule_commit": "a75f24ecc98889e2beb4f702dc89e737aa82739e",
     "protocol_codes_sha256": "37ed4b4636de7d9535c91b3f3087750d6f788699de180783998f5a35105c22c1"
   },
   "reviewed_upstream": {

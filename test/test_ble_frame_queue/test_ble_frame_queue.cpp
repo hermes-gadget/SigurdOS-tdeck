@@ -7,6 +7,7 @@
 #include "comms/ble_auth_watchdog.h"
 #include "comms/ble_bond_rotation.h"
 #include "comms/ble_task_mutex.h"
+#include "helpers/esp32/BleFramePolicy.h"
 
 #include <atomic>
 #include <cstring>
@@ -23,6 +24,25 @@ using sigurdos::comms::BleRxAdmissionAction;
 using sigurdos::comms::BleAuthWatchdog;
 using sigurdos::comms::BleBondRotationState;
 using sigurdos::comms::BleTaskMutex;
+
+TEST(BleAttPayloadPolicy, AccountsForThreeByteAttHeaderAtBoundaries)
+{
+    using meshcore::ble::frameFitsMtu;
+    EXPECT_TRUE(frameFitsMtu(20, 23));
+    EXPECT_FALSE(frameFitsMtu(21, 23));
+    EXPECT_TRUE(frameFitsMtu(173, 176));
+    EXPECT_FALSE(frameFitsMtu(174, 176));
+    EXPECT_FALSE(frameFitsMtu(176, 176));
+    EXPECT_TRUE(frameFitsMtu(176, 179));
+    EXPECT_TRUE(frameFitsMtu(176, meshcore::ble::PREFERRED_ATT_MTU));
+}
+
+TEST(BleAttPayloadPolicy, RejectsEmptyFramesAndInvalidMtu)
+{
+    EXPECT_FALSE(meshcore::ble::frameFitsMtu(0, 23));
+    EXPECT_FALSE(meshcore::ble::frameFitsMtu(1, 3));
+    EXPECT_EQ(meshcore::ble::payloadCapacity(2), 0u);
+}
 
 constexpr size_t MAX_LEN = 176;   // MAX_FRAME_SIZE on target
 constexpr size_t CAPACITY = 4;    // FRAME_QUEUE_SIZE on target
