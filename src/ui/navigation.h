@@ -55,6 +55,11 @@ enum class Screen {
     COUNT
 };
 
+inline bool screen_refresh_matches(Screen expected, Screen active)
+{
+    return expected == active;
+}
+
 // Navigate to a screen
 void navigate_to(Screen screen);
 
@@ -76,6 +81,10 @@ Screen current_screen();
 // Re-dispatch the current screen without modifying history.
 // Used after theme/style changes to rebuild widgets with new globals.
 void refresh_current_screen();
+
+// Re-dispatch only when the caller's screen is still current. Deferred LVGL
+// callbacks use this to avoid replacing an unrelated screen generation.
+bool refresh_current_screen_if(Screen expected);
 
 // Universal back-swipe gesture (two-swipe commit).
 // Call this from the trackball dispatch loop for screens that don't have

@@ -18,6 +18,9 @@
 
 #include <array>
 #include <cstddef>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -26,6 +29,18 @@
 namespace {
 
 using sigurdos::ui::Screen;
+
+std::string read_project_file(const char* path)
+{
+    const char* prefixes[] = {"", "../", "../../", "../../../", "../../../../"};
+    for (const char* prefix : prefixes) {
+        std::ifstream in(std::string(prefix) + path);
+        if (in.good()) {
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        }
+    }
+    return {};
+}
 
 constexpr std::array<Screen, 28> kScreens = {
     Screen::Home,
@@ -121,6 +136,42 @@ TEST(NavigationContractTest, ParameterizedRouteAPIsExist) {
     (void)static_cast<repeater_route_fn>(sigurdos::ui::navigate_to_repeater_detail);
     (void)static_cast<custom_route_fn>(sigurdos::ui::navigate_to_custom_radio_setup);
     SUCCEED();
+}
+
+TEST(NavigationContractTest, DeferredRefreshRequiresMatchingScreenGeneration) {
+    EXPECT_TRUE(sigurdos::ui::screen_refresh_matches(
+        Screen::NodeStats, Screen::NodeStats));
+    EXPECT_FALSE(sigurdos::ui::screen_refresh_matches(
+        Screen::NodeStats, Screen::Home));
+
+    using guarded_refresh_fn = bool (*)(Screen);
+    (void)static_cast<guarded_refresh_fn>(
+        sigurdos::ui::refresh_current_screen_if);
+}
+
+TEST(NavigationContractTest, NodeStatsResetDefersGuardedRefreshWithoutDeletingRoot) {
+    const std::string source = read_project_file(
+        "src/ui/screens/screen_node_stats.cpp");
+    ASSERT_FALSE(source.empty());
+
+    const size_t reset_pos = source.find(
+        "sigurdos::mesh::resetPacketStats();");
+    const size_t async_pos = source.find("lv_async_call(", reset_pos);
+    const size_t guarded_pos = source.find(
+        "refresh_current_screen_if(Screen::NodeStats)", async_pos);
+
+    ASSERT_NE(reset_pos, std::string::npos);
+    ASSERT_NE(async_pos, std::string::npos);
+    ASSERT_NE(guarded_pos, std::string::npos);
+    EXPECT_LT(reset_pos, async_pos);
+    EXPECT_LT(async_pos, guarded_pos);
+
+    const std::string reset_callback = source.substr(reset_pos,
+        guarded_pos + std::string("refresh_current_screen_if(Screen::NodeStats)").size()
+            - reset_pos);
+    EXPECT_EQ(reset_callback.find("lv_obj_del_async"), std::string::npos);
+    EXPECT_EQ(reset_callback.find("navigate_to(Screen::NodeStats)"),
+              std::string::npos);
 }
 
 } // namespace

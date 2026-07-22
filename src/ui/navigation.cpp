@@ -205,6 +205,13 @@ void refresh_current_screen()
     dispatch_screen(current);
 }
 
+bool refresh_current_screen_if(Screen expected)
+{
+    if (!screen_refresh_matches(expected, current)) return false;
+    refresh_current_screen();
+    return true;
+}
+
 // ════════════════════════════════════════════════════
 // Universal back-swipe (two-swipe commit)
 // ════════════════════════════════════════════════════

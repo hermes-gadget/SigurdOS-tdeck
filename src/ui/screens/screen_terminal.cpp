@@ -21,6 +21,7 @@
 #include "../navigation.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../terminal_line_cap.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
@@ -57,7 +58,6 @@ static uint32_t term_classify_line(const char* text)
 }
 
 // ── Terminal line cap — prevent unbounded label accumulation ──
-static constexpr unsigned MAX_TERM_LINES = 64;
 static constexpr uint32_t MAX_TERM_COMMAND_LENGTH = 255;
 static constexpr size_t MAX_TERM_VAR_KEY_LENGTH = 31;
 static constexpr size_t MAX_TERM_VAR_VALUE_LENGTH = 127;
@@ -78,12 +78,12 @@ static bool terminal_var_key_valid(const char* key, size_t len)
 
 static void term_add_line(lv_obj_t* log, const char* text)
 {
-    // Prune oldest line if at cap
-    while (lv_obj_get_child_cnt(log) >= MAX_TERM_LINES) {
-        lv_obj_t* first = lv_obj_get_child(log, 0);
-        if (first) lv_obj_del_async(first);
-        else break;
-    }
+    const bool ready = terminal_prune_oldest_for_append(
+        log,
+        [](lv_obj_t* obj) { return lv_obj_get_child_cnt(obj); },
+        [](lv_obj_t* obj) { return lv_obj_get_child(obj, 0); },
+        [](lv_obj_t* obj) { lv_obj_delete(obj); });
+    if (!ready) return;
 
     lv_obj_t* lbl = lv_label_create(log);
     lv_label_set_text(lbl, text);
