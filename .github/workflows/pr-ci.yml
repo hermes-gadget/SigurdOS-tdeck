@@ -331,10 +331,12 @@ jobs:
       - name: AGENTS.md / CLAUDE.md mirror check
         run: |
           # Both files must be byte-identical in their shared content sections
-          # (the first few lines differ — CLAUDE.md carries a mirror notice).
-          # Strip header lines that legitimately differ, then diff the rest.
-          awk 'NR>7' AGENTS.md > /tmp/agents_core.md
-          awk 'NR>9' CLAUDE.md > /tmp/claude_core.md
+          # (the headers and active-file marker legitimately differ). Anchor on
+          # the first shared heading instead of fragile fixed line numbers.
+          awk '/^## Markdown Files in This Repo$/ { shared=1 } shared' AGENTS.md \
+            | sed 's/ ← you are here//' > /tmp/agents_core.md
+          awk '/^## Markdown Files in This Repo$/ { shared=1 } shared' CLAUDE.md \
+            | sed 's/ ← you are here//' > /tmp/claude_core.md
           if ! diff -q /tmp/agents_core.md /tmp/claude_core.md > /dev/null; then
             echo "::error::AGENTS.md and CLAUDE.md are out of sync — they must be true mirrors"
             diff -u /tmp/agents_core.md /tmp/claude_core.md
