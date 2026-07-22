@@ -39,7 +39,7 @@ public:
     bool format() {
         if (_mock_format_succeeds) {
             _mock_formatted = true;
-            _mock_mount_succeeds = true;  // after format, mount should work
+            _mock_mount_succeeds = _mock_post_format_mount_succeeds;
             return true;
         }
         return false;
@@ -54,16 +54,21 @@ public:
     // Test control
     void mock_set_mount_result(bool succeeds) { _mock_mount_succeeds = succeeds; }
     void mock_set_format_result(bool succeeds) { _mock_format_succeeds = succeeds; }
+    void mock_set_post_format_mount_result(bool succeeds) {
+        _mock_post_format_mount_succeeds = succeeds;
+    }
     bool mock_was_formatted() const { return _mock_formatted; }
     void mock_reset() {
         _mock_mount_succeeds = false;
         _mock_format_succeeds = true;
+        _mock_post_format_mount_succeeds = true;
         _mock_formatted = false;
     }
 
 private:
     bool _mock_mount_succeeds = false;
     bool _mock_format_succeeds = true;
+    bool _mock_post_format_mount_succeeds = true;
     bool _mock_formatted = false;
 };
 

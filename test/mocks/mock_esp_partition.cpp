@@ -11,6 +11,8 @@
 static bool s_has_test_partition = false;
 static bool s_has_spiffs_partition = false;
 static bool s_spiffs_erased = false;
+static size_t s_spiffs_programmed_offset = 0;
+static size_t s_spiffs_read_error_offset = SIZE_MAX;
 static bool s_has_otadata_partition = true;
 static esp_partition_t s_test_partition = {
     ESP_PARTITION_TYPE_APP,
@@ -23,7 +25,7 @@ static esp_partition_t s_spiffs_partition = {
     ESP_PARTITION_TYPE_DATA,
     ESP_PARTITION_SUBTYPE_DATA_SPIFFS,
     0x290000,
-    0x160000,
+    MOCK_SPIFFS_PARTITION_SIZE,
     "spiffs",
 };
 static esp_partition_t s_otadata_partition = {
@@ -48,6 +50,17 @@ void mock_otadata_partition(bool present, uint32_t address) {
 void mock_spiffs_partition(bool present, bool erased) {
     s_has_spiffs_partition = present;
     s_spiffs_erased = erased;
+    s_spiffs_programmed_offset = erased ? SIZE_MAX : 0;
+    s_spiffs_read_error_offset = SIZE_MAX;
+}
+
+void mock_spiffs_programmed_byte(size_t offset) {
+    s_spiffs_erased = true;
+    s_spiffs_programmed_offset = offset;
+}
+
+void mock_spiffs_read_error(size_t offset) {
+    s_spiffs_read_error_offset = offset;
 }
 } // namespace test
 } // namespace sigurdos
@@ -92,10 +105,15 @@ esp_err_t esp_partition_read(
     // Fill with 0xFF if "erased", or 0x00 if "not erased" (simulate data).
     if (partition->type == ESP_PARTITION_TYPE_DATA &&
         partition->subtype == ESP_PARTITION_SUBTYPE_DATA_SPIFFS) {
-        if (s_spiffs_erased) {
-            memset(dst, 0xFF, size);
-        } else {
-            memset(dst, 0x00, size);  // non-erased: arbitrary non-0xFF data
+        if (s_spiffs_read_error_offset >= src_offset &&
+            s_spiffs_read_error_offset - src_offset < size) {
+            return ESP_ERR_INVALID_ARG;
+        }
+
+        memset(dst, s_spiffs_erased ? 0xFF : 0x00, size);
+        if (s_spiffs_programmed_offset >= src_offset &&
+            s_spiffs_programmed_offset - src_offset < size) {
+            static_cast<uint8_t*>(dst)[s_spiffs_programmed_offset - src_offset] = 0x00;
         }
         return ESP_OK;
     }

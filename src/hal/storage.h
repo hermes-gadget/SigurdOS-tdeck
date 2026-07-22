@@ -8,7 +8,8 @@
 namespace sigurdos {
 
 // Safe storage initialiser — mounts SPIFFS, auto-formatting only
-// when the partition appears fully erased (clean flash / factory reset).
+// after every byte in the partition is proven erased (clean flash / factory
+// reset). A programmed byte or partition read error preserves the partition.
 // Corrupt data is left untouched (user must factory-reset to recover).
 //
 // Returns true if SPIFFS is usable after this call.

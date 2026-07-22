@@ -51,6 +51,8 @@ typedef uint32_t esp_partition_subtype_t;
 #define ESP_PARTITION_SUBTYPE_DATA_SPIFFS 0x82
 #define ESP_PARTITION_SUBTYPE_DATA_FAT    0x81
 
+#define MOCK_SPIFFS_PARTITION_SIZE 0x160000u
+
 typedef void* esp_partition_iterator_t;
 
 // -- Functions --
@@ -105,6 +107,14 @@ void mock_otadata_partition(bool present, uint32_t address);
 // Set whether esp_partition_find_first returns a SPIFFS partition
 // and whether the partition content appears erased (all 0xFF).
 void mock_spiffs_partition(bool present, bool erased);
+
+// Make an otherwise erased SPIFFS partition contain one programmed byte at
+// the requested offset. Values beyond the partition are ignored by reads.
+void mock_spiffs_programmed_byte(size_t offset);
+
+// Make the partition read containing this offset fail. SIZE_MAX disables the
+// injected failure.
+void mock_spiffs_read_error(size_t offset);
 
 } // namespace test
 } // namespace sigurdos

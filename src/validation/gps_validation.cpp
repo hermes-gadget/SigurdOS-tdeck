@@ -12,6 +12,7 @@
 
 #include "hal/gps.h"
 #include "hal/tdeck_pins.h"
+#include "validation/gps_validation_storage.h"
 #if defined(SIGURDOS_GPS_VALIDATION_WIFI) && SIGURDOS_GPS_VALIDATION_WIFI
 #include "validation/gps_validation_wifi.h"
 #endif
@@ -111,7 +112,7 @@ static void emit_status(bool persist)
 
 static void init_log()
 {
-    spiffs_ready = SPIFFS.begin(true);
+    spiffs_ready = sigurdos::gps_validation::init_storage();
     if (!spiffs_ready) {
         Serial.println("[gps-validation] spiffs=0");
         return;
