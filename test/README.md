@@ -16,6 +16,9 @@ pio test -e native_test -f test_gps
 # Run the full host-side native suite.
 pio test -e native_test
 
+# Exercise the pinned production MeshCore dispatcher with host radio fakes.
+pio test -e native_mesh_integration
+
 # Build the firmware image for the LilyGo T-Deck target.
 pio run -e SigurdOS_TDeck
 ```
@@ -79,6 +82,7 @@ test/
 |-- test_map/                       Map projection, LRU/negative cache, and load budgets
 |-- test_map_renderer/              Map renderer constants, zoom validation, and tile math
 |-- test_mesh_contract/             Mesh advert types, contact flags, and buffer capacity stability
+|-- test_mesh_integration/          Production MeshCore parser/dispatcher/radio integration
 |-- test_mesh_messaging/            Message queues, contacts, responses, LPP parsing
 |-- test_mesh_wrapper/              Public mesh API contracts and return ranges
 |-- test_mesh_wrapper_internal/     Wrapper seam helpers: scope-key hex codec, DM conversation key
