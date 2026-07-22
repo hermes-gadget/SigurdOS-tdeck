@@ -16,6 +16,7 @@
 #include "durable_fanout.h"
 #include "contact_store.h"
 #include "contact_uri.h"
+#include "esp32_hardware_rng.h"
 #include "persistence_store.h"
 #include "response_copy.h"
 #include "hal/tdeck_board.h"
@@ -48,6 +49,7 @@
 #include <helpers/StaticPoolPacketManager.h>
 #include "hal/spi_shared.h"
 #include <new>
+#include <type_traits>
 
 using sigurdos::mesh::MeshMessage;
 
@@ -77,7 +79,10 @@ static OwnedSX1262Wrapper*        radio_driver = nullptr;
 static bool                      radio_inited = false;
 static ESP32RTCClock             fallback_clock;
 static AutoDiscoverRTCClock      rtc_clock(fallback_clock);
-static StdRNG                    fast_rng;
+using ProductionMeshRng = sigurdos::mesh::Esp32HardwareRng;
+static_assert(!std::is_same<ProductionMeshRng, StdRNG>::value,
+              "Production identity generation must not use StdRNG");
+static ProductionMeshRng        hardware_rng;
 static SimpleMeshTables          tables;
 static ArduinoMillis             millis_clock;
 static StaticPoolPacketManager   pkt_mgr(16);
@@ -1057,10 +1062,8 @@ bool init(bool spiffs_ok)
                   freq, bw, sf, cr, tx_power);
 #endif
 
-    fast_rng.begin(radio_module->random(0x7FFFFFFF));
-
     g_mesh = new (std::nothrow) mesh_impl_t(
-        *radio_driver, millis_clock, fast_rng, rtc_clock, pkt_mgr, tables);
+        *radio_driver, millis_clock, hardware_rng, rtc_clock, pkt_mgr, tables);
     if (!g_mesh) {
         Serial.println("[mesh] ERROR: SigurdMeshV2 allocation failed");
         cleanupMeshInit();
@@ -1070,7 +1073,7 @@ bool init(bool spiffs_ok)
 
     // Generate or load identity
     if (!loadIdentity(g_mesh->self_id)) {
-        g_mesh->self_id = ::mesh::LocalIdentity(&fast_rng);
+        g_mesh->self_id = ::mesh::LocalIdentity(&hardware_rng);
         if (spiffs_ok) {
             saveIdentity(g_mesh->self_id);
         } else {
