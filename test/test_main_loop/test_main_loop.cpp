@@ -49,4 +49,89 @@ TEST(MainLoopDispatchTest, ServicesRemoteTestTelemetryAndDebugAfterGpsWork)
     EXPECT_LT(timing_pos, debug_pos);
 }
 
+TEST(MainLoopDispatchTest, IntegratesBootHealthAndValidatedDisplayRetryInOrder)
+{
+    const std::string source = read_project_file("src/main.cpp");
+    ASSERT_FALSE(source.empty());
+
+    const size_t reset_pos = source.find(
+        "const esp_reset_reason_t reset_reason = esp_reset_reason();");
+    const size_t health_begin_pos = source.find(
+        "sigurdos::ota_boot_health::begin();");
+    const size_t board_pos = source.find("board.begin();");
+    const size_t retry_begin_pos = source.find(
+        "sigurdos::hal::display_retry_begin(");
+    const size_t display_pos = source.find("sigurdos_display_init()");
+    const size_t retry_failure_pos = source.find(
+        "sigurdos::hal::display_retry_note_failure(");
+    const size_t rollback_pos = source.find(
+        "sigurdos::ota_boot_health::rollbackIfPending(");
+    const size_t retry_clear_pos = source.find(
+        "sigurdos::hal::display_retry_clear(");
+    const size_t chats_pos = source.find(
+        "sigurdos::ui::load_persisted_state();");
+    const size_t core_ready_pos = source.find(
+        "sigurdos::ota_boot_health::markCoreReady();");
+    const size_t runtime_pos = source.find(
+        "sigurdos::hal::boot_watchdog_enter_runtime();");
+    const size_t health_loop_pos = source.find(
+        "sigurdos::ota_boot_health::loop();");
+    const size_t runtime_progress_pos = source.find(
+        "sigurdos::hal::boot_watchdog_runtime_progress();");
+
+    ASSERT_NE(reset_pos, std::string::npos);
+    ASSERT_NE(health_begin_pos, std::string::npos);
+    ASSERT_NE(board_pos, std::string::npos);
+    ASSERT_NE(retry_begin_pos, std::string::npos);
+    ASSERT_NE(display_pos, std::string::npos);
+    ASSERT_NE(retry_failure_pos, std::string::npos);
+    ASSERT_NE(rollback_pos, std::string::npos);
+    ASSERT_NE(retry_clear_pos, std::string::npos);
+    ASSERT_NE(chats_pos, std::string::npos);
+    ASSERT_NE(core_ready_pos, std::string::npos);
+    ASSERT_NE(runtime_pos, std::string::npos);
+    ASSERT_NE(health_loop_pos, std::string::npos);
+    ASSERT_NE(runtime_progress_pos, std::string::npos);
+
+    EXPECT_LT(reset_pos, health_begin_pos);
+    EXPECT_LT(health_begin_pos, board_pos);
+    EXPECT_LT(board_pos, retry_begin_pos);
+    EXPECT_LT(retry_begin_pos, display_pos);
+    EXPECT_LT(display_pos, retry_failure_pos);
+    EXPECT_LT(retry_failure_pos, rollback_pos);
+    EXPECT_LT(rollback_pos, retry_clear_pos);
+    EXPECT_LT(retry_clear_pos, chats_pos);
+    EXPECT_LT(chats_pos, core_ready_pos);
+    EXPECT_LT(core_ready_pos, runtime_pos);
+    EXPECT_LT(runtime_pos, health_loop_pos);
+    EXPECT_LT(health_loop_pos, runtime_progress_pos);
+}
+
+TEST(MainLoopDispatchTest, CriticalBatterySleepFailureCannotEnterMainLoopUninitialized)
+{
+    const std::string source = read_project_file("src/main.cpp");
+    ASSERT_FALSE(source.empty());
+
+    const size_t helper_pos = source.find(
+        "[[noreturn]] static void retry_critical_battery_sleep()");
+    const size_t early_guard_pos = source.find(
+        "if (sigurdos::tdeck_should_resleep_early(");
+    const size_t retry_call_pos = source.find(
+        "retry_critical_battery_sleep();", early_guard_pos);
+    const size_t input_init_pos = source.find(
+        "sigurdos_display_init_inputs();");
+
+    ASSERT_NE(helper_pos, std::string::npos);
+    ASSERT_NE(early_guard_pos, std::string::npos);
+    ASSERT_NE(retry_call_pos, std::string::npos);
+    ASSERT_NE(input_init_pos, std::string::npos);
+    EXPECT_LT(helper_pos, early_guard_pos);
+    EXPECT_LT(early_guard_pos, retry_call_pos);
+    EXPECT_LT(retry_call_pos, input_init_pos);
+
+    const std::string early_guard = source.substr(
+        early_guard_pos, input_init_pos - early_guard_pos);
+    EXPECT_EQ(early_guard.find("return;"), std::string::npos);
+}
+
 }  // anonymous namespace

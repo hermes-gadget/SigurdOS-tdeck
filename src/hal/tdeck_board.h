@@ -57,6 +57,33 @@ inline bool tdeck_wake_configuration_succeeded(int error) {
     return error == 0;
 }
 
+enum class TDeckSleepStatus : uint8_t {
+    Ready,
+    Inhibited,
+    WakeConfigurationFailed,
+};
+
+inline TDeckSleepStatus tdeck_sleep_preflight(bool inhibited,
+                                               int timer_error) {
+    if (inhibited) return TDeckSleepStatus::Inhibited;
+    if (!tdeck_wake_configuration_succeeded(timer_error)) {
+        return TDeckSleepStatus::WakeConfigurationFailed;
+    }
+    return TDeckSleepStatus::Ready;
+}
+
+inline const char* tdeck_sleep_status_name(TDeckSleepStatus status) {
+    switch (status) {
+    case TDeckSleepStatus::Ready:
+        return "ready";
+    case TDeckSleepStatus::Inhibited:
+        return "inhibited";
+    case TDeckSleepStatus::WakeConfigurationFailed:
+        return "wake configuration failed";
+    }
+    return "unknown";
+}
+
 #ifdef SIGURDOS_TDECK
 class TDeckBoard : public ESP32Board {
     uint8_t  _startup_reason;
@@ -105,6 +132,15 @@ class TDeckBoard : public ESP32Board {
             PIN_GPS_RX, PIN_GPS_TX, PIN_SD_CS,
         };
         for (int pin : signal_pins) highImpedance(pin);
+    }
+
+    [[noreturn]] static void enterDeepSleep() {
+        esp_deep_sleep_start();
+
+        // ESP-IDF documents this call as non-returning. If a platform fault
+        // violates that contract, stay out of the application loop because
+        // the peripheral rail and buses have already been shut down.
+        while (true) delay(1000);
     }
 
 public:
@@ -187,10 +223,12 @@ public:
         esp_restart();
     }
 
-    void sleep(uint32_t secs) override {
+    // Returns only when sleep preparation fails. A successful transition is
+    // explicitly non-returning via enterDeepSleep().
+    TDeckSleepStatus trySleep(uint32_t secs) {
         if (_inhibit_sleep) {
             Serial.println("[power] deep sleep inhibited");
-            return;
+            return TDeckSleepStatus::Inhibited;
         }
 
         // Validate the mandatory recovery wake source before touching powered
@@ -199,9 +237,11 @@ public:
         const uint32_t wake_secs = tdeck_sleep_wake_seconds(secs);
         const esp_err_t timer_error =
             esp_sleep_enable_timer_wakeup(wake_secs * 1000000ULL);
-        if (!tdeck_wake_configuration_succeeded(timer_error)) {
+        const TDeckSleepStatus preflight =
+            tdeck_sleep_preflight(_inhibit_sleep, timer_error);
+        if (preflight != TDeckSleepStatus::Ready) {
             Serial.printf("[power] timer wake setup failed: %d\n", timer_error);
-            return;
+            return preflight;
         }
 
         const esp_err_t domain_error =
@@ -238,7 +278,11 @@ public:
         pinMode(PIN_PERIPH_PWR, OUTPUT);
         digitalWrite(PIN_PERIPH_PWR, LOW);
         delay(10);
-        esp_deep_sleep_start();
+        enterDeepSleep();
+    }
+
+    void sleep(uint32_t secs) override {
+        (void)trySleep(secs);
     }
 
     void setInhibitSleep(bool inhibit) { _inhibit_sleep = inhibit; }

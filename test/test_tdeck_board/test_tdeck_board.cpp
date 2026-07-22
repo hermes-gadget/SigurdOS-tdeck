@@ -63,6 +63,20 @@ TEST_F(TDeckBoardPowerTest, WakeConfigurationErrorsAreRecognized) {
     EXPECT_FALSE(sigurdos::tdeck_wake_configuration_succeeded(0x102));
 }
 
+TEST_F(TDeckBoardPowerTest, SleepPreflightReportsInhibitionAndWakeFailure) {
+    using sigurdos::TDeckSleepStatus;
+
+    EXPECT_EQ(sigurdos::tdeck_sleep_preflight(true, 0),
+              TDeckSleepStatus::Inhibited);
+    EXPECT_EQ(sigurdos::tdeck_sleep_preflight(false, -1),
+              TDeckSleepStatus::WakeConfigurationFailed);
+    EXPECT_EQ(sigurdos::tdeck_sleep_preflight(false, 0),
+              TDeckSleepStatus::Ready);
+    EXPECT_STREQ(sigurdos::tdeck_sleep_status_name(
+                     TDeckSleepStatus::WakeConfigurationFailed),
+                 "wake configuration failed");
+}
+
 TEST_F(TDeckBoardPowerTest, OtherBootReasonsAndRecoveredBatteryContinue) {
     EXPECT_FALSE(sigurdos::tdeck_should_resleep_early(false, true, 3199));
     EXPECT_FALSE(sigurdos::tdeck_should_resleep_early(true, false, 3199));

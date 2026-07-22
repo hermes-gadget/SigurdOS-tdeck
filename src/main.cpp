@@ -15,6 +15,8 @@
 #include "hal/launcher_env.h"
 #include "hal/buzzer.h"
 #include "hal/boot_watchdog.h"
+#include "hal/display_retry_state.h"
+#include "hal/ota_boot_health.h"
 #include "app/map_renderer.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/ui.h"
@@ -51,11 +53,26 @@ static void boot_status(const char* status)
 #include "esp_log.h"
 static const char* BOOT_TAG = "boot";
 
+[[noreturn]] static void retry_critical_battery_sleep()
+{
+    // setup() must never return before LVGL, storage, mesh, and UI are ready.
+    // A failed wake-source setup is retried here with the boot watchdog
+    // disabled, instead of allowing Arduino to enter an uninitialized loop().
+    sigurdos::hal::boot_watchdog_stop();
+    while (true) {
+        const sigurdos::TDeckSleepStatus status = board.trySleep(0);
+        Serial.printf("[boot] critical-battery sleep failed (%s); retrying\n",
+                      sigurdos::tdeck_sleep_status_name(status));
+        delay(5000);
+    }
+}
+
 void setup()
 {
     esp_log_write(ESP_LOG_ERROR, BOOT_TAG, "SETUP ENTRY - BEFORE Serial.begin");
     Serial.begin(115200);
     const esp_reset_reason_t reset_reason = esp_reset_reason();
+    sigurdos::ota_boot_health::begin();
     sigurdos::hal::boot_watchdog_begin(reset_reason);
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
     esp_log_write(ESP_LOG_ERROR, BOOT_TAG, "HELLO FROM REMOTE_TEST BUILD -v2");
@@ -78,22 +95,30 @@ void setup()
             deep_sleep_reset, timer_wakeup, early_battery_mv)) {
         Serial.printf("[boot] battery still critical (%u mV); returning to deep sleep\n",
                       early_battery_mv);
-        board.sleep(0);
-        return;
+        const sigurdos::TDeckSleepStatus status = board.trySleep(0);
+        Serial.printf("[boot] initial deep-sleep attempt failed: %s\n",
+                      sigurdos::tdeck_sleep_status_name(status));
+        retry_critical_battery_sleep();
     }
     sigurdos::hal::buzzer_init();
 
     // Track display init failures across reboots to detect boot loops.
     // RTC_NOINIT_ATTR persists through software resets (ESP.restart()).
-    static RTC_NOINIT_ATTR uint8_t display_failures = 0;
-    static constexpr uint8_t MAX_DISPLAY_FAILURES = 3;
+    static RTC_NOINIT_ATTR sigurdos::hal::DisplayRetryState
+        display_retry_state;
+    sigurdos::hal::display_retry_begin(
+        display_retry_state, reset_reason == ESP_RST_SW);
 
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Display);
     if (!sigurdos_display_init()) {
-        display_failures++;
+        const uint8_t display_failures =
+            sigurdos::hal::display_retry_note_failure(display_retry_state);
         Serial.printf("[boot] FATAL: Display init failed (%u/%u attempts)\n",
-                      display_failures, MAX_DISPLAY_FAILURES);
-        if (display_failures >= MAX_DISPLAY_FAILURES) {
+                      display_failures,
+                      sigurdos::hal::MAX_DISPLAY_FAILURES);
+        sigurdos::ota_boot_health::rollbackIfPending(
+            "display initialization failed");
+        if (sigurdos::hal::display_retry_should_halt(display_retry_state)) {
             Serial.println("[boot] HALTED: Too many display failures.");
             Serial.println("[boot] USB reflashing remains available; reset to retry.");
             // Mesh, BLE, OTA, and interactive command services have not started.
@@ -105,7 +130,7 @@ void setup()
         delay(5000);
         ESP.restart();
     }
-    display_failures = 0;  // success - reset counter
+    sigurdos::hal::display_retry_clear(display_retry_state);
     boot_log("display core init OK");
 
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Ui);
@@ -228,6 +253,7 @@ void setup()
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Telemetry);
     sigurdos::telemetry::init();
 #endif
+    sigurdos::ota_boot_health::markCoreReady();
     sigurdos::hal::boot_watchdog_enter_runtime();
 }
 
@@ -244,8 +270,9 @@ void loop()
         last_batt_check = millis();
         if (board.isBatteryCritical()) {
             Serial.println("CRITICAL: Battery low — entering deep sleep");
-            board.sleep(0);  // sleep indefinitely until charged
-            return;
+            const sigurdos::TDeckSleepStatus status = board.trySleep(0);
+            Serial.printf("[power] deep-sleep attempt failed: %s\n",
+                          sigurdos::tdeck_sleep_status_name(status));
         }
     }
 
@@ -299,5 +326,6 @@ void loop()
 #if SIGURDOS_DEBUG_DIAG
     sigurdos::debug::loop();
 #endif
+    sigurdos::ota_boot_health::loop();
     sigurdos::hal::boot_watchdog_runtime_progress();
 }
