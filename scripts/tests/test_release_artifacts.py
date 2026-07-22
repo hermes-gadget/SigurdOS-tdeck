@@ -142,7 +142,7 @@ def make_release_directory(path, commit="a" * 40, version="beta-test"):
         "git_dirty": False,
         "meshcore_sha": "b" * 40,
         "build_environment": "SigurdOS_TDeck",
-        "partition_table": "default_16MB.csv",
+        "partition_table": "partitions_sigurdos_16MB.csv",
         "source_timestamp_utc": "2026-01-01T00:00:00Z",
         "flash_mode": "keep",
         "flash_size": "16MB",

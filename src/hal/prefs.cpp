@@ -272,6 +272,13 @@ bool prefs_set_ble_enabled(bool enabled) {
 #endif
 }
 
+bool clearSavedNetworkCredentials() {
+    NodePrefs candidate = prefs_get();
+    detail::clearSavedNetworkCredentialFields(candidate);
+    if (!prefs_set(candidate)) return false;
+    return clearRepeaterPasswords();
+}
+
 // ── Repeater password storage ─────────────────────────────────────────
 static constexpr const char* PW_NS = "sigurdos_pw";
 static constexpr int MAX_SAVED_PWS = 8;
@@ -399,6 +406,14 @@ void removeRepeaterPassword(const char* name) {
         }
     }
     nvs.end();
+}
+
+bool clearRepeaterPasswords() {
+    Preferences nvs;
+    if (!nvs.begin(PW_NS, false)) return false;
+    const bool cleared = nvs.clear();
+    nvs.end();
+    return cleared;
 }
 
 } // namespace sigurdos

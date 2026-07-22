@@ -1191,6 +1191,80 @@ void settings_system_show()
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 
+    // Targeted credential clearing preserves the node identity and local PIN.
+    lv_obj_t* btn_clear_credentials = lv_list_add_btn(
+        list, LV_SYMBOL_TRASH, "  Clear saved credentials");
+    lv_obj_set_style_bg_color(
+        btn_clear_credentials,
+        lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(btn_clear_credentials, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(btn_clear_credentials,
+                                lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(btn_clear_credentials, [](lv_event_t* e) {
+        lv_obj_t* parent = lv_obj_get_screen(
+            (lv_obj_t*)lv_event_get_target(e));
+        auto dlg_sz = dialog_size(270, 132);
+        lv_obj_t* dlg = lv_obj_create(parent);
+        lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+        lv_obj_center(dlg);
+        lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+        lv_obj_set_style_border_color(dlg, lv_color_hex(DIVIDER), 0);
+        lv_obj_set_style_border_width(dlg, 2, 0);
+        lv_obj_set_style_radius(dlg, 0, 0);
+        lv_obj_set_style_pad_all(dlg, 8, 0);
+        lv_obj_set_style_bg_opa(dlg, LV_OPA_COVER, 0);
+
+        lv_obj_t* title = lv_label_create(dlg);
+        lv_label_set_text(title, "Clear saved credentials?");
+        lv_obj_set_style_text_color(title, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
+
+        lv_obj_t* msg = lv_label_create(dlg);
+        lv_label_set_text(msg,
+            "Remove WiFi, repeater, and\nflood-scope credentials?\nIdentity and device PIN stay.");
+        lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
+        lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(msg, LV_ALIGN_TOP_MID, 0, 25);
+
+        lv_obj_t* cancel_btn = lv_btn_create(dlg);
+        lv_obj_set_size(cancel_btn, 90, 26);
+        lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 8, -4);
+        apply_pixel_btn_outline(cancel_btn);
+        lv_obj_t* cancel_label = lv_label_create(cancel_btn);
+        lv_label_set_text(cancel_label, "Cancel");
+        lv_obj_center(cancel_label);
+        lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ev) {
+            lv_obj_del_async(lv_obj_get_parent(
+                (lv_obj_t*)lv_event_get_target(ev)));
+        }, LV_EVENT_CLICKED, nullptr);
+
+        lv_obj_t* confirm_btn = lv_btn_create(dlg);
+        lv_obj_set_size(confirm_btn, 90, 26);
+        lv_obj_align(confirm_btn, LV_ALIGN_BOTTOM_RIGHT, -8, -4);
+        lv_obj_set_style_bg_color(confirm_btn, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_radius(confirm_btn, 0, 0);
+        lv_obj_t* confirm_label = lv_label_create(confirm_btn);
+        lv_label_set_text(confirm_label, "Clear");
+        lv_obj_center(confirm_label);
+        lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ev) {
+            lv_obj_t* button = (lv_obj_t*)lv_event_get_target(ev);
+            lv_obj_t* dialog = lv_obj_get_parent(button);
+            const bool cleared = sigurdos::clearSavedNetworkCredentials();
+            lv_obj_t* label = (lv_obj_t*)lv_event_get_user_data(ev);
+            lv_label_set_text(label, cleared
+                ? "Saved credentials cleared.\nRe-enter them when needed."
+                : "Credential clear failed.\nNothing else was erased.");
+            lv_obj_align(label, LV_ALIGN_CENTER, 0, -2);
+            lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_t* cancel = lv_obj_get_child(dialog, 2);
+            if (cancel) {
+                lv_obj_t* cancel_text = lv_obj_get_child(cancel, 0);
+                if (cancel_text) lv_label_set_text(cancel_text, "Close");
+            }
+        }, LV_EVENT_CLICKED, msg);
+    }, LV_EVENT_CLICKED, nullptr);
     row++;
 
     // Reboot

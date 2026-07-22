@@ -1,3 +1,10 @@
 # Keep a newly booted OTA image pending until SigurdOS completes its own
 # display/UI/storage/settings/main-loop health contract.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# Production releases encrypt flash contents and the NVS key partition. Flash
+# encryption is irreversible in release mode; manufacturing/recovery tooling
+# must provision and retain the device-specific recovery material.
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+CONFIG_NVS_ENCRYPTION=y
+CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y

@@ -123,6 +123,14 @@ inline uint8_t normalizePathHashMode(uint8_t mode) {
     return mode <= 2 ? mode : 0;
 }
 
+inline void clearSavedNetworkCredentialFields(NodePrefs& prefs) {
+    std::memset(prefs.wifi_ssid, 0, sizeof(prefs.wifi_ssid));
+    std::memset(prefs.wifi_password, 0, sizeof(prefs.wifi_password));
+    std::memset(prefs.default_scope_key_hex, 0,
+                sizeof(prefs.default_scope_key_hex));
+    std::memset(prefs.active_region, 0, sizeof(prefs.active_region));
+}
+
 enum class BlePrefsWriteMode : uint8_t {
     Preserve,
     Write,
@@ -162,9 +170,14 @@ bool             prefs_set(const NodePrefs& p);
 // leave the cross-variant BLE keys untouched.
 bool prefs_set_ble_enabled(bool enabled);
 
+// Clear saved WiFi, flood-scope, and repeater credentials while preserving the
+// node identity and the device PIN that protects local administration.
+bool clearSavedNetworkCredentials();
+
 // ── Saved repeater passwords (persist across firmware updates in NVS) ──
 bool saveRepeaterPassword(const char* name, const char* password);
 bool loadRepeaterPassword(const char* name, char* password, size_t max_len);
 void removeRepeaterPassword(const char* name);
+bool clearRepeaterPasswords();
 
 } // namespace sigurdos

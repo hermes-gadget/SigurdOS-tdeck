@@ -122,7 +122,7 @@ def validate_release_directory(
         raise ReleaseArtifactError("build metadata does not identify the T-Deck board")
     if metadata.get("chip_family") != "ESP32-S3" or metadata.get("mcu") != "esp32s3":
         raise ReleaseArtifactError("build metadata does not identify ESP32-S3")
-    if metadata.get("partition_table") != "default_16MB.csv":
+    if metadata.get("partition_table") != "partitions_sigurdos_16MB.csv":
         raise ReleaseArtifactError("release build did not use the canonical 16 MB partition table")
     if metadata.get("flash_size") != "16MB" or metadata.get("flash_mode") != "keep":
         raise ReleaseArtifactError("release build has an unexpected flash size or mode")

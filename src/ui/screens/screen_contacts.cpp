@@ -559,6 +559,7 @@ void show_login_password_dialog(const char* contact_name)
         lv_textarea_set_text(ta, saved_pw);
         lv_obj_add_state(save_cb, LV_STATE_CHECKED);
     }
+    memset(saved_pw, 0, sizeof(saved_pw));
 
     // Cancel button
     lv_obj_t* cancel_btn = lv_btn_create(dlg);
@@ -601,6 +602,10 @@ void show_login_password_dialog(const char* contact_name)
                 // Save password to NVS if checkbox is checked
                 if (d->save_cb && (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED)) {
                     sigurdos::saveRepeaterPassword(d->name, pw);
+                } else {
+                    // Unchecking an existing opt-in must revoke the stored
+                    // password instead of silently retaining the old secret.
+                    sigurdos::removeRepeaterPassword(d->name);
                 }
             }
         }

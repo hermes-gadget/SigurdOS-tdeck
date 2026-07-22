@@ -41,4 +41,14 @@ bool prefs_set_ble_enabled(bool enabled) {
     return true;
 }
 
+bool clearSavedNetworkCredentials() {
+    detail::clearSavedNetworkCredentialFields(g_prefs);
+    return true;
+}
+
+bool saveRepeaterPassword(const char*, const char*) { return true; }
+bool loadRepeaterPassword(const char*, char*, size_t) { return false; }
+void removeRepeaterPassword(const char*) {}
+bool clearRepeaterPasswords() { return true; }
+
 } // namespace sigurdos

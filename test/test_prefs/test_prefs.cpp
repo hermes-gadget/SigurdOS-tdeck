@@ -151,6 +151,29 @@ TEST_F(PrefsTest, GpsIntervalPreservesZeroWhenUpdatedAtRuntime) {
     EXPECT_EQ(0u, sigurdos::prefs_get().gps_interval);
 }
 
+TEST_F(PrefsTest, CredentialClearPreservesIdentityAndLocalProtection) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    std::strcpy(prefs.node_name, "private-node");
+    std::strcpy(prefs.wifi_ssid, "private-network");
+    std::strcpy(prefs.wifi_password, "long-lived-password");
+    std::strcpy(prefs.default_scope_key_hex,
+                "00112233445566778899aabbccddeeff");
+    std::strcpy(prefs.active_region, "$private");
+    prefs.device_pin = 123456;
+    prefs.ble_pin = 654321;
+
+    sigurdos::detail::clearSavedNetworkCredentialFields(prefs);
+
+    EXPECT_STREQ(prefs.wifi_ssid, "");
+    EXPECT_STREQ(prefs.wifi_password, "");
+    EXPECT_STREQ(prefs.default_scope_key_hex, "");
+    EXPECT_STREQ(prefs.active_region, "");
+    EXPECT_STREQ(prefs.node_name, "private-node");
+    EXPECT_EQ(prefs.device_pin, 123456U);
+    EXPECT_EQ(prefs.ble_pin, 654321U);
+}
+
 TEST_F(PrefsTest, CompanionPolicyWidthsRoundTripWithoutTruncation) {
     sigurdos::NodePrefs saved;
     saved.set_defaults();
