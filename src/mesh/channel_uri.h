@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ben
+
 #pragma once
 
+#include "channel_validation.h"
 #include "contact_uri.h"
 
 #include <cstddef>
@@ -10,10 +13,11 @@ namespace sigurdos::mesh {
 
 struct ChannelUriFields {
     char name[32]{};
-    char secret_hex[65]{};
+    char secret_hex[33]{};
 };
 
-inline bool parseChannelAddUri(const char* uri, ChannelUriFields& out) {
+inline bool parseChannelAddUri(const char* uri, ChannelUriFields& out)
+{
     static constexpr char PREFIX[] = "meshcore://channel/add?";
     static constexpr size_t PREFIX_LEN = sizeof(PREFIX) - 1;
     if (!uri || std::strncmp(uri, PREFIX, PREFIX_LEN) != 0) return false;
@@ -26,20 +30,21 @@ inline bool parseChannelAddUri(const char* uri, ChannelUriFields& out) {
     if (!*cursor) return false;
     while (*cursor) {
         const char* key = cursor;
-        while (*cursor && *cursor != '=' && *cursor != '&') cursor++;
+        while (*cursor && *cursor != '=' && *cursor != '&') ++cursor;
         if (*cursor != '=') return false;
-        const size_t key_len = size_t(cursor - key);
+        const size_t key_len = static_cast<size_t>(cursor - key);
         const char* value = ++cursor;
-        while (*cursor && *cursor != '&') cursor++;
-        const size_t value_len = size_t(cursor - value);
+        while (*cursor && *cursor != '&') ++cursor;
+        const size_t value_len = static_cast<size_t>(cursor - value);
         if (value_len == 0) return false;
 
         if (key_len == 4 && std::memcmp(key, "name", 4) == 0) {
             if (have_name || !detail::decodeUriComponent(
-                    value, value_len, parsed.name, sizeof(parsed.name))) return false;
+                    value, value_len, parsed.name, sizeof(parsed.name)) ||
+                !channel_name_valid(parsed.name)) return false;
             have_name = true;
         } else if (key_len == 6 && std::memcmp(key, "secret", 6) == 0) {
-            if (have_secret || (value_len != 32 && value_len != 64)) return false;
+            if (have_secret || value_len != 32) return false;
             for (size_t i = 0; i < value_len; ++i) {
                 if (!detail::uriHex(value[i])) return false;
             }
@@ -52,16 +57,17 @@ inline bool parseChannelAddUri(const char* uri, ChannelUriFields& out) {
 
         if (*cursor == '&') {
             if (!cursor[1]) return false;
-            cursor++;
+            ++cursor;
         }
     }
-    if (!have_name || !have_secret || !parsed.name[0]) return false;
+    if (!have_name || !have_secret) return false;
     out = parsed;
     return true;
 }
 
 inline bool parseRawContactUriHex(const char* uri, char* hex, size_t hex_cap,
-                                  size_t& hex_len) {
+                                  size_t& hex_len)
+{
     static constexpr char PREFIX[] = "meshcore://";
     static constexpr size_t PREFIX_LEN = sizeof(PREFIX) - 1;
     hex_len = 0;
@@ -72,11 +78,13 @@ inline bool parseRawContactUriHex(const char* uri, char* hex, size_t hex_cap,
     while (value[hex_len]) {
         if (!detail::uriHex(value[hex_len]) || hex_len + 1 >= hex_cap) return false;
         hex[hex_len] = value[hex_len];
-        hex_len++;
+        ++hex_len;
     }
-    if (hex_len < SIGURDOS_CONTACT_PUBKEY_LEN * 2 || (hex_len & 1U) != 0) return false;
+    if (hex_len < SIGURDOS_CONTACT_PUBKEY_LEN * 2 || (hex_len & 1U) != 0) {
+        return false;
+    }
     hex[hex_len] = '\0';
     return true;
 }
 
-}  // namespace sigurdos::mesh
+} // namespace sigurdos::mesh

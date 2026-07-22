@@ -104,6 +104,49 @@ TEST(ChannelSecurityInputTest, RawContactUriRejectsSeparatorsAndOddOrOversizeDat
         hex, sizeof(hex), len));
 }
 
+TEST(ChannelPskValidation, AcceptsOnlyCanonicalSixteenByteBase64) {
+    uint8_t decoded[16];
+    ASSERT_TRUE(sigurdos::mesh::channel_psk_decode_16(
+        "AAAAAAAAAAAAAAAAAAAAAA==", decoded));
+    for (uint8_t value : decoded) EXPECT_EQ(value, 0);
+
+    EXPECT_FALSE(sigurdos::mesh::channel_psk_decode_16(
+        "AAAAAAAAAAAAAAAAAAAAAB==", decoded));  // non-zero pad bits
+    EXPECT_FALSE(sigurdos::mesh::channel_psk_decode_16(
+        "AAAAAAAAAAAAAAAAAAAAAA=", decoded));
+    EXPECT_FALSE(sigurdos::mesh::channel_psk_decode_16(
+        "AAAAAAAAAAAA!AAAAAAAAA==", decoded));
+    EXPECT_FALSE(sigurdos::mesh::channel_psk_decode_16(
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", decoded));
+}
+
+TEST(ChannelUriValidation, ParsesExactStrictFields) {
+    sigurdos::mesh::ChannelUriFields fields{};
+    ASSERT_TRUE(sigurdos::mesh::parseChannelAddUri(
+        "meshcore://channel/add?name=Field-Test&secret="
+        "00112233445566778899aabbccddeeff", fields));
+    EXPECT_STREQ(fields.name, "Field-Test");
+    EXPECT_STREQ(fields.secret_hex, "00112233445566778899aabbccddeeff");
+}
+
+TEST(ChannelUriValidation, RejectsDuplicatesTruncationAndMalformedFields) {
+    sigurdos::mesh::ChannelUriFields fields{};
+    EXPECT_FALSE(sigurdos::mesh::parseChannelAddUri(
+        "meshcore://channel/add?name=a&name=b&secret="
+        "00112233445566778899aabbccddeeff", fields));
+    EXPECT_FALSE(sigurdos::mesh::parseChannelAddUri(
+        "meshcore://channel/add?name=abcdefghijklmnopqrstuvwxyz123456&secret="
+        "00112233445566778899aabbccddeeff", fields));
+    EXPECT_FALSE(sigurdos::mesh::parseChannelAddUri(
+        "meshcore://channel/add?name=bad%GG&secret="
+        "00112233445566778899aabbccddeeff", fields));
+    EXPECT_FALSE(sigurdos::mesh::parseChannelAddUri(
+        "meshcore://channel/add?name=valid&secret=0011", fields));
+    EXPECT_FALSE(sigurdos::mesh::parseChannelAddUri(
+        "meshcore://channel/add?name=valid&secret="
+        "00112233445566778899aabbccddeeff&unknown=x", fields));
+}
+
 // ---------------------------------------------------------------------------
 // channel_name_valid — positive cases
 // ---------------------------------------------------------------------------

@@ -1313,27 +1313,23 @@ namespace mesh {
             [](const ChannelDetails& value) { return value.name[0] == '\0'; });
     }
 
-    int SigurdMeshV2::decode_b64(const char* in, size_t in_len, uint8_t* out, size_t out_cap) {
-        size_t decoded = 0;
-        return decodeBase64Strict(in, in_len, out, out_cap, decoded)
-            ? static_cast<int>(decoded) : 0;
-    }
-
     bool SigurdMeshV2::addChannelBool(const char* name, const char* psk_base64) {
-        if (!name || !name[0] || !psk_base64 || !channel_name_valid(name)) return false;
+        if (!psk_base64 || !channel_name_valid(name)) return false;
+        ChannelDetails candidate{};
+        if (!channel_psk_decode_16(psk_base64, candidate.channel.secret)) return false;
+        strncpy(candidate.name, name, sizeof(candidate.name) - 1);
+        candidate.name[sizeof(candidate.name) - 1] = '\0';
+
         int idx = getChannelCount();
-        if (idx >= MAX_GROUP_CHANNELS) return false;
         for (int i = 0; i < idx; i++) {
-            ChannelDetails t;
-            if (BaseChatMesh::getChannel(i, t) && strcmp(t.name, name) == 0) return true;
+            ChannelDetails existing{};
+            if (!BaseChatMesh::getChannel(i, existing) ||
+                strcmp(existing.name, name) != 0) continue;
+            return memcmp(existing.channel.secret, candidate.channel.secret,
+                          sizeof(existing.channel.secret)) == 0;
         }
-        ChannelDetails cd{};
-        int len = decode_b64(psk_base64, strlen(psk_base64),
-                             cd.channel.secret, sizeof(cd.channel.secret));
-        if (len != 32 && len != 16) return false;
-        strncpy(cd.name, name, sizeof(cd.name) - 1);
-        cd.name[sizeof(cd.name) - 1] = '\0';
-        return BaseChatMesh::setChannel(idx, cd);  // setChannel recomputes hash
+        if (idx >= MAX_GROUP_CHANNELS) return false;
+        return BaseChatMesh::setChannel(idx, candidate);  // recomputes hash
     }
 
     bool SigurdMeshV2::addHashtagChannel(const char* name) {

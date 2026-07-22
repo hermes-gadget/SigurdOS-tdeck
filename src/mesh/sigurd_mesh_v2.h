@@ -659,10 +659,6 @@ public:
     bool setChannelSlot(int idx, const ChannelDetails& details);
 
 
-    // Base64 PSK decode (self-contained, matches MeshCore's alphabet).
-    static int decode_b64(const char* in, size_t in_len, uint8_t* out, size_t out_cap);
-
-
     // bool-returning addChannel for wrapper compatibility. Inserts via
     // setChannel() at the next free slot (keeps the channel array contiguous
     // and consistent with getChannelCount()).

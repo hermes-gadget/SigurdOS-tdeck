@@ -92,7 +92,9 @@ inline bool parseContactAddUri(const char* uri, ContactUriFields& out)
             parsed.pubkey_hex[value_len] = '\0';
             have_key = true;
         } else if (key_len == 4 && std::memcmp(key, "type", 4) == 0) {
-            if (have_type || value_len != 1 || value[0] < '1' || value[0] > '3') {
+            if (have_type || value_len != 1 ||
+                value[0] < (char)('0' + MESHCORE_ADV_TYPE_CHAT) ||
+                value[0] > (char)('0' + MESHCORE_ADV_TYPE_SENSOR)) {
                 return false;
             }
             parsed.type = (uint8_t)(value[0] - '0');

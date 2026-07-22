@@ -7,9 +7,11 @@
 #include "hal/atomic_file.h"
 
 #include <cstring>
+#include <cstdlib>
 
 #if defined(ESP32_PLATFORM)
 #include <SPIFFS.h>
+#include <esp_heap_caps.h>
 #include "hal/storage.h"
 #else
 #include <cstdio>
@@ -112,6 +114,28 @@ static bool contactValid(const StoredContact& contact)
     return path::storedLengthValid(contact.out_path_len);
 }
 
+static StoredContact* allocateContacts(int count)
+{
+    if (count <= 0 || count > MAX_CONTACTS) return nullptr;
+    const size_t bytes = sizeof(StoredContact) * (size_t)count;
+#if defined(ESP32_PLATFORM)
+    void* memory = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!memory) memory = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    return static_cast<StoredContact*>(memory);
+#else
+    return static_cast<StoredContact*>(std::malloc(bytes));
+#endif
+}
+
+static void freeContacts(StoredContact* contacts)
+{
+#if defined(ESP32_PLATFORM)
+    heap_caps_free(contacts);
+#else
+    std::free(contacts);
+#endif
+}
+
 static bool writeContacts(sigurdos::storage::AtomicFileWriter& writer, void* raw)
 {
     ContactSaveCtx* ctx = static_cast<ContactSaveCtx*>(raw);
@@ -136,9 +160,13 @@ static bool writeContacts(sigurdos::storage::AtomicFileWriter& writer, void* raw
     return true;
 }
 
-static bool validateContacts(sigurdos::storage::AtomicFileReader& reader, void*)
+static bool readValidatedContacts(sigurdos::storage::AtomicFileReader& reader,
+                                  StoredContact** contacts_out, int* count_out)
 {
-    if (reader.size() < sizeof(int) || !reader.seek(0)) return false;
+    if (!contacts_out || !count_out || reader.size() < sizeof(int) ||
+        !reader.seek(0)) return false;
+    *contacts_out = nullptr;
+    *count_out = 0;
     uint8_t head[sizeof(detail::CONTACT_STORE_MAGIC)] = {};
     if (reader.read(head, sizeof(head)) != sizeof(head)) return false;
 
@@ -147,7 +175,7 @@ static bool validateContacts(sigurdos::storage::AtomicFileReader& reader, void*)
     uint8_t version = 0;
     if (std::memcmp(head, detail::CONTACT_STORE_MAGIC, sizeof(head)) == 0) {
         if (reader.read(&version, 1) != 1 ||
-            version == 0 || version > detail::CONTACT_STORE_VERSION ||
+            version < 1 || version > detail::CONTACT_STORE_VERSION ||
             reader.read(&count, sizeof(count)) != sizeof(count)) {
             return false;
         }
@@ -161,16 +189,44 @@ static bool validateContacts(sigurdos::storage::AtomicFileReader& reader, void*)
         : detail::CONTACT_STORE_V1_RECORD_SIZE;
     if (reader.size() != header_size + (size_t)count * record_size) return false;
 
+    StoredContact* contacts = allocateContacts(count);
+    if (!contacts) return false;
     uint8_t rec[detail::CONTACT_STORE_RECORD_SIZE];
     for (int i = 0; i < count; ++i) {
-        if (reader.read(rec, record_size) != record_size) return false;
-        StoredContact contact{};
+        if (reader.read(rec, record_size) != record_size) {
+            freeContacts(contacts);
+            return false;
+        }
         const bool ok = version >= 2
-            ? detail::readContactRecord(contact, rec, record_size)
-            : detail::readContactRecordV1(contact, rec, record_size);
-        if (!ok) return false;
+            ? detail::readContactRecord(contacts[i], rec, record_size)
+            : detail::readContactRecordV1(contacts[i], rec, record_size);
+        if (!ok || !contactValid(contacts[i]) ||
+            !contactCandidateValid(contacts[i].name, contacts[i].pub_key,
+                                   contacts[i].type)) {
+            freeContacts(contacts);
+            return false;
+        }
+        for (int previous = 0; previous < i; ++previous) {
+            if (contactCandidateDuplicates(
+                    contacts[i].name, contacts[i].pub_key,
+                    contacts[previous].name, contacts[previous].pub_key)) {
+                freeContacts(contacts);
+                return false;
+            }
+        }
     }
+    *contacts_out = contacts;
+    *count_out = count;
     return true;
+}
+
+static bool validateContacts(sigurdos::storage::AtomicFileReader& reader, void*)
+{
+    StoredContact* contacts = nullptr;
+    int count = 0;
+    const bool valid = readValidatedContacts(reader, &contacts, &count);
+    freeContacts(contacts);
+    return valid;
 }
 
 struct SaveAllCtx {
@@ -308,70 +364,24 @@ int contactStoreLoad(ContactStoreWriteFn write, void* ctx)
 #if defined(ESP32_PLATFORM)
     File f = SPIFFS.open(STORE_PATH, "r");
     if (!f) return 0;
-    uint8_t head[sizeof(detail::CONTACT_STORE_MAGIC)] = {};
-    bool ok = f.read(head, sizeof(head)) == sizeof(head);
+    sigurdos::storage::AtomicFileReader reader(&f);
 #else
     FILE* f = std::fopen(g_native_path, "rb");
     if (!f) return 0;
-    uint8_t head[sizeof(detail::CONTACT_STORE_MAGIC)] = {};
-    bool ok = std::fread(head, 1, sizeof(head), f) == sizeof(head);
+    sigurdos::storage::AtomicFileReader reader(f);
 #endif
-
+    StoredContact* contacts = nullptr;
     int count = 0;
-    uint8_t version = 0;
-    if (ok && std::memcmp(head, detail::CONTACT_STORE_MAGIC, sizeof(head)) == 0) {
-        // Versioned format: magic + version + count + records.
-#if defined(ESP32_PLATFORM)
-        ok = f.read(&version, 1) == 1;
-        ok = ok && version <= detail::CONTACT_STORE_VERSION;
-        ok = ok && f.read((uint8_t*)&count, sizeof(count)) == sizeof(count);
-#else
-        ok = std::fread(&version, 1, 1, f) == 1;
-        ok = ok && version <= detail::CONTACT_STORE_VERSION;
-        ok = ok && std::fread(&count, 1, sizeof(count), f) == sizeof(count);
-#endif
-        if (ok && count > MAX_CONTACTS) count = MAX_CONTACTS;
-    } else if (ok) {
-        // Legacy format: bare count + records. A legacy count can never
-        // collide with the magic — read as an int32 the magic is negative,
-        // and legacy counts were only ever written positive.
-        std::memcpy(&count, head, sizeof(count));
-    }
-
-    if (!ok || count <= 0) {
-#if defined(ESP32_PLATFORM)
-        f.close();
-#else
-        std::fclose(f);
-#endif
-        return 0;
-    }
-
-    int loaded = 0;
-    uint8_t rec[detail::CONTACT_STORE_RECORD_SIZE];
-    const size_t record_size = version >= 2
-        ? detail::CONTACT_STORE_RECORD_SIZE
-        : detail::CONTACT_STORE_V1_RECORD_SIZE;
-    for (int i = 0; i < count; i++) {
-#if defined(ESP32_PLATFORM)
-        if (f.read(rec, record_size) != record_size) break;
-#else
-        if (std::fread(rec, 1, record_size, f) != record_size) break;
-#endif
-        StoredContact contact{};
-        const bool record_ok = version >= 2
-            ? detail::readContactRecord(contact, rec, record_size)
-            : detail::readContactRecordV1(contact, rec, record_size);
-        if (!record_ok) break;
-        if (!write(contact, ctx)) break;
-        loaded++;
-    }
-
+    const bool valid = readValidatedContacts(reader, &contacts, &count);
 #if defined(ESP32_PLATFORM)
     f.close();
 #else
     std::fclose(f);
 #endif
+    if (!valid) return 0;
+    int loaded = 0;
+    for (int i = 0; i < count && write(contacts[i], ctx); ++i) ++loaded;
+    freeContacts(contacts);
     return loaded;
 }
 

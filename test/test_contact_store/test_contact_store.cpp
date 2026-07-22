@@ -8,6 +8,7 @@
 
 #include "mesh/contact_store.h"
 #include "mesh/contact_uri.h"
+#include "mesh/contact_revision.h"
 #include "hal/atomic_file.h"
 #include "mesh/mesh_wrapper.h"
 
@@ -213,7 +214,24 @@ TEST_F(ContactStoreTest, UnknownVersionRejected) {
     EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 2), 0);
 }
 
-TEST_F(ContactStoreTest, VersionedCountClampedToMaxContacts) {
+TEST_F(ContactStoreTest, VersionZeroAndTrailingBytesAreRejected) {
+    StoredContact contact = makeContact(0x10, "Alice", ADV_TYPE_CHAT, 0);
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, 1, 0);
+    appendV1Record(raw, contact, 0);
+    writeBytes(path, raw);
+    StoredContact out{};
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 0);
+
+    raw.clear();
+    appendVersionedHeader(raw, 1, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
+    appendRecord(raw, contact);
+    raw.push_back(0xAA);
+    writeBytes(path, raw);
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(&out, 1), 0);
+}
+
+TEST_F(ContactStoreTest, VersionedCountAboveMaximumIsRejected) {
     const int over = MAX_CONTACTS + 5;
     std::vector<uint8_t> raw;
     appendVersionedHeader(raw, over, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
@@ -223,10 +241,10 @@ TEST_F(ContactStoreTest, VersionedCountClampedToMaxContacts) {
     writeBytes(path, raw);
 
     std::vector<StoredContact> out((size_t)over);
-    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out.data(), over), MAX_CONTACTS);
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out.data(), over), 0);
 }
 
-TEST_F(ContactStoreTest, TruncatedVersionedFileKeepsCompleteRecords) {
+TEST_F(ContactStoreTest, TruncatedVersionedFileAppliesNoRecords) {
     StoredContact first = makeContact(0x20, "First", 1, 1);
     StoredContact second = makeContact(0x60, "Second", 2, 2);
 
@@ -238,18 +256,14 @@ TEST_F(ContactStoreTest, TruncatedVersionedFileKeepsCompleteRecords) {
     writeBytes(path, raw);
 
     StoredContact out[4]{};
-    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 4), 1);
-    EXPECT_STREQ(out[0].name, "First");
-    EXPECT_EQ(out[0].type, 1);
-    EXPECT_EQ(out[0].flags, 1);
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 4), 0);
 }
 
-TEST_F(ContactStoreTest, RoundTripPreservesOrderAndTerminatesName) {
+TEST_F(ContactStoreTest, RoundTripPreservesValidatedOrder) {
     StoredContact contacts[2] = {
-        makeContact(0x01, "Alice", 7, 0),
-        makeContact(0x80, "01234567890123456789012345678901", 8, 3),
+        makeContact(0x01, "Alice", ADV_TYPE_CHAT, 0),
+        makeContact(0x80, "Sensor", ADV_TYPE_SENSOR, 3),
     };
-    std::memset(contacts[1].name, 'X', SIGURDOS_CONTACT_NAME_LEN);
 
     ASSERT_TRUE(sigurdos::mesh::contactStoreSaveAll(contacts, 2));
 
@@ -258,12 +272,12 @@ TEST_F(ContactStoreTest, RoundTripPreservesOrderAndTerminatesName) {
     ASSERT_EQ(loaded, 2);
     EXPECT_EQ(std::memcmp(out[0].pub_key, contacts[0].pub_key, SIGURDOS_CONTACT_PUBKEY_LEN), 0);
     EXPECT_STREQ(out[0].name, "Alice");
-    EXPECT_EQ(out[0].type, 7);
+    EXPECT_EQ(out[0].type, ADV_TYPE_CHAT);
     EXPECT_EQ(out[0].flags, 0);
 
     EXPECT_EQ(std::memcmp(out[1].pub_key, contacts[1].pub_key, SIGURDOS_CONTACT_PUBKEY_LEN), 0);
-    EXPECT_EQ(out[1].name[SIGURDOS_CONTACT_NAME_LEN - 1], '\0');
-    EXPECT_EQ(out[1].type, 8);
+    EXPECT_STREQ(out[1].name, "Sensor");
+    EXPECT_EQ(out[1].type, ADV_TYPE_SENSOR);
     EXPECT_EQ(out[1].flags, 3);
 }
 
@@ -330,7 +344,7 @@ TEST_F(ContactStoreTest, EncodedMultiByteRoutesRoundTrip) {
                           sizeof(out[1].out_path)), 0);
 }
 
-TEST_F(ContactStoreTest, TruncatedFileKeepsCompleteRecordsBeforeEof) {
+TEST_F(ContactStoreTest, TruncatedLegacyFileAppliesNoRecords) {
     StoredContact first = makeContact(0x20, "First", 1, 1);
     StoredContact second = makeContact(0x60, "Second", 2, 2);
 
@@ -342,11 +356,7 @@ TEST_F(ContactStoreTest, TruncatedFileKeepsCompleteRecordsBeforeEof) {
     writeBytes(path, raw);
 
     StoredContact out[4]{};
-    int loaded = sigurdos::mesh::contactStoreLoadAll(out, 4);
-    ASSERT_EQ(loaded, 1);
-    EXPECT_STREQ(out[0].name, "First");
-    EXPECT_EQ(out[0].type, 1);
-    EXPECT_EQ(out[0].flags, 0x02);
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 4), 0);
 }
 
 TEST_F(ContactStoreTest, NonPositiveCountRejected) {
@@ -428,6 +438,18 @@ TEST(ContactSaveDebounce, HandlesMillisWrap) {
                                                      0x00007600U));
 }
 
+TEST(ContactRevision, IsStrictlyMonotonicAcrossRepeatedOrCorrectedClockValues) {
+    uint32_t revision = 0;
+    ASSERT_TRUE(sigurdos::mesh::nextContactRevision(100, 100, &revision));
+    EXPECT_EQ(revision, 101U);
+    ASSERT_TRUE(sigurdos::mesh::nextContactRevision(50, revision, &revision));
+    EXPECT_EQ(revision, 102U);
+    ASSERT_TRUE(sigurdos::mesh::nextContactRevision(500, revision, &revision));
+    EXPECT_EQ(revision, 500U);
+    EXPECT_FALSE(sigurdos::mesh::nextContactRevision(
+        UINT32_MAX, UINT32_MAX, &revision));
+}
+
 TEST(ContactImportValidation, ParsesStrictQueryContact) {
     sigurdos::mesh::ContactUriFields fields{};
     ASSERT_TRUE(sigurdos::mesh::parseContactAddUri(
@@ -443,11 +465,55 @@ TEST(ContactImportValidation, RejectsMalformedAndUnsupportedType) {
     EXPECT_FALSE(sigurdos::mesh::parseContactAddUri(
         "meshcore://contact/add?name=Alice&public_key="
         "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-        "&type=4", fields));
+        "&type=5", fields));
     EXPECT_FALSE(sigurdos::mesh::parseContactAddUri(
         "meshcore://contact/add?name=Alice%GG&public_key="
         "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
         fields));
+}
+
+TEST(ContactImportValidation, SupportsEveryMeshCoreContactRole) {
+    uint8_t key[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    key[0] = 1;
+    for (uint8_t type : {ADV_TYPE_CHAT, ADV_TYPE_REPEATER,
+                         ADV_TYPE_ROOM, ADV_TYPE_SENSOR}) {
+        EXPECT_TRUE(sigurdos::mesh::contactCandidateValid("Node", key, type));
+    }
+    sigurdos::mesh::ContactUriFields fields{};
+    EXPECT_TRUE(sigurdos::mesh::parseContactAddUri(
+        "meshcore://contact/add?name=Sensor&public_key="
+        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        "&type=4", fields));
+    EXPECT_EQ(fields.type, ADV_TYPE_SENSOR);
+}
+
+TEST_F(ContactStoreTest, InvalidLaterRecordDoesNotApplyEarlierRecord) {
+    StoredContact valid = makeContact(0x20, "Valid", ADV_TYPE_CHAT, 0);
+    StoredContact invalid = makeContact(0x60, "Invalid", ADV_TYPE_NONE, 0);
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, 2, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
+    appendRecord(raw, valid);
+    appendRecord(raw, invalid);
+    writeBytes(path, raw);
+
+    StoredContact out[2]{};
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 2), 0);
+    EXPECT_EQ(out[0].name[0], '\0');
+}
+
+TEST_F(ContactStoreTest, DuplicateNamesOrKeysRejectWholeFile) {
+    StoredContact contacts[2] = {
+        makeContact(0x20, "Same", ADV_TYPE_CHAT, 0),
+        makeContact(0x60, "Same", ADV_TYPE_SENSOR, 0),
+    };
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, 2, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
+    appendRecord(raw, contacts[0]);
+    appendRecord(raw, contacts[1]);
+    writeBytes(path, raw);
+
+    StoredContact out[2]{};
+    EXPECT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 2), 0);
 }
 
 TEST(ContactImportValidation, RejectsEncodedControl) {

@@ -19,6 +19,14 @@ static constexpr uint8_t MESHCORE_ADV_TYPE_REPEATER = 2;
 static constexpr uint8_t MESHCORE_ADV_TYPE_ROOM = 3;
 static constexpr uint8_t MESHCORE_ADV_TYPE_SENSOR = 4;
 
+// Lightweight names for MeshCore's AdvertDataHelpers.h wire constants. Keep
+// this storage/parser header independent of MeshCore's hardware-heavy graph.
+static constexpr uint8_t MESHCORE_ADV_TYPE_NONE = 0;
+static constexpr uint8_t MESHCORE_ADV_TYPE_CHAT = 1;
+static constexpr uint8_t MESHCORE_ADV_TYPE_REPEATER = 2;
+static constexpr uint8_t MESHCORE_ADV_TYPE_ROOM = 3;
+static constexpr uint8_t MESHCORE_ADV_TYPE_SENSOR = 4;
+
 struct StoredContact {
     uint8_t pub_key[SIGURDOS_CONTACT_PUBKEY_LEN];
     char name[SIGURDOS_CONTACT_NAME_LEN];

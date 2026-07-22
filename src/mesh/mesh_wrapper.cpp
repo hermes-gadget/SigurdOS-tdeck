@@ -19,6 +19,8 @@
 #include "contact_store.h"
 #include "contact_uri.h"
 #include "esp32_hardware_rng.h"
+#include "contact_revision.h"
+#include "channel_uri.h"
 #include "persistence_store.h"
 #include "response_copy.h"
 #include "telemetry_lpp_parser.h"
@@ -1308,6 +1310,20 @@ bool getContactByName(const char* name, ContactInfo* out) {
     return false;
 }
 
+static bool assignLocalContactRevision(::ContactInfo& contact)
+{
+    if (!g_mesh) return false;
+    uint32_t high_water = 0;
+    for (int i = 0; i < g_mesh->getContactCount(); ++i) {
+        const auto* existing = g_mesh->getContact(i);
+        if (existing && existing->lastmod > high_water) high_water = existing->lastmod;
+    }
+    uint32_t revision = 0;
+    if (!nextContactRevision(meshRtcTimeUnique(), high_water, &revision)) return false;
+    contact.lastmod = revision;
+    return true;
+}
+
 // ── Favourite contacts ──────────────────────────
 
 bool isContactFavourite(const char* name) {
@@ -1334,7 +1350,10 @@ bool setContactFavourite(const char* name, bool favourite) {
             else           live->flags &= ~0x01;
             // Bump lastmod + persist so a companion app's incremental
             // CMD_GET_CONTACTS(since=…) picks up the favourite change (R3).
-            live->lastmod = getCurrentTime();
+            if (!assignLocalContactRevision(*live)) {
+                *live = before;
+                return false;
+            }
             if (saveContacts()) return true;
             *live = before;
             return false;
@@ -1898,8 +1917,17 @@ void setDutyCycle(uint8_t percent) {
         if (!g_mesh || !name) return false;
         int idx = findContactIndex(name);
         if (idx < 0) return false;
-        if (!g_mesh->resetPathTo(idx)) return false;
-        saveContacts();
+        const ::ContactInfo* cached = g_mesh->getContact(idx);
+        if (!cached) return false;
+        ::ContactInfo* live = g_mesh->lookupContactByPubKey(
+            cached->id.pub_key, PUB_KEY_SIZE);
+        if (!live) return false;
+        const ::ContactInfo before = *live;
+        if (!g_mesh->resetPathTo(idx) || !assignLocalContactRevision(*live) ||
+            !saveContacts()) {
+            *live = before;
+            return false;
+        }
         return true;
     }
 
@@ -1911,10 +1939,12 @@ void setDutyCycle(uint8_t percent) {
                 // Get writable pointer to the actual MeshCore ContactInfo
                 ::ContactInfo* live = g_mesh->lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
                 if (!live) return false;
+                const ::ContactInfo before = *live;
                 // Pack perm into flags bits 1-2, preserving bit 0 (favourite)
                 live->flags = (live->flags & 0x01) | ((perm & 0x03) << 1);
-                saveContacts();
-                return true;
+                if (assignLocalContactRevision(*live) && saveContacts()) return true;
+                *live = before;
+                return false;
             }
         }
         return false;
@@ -2179,35 +2209,6 @@ bool importIdentity(const char* hex_privkey) {
 
 // ── URI import helpers ────────────────────────
 
-// Simple URL decoder (in-place). Handles '+' -> ' ' and '%XX' -> char.
-static uint8_t hexDigitVal(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return 0;
-}
-
-static void urlDecode(char* str) {
-    if (!str) return;
-    char* src = str;
-    char* dst = str;
-    while (*src) {
-        if (*src == '+') {
-            *dst++ = ' ';
-            src++;
-        } else if (*src == '%'
-                && ::mesh::Utils::isHexChar(src[1])
-                && ::mesh::Utils::isHexChar(src[2])) {
-            *dst++ = (char)((hexDigitVal(src[1]) << 4)
-                          |  hexDigitVal(src[2]));
-            src += 3;
-        } else {
-            *dst++ = *src++;
-        }
-    }
-    *dst = '\0';
-}
-
 // Percent-encode a string for a URL query component value.
 // Unreserved characters (A-Z a-z 0-9 - _ . ~) pass through;
 // everything else is encoded as %XX.  Returns bytes written
@@ -2274,9 +2275,11 @@ static bool addContactChecked(const char* name, const uint8_t* pub_key,
     memcpy(contact.id.pub_key, pub_key, PUB_KEY_SIZE);
     contact.type = type;
     contact.out_path_len = OUT_PATH_UNKNOWN;
+    if (!assignLocalContactRevision(contact)) return false;
     if (!g_mesh->addContact(contact)) return false;
-    saveContacts();
-    return true;
+    if (saveContacts()) return true;
+    g_mesh->removeContactByPubKey(pub_key);
+    return false;
 }
 
 bool importContactByUri(const char* uri) {
@@ -2329,25 +2332,26 @@ bool addContactManual(const char* name, const char* pubkey_hex, uint8_t type) {
 }
 
 bool addChannelByUri(const char* uri) {
-    if (!uri || !g_mesh) return false;
-
-    // Must start with "meshcore://"
-    if (strncmp(uri, "meshcore://", 11) != 0) return false;
+    if (!g_mesh) return false;
     ChannelUriFields fields{};
-    if (!parseChannelAddUri(uri, fields) || !channel_name_valid(fields.name)) return false;
+    if (!parseChannelAddUri(uri, fields)) return false;
 
-    // Decode secret hex → bytes → base64 (what addChannel expects)
-    uint8_t raw_secret[32];  // up to 32 bytes
-    int raw_len = SigurdMeshV2::hexToBytes(fields.secret_hex, raw_secret, sizeof(raw_secret));
-    if (raw_len != 16 && raw_len != 32) return false;
+    uint8_t raw_secret[16];
+    if (SigurdMeshV2::hexToBytes(fields.secret_hex, raw_secret,
+                                 sizeof(raw_secret)) != 16) return false;
+    char b64[25];
+    encodeBase64(raw_secret, sizeof(raw_secret), b64);
 
-    // Base64-encode the raw secret
-    // Output size: ((raw_len + 2) / 3) * 4 + 1 — max 45 for 32 bytes
-    char b64[48];
-    encodeBase64(raw_secret, raw_len, b64);
-
-    // Use the wrapper's addChannel which accepts base64 PSK
-    return addChannel(fields.name, b64);
+    const int previous_count = g_mesh->getChannelCount();
+    if (!g_mesh->addChannelBool(fields.name, b64)) return false;
+    if (saveChannels()) {
+        syncRegionsFromChannels();
+        return true;
+    }
+    if (g_mesh->getChannelCount() > previous_count) {
+        g_mesh->removeChannel(previous_count);
+    }
+    return false;
 }
 
 // ── QR code support ─────────────────────────────

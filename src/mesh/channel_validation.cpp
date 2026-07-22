@@ -147,5 +147,35 @@ size_t channel_name_sanitise(char* name, size_t max_len) {
     return len;
 }
 
+bool channel_psk_decode_16(const char* encoded, uint8_t out[16]) {
+    if (!encoded || !out || std::strlen(encoded) != 24 ||
+        encoded[22] != '=' || encoded[23] != '=') return false;
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    uint8_t values[22];
+    for (size_t i = 0; i < sizeof(values); ++i) {
+        const char* found = std::strchr(alphabet, encoded[i]);
+        if (!found) return false;
+        values[i] = (uint8_t)(found - alphabet);
+    }
+    // Sixteen bytes leave two significant bits in the final Base64 symbol.
+    // Canonical encoding requires its unused low four bits to be zero.
+    if ((values[21] & 0x0F) != 0) return false;
+
+    size_t written = 0;
+    uint32_t bits = 0;
+    int bit_count = 0;
+    for (size_t i = 0; i < sizeof(values); ++i) {
+        bits = (bits << 6) | values[i];
+        bit_count += 6;
+        while (bit_count >= 8 && written < 16) {
+            bit_count -= 8;
+            out[written++] = (uint8_t)(bits >> bit_count);
+            bits &= bit_count == 0 ? 0 : ((1u << bit_count) - 1u);
+        }
+    }
+    return written == 16 && bit_count == 4 && bits == 0;
+}
+
 }  // namespace mesh
 }  // namespace sigurdos
