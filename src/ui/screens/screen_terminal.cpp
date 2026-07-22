@@ -22,7 +22,9 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../terminal_line_cap.h"
+#include "../terminal_var_policy.h"
 #include "../../hal/prefs.h"
+#include "../../hal/atomic_file.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
 #include <Arduino.h>
@@ -31,11 +33,79 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 namespace sigurdos::ui {
 
 using namespace theme;
 using namespace responsive;
+
+static constexpr size_t TERMINAL_VAR_STORE_MAX = 4096;
+static constexpr const char* TERMINAL_VAR_PATH = "/custom_vars.txt";
+
+struct TerminalVarWriteCtx { const char* data; size_t length; };
+
+static bool terminal_var_write(sigurdos::storage::AtomicFileWriter& writer, void* data)
+{
+    auto* ctx = static_cast<TerminalVarWriteCtx*>(data);
+    return ctx && writer.write(ctx->data, ctx->length) == ctx->length;
+}
+
+static bool terminal_var_validate(sigurdos::storage::AtomicFileReader& reader, void* data)
+{
+    auto* ctx = static_cast<TerminalVarWriteCtx*>(data);
+    if (!ctx || reader.size() != ctx->length) return false;
+    char chunk[128];
+    size_t offset = 0;
+    while (offset < ctx->length) {
+        size_t count = ctx->length - offset;
+        if (count > sizeof(chunk)) count = sizeof(chunk);
+        if (reader.read(chunk, count) != count ||
+            std::memcmp(chunk, ctx->data + offset, count) != 0) return false;
+        offset += count;
+    }
+    return true;
+}
+
+enum class TerminalVarUpdate { Ok, NotFound, TooLarge, NoMemory, IoError };
+
+static TerminalVarUpdate terminal_var_update(const char* key, const char* value)
+{
+    size_t input_len = 0;
+    File file = SPIFFS.open(TERMINAL_VAR_PATH, "r");
+    if (file) {
+        input_len = file.size();
+        if (input_len > TERMINAL_VAR_STORE_MAX) { file.close(); return TerminalVarUpdate::TooLarge; }
+    }
+    auto* input = new(std::nothrow) char[input_len + 1];
+    auto* output = new(std::nothrow) char[TERMINAL_VAR_STORE_MAX + 1];
+    if (!input || !output) {
+        delete[] input; delete[] output;
+        if (file) file.close();
+        return TerminalVarUpdate::NoMemory;
+    }
+    if (file && input_len > 0 && file.readBytes(input, input_len) != input_len) {
+        file.close(); delete[] input; delete[] output;
+        return TerminalVarUpdate::IoError;
+    }
+    if (file) file.close();
+    input[input_len] = '\0';
+
+    size_t output_len = 0;
+    bool found = false;
+    const bool built = terminal_var_rewrite(input, input_len, key, value, output,
+                                             TERMINAL_VAR_STORE_MAX + 1,
+                                             &output_len, &found);
+    delete[] input;
+    if (!built) { delete[] output; return TerminalVarUpdate::TooLarge; }
+    if (!value && !found) { delete[] output; return TerminalVarUpdate::NotFound; }
+
+    TerminalVarWriteCtx ctx{output, output_len};
+    const bool saved = sigurdos::storage::atomicFileReplace(
+        TERMINAL_VAR_PATH, terminal_var_write, &ctx, terminal_var_validate, &ctx);
+    delete[] output;
+    return saved ? TerminalVarUpdate::Ok : TerminalVarUpdate::IoError;
+}
 
 // ════════════════════════════════════════════════════════
 // Terminal — colored log output helpers
@@ -238,55 +308,40 @@ void terminal_screen_show()
                     char key[MAX_TERM_VAR_KEY_LENGTH + 1];
                     memcpy(key, arg, klen);
                     key[klen] = '\0';
-                    // Read existing vars, update or append
-                    String all;
-                    File f = SPIFFS.open("/custom_vars.txt", "r");
-                    if (f) {
-                        while (f.available()) {
-                            String line = f.readStringUntil('\n');
-                            line.trim();
-                            if (line.length() > 0) {
-                                if (!line.startsWith(key) || line.charAt(strlen(key)) != '=') {
-                                    all += line + "\n";
-                                }
-                            }
-                        }
-                        f.close();
+                    const TerminalVarUpdate status = terminal_var_update(key, value);
+                    if (status == TerminalVarUpdate::Ok) {
+                        snprintf(result, sizeof(result), "Set: %s = %s", key, value);
+                    } else if (status == TerminalVarUpdate::TooLarge) {
+                        snprintf(result, sizeof(result), "Variable store full (max %zu bytes)",
+                                 TERMINAL_VAR_STORE_MAX);
+                    } else if (status == TerminalVarUpdate::NoMemory) {
+                        snprintf(result, sizeof(result), "Set failed: not enough memory");
+                    } else {
+                        snprintf(result, sizeof(result), "Set failed: storage write error");
                     }
-                    all += String(key) + "=" + value + "\n";
-                    File wf = SPIFFS.open("/custom_vars.txt", "w");
-                    if (wf) { wf.print(all); wf.close(); }
-                    snprintf(result, sizeof(result), "Set: %s = %s", key, value);
                 }
             }
         } else if (strncmp(cmd, "delvar ", 7) == 0) {
             const char* key = cmd + 7;
             if (!key[0]) {
                 snprintf(result, sizeof(result), "Usage: delvar <key>");
+            } else if (!terminal_var_key_valid(key, strlen(key))) {
+                snprintf(result, sizeof(result),
+                    "Invalid key (max %zu; use letters, digits, _, -, .)",
+                    MAX_TERM_VAR_KEY_LENGTH);
             } else {
-                String all;
-                bool found = false;
-                File f = SPIFFS.open("/custom_vars.txt", "r");
-                if (f) {
-                    while (f.available()) {
-                        String line = f.readStringUntil('\n');
-                        line.trim();
-                        if (line.length() > 0) {
-                            if (line.startsWith(key) && line.charAt(strlen(key)) == '=') {
-                                found = true;
-                            } else {
-                                all += line + "\n";
-                            }
-                        }
-                    }
-                    f.close();
-                }
-                if (found) {
-                    File wf = SPIFFS.open("/custom_vars.txt", "w");
-                    if (wf) { wf.print(all); wf.close(); }
+                const TerminalVarUpdate status = terminal_var_update(key, nullptr);
+                if (status == TerminalVarUpdate::Ok) {
                     snprintf(result, sizeof(result), "Deleted: %s", key);
-                } else {
+                } else if (status == TerminalVarUpdate::NotFound) {
                     snprintf(result, sizeof(result), "Key '%s' not found", key);
+                } else if (status == TerminalVarUpdate::TooLarge) {
+                    snprintf(result, sizeof(result), "Delete refused: variable store exceeds %zu bytes",
+                             TERMINAL_VAR_STORE_MAX);
+                } else if (status == TerminalVarUpdate::NoMemory) {
+                    snprintf(result, sizeof(result), "Delete failed: not enough memory");
+                } else {
+                    snprintf(result, sizeof(result), "Delete failed: storage write error");
                 }
             }
         } else if (strcmp(cmd, "listvars") == 0) {
