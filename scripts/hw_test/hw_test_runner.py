@@ -91,9 +91,11 @@ else:
 
 STATUS_RE = re.compile(r"\[test\]\s+heap=(\d+)\s+psram=(\d+)")
 GETRF_RE = re.compile(
-    r"freq=([0-9.]+)\s+SF=(\d+)\s+BW=([0-9.]+)\s+CR=(\d+)\s+TX=(-?\d+)",
+    r"freq=([0-9.]+)\s+SF=(\d+)\s+BW=([0-9.]+)\s+CR=(\d+)\s+TX=(-?\d+)"
+    r"(?:\s+dBm)?\s+RX_BOOST=([01])",
     re.IGNORECASE,
 )
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(slots=True)
@@ -139,6 +141,26 @@ def _run(
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"command failed: {shlex.join(command)}: {exc}") from exc
+
+
+def _artifact_provenance(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FlashError(f"cannot read provenance metadata {path}: {exc}") from exc
+    provenance: dict[str, Any] = {}
+    mappings = {
+        "git_sha": ("git_sha", "commit"),
+        "meshcore_sha": ("meshcore_sha",),
+        "build_environment": ("build_environment",),
+        "git_dirty": ("git_dirty",),
+    }
+    for target, keys in mappings.items():
+        for key in keys:
+            if key in payload:
+                provenance[target] = payload[key]
+                break
+    return provenance
 
 
 def _record(
@@ -234,12 +256,19 @@ def _check_variant(
     info: DeviceInfo,
     expected_environment: str,
     selection: PhaseSelection,
+    expected_provenance: dict[str, Any] | None = None,
+    *,
+    allow_unknown_provenance: bool = False,
 ) -> bool:
+    expected_provenance = expected_provenance or {}
     started, started_at = time.monotonic(), utc_now()
     report.metadata.update(
         {
             "firmware_protocol": info.protocol.value,
             "firmware_environment": info.build_environment or "unknown",
+            "firmware_git_sha": info.git_sha or "unknown",
+            "firmware_git_dirty": info.git_dirty,
+            "firmware_meshcore_sha": info.meshcore_sha or "unknown",
             "firmware_radio": info.radio_available,
             "serial_recovered": info.recovered,
         }
@@ -268,6 +297,7 @@ def _check_variant(
     )
     expected = capabilities_for(expected_environment)
     mismatch: list[str] = []
+    unknown: list[str] = []
     if expected:
         if expected.command_protocol != info.protocol:
             mismatch.append(
@@ -281,17 +311,67 @@ def _check_variant(
             mismatch.append(f"expected {wanted} firmware, found {actual} firmware")
     if info.build_environment and info.build_environment != expected_environment:
         mismatch.append(f"expected env {expected_environment}, found {info.build_environment}")
-    if mismatch:
+    elif not info.build_environment:
+        unknown.append("firmware environment")
+    metadata_environment = expected_provenance.get("build_environment")
+    if metadata_environment and metadata_environment != expected_environment:
+        mismatch.append(
+            f"artifact env expected {expected_environment}, metadata has {metadata_environment}"
+        )
+
+    for label, actual, expected in (
+        ("Git SHA", info.git_sha, expected_provenance.get("git_sha")),
+        ("MeshCore SHA", info.meshcore_sha, expected_provenance.get("meshcore_sha")),
+    ):
+        if not actual or not expected:
+            unknown.append(label)
+        elif not str(expected).startswith(actual) and not actual.startswith(str(expected)):
+            mismatch.append(f"{label} expected {expected}, found {actual}")
+
+    expected_dirty = expected_provenance.get("git_dirty")
+    if info.git_dirty is None or not isinstance(expected_dirty, bool):
+        unknown.append("Git dirty state")
+    elif info.git_dirty != expected_dirty:
+        mismatch.append(
+            f"Git dirty state expected {int(expected_dirty)}, found {int(info.git_dirty)}"
+        )
+
+    artifact_sha = expected_provenance.get("firmware_sha256")
+    device_sha = expected_provenance.get("device_firmware_sha256")
+    if artifact_sha and not SHA256_RE.fullmatch(str(artifact_sha)):
+        mismatch.append("artifact SHA-256 is not 64 lowercase hexadecimal characters")
+    elif device_sha and not SHA256_RE.fullmatch(str(device_sha)):
+        mismatch.append("flashed-device SHA-256 is not 64 lowercase hexadecimal characters")
+    elif not artifact_sha or not device_sha:
+        unknown.append("full flashed artifact SHA-256")
+    elif artifact_sha != device_sha:
+        mismatch.append(f"flashed artifact SHA-256 expected {artifact_sha}, found {device_sha}")
+
+    if mismatch or (unknown and not allow_unknown_provenance):
+        now, now_at = time.monotonic(), utc_now()
+        detail = mismatch + [f"unknown {item}" for item in unknown]
+        _record(
+            report,
+            "firmware.expected_variant",
+            TestStatus.FAIL,
+            "; ".join(detail),
+            now,
+            now_at,
+            critical=True,
+        )
+        report.notes.append("Firmware provenance mismatch: " + "; ".join(detail))
+        return False
+    if unknown:
         now, now_at = time.monotonic(), utc_now()
         _record(
             report,
             "firmware.expected_variant",
             TestStatus.WARN,
-            "; ".join(mismatch),
+            "exploratory override accepted unknown " + ", ".join(unknown),
             now,
             now_at,
         )
-        report.notes.append("Firmware variant mismatch: " + "; ".join(mismatch))
+        report.notes.append("Unknown firmware provenance was explicitly allowed")
     return True
 
 
@@ -454,6 +534,105 @@ def run_ui(
                     )
 
 
+RadioProfile = tuple[float, int, float, int, int, bool]
+
+
+def _parse_radio_profile(output: str) -> RadioProfile | None:
+    match = GETRF_RE.search(output)
+    if not match:
+        return None
+    return (
+        float(match.group(1)),
+        int(match.group(2)),
+        float(match.group(3)),
+        int(match.group(4)),
+        int(match.group(5)),
+        match.group(6) == "1",
+    )
+
+
+def _radio_profile_matches(actual: RadioProfile, expected: RadioProfile) -> bool:
+    return (
+        abs(actual[0] - expected[0]) < 0.002
+        and actual[1] == expected[1]
+        and abs(actual[2] - expected[2]) < 0.2
+        and actual[3:] == expected[3:]
+    )
+
+
+def _reboot_radio_connection(
+    connection: PersistentSerial,
+    report: HardwareReport,
+    result_name: str,
+) -> bool:
+    started, started_at = time.monotonic(), utc_now()
+    try:
+        response = connection.send_command("reboot", timeout_s=2, recover_on_silence=False)
+        connection.close()
+        time.sleep(2)
+        connection.connect()
+        info = connection.detect_firmware()
+        passed = info.protocol == CommandProtocol.REMOTE_TEST
+        _record(
+            report,
+            result_name,
+            TestStatus.PASS if passed else TestStatus.FAIL,
+            "remote-test controller returned" if passed else "controller did not return",
+            started,
+            started_at,
+            critical=not passed,
+            data={"response": response.output[-800:]},
+        )
+        return passed
+    except HardwareSerialError as exc:
+        _record(
+            report,
+            result_name,
+            TestStatus.FAIL,
+            str(exc),
+            started,
+            started_at,
+            critical=True,
+        )
+        return False
+
+
+def _restore_radio_profile(
+    connection: PersistentSerial,
+    report: HardwareReport,
+    original: RadioProfile,
+) -> None:
+    params = (
+        f"{original[0]:.3f} {original[1]} {original[2]:g} {original[3]} "
+        f"{original[4]} {int(original[5])}"
+    )
+    restored = _run_check(
+        report,
+        "radio.restore",
+        lambda: _command_expect(
+            connection,
+            f"setrf {params}",
+            ("radio params saved to NVS",),
+            timeout_s=7,
+        ),
+        critical=True,
+    )
+    if not restored or not _reboot_radio_connection(connection, report, "radio.restore_reboot"):
+        return
+
+    def verify_restore() -> tuple[bool, str, dict[str, Any]]:
+        response = connection.send_command("getrf", timeout_s=6, expected=("[test] getrf:",))
+        observed = _parse_radio_profile(response.output)
+        passed = observed is not None and _radio_profile_matches(observed, original)
+        return (
+            passed,
+            "original radio profile restored" if passed else "original radio profile not restored",
+            {"observed": observed, "expected": original, "output": response.output[-1600:]},
+        )
+
+    _run_check(report, "radio.verify_restore", verify_restore, critical=True)
+
+
 def run_radio(
     connection: PersistentSerial,
     report: HardwareReport,
@@ -489,126 +668,101 @@ def run_radio(
         )
         return
 
-    _run_check(
-        report,
-        "radio.query_initial",
-        lambda: _command_expect(connection, "getrf", ("[test] getrf:",), timeout_s=6),
-    )
-    params = f"{frequency_mhz:.3f} {spreading_factor} {bandwidth_khz:g} {coding_rate} {tx_power_dbm}"
-    configured = _run_check(
-        report,
-        "radio.configure",
-        lambda: _command_expect(
-            connection,
-            f"setrf {params}",
-            ("radio params saved to NVS",),
-            timeout_s=7,
-        ),
-        critical=True,
-    )
-    if not configured:
+    original: list[RadioProfile] = []
+
+    def query_initial() -> tuple[bool, str, dict[str, Any]]:
+        response = connection.send_command("getrf", timeout_s=6, expected=("[test] getrf:",))
+        parsed = _parse_radio_profile(response.output)
+        if parsed is not None:
+            original.append(parsed)
+        return (
+            parsed is not None,
+            "original radio profile captured" if parsed is not None else "original radio profile could not be parsed; refusing mutation",
+            {"profile": parsed, "output": response.output[-1600:]},
+        )
+
+    if not _run_check(report, "radio.query_initial", query_initial, critical=True):
         return
 
-    reboot_started, reboot_at = time.monotonic(), utc_now()
-    response = connection.send_command("reboot", timeout_s=2, recover_on_silence=False)
-    connection.close()
-    time.sleep(2)
+    params = f"{frequency_mhz:.3f} {spreading_factor} {bandwidth_khz:g} {coding_rate} {tx_power_dbm}"
+    mutation_attempted = False
     try:
-        connection.connect()
-        info = connection.detect_firmware()
-        passed = info.protocol == CommandProtocol.REMOTE_TEST
-        _record(
+        mutation_attempted = True
+        configured = _run_check(
             report,
-            "radio.reboot",
-            TestStatus.PASS if passed else TestStatus.FAIL,
-            "remote-test controller returned" if passed else "controller did not return",
-            reboot_started,
-            reboot_at,
-            critical=not passed,
-            data={"response": response.output[-800:]},
-        )
-    except HardwareSerialError as exc:
-        _record(
-            report,
-            "radio.reboot",
-            TestStatus.FAIL,
-            str(exc),
-            reboot_started,
-            reboot_at,
+            "radio.configure",
+            lambda: _command_expect(
+                connection,
+                f"setrf {params}",
+                ("radio params saved to NVS",),
+                timeout_s=7,
+            ),
             critical=True,
         )
-        return
+        if not configured or not _reboot_radio_connection(connection, report, "radio.reboot"):
+            return
 
-    observed: list[str] = []
+        def verify_params() -> tuple[bool, str, dict[str, Any]]:
+            response = connection.send_command("getrf", timeout_s=6, expected=("[test] getrf:",))
+            values = _parse_radio_profile(response.output)
+            expected: RadioProfile = (
+                frequency_mhz,
+                spreading_factor,
+                bandwidth_khz,
+                coding_rate,
+                tx_power_dbm,
+                False,
+            )
+            passed = values is not None and _radio_profile_matches(values, expected)
+            return passed, "test radio profile confirmed" if passed else "test radio profile mismatch", {
+                "observed": values,
+                "expected": expected,
+                "output": response.output[-1600:],
+            }
 
-    def verify_params() -> tuple[bool, str, dict[str, Any]]:
-        response = connection.send_command("getrf", timeout_s=6, expected=("[test] getrf:",))
-        observed.append(response.output)
-        match = GETRF_RE.search(response.output)
-        if not match:
-            return False, "radio parameters could not be parsed", {"output": response.output[-1600:]}
-        values = (
-            float(match.group(1)),
-            int(match.group(2)),
-            float(match.group(3)),
-            int(match.group(4)),
-            int(match.group(5)),
+        if not _run_check(report, "radio.verify_config", verify_params, critical=True):
+            return
+
+        channel = f"{TEST_CHANNEL_PREFIX}-{int(time.time()) % 100000:05d}"
+
+        def add_channel() -> tuple[bool, str, dict[str, Any]]:
+            response = connection.send_command(
+                f"addchannel {channel}",
+                timeout_s=7,
+                expected=("addchannel",),
+            )
+            passed = "addchannel OK" in response.output
+            return passed, f"created #{channel}" if passed else "channel creation failed", {
+                "output": response.output[-1600:]
+            }
+
+        if not _run_check(report, "radio.channel", add_channel):
+            return
+        message = f"hw-test-{int(time.time())}"
+        _run_check(
+            report,
+            "radio.transmit",
+            lambda: _command_expect(
+                connection,
+                f"sendchannel {channel} {message}",
+                ("sendchannel OK",),
+                timeout_s=12,
+            ),
+            critical=True,
         )
-        expected = (frequency_mhz, spreading_factor, bandwidth_khz, coding_rate, tx_power_dbm)
-        passed = (
-            abs(values[0] - expected[0]) < 0.002
-            and values[1] == expected[1]
-            and abs(values[2] - expected[2]) < 0.2
-            and values[3:] == expected[3:]
+        _run_check(
+            report,
+            "radio.cleanup",
+            lambda: _command_expect(
+                connection,
+                f"removechannel {channel}",
+                ("OK",),
+                timeout_s=7,
+            ),
         )
-        detail = (
-            f"observed freq={values[0]:.3f} SF={values[1]} BW={values[2]:.1f} "
-            f"CR={values[3]} TX={values[4]}"
-        )
-        return passed, detail, {"observed": values, "expected": expected}
-
-    if not _run_check(report, "radio.verify_config", verify_params, critical=True):
-        return
-
-    channel = f"{TEST_CHANNEL_PREFIX}-{int(time.time()) % 100000:05d}"
-    added_output: list[str] = []
-
-    def add_channel() -> tuple[bool, str, dict[str, Any]]:
-        response = connection.send_command(
-            f"addchannel {channel}",
-            timeout_s=7,
-            expected=("addchannel",),
-        )
-        added_output.append(response.output)
-        passed = "addchannel OK" in response.output
-        return passed, f"created #{channel}" if passed else "channel creation failed", {
-            "output": response.output[-1600:]
-        }
-
-    if not _run_check(report, "radio.channel", add_channel):
-        return
-    message = f"hw-test-{int(time.time())}"
-    _run_check(
-        report,
-        "radio.transmit",
-        lambda: _command_expect(
-            connection,
-            f"sendchannel {channel} {message}",
-            ("sendchannel OK",),
-            timeout_s=12,
-        ),
-        critical=True,
-    )
-    _run_check(
-        report,
-        "radio.cleanup",
-        lambda: _command_expect(
-            connection,
-            f"removechannel {channel}",
-            ("OK",),
-            timeout_s=7,
-        ),
-    )
+    finally:
+        if mutation_attempted:
+            _restore_radio_profile(connection, report, original[0])
 
 
 def _build_or_flash(args: argparse.Namespace, metadata: dict[str, Any]) -> None:
@@ -633,6 +787,15 @@ def _build_or_flash(args: argparse.Namespace, metadata: dict[str, Any]) -> None:
         )
         digest = firmware_sha256(firmware)
         metadata.update({"artifact_source": "reviewed", "firmware_sha256": digest})
+        if args.metadata:
+            metadata.update(_artifact_provenance(args.metadata.expanduser().resolve()))
+        required = ("git_sha", "git_dirty", "meshcore_sha", "build_environment")
+        missing = [key for key in required if key not in metadata]
+        if missing:
+            raise FlashError(
+                "reviewed build metadata is missing required provenance: "
+                + ", ".join(missing)
+            )
     else:
         build = flasher.build(args.env)
         firmware = build.firmware
@@ -644,6 +807,8 @@ def _build_or_flash(args: argparse.Namespace, metadata: dict[str, Any]) -> None:
                 "firmware_sha256": build.sha256,
             }
         )
+        generated_metadata = build_root / "webflasher" / "build-metadata.json"
+        metadata.update(_artifact_provenance(generated_metadata))
         print(
             f"BUILD PASS: {build.environment} -> {firmware} sha256={build.sha256}",
             flush=True,
@@ -665,6 +830,7 @@ def _build_or_flash(args: argparse.Namespace, metadata: dict[str, Any]) -> None:
                 "flash_duration_s": round(flashed.duration_s, 3),
                 "flash_boot_verified": flashed.boot_verified,
                 "firmware_sha256": flashed.sha256,
+                "device_firmware_sha256": flashed.sha256,
             }
         )
         print(
@@ -723,7 +889,14 @@ def _run_local(args: argparse.Namespace, metadata: dict[str, Any]) -> int:
                 critical=True,
             )
             return _finish(report, output_dir)
-        if not _check_variant(report, info, args.env, selection):
+        if not _check_variant(
+            report,
+            info,
+            args.env,
+            selection,
+            metadata,
+            allow_unknown_provenance=args.allow_unknown_provenance,
+        ):
             return _finish(report, output_dir)
 
         if selection.smoke:
@@ -803,7 +976,11 @@ def _finish(report: HardwareReport, output_dir: Path) -> int:
     return report.exit_code
 
 
-def _worker_arguments(args: argparse.Namespace, remote_output: str) -> list[str]:
+def _worker_arguments(
+    args: argparse.Namespace,
+    remote_output: str,
+    metadata: dict[str, Any],
+) -> list[str]:
     selection = _selection(args)
     mode = "--smoke"
     if selection == PhaseSelection(True, True, True, True):
@@ -816,7 +993,7 @@ def _worker_arguments(args: argparse.Namespace, remote_output: str) -> list[str]
         mode = "--radio"
     elif selection.soak:
         mode = "--soak"
-    return [
+    worker = [
         "python3",
         "-m",
         "hw_test.hw_test_runner",
@@ -852,6 +1029,20 @@ def _worker_arguments(args: argparse.Namespace, remote_output: str) -> list[str]
         "--radio-power",
         str(args.radio_power),
     ]
+    for option, key in (
+        ("--expected-git-sha", "git_sha"),
+        ("--expected-meshcore-sha", "meshcore_sha"),
+        ("--expected-firmware-sha256", "firmware_sha256"),
+        ("--expected-device-firmware-sha256", "device_firmware_sha256"),
+    ):
+        value = metadata.get(key)
+        if value is not None:
+            worker.extend((option, str(value)))
+    if "git_dirty" in metadata:
+        worker.extend(("--expected-git-dirty", "1" if metadata["git_dirty"] else "0"))
+    if args.allow_unknown_provenance:
+        worker.append("--allow-unknown-provenance")
+    return worker
 
 
 def _merge_report_metadata(
@@ -883,7 +1074,7 @@ def _run_pi_worker(args: argparse.Namespace, metadata: dict[str, Any]) -> int:
     copied = _run(["scp", "-r", str(package_dir), f"{host}:{remote_root}/"], timeout=120, echo=True)
     if copied.returncode != 0:
         raise RuntimeError(f"cannot deploy Pi worker: {copied.stderr.strip()}")
-    worker = _worker_arguments(args, remote_output)
+    worker = _worker_arguments(args, remote_output, metadata)
     command = f"cd {shlex.quote(remote_root)} && {shlex.join(worker)}"
     print(f"Running hardware tests on {host}:{args.port or PI_TDECK_PORT}", flush=True)
     result = subprocess.run(["ssh", host, command], check=False)
@@ -946,7 +1137,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cold-boot", action="store_true")
     parser.add_argument("--no-boot-verify", action="store_true")
     parser.add_argument("--esptool")
+    parser.add_argument(
+        "--allow-unknown-provenance",
+        action="store_true",
+        help="allow missing identity only for exploratory tests of an attached device",
+    )
     parser.add_argument("--remote-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-git-sha", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-git-dirty", choices=("0", "1"), help=argparse.SUPPRESS)
+    parser.add_argument("--expected-meshcore-sha", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-firmware-sha256", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-device-firmware-sha256", help=argparse.SUPPRESS)
     return parser
 
 
@@ -961,10 +1162,20 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--firmware requires --flash")
     if args.firmware and not (args.sha256 or args.metadata):
         parser.error("--firmware requires --sha256 or --metadata from the reviewed build")
+    if args.firmware and args.sha256:
+        parser.error(
+            "--sha256 alone cannot identify the firmware build; use --metadata with Git and MeshCore provenance"
+        )
     if (args.sha256 or args.metadata) and not args.firmware:
         parser.error("--sha256/--metadata require --firmware")
     if args.cold_boot and not args.flash:
         parser.error("--cold-boot requires --flash")
+    if args.allow_unknown_provenance and (
+        args.build or args.flash or args.firmware or args.sha256 or args.metadata
+    ):
+        parser.error(
+            "--allow-unknown-provenance is exploratory only and cannot be used with build, flash, or release evidence"
+        )
     if not args.pi_mode and not args.local:
         # Explicit transport is safest around machines that also have a Heltec
         # on /dev/ttyUSB0. Direct Pi workers force --local internally.
@@ -980,6 +1191,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     validate_args(parser, args)
     metadata: dict[str, Any] = {}
+    if args.remote_worker:
+        metadata.update(
+            {
+                key: value
+                for key, value in (
+                    ("git_sha", args.expected_git_sha),
+                    ("meshcore_sha", args.expected_meshcore_sha),
+                    ("firmware_sha256", args.expected_firmware_sha256),
+                    ("device_firmware_sha256", args.expected_device_firmware_sha256),
+                )
+                if value is not None
+            }
+        )
+        if args.expected_git_dirty is not None:
+            metadata["git_dirty"] = args.expected_git_dirty == "1"
     try:
         if not args.remote_worker:
             _build_or_flash(args, metadata)

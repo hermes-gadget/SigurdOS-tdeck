@@ -31,6 +31,7 @@
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
 #include "diagnostics/debug.h"
+#include "diagnostics/build_info.h"
 #include "diagnostics/telemetry.h"
 #include "ui/screens.h"
 #include "ui/chat_screen.h"
@@ -373,6 +374,7 @@ static void print_help() {
 
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
+    Serial.println(F("║  buildinfo   Show build provenance   ║"));
     Serial.println(F("║  stresschat [n] Chat/Home LVGL stress ║"));
     Serial.println(F("║  keydiag     Dump keyboard diagnostics║"));
     Serial.println(F("║  inputdiag   Dump touch/trackball diag║"));
@@ -1766,6 +1768,13 @@ static void dump_focused_widget() {
 }
 
 // ── Cmd: getrf ────────────────────────────────────────────
+static void cmd_buildinfo() {
+    const auto& build = sigurdos::build::info();
+    Serial.printf("[test] build: git=%s|dirty=%d|mcore=%s|env=%s\n",
+                  build.git_sha, build.git_dirty ? 1 : 0,
+                  build.meshcore_sha, build.build_env);
+}
+
 static void cmd_getrf() {
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
 
@@ -2310,6 +2319,8 @@ static bool dispatch(const char* line) {
         channel[sizeof(channel) - 1] = '\0';
         bool ok = sigurdos::mesh::sendRoomMsgFetchRequest(name, channel);
         Serial.printf("[test] fetchmsgs %s channel=%s: %s\n", name, channel, ok ? "OK" : "FAILED");
+    } else if (strcmp(cmd, "buildinfo") == 0) {
+        cmd_buildinfo();
     } else if (strcmp(cmd, "getrf") == 0) {
         cmd_getrf();
     } else if (strcmp(cmd, "setrf") == 0) {
