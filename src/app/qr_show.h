@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <limits>
 
 namespace sigurdos {
 namespace app {
@@ -40,6 +41,22 @@ struct QrCanvasLayout {
     int canvas_size;
     bool fits;
 };
+
+template <typename TryVersionFn>
+inline int sigurdos_qr_select_smallest_version(TryVersionFn try_version) {
+    for (int version = 1; version <= SIGURDOS_QR_VERSION; ++version) {
+        if (try_version(version)) return version;
+    }
+    return 0;
+}
+
+inline std::size_t sigurdos_qr_canvas_buffer_bytes(
+    const QrCanvasLayout& layout) {
+    if (!layout.fits || layout.canvas_size <= 0) return 0;
+    const std::size_t side = static_cast<std::size_t>(layout.canvas_size);
+    if (side > std::numeric_limits<std::size_t>::max() / side / 2U) return 0;
+    return side * side * 2U;
+}
 
 inline QrCanvasLayout sigurdos_qr_canvas_layout(
     int qr_size,
