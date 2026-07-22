@@ -501,6 +501,8 @@ python3 scripts/download_maps.py --name uk \
 | `carto` | `{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png` | 19 |
 
 Output: `maps-{name}/tiles/{z}/{x}/{y}.png` — copy the `tiles/` directory to the SD card root.
+By default an existing tile is downloaded again so a region can be refreshed.
+Pass `--resume` to keep existing non-empty files and fetch only missing tiles.
 
 ---
 

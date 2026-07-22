@@ -28,6 +28,7 @@ def _load_config():
         "host": "SIGURDOS_GPS_VALIDATION_WIFI_HOST",
         "port": "SIGURDOS_GPS_VALIDATION_WIFI_PORT",
         "path": "SIGURDOS_GPS_VALIDATION_WIFI_PATH",
+        "token": "SIGURDOS_GPS_VALIDATION_WIFI_TOKEN",
     }
     for key, env_name in env_map.items():
         if env_name in os.environ:
@@ -37,7 +38,7 @@ def _load_config():
 
 
 config, loaded_from = _load_config()
-missing = [key for key in ("ssid", "host") if not str(config.get(key, ""))]
+missing = [key for key in ("ssid", "host", "token") if not str(config.get(key, ""))]
 if missing:
     raise RuntimeError(
         "GPS WiFi validation config is missing required field(s): "
@@ -52,6 +53,12 @@ if port <= 0 or port > 65535:
 path = str(config.get("path", "/gps"))
 if not path.startswith("/"):
     path = "/" + path
+if len(path) > 128 or "?" in path or "#" in path or any(ch.isspace() for ch in path):
+    raise RuntimeError("GPS WiFi validation path is invalid")
+
+token = str(config["token"])
+if len(token) < 22 or len(token) > 128 or any(ch.isspace() for ch in token):
+    raise RuntimeError("GPS WiFi validation token must be 22-128 non-whitespace characters")
 
 env.Append(
     CPPDEFINES=[
@@ -60,6 +67,7 @@ env.Append(
         ("SIGURDOS_GPS_VALIDATION_WIFI_HOST", _macro_string(config["host"])),
         ("SIGURDOS_GPS_VALIDATION_WIFI_PORT", str(port)),
         ("SIGURDOS_GPS_VALIDATION_WIFI_PATH", _macro_string(path)),
+        ("SIGURDOS_GPS_VALIDATION_WIFI_TOKEN", _macro_string(token)),
     ]
 )
 

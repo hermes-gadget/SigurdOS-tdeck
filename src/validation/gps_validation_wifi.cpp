@@ -26,6 +26,9 @@
 #ifndef SIGURDOS_GPS_VALIDATION_WIFI_PATH
 #define SIGURDOS_GPS_VALIDATION_WIFI_PATH "/gps"
 #endif
+#ifndef SIGURDOS_GPS_VALIDATION_WIFI_TOKEN
+#define SIGURDOS_GPS_VALIDATION_WIFI_TOKEN ""
+#endif
 
 namespace {
 
@@ -54,7 +57,7 @@ uint32_t last_wifi_attempt_ms = 0;
 UploadQueue upload_queue;
 WiFiClient upload_client;
 UploadPhase upload_phase = UploadPhase::Idle;
-char http_header[256] = {};
+char http_header[512] = {};
 size_t http_header_len = 0;
 size_t http_header_offset = 0;
 size_t http_body_offset = 0;
@@ -67,7 +70,8 @@ uint32_t uploads_failed = 0;
 bool wifi_has_config()
 {
     return strlen(SIGURDOS_GPS_VALIDATION_WIFI_SSID) > 0
-        && strlen(SIGURDOS_GPS_VALIDATION_WIFI_HOST) > 0;
+        && strlen(SIGURDOS_GPS_VALIDATION_WIFI_HOST) > 0
+        && strlen(SIGURDOS_GPS_VALIDATION_WIFI_TOKEN) >= 22;
 }
 
 void print_upload_outcome(const char* outcome, int http_status)
@@ -180,11 +184,13 @@ void begin_upload()
         "POST %s HTTP/1.1\r\n"
         "Host: %s:%u\r\n"
         "Content-Type: text/plain\r\n"
+        "X-SigurdOS-Token: %s\r\n"
         "Connection: close\r\n"
         "Content-Length: %u\r\n\r\n",
         SIGURDOS_GPS_VALIDATION_WIFI_PATH,
         SIGURDOS_GPS_VALIDATION_WIFI_HOST,
         (unsigned)SIGURDOS_GPS_VALIDATION_WIFI_PORT,
+        SIGURDOS_GPS_VALIDATION_WIFI_TOKEN,
         (unsigned)body_len);
     if (header_len <= 0 || static_cast<size_t>(header_len) >= sizeof(http_header)) {
         finish_upload("request-too-large", 0, false);

@@ -74,6 +74,7 @@ jobs:
           SIGURDOS_GPS_VALIDATION_WIFI_SSID: ci-compile-only
           SIGURDOS_GPS_VALIDATION_WIFI_PASS: ci-not-a-secret
           SIGURDOS_GPS_VALIDATION_WIFI_HOST: 192.0.2.1
+          SIGURDOS_GPS_VALIDATION_WIFI_TOKEN: ci-compile-token-0123456789abcdef
         run: |
           set -o pipefail
           pio run -e ${{ matrix.env }} 2>&1 | tee "build-${{ matrix.env }}.log"

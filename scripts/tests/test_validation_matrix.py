@@ -37,6 +37,7 @@ class ValidationMatrixTests(unittest.TestCase):
         self.assertNotIn("requires_wifi", self.workflow)
         self.assertIn("SIGURDOS_GPS_VALIDATION_WIFI_SSID", self.workflow)
         self.assertIn("SIGURDOS_GPS_VALIDATION_WIFI_HOST", self.workflow)
+        self.assertIn("SIGURDOS_GPS_VALIDATION_WIFI_TOKEN", self.workflow)
         self.assertIn("if-no-files-found: error", self.workflow)
         self.assertIn("check_first_party_warnings.py", self.workflow)
         self.assertIn("retention-days: 7", self.workflow)

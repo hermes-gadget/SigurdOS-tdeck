@@ -68,6 +68,36 @@ TILE_SERVERS = {
     },
 }
 
+CITIES = {
+    "london": (51.3, -0.5, 51.7, 0.3),
+    "toronto": (43.55, -79.65, 43.85, -79.15),
+    "montreal": (45.4, -73.75, 45.65, -73.45),
+    "vancouver": (49.15, -123.3, 49.35, -122.95),
+    "ottawa": (45.25, -76.05, 45.55, -75.45),
+    "new-york": (40.55, -74.15, 40.9, -73.7),
+    "seattle": (47.45, -122.45, 47.8, -122.15),
+    "chicago": (41.7, -88.0, 42.05, -87.5),
+    "los-angeles": (33.85, -118.55, 34.2, -118.15),
+    "san-francisco": (37.65, -122.55, 37.9, -122.3),
+    "manchester": (53.35, -2.45, 53.55, -2.1),
+    "birmingham": (52.35, -2.05, 52.55, -1.7),
+    "leeds": (53.7, -1.7, 53.9, -1.4),
+    "liverpool": (53.3, -3.1, 53.5, -2.8),
+    "bristol": (51.35, -2.75, 51.55, -2.45),
+    "edinburgh": (55.85, -3.35, 56.05, -3.05),
+    "glasgow": (55.75, -4.4, 55.95, -4.1),
+    "cardiff": (51.4, -3.3, 51.55, -3.05),
+    "belfast": (54.5, -6.1, 54.7, -5.8),
+    "teesside": (54.45, -1.45, 54.65, -1.05),
+    "newcastle": (54.9, -1.75, 55.05, -1.45),
+    "sheffield": (53.3, -1.6, 53.45, -1.35),
+    "nottingham": (52.85, -1.3, 53.05, -1.05),
+    "southampton": (50.85, -1.5, 50.95, -1.3),
+    "brighton": (50.75, -0.25, 50.9, -0.05),
+    "cambridge": (52.1, 0.05, 52.25, 0.2),
+    "oxford": (51.7, -1.35, 51.8, -1.15),
+}
+
 # ── Tile math (Web Mercator) ────────────────────────────────
 
 def latlon_to_tile(lat, lon, zoom):
@@ -131,7 +161,7 @@ def init_session(server_config):
 
 def download_tile(args):
     """Download a single PNG tile. Returns (x, y, zoom, success)."""
-    x, y, zoom, server_config, output_dir = args
+    x, y, zoom, server_config, output_dir, resume = args
     global session, download_stats
 
     # Build URL
@@ -148,8 +178,8 @@ def download_tile(args):
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"{y}.png")
 
-    # Skip if already downloaded
-    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+    # Resume keeps a prior non-empty tile. The default refreshes it.
+    if resume and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
         with stats_lock:
             download_stats["done"] += 1
         return x, y, zoom, True
@@ -168,7 +198,8 @@ def download_tile(args):
                 return x, y, zoom, True
             elif resp.status_code == 404:
                 # Tile doesn't exist at this zoom (e.g., ocean tile)
-                # Create empty marker
+                if os.path.exists(out_path):
+                    os.unlink(out_path)
                 with stats_lock:
                     download_stats["done"] += 1
                 return x, y, zoom, True
@@ -211,17 +242,17 @@ def write_metadata(output_dir, name, server_config, lat1, lon1, lat2, lon2, zoom
 
 # ── Main ────────────────────────────────────────────────────
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(
         description="Download map tiles for Sigurdos offline use",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--name", required=True, help="Region name (used for output dir)")
+    parser.add_argument("--name", help="Region name (defaults to --city)")
     parser.add_argument("--output", default=None, help="Output directory (default: ./maps-{name})")
 
     # Bounding box: either --bbox "lat1,lon1,lat2,lon2" or individual --lat1/--lon1/--lat2/--lon2
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group()
     group.add_argument("--bbox", help="Bounding box: 'lat1,lon1,lat2,lon2'")
     group.add_argument("--city", help="City name for quick download (e.g. 'London', 'Manchester')")
 
@@ -241,58 +272,53 @@ def main():
                         help="Calculate tile count without downloading")
     parser.add_argument("--resume", action="store_true",
                         help="Skip already-downloaded tiles")
+    return parser
 
-    args = parser.parse_args()
+
+def parse_args(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    coordinates = (args.lat1, args.lon1, args.lat2, args.lon2)
+    any_coordinates = any(value is not None for value in coordinates)
+    all_coordinates = all(value is not None for value in coordinates)
+    if any_coordinates and not all_coordinates:
+        parser.error("coordinate mode requires --lat1, --lon1, --lat2, and --lon2")
+    modes = int(args.bbox is not None) + int(args.city is not None) + int(all_coordinates)
+    if modes != 1:
+        parser.error("choose exactly one location mode: --city, --bbox, or all four coordinates")
+    if (args.bbox is not None or all_coordinates) and not args.name:
+        parser.error("--name is required with --bbox or coordinate mode")
+    if args.workers < 1:
+        parser.error("--workers must be at least 1")
 
     # Parse bounding box
-    if args.bbox:
-        parts = [float(x.strip()) for x in args.bbox.split(",")]
+    if args.bbox is not None:
+        try:
+            parts = [float(x.strip()) for x in args.bbox.split(",")]
+        except ValueError:
+            parser.error("--bbox values must be numbers")
         if len(parts) != 4:
-            print("ERROR: --bbox needs exactly 4 values: lat1,lon1,lat2,lon2")
-            sys.exit(1)
+            parser.error("--bbox needs exactly 4 values: lat1,lon1,lat2,lon2")
         lat1, lon1, lat2, lon2 = parts
     elif args.city:
-        # Quick city lookup
-        cities = {
-            "london": (51.3, -0.5, 51.7, 0.3),
-            "toronto": (43.55, -79.65, 43.85, -79.15),
-            "montreal": (45.4, -73.75, 45.65, -73.45),
-            "vancouver": (49.15, -123.3, 49.35, -122.95),
-            "ottawa": (45.25, -76.05, 45.55, -75.45),
-            "new-york": (40.55, -74.15, 40.9, -73.7),
-            "seattle": (47.45, -122.45, 47.8, -122.15),
-            "chicago": (41.7, -88.0, 42.05, -87.5),
-            "los-angeles": (33.85, -118.55, 34.2, -118.15),
-            "san-francisco": (37.65, -122.55, 37.9, -122.3),
-            "manchester": (53.35, -2.45, 53.55, -2.1),
-            "birmingham": (52.35, -2.05, 52.55, -1.7),
-            "leeds": (53.7, -1.7, 53.9, -1.4),
-            "liverpool": (53.3, -3.1, 53.5, -2.8),
-            "bristol": (51.35, -2.75, 51.55, -2.45),
-            "edinburgh": (55.85, -3.35, 56.05, -3.05),
-            "glasgow": (55.75, -4.4, 55.95, -4.1),
-            "cardiff": (51.4, -3.3, 51.55, -3.05),
-            "belfast": (54.5, -6.1, 54.7, -5.8),
-            "teesside": (54.45, -1.45, 54.65, -1.05),
-            "newcastle": (54.9, -1.75, 55.05, -1.45),
-            "sheffield": (53.3, -1.6, 53.45, -1.35),
-            "nottingham": (52.85, -1.3, 53.05, -1.05),
-            "southampton": (50.85, -1.5, 50.95, -1.3),
-            "brighton": (50.75, -0.25, 50.9, -0.05),
-            "cambridge": (52.1, 0.05, 52.25, 0.2),
-            "oxford": (51.7, -1.35, 51.8, -1.15),
-        }
         key = args.city.lower()
-        if key not in cities:
-            print(f"ERROR: Unknown city '{args.city}'. Known: {', '.join(sorted(cities.keys()))}")
-            sys.exit(1)
-        lat1, lon1, lat2, lon2 = cities[key]
-        print(f"City '{args.city}': bbox={lat1},{lon1},{lat2},{lon2}")
+        if key not in CITIES:
+            parser.error(f"unknown city '{args.city}'. Known: {', '.join(sorted(CITIES))}")
+        lat1, lon1, lat2, lon2 = CITIES[key]
+        args.name = args.name or key
     else:
         lat1, lon1, lat2, lon2 = args.lat1, args.lon1, args.lat2, args.lon2
-        if any(v is None for v in [lat1, lon1, lat2, lon2]):
-            print("ERROR: When not using --bbox or --city, all --lat1/--lon1/--lat2/--lon2 are required")
-            sys.exit(1)
+
+    args.bounds = (lat1, lon1, lat2, lon2)
+    return args
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    lat1, lon1, lat2, lon2 = args.bounds
+    if args.city:
+        print(f"City '{args.city}': bbox={lat1},{lon1},{lat2},{lon2}")
 
     zoom_min, zoom_max = args.zoom
     if zoom_min > zoom_max:
@@ -344,7 +370,7 @@ def main():
     tiles = []
     for zoom in range(zoom_min, zoom_max + 1):
         for x, y, _ in tiles_for_bbox(lat1, lon1, lat2, lon2, zoom):
-            tiles.append((x, y, zoom, server_config, tiles_dir))
+            tiles.append((x, y, zoom, server_config, tiles_dir, args.resume))
 
     download_stats["total"] = len(tiles)
     download_stats["done"] = 0
