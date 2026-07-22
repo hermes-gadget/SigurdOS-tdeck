@@ -418,6 +418,36 @@ TEST_F(GPSIntegrationTest, ValidGGAReportsFixWithCoordinateDirections) {
     EXPECT_NEAR(sigurdos_gps_longitude(), 11.5167f, 0.01f);
 }
 
+TEST_F(GPSIntegrationTest, RmcVoidInvalidatesAnExistingFix) {
+    feed_body("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+    ASSERT_TRUE(sigurdos_gps_has_fix());
+
+    feed_body("GPRMC,123520,V,,,,,0.0,0.0,290224,,,N");
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_fix_quality(), 0);
+}
+
+TEST_F(GPSIntegrationTest, NoFixGgaInvalidatesAnExistingFix) {
+    feed_body("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+    ASSERT_TRUE(sigurdos_gps_has_fix());
+
+    feed_body("GPGGA,123520,,,,,0,00,9.9,,M,,M,,");
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+    EXPECT_EQ(sigurdos_gps_fix_quality(), 0);
+}
+
+TEST_F(GPSIntegrationTest, FixExpiresWithoutInputAcrossMillisWrap) {
+    arduino_mock::current_millis = UINT32_MAX - 5000u;
+    feed_body("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+    ASSERT_TRUE(sigurdos_gps_has_fix());
+
+    arduino_mock::current_millis += 15001u;
+
+    EXPECT_FALSE(sigurdos_gps_has_fix());
+}
+
 TEST_F(GPSIntegrationTest, InitUsesLilyGoGpsShieldUartContract) {
     EXPECT_TRUE(Serial1.mock_was_begun());
     EXPECT_EQ(Serial1.mock_last_baud(), GPS_PRIMARY_BAUD_RATE);
@@ -622,6 +652,21 @@ TEST_F(GPSIntegrationTest, ValidFixExposesUtcUntilClockAcceptsIt) {
     EXPECT_TRUE(sigurdos_gps_time_synced());
     EXPECT_EQ(sigurdos_gps_time_sync_status(), SigurdOSGpsSyncStatus::Success);
     EXPECT_FALSE(sigurdos_gps_get_pending_time(&utc));
+}
+
+TEST_F(GPSIntegrationTest, ClockResynchronizesAfterThirtyMinutesAcrossMillisWrap) {
+    arduino_mock::current_millis = UINT32_MAX - 1000u;
+    feed_body("GPRMC,123519,A,4807.038,N,01131.000,E,0.0,0.0,290224,,,A");
+    SigurdOSGpsUtcTime utc{};
+    ASSERT_TRUE(sigurdos_gps_get_pending_time(&utc));
+    sigurdos_gps_mark_time_synced();
+    EXPECT_FALSE(sigurdos_gps_get_pending_time(&utc));
+
+    arduino_mock::current_millis += 30u * 60u * 1000u;
+    feed_body("GPRMC,130000,A,4807.038,N,01131.000,E,0.0,0.0,290224,,,A");
+
+    ASSERT_TRUE(sigurdos_gps_get_pending_time(&utc));
+    EXPECT_EQ(utc.hour, 13);
 }
 
 TEST_F(GPSIntegrationTest, FixWithoutValidDateDoesNotOfferClockSync) {

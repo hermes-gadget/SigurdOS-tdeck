@@ -42,6 +42,8 @@ static struct GPSData {
     bool     has_fix;
     bool     initialized;
     bool     time_synced;
+    uint32_t last_valid_fix_ms;
+    uint32_t last_time_sync_ms;
     uint32_t epoch;
     uint32_t active_baud;
     uint32_t chars_processed;
@@ -75,9 +77,32 @@ static uint32_t gps_last_service_ms = 0;
 
 static constexpr uint32_t GPS_BAUD_PROBE_INTERVAL_MS = 3000;
 static constexpr uint32_t GPS_PROBE_TIMEOUT_MS = 60000;  // stop cycling after 60s with no valid sentences
+static constexpr uint32_t GPS_FIX_FRESHNESS_MS = 15000;
+static constexpr uint32_t GPS_TIME_RESYNC_INTERVAL_MS = 30UL * 60UL * 1000UL;
 static uint32_t gps_probe_start_ms = 0;
 static constexpr uint8_t GPS_BAUD_CANDIDATE_COUNT =
     (GPS_PRIMARY_BAUD_RATE == GPS_FALLBACK_BAUD_RATE) ? 1 : 2;
+
+static void gps_invalidate_fix()
+{
+    gps.has_fix = false;
+    gps.fix_quality = 0;
+}
+
+static bool gps_fix_is_fresh(uint32_t now)
+{
+    if (!gps.has_fix) return false;
+    if ((uint32_t)(now - gps.last_valid_fix_ms) <= GPS_FIX_FRESHNESS_MS) return true;
+    gps_invalidate_fix();
+    return false;
+}
+
+static bool gps_time_sync_due(uint32_t now)
+{
+    if (!gps.time_synced) return true;
+    if (gps_sync_status == SigurdOSGpsSyncStatus::Waiting) return true;
+    return (uint32_t)(now - gps.last_time_sync_ms) >= GPS_TIME_RESYNC_INTERVAL_MS;
+}
 
 static uint32_t gps_baud_for_index(uint8_t index)
 {
@@ -327,7 +352,12 @@ static bool parse_gga(const char* sentence) {
     gps.fix_quality = (uint8_t)parsed_fix_quality;
     gps.satellites = (uint8_t)parsed_satellites;
     gps.altitude_m = parsed_altitude;
-    gps.has_fix = parsed_fix_quality > 0;
+    if (parsed_fix_quality > 0) {
+        gps.has_fix = true;
+        gps.last_valid_fix_ms = millis();
+    } else {
+        gps_invalidate_fix();
+    }
     return true;
 }
 
@@ -356,10 +386,11 @@ static bool parse_rmc(const char* sentence) {
         !nmea_field(sentence, 6, ew, sizeof(ew))) return false;
     const bool coordinates_empty = lat_str[0] == '\0' && ns[0] == '\0' &&
                                    lon_str[0] == '\0' && ew[0] == '\0';
-    float ignored_coordinate = 0.0f;
+    float parsed_lat = 0.0f;
+    float parsed_lon = 0.0f;
     if (!coordinates_empty && (ns[1] != '\0' || ew[1] != '\0' ||
-        !nmea_to_decimal(lat_str, ns[0], true, &ignored_coordinate) ||
-        !nmea_to_decimal(lon_str, ew[0], false, &ignored_coordinate))) return false;
+        !nmea_to_decimal(lat_str, ns[0], true, &parsed_lat) ||
+        !nmea_to_decimal(lon_str, ew[0], false, &parsed_lon))) return false;
     if (parsed_status == 'A' && coordinates_empty) return false;
 
     // Field 7: speed (knots)
@@ -381,7 +412,10 @@ static bool parse_rmc(const char* sentence) {
         !nmea_date(field, &parsed_year, &parsed_month, &parsed_day)) return false;
 
     gps.rmc_status = parsed_status;
-    if (parsed_status == 'V') return true;
+    if (parsed_status == 'V') {
+        gps_invalidate_fix();
+        return true;
+    }
 
     gps.hour = parsed_hour;
     gps.minute = parsed_minute;
@@ -391,6 +425,10 @@ static bool parse_rmc(const char* sentence) {
     gps.day = parsed_day;
     gps.month = parsed_month;
     gps.year = parsed_year;
+    gps.latitude = parsed_lat;
+    gps.longitude = parsed_lon;
+    gps.has_fix = true;
+    gps.last_valid_fix_ms = millis();
     return true;
 }
 
@@ -538,7 +576,8 @@ void sigurdos_gps_loop() {
                 // Publish a pending GPS time for the clock owner. Parsing must
                 // not consume it: main.cpp marks it synced only after the mesh
                 // clock accepts the update.
-                if (!gps.time_synced && gps.has_fix && gps.year >= 2020) {
+                const uint32_t now = millis();
+                if (gps_time_sync_due(now) && gps_fix_is_fresh(now) && gps.year >= 2020) {
                     // Compute Unix epoch from GPS date/time using Howard
                     // Hinnant's date algorithm — shared with the onboarding
                     // and manual time-set paths (mesh_wrapper.cpp makeEpoch)
@@ -596,7 +635,7 @@ uint8_t  sigurdos_gps_fix_type()          { return gps.fix_type; }
 uint8_t  sigurdos_gps_gsv_snr_max()       { return gps.gsv_snr_max; }
 uint8_t  sigurdos_gps_gsv_snr_count()     { return gps.gsv_snr_count; }
 char     sigurdos_gps_rmc_status()        { return gps.rmc_status; }
-bool     sigurdos_gps_has_fix()      { return gps.has_fix; }
+bool     sigurdos_gps_has_fix()      { return gps_fix_is_fresh(millis()); }
 uint8_t  sigurdos_gps_hour()         { return gps.hour; }
 uint8_t  sigurdos_gps_minute()       { return gps.minute; }
 uint8_t  sigurdos_gps_second()       { return gps.second; }
@@ -611,7 +650,6 @@ void sigurdos_gps_set_map_high_rate(bool enabled) {
 void sigurdos_gps_start_time_sync(uint32_t timeout_ms) {
     if (timeout_ms == 0) timeout_ms = 60000;
     if (!gps.initialized) sigurdos_gps_init();
-    gps.time_synced = false;
     gps.epoch = 0;
     gps_sync_started_ms = millis();
     gps_sync_timeout_ms = timeout_ms;
@@ -641,7 +679,10 @@ void sigurdos_gps_service(bool background_enabled, uint32_t background_interval_
     const uint32_t interval = sigurdos_gps_effective_poll_ms(
         background_enabled, background_interval_s, gps_map_high_rate,
         gps_sync_status == SigurdOSGpsSyncStatus::Waiting);
-    if (interval == 0) return;
+    if (interval == 0) {
+        gps_invalidate_fix();
+        return;
+    }
     if (!gps.initialized) sigurdos_gps_init();
     if (sigurdos_gps_poll_due(now, gps_last_service_ms, interval)) {
         gps_last_service_ms = now;
@@ -650,7 +691,8 @@ void sigurdos_gps_service(bool background_enabled, uint32_t background_interval_
 }
 
 bool sigurdos_gps_get_pending_time(SigurdOSGpsUtcTime* out) {
-    if (!out || gps.time_synced || !gps.has_fix || gps.year < 2020 ||
+    const uint32_t now = millis();
+    if (!out || !gps_time_sync_due(now) || !gps_fix_is_fresh(now) || gps.year < 2020 ||
         gps.month < 1 || gps.month > 12 || gps.day < 1 || gps.day > 31) {
         return false;
     }
@@ -660,6 +702,7 @@ bool sigurdos_gps_get_pending_time(SigurdOSGpsUtcTime* out) {
 }
 void sigurdos_gps_mark_time_synced() {
     gps.time_synced = true;
+    gps.last_time_sync_ms = millis();
     if (gps_sync_status == SigurdOSGpsSyncStatus::Waiting) {
         gps_sync_status = SigurdOSGpsSyncStatus::Success;
     }

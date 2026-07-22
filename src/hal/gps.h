@@ -60,8 +60,9 @@ void sigurdos_gps_cancel_time_sync();
 SigurdOSGpsSyncStatus sigurdos_gps_time_sync_status();
 uint32_t sigurdos_gps_time_sync_remaining_ms();
 void sigurdos_gps_service(bool background_enabled, uint32_t background_interval_s);
-// Returns one valid, not-yet-applied GPS UTC value. The caller must route it
-// through the system clock setter and mark it synced only after that succeeds.
+// Returns a fresh GPS UTC value when the clock has never been synchronized, an
+// interactive sync is waiting, or the periodic resynchronization interval has
+// elapsed. The caller marks it synced only after the clock accepts the update.
 bool    sigurdos_gps_get_pending_time(SigurdOSGpsUtcTime* out);
 void    sigurdos_gps_mark_time_synced();
 
