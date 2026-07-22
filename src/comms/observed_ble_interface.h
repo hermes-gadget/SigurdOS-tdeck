@@ -33,6 +33,8 @@ struct BleSerialObserverStats {
     uint32_t auth_timeout_count = 0;
     uint32_t ble_write_count = 0;
     uint32_t ble_write_drop_count = 0;
+    uint32_t rx_fault_disconnect_count = 0;
+    uint32_t init_failure_count = 0;
     uint32_t rx_frame_count = 0;
     uint32_t tx_frame_count = 0;
     uint32_t tx_drop_count = 0;
@@ -70,6 +72,8 @@ protected:
 private:
     void refreshConnectionState();
     bool initializeConfigured();
+    bool validateInitializedStack();
+    void rollbackInitialization();
 
     BleSerialObserverStats _stats{};
     BleInitGate _init_gate;

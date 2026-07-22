@@ -23,6 +23,21 @@ enum class BleFrameQueuePushResult : uint8_t {
     Full,
 };
 
+enum class BleRxAdmissionAction : uint8_t {
+    Accepted,
+    DisconnectPeer,
+};
+
+// Arduino-ESP32 acknowledges writes before invoking onWrite(), so the callback
+// cannot return ATT backpressure. A rejected frame must terminate the session
+// to make failure visible and force the client to resynchronize.
+inline BleRxAdmissionAction rxAdmissionAction(BleFrameQueuePushResult result)
+{
+    return result == BleFrameQueuePushResult::Accepted
+        ? BleRxAdmissionAction::Accepted
+        : BleRxAdmissionAction::DisconnectPeer;
+}
+
 // Bounded FIFO carrying BLE frames across the Bluedroid host-task to
 // app-loop-task boundary (audit NET-002, issue #813). Both sides run in task
 // context, so the target locks with a FreeRTOS critical section — the hold

@@ -16,6 +16,9 @@ namespace {
 
 using sigurdos::comms::BleFrameQueue;
 using sigurdos::comms::BleInitGate;
+using sigurdos::comms::BleInitState;
+using sigurdos::comms::BleFrameQueuePushResult;
+using sigurdos::comms::BleRxAdmissionAction;
 using sigurdos::comms::BleAuthWatchdog;
 using sigurdos::comms::BleTaskMutex;
 
@@ -72,14 +75,14 @@ TEST(BleInitGate, ConfigurationDoesNotInitializeController)
     EXPECT_FALSE(gate.initialized());
     EXPECT_EQ(init_calls, 0);
 
-    EXPECT_TRUE(gate.ensureInitialized([&] {
+    EXPECT_TRUE(gate.ensureInitialized(0, [&] {
         ++init_calls;
         return true;
     }));
     EXPECT_TRUE(gate.initialized());
     EXPECT_EQ(init_calls, 1);
 
-    EXPECT_TRUE(gate.ensureInitialized([&] {
+    EXPECT_TRUE(gate.ensureInitialized(0, [&] {
         ++init_calls;
         return true;
     }));
@@ -90,26 +93,43 @@ TEST(BleInitGate, RequiresConfigurationAndRetriesFailedInitialization)
 {
     BleInitGate gate;
     int init_calls = 0;
-    EXPECT_FALSE(gate.ensureInitialized([&] {
+    EXPECT_FALSE(gate.ensureInitialized(0, [&] {
         ++init_calls;
         return true;
     }));
     EXPECT_EQ(init_calls, 0);
 
     gate.configure();
-    EXPECT_FALSE(gate.ensureInitialized([&] {
+    EXPECT_FALSE(gate.ensureInitialized(0, [&] {
         ++init_calls;
         return false;
     }));
     EXPECT_FALSE(gate.initialized());
+    EXPECT_EQ(gate.state(), BleInitState::Failed);
     EXPECT_EQ(init_calls, 1);
 
-    EXPECT_TRUE(gate.ensureInitialized([&] {
+    EXPECT_FALSE(gate.ensureInitialized(999, [&] {
+        ++init_calls;
+        return true;
+    }));
+    EXPECT_EQ(init_calls, 1);
+
+    EXPECT_TRUE(gate.ensureInitialized(1000, [&] {
         ++init_calls;
         return true;
     }));
     EXPECT_TRUE(gate.initialized());
     EXPECT_EQ(init_calls, 2);
+}
+
+TEST(BleInitGate, RetryDeadlineHandlesMillisWrap)
+{
+    BleInitGate gate(32);
+    gate.configure();
+    EXPECT_FALSE(gate.ensureInitialized(0xFFFFFFF0u, [] { return false; }));
+    EXPECT_EQ(gate.retryAtMs(), 0x00000010u);
+    EXPECT_FALSE(gate.ensureInitialized(0x0000000Fu, [] { return true; }));
+    EXPECT_TRUE(gate.ensureInitialized(0x00000010u, [] { return true; }));
 }
 
 // Frames carry a 32-bit sequence number followed by a deterministic fill so
@@ -177,6 +197,23 @@ TEST(BleFrameQueue, DropsWhenFullAndRejectsBadFrames)
     uint8_t out[MAX_LEN];
     EXPECT_EQ(queue.pop(out), 0u);               // empty pop
     EXPECT_EQ(queue.pop(nullptr), 0u);           // null dest
+}
+
+TEST(BleFrameQueue, SaturationRequiresExternallyVisibleDisconnect)
+{
+    Queue queue;
+    uint8_t frame[MAX_LEN] = {1};
+    for (size_t i = 0; i < CAPACITY; i++) {
+        ASSERT_EQ(queue.tryPush(frame, 8), BleFrameQueuePushResult::Accepted);
+    }
+
+    const auto full_result = queue.tryPush(frame, 8);
+    EXPECT_EQ(full_result, BleFrameQueuePushResult::Full);
+    EXPECT_EQ(sigurdos::comms::rxAdmissionAction(full_result),
+              BleRxAdmissionAction::DisconnectPeer);
+    EXPECT_EQ(sigurdos::comms::rxAdmissionAction(
+                  queue.tryPush(frame, MAX_LEN + 1)),
+              BleRxAdmissionAction::DisconnectPeer);
 }
 
 TEST(BleFrameQueue, WrapsAroundRepeatedly)

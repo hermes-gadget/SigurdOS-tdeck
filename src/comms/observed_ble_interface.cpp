@@ -38,17 +38,39 @@ void ObservedSerialBLEInterface::configure(const char* prefix, const char* name,
 bool ObservedSerialBLEInterface::initializeConfigured()
 {
     BleTaskMutex::Guard guard(_task_mutex);
-    return _init_gate.ensureInitialized([this] {
+    return _init_gate.ensureInitialized(millis(), [this] {
         char mutable_name[sizeof(_configured_name)]{};
         std::memcpy(mutable_name, _configured_name, sizeof(mutable_name));
         SerialBLEInterface::begin(_configured_prefix, mutable_name,
                                   _configured_pin);
+        if (!validateInitializedStack()) {
+            _stats.init_failure_count++;
+            rollbackInitialization();
+            return false;
+        }
         _rx_queue.clear();
         _stats.begun = true;
         _stats.begin_count++;
         refreshConnectionState();
         return true;
     });
+}
+
+bool ObservedSerialBLEInterface::validateInitializedStack()
+{
+    if (!BLEDevice::getInitialized()) return false;
+    if (BLEDevice::setMTU(MAX_FRAME_SIZE) != ESP_OK) return false;
+    if (BLEDevice::getMTU() != MAX_FRAME_SIZE) return false;
+    return BLEDevice::getAdvertising() != nullptr;
+}
+
+void ObservedSerialBLEInterface::rollbackInitialization()
+{
+    _auth_watchdog.cancel();
+    _rx_queue.clear();
+    _connected_server = nullptr;
+    if (BLEDevice::getInitialized()) BLEDevice::deinit(false);
+    refreshConnectionState();
 }
 
 void ObservedSerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code)
@@ -235,17 +257,27 @@ void ObservedSerialBLEInterface::onWrite(BLECharacteristic* characteristic,
                                          esp_ble_gatts_cb_param_t* param)
 {
     BleTaskMutex::Guard guard(_task_mutex);
-    (void)param;
     // NET-002 (#813): deliberately NOT forwarded to the base class. Its
     // receive queue is written here on the Bluedroid host task and drained
     // on the app loop task with no synchronization — concurrent access tears
     // the queue index and frame contents. _rx_queue locks the handoff.
     if (!characteristic) return;
     const size_t len = characteristic->getLength();
-    if (len == 0) return;
     _stats.ble_write_count++;
-    if (!_rx_queue.push(characteristic->getData(), len)) {
-        _stats.ble_write_drop_count++;  // oversize frame or queue full
+    const BleFrameQueuePushResult result =
+        _rx_queue.tryPush(characteristic->getData(), len);
+    if (rxAdmissionAction(result) == BleRxAdmissionAction::DisconnectPeer) {
+        // This is a transport fault, not telemetry-only packet loss. The
+        // installed callback API cannot change the ATT response status, so
+        // disconnect the writer after the already-issued acknowledgement.
+        _stats.ble_write_drop_count++;
+        _stats.rx_fault_disconnect_count++;
+        _rx_queue.clear();
+        if (_connected_server && param) {
+            _connected_server->disconnect(param->write.conn_id);
+        } else if (_connected_server) {
+            _connected_server->disconnect(_stats.last_conn_id);
+        }
     }
     refreshConnectionState();
 }

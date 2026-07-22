@@ -58,7 +58,12 @@ reset. A failed durable write leaves the running identity unchanged.
 
 BLE is a single-client, compile-time-selected companion transport; BLE and USB
 are not served simultaneously and there is no runtime transport switch. BLE
-re-advertises after disconnect.
+re-advertises after disconnect. Clients should use write-with-response. Because
+the installed Arduino callback runs after the ATT acknowledgement, an invalid,
+oversized, or queue-saturating write is treated as a transport fault: the peer
+is disconnected and must reconnect and resynchronize. The observer's
+`ble_write_drop_count` therefore counts connection-fatal RX faults, not silent
+telemetry loss.
 
 `client_repeat` matches stock companion behavior: when disabled the handheld
 does not forward packets; when enabled it forwards without applying
