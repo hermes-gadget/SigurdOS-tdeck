@@ -9,10 +9,12 @@
 
 #include <gtest/gtest.h>
 #include "mesh/scope_key_hex.h"
+#include "mesh/anonymous_message_policy.h"
 #include "mesh/mesh_init_lifecycle.h"
 #include "mesh/mesh_wrapper_internal.h"
 
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -22,6 +24,39 @@ using sigurdos::mesh::scopeKeyHexDecode;
 using sigurdos::mesh::scopeKeyBase64Decode;
 using sigurdos::mesh::formatDmConversation;
 using sigurdos::mesh::detail::MeshInitState;
+
+TEST(AnonymousMessagePolicy, EnforcesExactAsciiTextBoundary)
+{
+    const std::string accepted(sigurdos::mesh::MAX_ANON_TEXT_BYTES, 'a');
+    const std::string rejected(sigurdos::mesh::MAX_ANON_TEXT_BYTES + 1, 'a');
+    size_t text_len = 0;
+
+    EXPECT_TRUE(sigurdos::mesh::anonymousTextFits(accepted.c_str(), &text_len));
+    EXPECT_EQ(text_len, sigurdos::mesh::MAX_ANON_TEXT_BYTES);
+    EXPECT_FALSE(sigurdos::mesh::anonymousTextFits(rejected.c_str(), &text_len));
+    EXPECT_EQ(text_len, 0u);
+}
+
+TEST(AnonymousMessagePolicy, CountsUtf8PayloadInBytes)
+{
+    const std::string accepted(173, 'a');
+    const std::string rejected(174, 'a');
+
+    EXPECT_TRUE(sigurdos::mesh::anonymousTextFits(
+        (accepted + "\xC3\xA9").c_str()));
+    EXPECT_FALSE(sigurdos::mesh::anonymousTextFits(
+        (rejected + "\xC3\xA9").c_str()));
+}
+
+TEST(AnonymousMessagePolicy, EnforcesInnerRequestBudget)
+{
+    EXPECT_TRUE(sigurdos::mesh::anonymousRequestFits(
+        sigurdos::mesh::MAX_ANON_REQUEST_BYTES));
+    EXPECT_FALSE(sigurdos::mesh::anonymousRequestFits(
+        sigurdos::mesh::MAX_ANON_REQUEST_BYTES + 1));
+    EXPECT_FALSE(sigurdos::mesh::anonymousTextFits(nullptr));
+    EXPECT_FALSE(sigurdos::mesh::anonymousTextFits(""));
+}
 
 TEST(ScopeKeyHex, EncodeEmitsLowercaseAndNulTerminates)
 {

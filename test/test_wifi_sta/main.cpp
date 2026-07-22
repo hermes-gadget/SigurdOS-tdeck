@@ -127,6 +127,7 @@ TEST(GpsValidationWifi, ResponseCleanupHandlesDisconnectTimeoutAndWrap) {
     EXPECT_FALSE(responseExpired(true, 0, 2000, 0));
     EXPECT_TRUE(responseExpired(true, 0, 2001, 0));
     EXPECT_TRUE(responseExpired(true, 0, 0x000007E1U, 0xFFFFFFF0U));
+}
 
 TEST(GpsValidationStatus, ValidZeroAxesStillReportLocation) {
     sigurdos::gps_validation::StatusFields fields{};

@@ -6,6 +6,7 @@
 #include "sigurd_mesh_v2.h"
 #include "companion_message_policy.h"
 #include "incoming_message_policy.h"
+#include "anonymous_message_policy.h"
 #include "advert_blob.h"
 #include "advert_blob_store.h"
 #include "client_repeat_policy.h"
@@ -484,7 +485,10 @@ namespace mesh {
                                                 uint8_t data_len,
                                                 uint32_t& tag,
                                                 uint32_t& est_timeout) {
-        if (!pub_key || !data || data_len == 0) return MSG_SEND_FAILED;
+        if (!pub_key || !data || data_len == 0 ||
+            !anonymousRequestFits(data_len)) {
+            return MSG_SEND_FAILED;
+        }
         int pending = -1;
         for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
             if (!_pending_reqs[i].in_use) {
@@ -1507,7 +1511,8 @@ namespace mesh {
     void SigurdMeshV2::clearGroupData() { _n_grp_data_recv = 0; }
 
     bool SigurdMeshV2::sendAnonMessage(const uint8_t* pub_key, const char* text) {
-        if (!pub_key || !text || !text[0]) return false;
+        size_t text_len = 0;
+        if (!pub_key || !anonymousTextFits(text, &text_len)) return false;
 
         // Build a temporary ContactInfo with the given pubkey
         ::ContactInfo tmp{};
@@ -1519,15 +1524,14 @@ namespace mesh {
         uint32_t ts = getRTCClock()->getCurrentTime();
 
         // Data format: [4-byte timestamp][null-terminated text]
-        uint8_t buf[256];
-        memcpy(buf, &ts, 4);
-        char safe_text[251];
-        const size_t tlen = sigurdos::utf8_copy_truncate(
-            safe_text, sizeof(safe_text), text);
-        memcpy(buf + 4, safe_text, tlen);
-        buf[4 + tlen] = '\0';
+        uint8_t buf[MAX_ANON_REQUEST_BYTES];
+        memcpy(buf, &ts, ANON_TIMESTAMP_BYTES);
+        memcpy(buf + ANON_TIMESTAMP_BYTES, text, text_len + 1);
 
-        int r = BaseChatMesh::sendAnonReq(tmp, buf, 5 + tlen, tag, est_timeout);
+        const uint8_t request_len = static_cast<uint8_t>(
+            ANON_TIMESTAMP_BYTES + text_len + ANON_TEXT_TERMINATOR_BYTES);
+        int r = BaseChatMesh::sendAnonReq(
+            tmp, buf, request_len, tag, est_timeout);
         if (r != MSG_SEND_FAILED) {
 #if SIGURDOS_DEBUG_MESH
             Serial.printf("[mesh] Anon msg sent to pubkey %02x%02x... (result=%d, tag=%u)\n",

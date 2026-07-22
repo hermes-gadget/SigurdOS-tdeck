@@ -146,6 +146,7 @@ TEST(MainLoopDispatchTest, EveryCriticalBatteryPathUsesOrderlyShutdown)
     ASSERT_NE(runtime_sleep_pos, std::string::npos);
     EXPECT_LT(runtime_guard_pos, runtime_sleep_pos);
     EXPECT_EQ(source.find("board.trySleep("), std::string::npos);
+}
 
 TEST(GpsClockHandoffTest, AppliesSecondsAndMarksOnlyAfterClockAccepts)
 {
