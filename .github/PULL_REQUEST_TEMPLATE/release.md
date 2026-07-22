@@ -11,6 +11,8 @@ Use `N/A — reason` only when the corresponding transport or update path is not
 - [ ] `INT-BLE` — official app scenarios A-J pass over BLE, including bond/reconnect, sync, messaging, time, login/CLI, identity, and malformed frames; or N/A with reason. Evidence: <!-- link -->
 - [ ] `INT-USB` — official `meshcore.js` companion USB matrix passes against both pinned stock peer and this release. Evidence: <!-- link -->
 - [ ] `INT-GOLDEN` — CI verified the pinned stock companion golden-frame corpus.
+- [ ] `BLE-BOND-REVOKE` — a removed BLE bond cannot resume an administrative session without pairing again. Evidence: <!-- link -->
+- [ ] `RESET-RECONNECT` — after factory reset, old companion credentials/bonds cannot silently reconnect. Evidence: <!-- link -->
 
 ## Soak
 
@@ -24,6 +26,9 @@ Use `N/A — reason` only when the corresponding transport or update path is not
 - [ ] `OTA-AUTH-FAIL` — missing/rejected credentials produce a bounded error and leave the device bootable. Evidence: <!-- link -->
 - [ ] `OTA-DOWNLOAD-FAIL` — offline/TLS/404/truncated transfer produces a bounded error and leaves the device bootable. Evidence: <!-- link -->
 - [ ] `OTA-IMAGE-FAIL` — invalid image/write failure does not replace the bootable image. Evidence: <!-- link -->
+- [ ] `OTA-SIGNATURE` — record whether the device verifies a publisher signature. A checksum result must not be submitted as signature evidence. Evidence: <!-- link -->
+- [ ] `OTA-DOWNGRADE` — an image with an older security epoch is rejected before activation. Evidence: <!-- link -->
+- [ ] `OTA-TLS-ROTATION` — current/alternate maintained roots work, an expired or untrusted chain fails closed, and offline recovery is exercised. Evidence: <!-- link -->
 
 ## Launcher matrix
 
