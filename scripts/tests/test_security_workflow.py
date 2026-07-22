@@ -27,6 +27,7 @@ class SecurityWorkflowTests(unittest.TestCase):
         self.assertIn("osv-scanner\" scan source", self.workflow)
         self.assertIn("--lockfile \"${{ runner.temp }}/platformio-sbom.cdx.json\"", self.workflow)
         self.assertIn("--config ci/osv-scanner.toml", self.workflow)
+        self.assertIn('osv-results.json\" lib', self.workflow)
         self.assertIn("pio run -e SigurdOS_TDeck", self.workflow)
 
     def test_dependency_inventories_are_required_artifacts(self) -> None:
