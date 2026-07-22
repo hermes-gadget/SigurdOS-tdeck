@@ -22,8 +22,8 @@
 #include "theme.h"
 #include "responsive.h"
 #include "pin_gate_policy.h"
+#include "wifi_status_icon.h"
 #include "../hal/battery.h"
-#include "../hal/wifi_ota.h"
 #include "../hal/prefs.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../fonts/emoji_font.h"
@@ -41,8 +41,6 @@ using namespace responsive;
 // Back button reference for back-swipe visual feedback
 static lv_obj_t* s_back_btn = nullptr;
 
-// WiFi status icon in bottom bar
-static lv_obj_t* g_wifi_icon = nullptr;
 static lv_obj_t* g_companion_icon = nullptr;
 
 void create_companion_status_icon(lv_obj_t* top_bar, int right_offset)
@@ -177,12 +175,7 @@ lv_obj_t* make_screen_full(const char* title)
         lv_label_set_text(wifi, LV_SYMBOL_WIFI);
         lv_obj_set_style_text_font(wifi, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(wifi, LV_ALIGN_RIGHT_MID, -52, 0);
-        g_wifi_icon = wifi;
-        lv_obj_add_event_cb(wifi, [](lv_event_t* e) {
-            auto* deleted = static_cast<lv_obj_t*>(lv_event_get_target(e));
-            if (g_wifi_icon == deleted) g_wifi_icon = nullptr;
-        }, LV_EVENT_DELETE, nullptr);
-        update_wifi_status();  // set initial state
+        wifi_status_icon_attach(wifi);
     }
 
     // Battery % (right, snapshot)
@@ -210,28 +203,6 @@ lv_obj_t* make_screen_full(const char* title)
     return scr;
 }
 
-// ── WiFi status icon in bottom bar ──────────────────────
-
-void update_wifi_status() {
-    if (!g_wifi_icon) return;
-    if (!lv_obj_is_valid(g_wifi_icon)) {
-        g_wifi_icon = nullptr;
-        return;
-    }
-    bool connected = sigurdos::wifi_sta::isConnected();
-    if (connected) {
-        int rssi = sigurdos::wifi_sta::getRSSI();
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%s %d", LV_SYMBOL_WIFI, rssi);
-        lv_label_set_text(g_wifi_icon, buf);
-        lv_obj_set_style_text_color(g_wifi_icon,
-            lv_color_hex(rssi > -60 ? ACCENT_GREEN : ACCENT), 0);
-        lv_obj_clear_flag(g_wifi_icon, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(g_wifi_icon, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
 // ════════════════════════════════════════════════════════
 // Back-button highlight for back-swipe visual feedback
 // ════════════════════════════════════════════════════════
@@ -251,11 +222,6 @@ void highlight_back_button(bool show)
 void screens_clear_back_btn()
 {
     s_back_btn = nullptr;
-}
-
-void screens_clear_wifi_icon()
-{
-    g_wifi_icon = nullptr;
 }
 
 void screens_clear_companion_icon()
