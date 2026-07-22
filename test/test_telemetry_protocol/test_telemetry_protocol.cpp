@@ -36,6 +36,7 @@ protected:
         arduino_mock::reset();
         Serial.mock_clear_rx();
         Serial.mock_clear_tx();
+        sigurdos::diagnostics::writer().reset();
     }
 
     void expect_output(const char* expected) {
@@ -207,6 +208,34 @@ TEST_F(TelemetryProtocolTest, PreservesNegativeSignForFractionalFloats) {
     emit_end();
 
     expect_output("@gps|lat=-0.5|lon=-12.25\n");
+}
+
+TEST_F(TelemetryProtocolTest, QueuesCompleteRecordsWhileSerialIsBackpressured) {
+    Serial.mock_set_available_for_write(0);
+    emit_record1_s(tag::ALERT, key::DESC, "deferred");
+    expect_output("");
+
+    Serial.mock_set_available_for_write(4096);
+    sigurdos::diagnostics::drain_diagnostic_output();
+    expect_output("@alert|desc=deferred\n");
+}
+
+TEST_F(TelemetryProtocolTest, DropsRecordsAtomicallyAndReportsLossLater) {
+    Serial.mock_set_available_for_write(0);
+    for (int i = 0; i < 120; ++i) {
+        emit_record1_s(tag::ALERT, key::DESC,
+                       "serial-output-is-intentionally-backpressured");
+    }
+    EXPECT_GT(sigurdos::diagnostics::writer().dropped_records(), 0u);
+    expect_output("");
+
+    Serial.mock_set_available_for_write(4096);
+    for (int i = 0; i < 12; ++i) {
+        sigurdos::diagnostics::drain_diagnostic_output(2048);
+    }
+    EXPECT_NE(Serial.mock_tx_output().find(
+                  "@alert|desc=diagnostic_output_dropped|n="),
+              std::string::npos);
 }
 
 }  // namespace

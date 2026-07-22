@@ -23,6 +23,7 @@
 #include "ui/ui.h"
 #include "ui/theme.h"
 #include "diagnostics/debug_cfg.h"
+#include "diagnostics/diagnostic_io.h"
 #if SIGURDOS_DEBUG_DIAG
 #include "diagnostics/debug.h"
 #endif
@@ -321,5 +322,6 @@ void loop()
     sigurdos::debug::loop();
 #endif
     sigurdos::ota_boot_health::loop();
+    sigurdos::diagnostics::drain_diagnostic_output();
     sigurdos::hal::boot_watchdog_runtime_progress();
 }

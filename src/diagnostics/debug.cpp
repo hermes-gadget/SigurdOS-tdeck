@@ -18,6 +18,7 @@
 #include "debug_cfg.h"
 #include "reset_policy.h"
 #include "debug_text_policy.h"
+#include "diagnostic_io.h"
 
 #if defined(SIGURDOS_DEBUG) && SIGURDOS_DEBUG
 
@@ -26,6 +27,8 @@
 #include <esp_core_dump.h>
 #include <cstddef>
 #include <cstring>
+
+#define Serial (::sigurdos::diagnostics::writer())
 
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
@@ -558,3 +561,5 @@ void dump_mesh_state()
 } // namespace sigurdos
 
 #endif // SIGURDOS_DEBUG
+
+#undef Serial

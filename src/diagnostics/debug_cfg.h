@@ -115,3 +115,8 @@ uint8_t feat_to_mask();
 #ifndef SIGURDOS_TELEMETRY_DIFF
 #define SIGURDOS_TELEMETRY_DIFF 0
 #endif
+
+// Message bodies are private. Packet telemetry records metadata by default.
+#ifndef SIGURDOS_TELEMETRY_INCLUDE_MESSAGE_TEXT
+#define SIGURDOS_TELEMETRY_INCLUDE_MESSAGE_TEXT 0
+#endif

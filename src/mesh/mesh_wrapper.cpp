@@ -32,6 +32,8 @@
 #include "regions.h"
 #include "utils/utf8_util.h"
 #include "../diagnostics/debug_cfg.h"
+#include "../diagnostics/telemetry.h"
+#include <helpers/sensors/LPPDataHelpers.h>
 
 // REQ_TYPE constants not defined in core BaseChatMesh.h (only in examples)
 #ifndef REQ_TYPE_GET_TELEMETRY_DATA
@@ -224,6 +226,7 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
                          const uint8_t* extra,
                          uint8_t extra_len) {
     if (!sender || !text) return;
+    sigurdos::telemetry::push_packet_log("rx", sender, channel, text, rssi);
     IncomingMessageFanoutCtx ctx{sender, channel, text, rssi, snr,
         sender_timestamp, path_len, sender_prefix, txt_type, extra, extra_len, 0};
     sigurdos::mesh::deliverMessageDurableFirst(
@@ -1173,6 +1176,7 @@ uint32_t sendMessage(const char* dest, const char* text) {
     // (see slop_mesh_v2.h sendTextTo overload)
     bool ok = g_mesh->sendTextTo(dest, text, ts);
     if (ok) {
+        sigurdos::telemetry::push_packet_log("tx", own_name, dest, text, 0);
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), dest);
         const int contact_idx = findContactIndex(dest);
@@ -1193,6 +1197,8 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
             if (ts == 0) ts = 1;
             sent = g_mesh->sendGroupText(i, text, ts);
             if (sent) {
+                sigurdos::telemetry::push_packet_log(
+                    "tx", own_name, channel_name, text, 0);
                 meshStoreOutgoingMessage(channel_name, text, ts, true, true);
                 pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
             }

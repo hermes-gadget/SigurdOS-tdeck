@@ -143,6 +143,7 @@ static constexpr uint32_t PKTLOG_SIZE = 32;
 
 struct PktLogEntry {
     uint32_t timestamp;
+    char     direction[4];
     char     sender[32];
     char     channel[32];
     char     text[64];
@@ -165,17 +166,20 @@ static void init_pktlog() {
     }
 }
 
-void push_packet_log(const char* sender, const char* channel,
-                     const char* text, int rssi) {
+void push_packet_log(const char* direction, const char* sender,
+                     const char* channel, const char* text, int rssi) {
     if (!s_pktlog) return;
     const char* sender_safe = packet_log_field_or_empty(sender);
     const char* channel_safe = packet_log_field_or_empty(channel);
     const char* text_safe = packet_log_field_or_empty(text);
     uint32_t idx = s_pktlog_head;
     s_pktlog[idx].timestamp = millis() / 1000;
+    packet_log_copy_field(s_pktlog[idx].direction,
+                          sizeof(s_pktlog[idx].direction), direction);
     packet_log_copy_field(s_pktlog[idx].sender, sizeof(s_pktlog[idx].sender), sender_safe);
     packet_log_copy_field(s_pktlog[idx].channel, sizeof(s_pktlog[idx].channel), channel_safe);
-    packet_log_copy_field(s_pktlog[idx].text, sizeof(s_pktlog[idx].text), text_safe);
+    packet_log_copy_field(s_pktlog[idx].text, sizeof(s_pktlog[idx].text),
+                          packet_log_text_by_policy(text_safe));
     s_pktlog[idx].rssi = rssi;
     s_pktlog_head = (s_pktlog_head + 1) % PKTLOG_SIZE;
     if (s_pktlog_count < UINT32_MAX) s_pktlog_count++;
@@ -205,6 +209,8 @@ static uint32_t emit_pktlog() {
         emit_tag(tag::PKT);
         emit_sep();
         emit_kv_u(key::I, idx);
+        emit_sep();
+        emit_kv_s(key::TYPE, e.direction);
         emit_sep();
         emit_kv_s(key::SRC, e.sender);
         emit_sep();
@@ -500,7 +506,7 @@ void report_loop_timing(uint32_t elapsed_us) {
         s_peak_loop_us = elapsed_us;
     }
     // Auto-emit alert if loop exceeds 500ms
-    if (elapsed_us > 500000) {
+    if (s_enabled && elapsed_us > 500000) {
         emit_tag(tag::ALERT);
         emit_sep();
         emit_kv_s(key::DESC, "loop_blocked");
@@ -513,6 +519,7 @@ void report_loop_timing(uint32_t elapsed_us) {
 void report_display_wake() {
     s_display_on = true;
     s_wake_count++;
+    if (!s_enabled) return;
     emit_tag(tag::ALERT);
     emit_sep();
     emit_kv_s(key::DESC, "display_wake");
@@ -524,6 +531,7 @@ void report_display_wake() {
 void report_display_sleep() {
     s_display_on = false;
     s_sleep_count++;
+    if (!s_enabled) return;
     emit_tag(tag::ALERT);
     emit_sep();
     emit_kv_s(key::DESC, "display_sleep");
@@ -535,15 +543,15 @@ void report_display_sleep() {
 // ── Phase 2+3+4 hook implementations ───────────────────
 
 void report_key_event(uint8_t keycode) {
-    input::report_key_event(keycode);
+    input::report_key_event(keycode, s_enabled);
 }
 
 void report_touch_event(uint16_t x, uint16_t y) {
-    input::report_touch_event(x, y);
+    input::report_touch_event(x, y, s_enabled);
 }
 
 void report_trackball_event(uint8_t direction) {
-    input::report_trackball_event(direction);
+    input::report_trackball_event(direction, s_enabled);
 }
 
 void report_render_flush() {

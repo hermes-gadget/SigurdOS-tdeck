@@ -4,7 +4,10 @@
 // Telemetry protocol serial output — minimal, fast, no heap allocation.
 
 #include "telemetry_protocol.h"
+#include "diagnostic_io.h"
 #include <Arduino.h>
+
+#define Serial (::sigurdos::diagnostics::writer())
 
 namespace sigurdos {
 namespace telemetry {
@@ -269,3 +272,5 @@ void emit_end_resp(const char* cmd, uint32_t count, uint32_t cost_us) {
 
 }  // namespace telemetry
 }  // namespace sigurdos
+
+#undef Serial

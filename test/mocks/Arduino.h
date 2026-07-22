@@ -136,6 +136,7 @@ public:
         _last_tx_pin = tx_pin;
     }
     int available() override { return (int)(_rx_len - _rx_pos); }
+    int availableForWrite() { return _write_capacity; }
     int read() override {
         if (_rx_pos < _rx_len) {
             return static_cast<uint8_t>(_rx_buf[_rx_pos++]);
@@ -196,6 +197,9 @@ public:
         }
     }
     void mock_clear_tx() { _tx_buf.clear(); }
+    void mock_set_available_for_write(int capacity) {
+        _write_capacity = capacity < 0 ? 0 : capacity;
+    }
     const std::string& mock_tx_output() const { return _tx_buf; }
     void mock_reset() {
         mock_clear_rx();
@@ -206,6 +210,7 @@ public:
         _last_config = 0;
         _last_rx_pin = -1;
         _last_tx_pin = -1;
+        _write_capacity = 4096;
     }
     bool mock_was_begun() const { return _begun; }
     int mock_begin_count() const { return _begin_count; }
@@ -232,6 +237,7 @@ private:
     uint32_t _last_config = 0;
     int8_t _last_rx_pin = -1;
     int8_t _last_tx_pin = -1;
+    int _write_capacity = 4096;
 };
 extern HardwareSerial Serial;
 extern HardwareSerial Serial1;

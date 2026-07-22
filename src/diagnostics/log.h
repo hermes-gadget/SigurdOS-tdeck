@@ -7,17 +7,18 @@
 
 #include <Arduino.h>
 #include "debug_cfg.h"
+#include "diagnostic_io.h"
 
 #if defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
 #define SIG_LOGE(fmt, ...) do { } while (0)
 #define SIG_LOGW(fmt, ...) do { } while (0)
 #define SIG_LOGD(fmt, ...) do { } while (0)
 #else
-#define SIG_LOGE(fmt, ...) Serial.printf("[E] " fmt "\n", ##__VA_ARGS__)
-#define SIG_LOGW(fmt, ...) Serial.printf("[W] " fmt "\n", ##__VA_ARGS__)
+#define SIG_LOGE(fmt, ...) sigurdos::diagnostics::diagnostic_logf("[E] ", fmt, ##__VA_ARGS__)
+#define SIG_LOGW(fmt, ...) sigurdos::diagnostics::diagnostic_logf("[W] ", fmt, ##__VA_ARGS__)
 
 #if SIGURDOS_DEBUG_ACTIVE
-#define SIG_LOGD(fmt, ...) Serial.printf("[D] " fmt "\n", ##__VA_ARGS__)
+#define SIG_LOGD(fmt, ...) sigurdos::diagnostics::diagnostic_logf("[D] ", fmt, ##__VA_ARGS__)
 #else
 #define SIG_LOGD(fmt, ...) do { } while (0)
 #endif
