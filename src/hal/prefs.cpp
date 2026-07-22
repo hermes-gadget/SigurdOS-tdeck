@@ -9,6 +9,7 @@
 #include <Preferences.h>
 #include <nvs.h>
 #include <cmath>
+#include <cstdio>
 
 namespace sigurdos {
 
@@ -272,7 +273,106 @@ bool prefs_set_ble_enabled(bool enabled) {
 #endif
 }
 
-// ── Repeater password storage ─────────────────────────────────────────
+// ── Named chat routing scopes ──────────────────────────────────────────
+static constexpr const char* CHAT_SCOPE_NS = "chat_scopes";
+static constexpr int MAX_CHAT_SCOPES = 32;
+
+static void makeChatScopeKey(char* out, size_t out_size, int slot) {
+    if (!out || out_size < 4 || slot < 0 || slot >= MAX_CHAT_SCOPES) return;
+    snprintf(out, out_size, "s%02d", slot);
+}
+
+static bool chatScopePreferenceValid(const ChatScopePreference& candidate) {
+    if (!candidate.conversation[0] || !candidate.scope_name[0] ||
+        !std::memchr(candidate.conversation, '\0', sizeof(candidate.conversation)) ||
+        !std::memchr(candidate.scope_name, '\0', sizeof(candidate.scope_name))) {
+        return false;
+    }
+    for (uint8_t byte : candidate.scope_key) {
+        if (byte != 0) return true;
+    }
+    return false;
+}
+
+int loadChatScopePreferences(ChatScopePreference* out, int max) {
+    if (!out || max <= 0) return 0;
+    Preferences nvs;
+    if (!nvs.begin(CHAT_SCOPE_NS, true)) return 0;
+    int count = 0;
+    for (int i = 0; i < MAX_CHAT_SCOPES && count < max; ++i) {
+        char key[4] = {};
+        makeChatScopeKey(key, sizeof(key), i);
+        ChatScopePreference candidate{};
+        if (nvs.getBytesLength(key) == sizeof(candidate) &&
+            nvs.getBytes(key, &candidate, sizeof(candidate)) == sizeof(candidate) &&
+            chatScopePreferenceValid(candidate)) {
+            out[count++] = candidate;
+        }
+    }
+    nvs.end();
+    return count;
+}
+
+bool saveChatScopePreference(const char* conversation, const char* scope_name,
+                             const uint8_t scope_key[16]) {
+    if (!conversation || !conversation[0] || !scope_name || !scope_name[0] ||
+        !scope_key) return false;
+    ChatScopePreference replacement{};
+    if (strlen(conversation) >= sizeof(replacement.conversation) ||
+        strlen(scope_name) >= sizeof(replacement.scope_name)) return false;
+    std::strcpy(replacement.conversation, conversation);
+    std::strcpy(replacement.scope_name, scope_name);
+    std::memcpy(replacement.scope_key, scope_key, sizeof(replacement.scope_key));
+    if (!chatScopePreferenceValid(replacement)) return false;
+
+    Preferences nvs;
+    if (!nvs.begin(CHAT_SCOPE_NS, false)) return false;
+    int slot = -1;
+    for (int i = 0; i < MAX_CHAT_SCOPES; ++i) {
+        char key[4] = {};
+        makeChatScopeKey(key, sizeof(key), i);
+        ChatScopePreference existing{};
+        const size_t len = nvs.getBytesLength(key);
+        const bool read = len == sizeof(existing) &&
+            nvs.getBytes(key, &existing, sizeof(existing)) == sizeof(existing);
+        if (read && chatScopePreferenceValid(existing) &&
+            strcmp(existing.conversation, conversation) == 0) {
+            slot = i;
+            break;
+        }
+        if (slot < 0 && (!read || !chatScopePreferenceValid(existing))) slot = i;
+    }
+    if (slot < 0) { nvs.end(); return false; }
+    char key[4] = {};
+    makeChatScopeKey(key, sizeof(key), slot);
+    const bool saved = nvs.putBytes(key, &replacement, sizeof(replacement)) ==
+                       sizeof(replacement);
+    nvs.end();
+    return saved;
+}
+
+bool removeChatScopePreference(const char* conversation) {
+    if (!conversation || !conversation[0]) return false;
+    Preferences nvs;
+    if (!nvs.begin(CHAT_SCOPE_NS, false)) return false;
+    bool removed = false;
+    for (int i = 0; i < MAX_CHAT_SCOPES; ++i) {
+        char key[4] = {};
+        makeChatScopeKey(key, sizeof(key), i);
+        ChatScopePreference existing{};
+        if (nvs.getBytesLength(key) == sizeof(existing) &&
+            nvs.getBytes(key, &existing, sizeof(existing)) == sizeof(existing) &&
+            std::memchr(existing.conversation, '\0', sizeof(existing.conversation)) &&
+            strcmp(existing.conversation, conversation) == 0) {
+            removed = nvs.remove(key);
+            break;
+        }
+    }
+    nvs.end();
+    return removed;
+}
+
+// ── Saved repeater passwords ──
 static constexpr const char* PW_NS = "sigurdos_pw";
 static constexpr int MAX_SAVED_PWS = 8;
 

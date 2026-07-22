@@ -10,6 +10,8 @@ The Chat screen is SigurdOS's primary messaging interface — a Discord-inspired
 |------|---------|
 | `src/ui/chat_screen.h` | Public API — `chat_screen_show()`, `chat_screen_open_dm()`, `chat_screen_add_msg()`, `chat_screen_handle_trackball()`, message cap get/set, unified-store restore |
 | `src/ui/chat_screen.cpp` | Full implementation — channel list, messaging view, message bubbles, input bar, emoji picker, send logic, trackball handler, unified-store restore |
+| `src/ui/channel_menu.*` | Named routing-scope validation and hardware-random key generation |
+| `src/hal/prefs.*` | Atomic NVS persistence for per-conversation scope names and keys |
 | `src/mesh/message_store.*` | Single durable message log shared by the UI and companion offline sync |
 | `src/ui/chat_history_store.*` | Read-only one-time migration codec for the retired `/msgs` snapshot |
 | `src/ui/navigation.cpp` | Screen routing — `navigate_to(Screen::Chat)` dispatches to `chat_screen_show()` |
@@ -114,8 +116,8 @@ Opened by tapping a channel row or calling `chat_screen_open_dm()`.
 │ │ What's up?                 │   │
 │ └────────────────────────────┘   │
 ├──────────────────────────────────┤
-│ ┌───────────────┐ 😀 [Send]      │  ← input bar: textarea, emoji button, send button
-│ │ Message       │               │
+│ [PUBLIC] ┌──────┐ 😀 [Send]      │  ← persistent route badge, textarea, emoji, send
+│          │Message│               │
 │ └───────────────┘               │
 ├──────────────────────────────────┤
 │ SigurdOS T-Deck   ▂▄▆█       72%  │  ← bottom bar
@@ -171,7 +173,8 @@ Located between the message list and bottom bar.
 
 | Element | Details |
 |---------|---------|
-| **Textarea** | `apply_pixel_input()` styling, one-line mode, max length = `MAX_MSG_BYTES` (149), placeholder "Message #channel" |
+| **Route badge** | Always shows `PUBLIC` or the active `$name`, including while text is being entered |
+| **Textarea** | `apply_pixel_input()` styling, one-line mode, max length = `MAX_MSG_BYTES` (149), placeholder "Message" |
 | **Emoji button** | 😀 label, opens emoji picker dialog on click |
 | **Send button** | "Send" label, accent background, dispatches `do_send()` on click |
 
@@ -239,6 +242,18 @@ DMs are synthetic channels prefixed with `"DM: "` followed by the contact name.
 - **Routing**: When sending, the prefix is stripped and `mesh::sendMessage(dest, text)` is called instead of `mesh::sendChannelMessage()`
 - **Incoming DM routing**: When a message arrives with an empty channel field, the sender's name is wrapped as `"DM: sender"` to map it to the correct conversation
 - **Signal indicator**: DM conversations show the contact's RSSI-based signal bars inline in the top bar
+
+### Named routing scopes
+
+The channel menu can assign a local `$name` to an individual conversation's
+routing scope. Firmware generates the 16-byte routing key independently with
+the ESP32 hardware RNG; the display name neither reveals nor reconstructs that
+key, and entering the same name on another device does not join the same scope.
+
+The name and random key are persisted together as one NVS blob per
+conversation. The composer keeps a dedicated `PUBLIC`/`$name` badge visible,
+and a failed save or clear leaves the previous effective state active so a
+storage error cannot silently switch a chat to public routing.
 
 ---
 

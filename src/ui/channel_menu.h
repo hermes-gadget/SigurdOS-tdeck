@@ -19,7 +19,7 @@
 // along with SigurdOS.  If not, see <https://www.gnu.org/licenses/>.
 
 // Channel quick-action menu. The LVGL-free logic here decides
-// which menu actions are available and validates private per-chat scopes.
+// which menu actions are available and validates named per-chat scopes.
 
 #include <cstddef>
 #include <cstdint>
@@ -28,7 +28,7 @@ namespace sigurdos::ui {
 
 enum class ChannelAction : uint8_t {
     None = 0,
-    ChooseScope,   // open the private scope editor for this chat
+    ChooseScope,   // open the named scope editor for this chat
     MarkRead,      // clear this chat unread badge (UI-only)
     LeaveChannel,  // remove this channel from the device
 };
@@ -38,30 +38,29 @@ struct ChannelMenuItem {
     const char*   label;
 };
 
-// True when `channel` is a real conversation that can carry a private send
+// True when `channel` is a real conversation that can carry a named send
 // scope. This includes #channels and DMs; empty/null names are rejected.
-bool channel_supports_private_scope(const char* channel);
+bool channel_supports_named_scope(const char* channel);
 
 // Fill `out` (up to `max` entries) with the menu items applicable to
-// `channel`. Private scope editing is included for every real conversation.
+// `channel`. Named scope editing is included for every real conversation.
 int channel_menu_build(const char* channel, ChannelMenuItem* out, int max);
 
 // Perform a mesh-backed channel action. Returns true when the action was
 // handled here; false for UI-only actions and invalid inputs.
 bool channel_menu_perform(ChannelAction action, const char* channel, int channel_idx);
 
-// Validate a private scope name. Empty/null is valid and means "clear this
-// chat scope". Bare names and $names are accepted; public #names are rejected.
-bool private_scope_name_valid(const char* name, const char** reason = nullptr);
+// Validate a local display name for an independent routing scope. The name is
+// not key material and does not let another device reconstruct the scope.
+bool named_scope_name_valid(const char* name, const char** reason = nullptr);
 
 using ScopeRandomFill = bool (*)(uint8_t* output, size_t length, void* context);
 
-// Normalize a user-entered routing scope and generate its independent 16-byte
-// key. Empty/null
-// clears the scope and writes an empty out_name plus a zero key. Non-empty input
-// writes "$<body>" to out_name and a random key to key16. Tests may inject a
-// deterministic filler; firmware defaults to the ESP32 hardware RNG.
-bool private_scope_prepare(const char* scope_name,
+// Normalize a user-entered named scope and generate its independent 16-byte
+// routing key. Empty/null clears the scope and writes an empty out_name plus a
+// zero key. Non-empty input writes "$<body>" to out_name and a random key to
+// key16. Tests may inject a deterministic filler; firmware uses hardware RNG.
+bool named_scope_prepare(const char* scope_name,
                            char* out_name, size_t out_name_len,
                            uint8_t key16[16],
                            const char** reason = nullptr,

@@ -31,12 +31,12 @@
 
 namespace sigurdos::ui {
 
-static const char* private_scope_body(const char* name)
+static const char* named_scope_body(const char* name)
 {
     return (name && name[0] == 0x24) ? name + 1 : name;
 }
 
-bool channel_supports_private_scope(const char* channel)
+bool channel_supports_named_scope(const char* channel)
 {
     return channel && channel[0];
 }
@@ -53,15 +53,15 @@ static bool secure_scope_random(uint8_t* output, size_t length, void*)
 #endif
 }
 
-bool private_scope_name_valid(const char* name, const char** reason)
+bool named_scope_name_valid(const char* name, const char** reason)
 {
     if (!name || !name[0]) return true;
     if (name[0] == '#') {
-        if (reason) *reason = "Private scopes only";
+        if (reason) *reason = "Use a $ named scope";
         return false;
     }
 
-    const char* body = private_scope_body(name);
+    const char* body = named_scope_body(name);
     if (!body[0]) {
         if (reason) *reason = "Name required";
         return false;
@@ -73,7 +73,7 @@ bool private_scope_name_valid(const char* name, const char** reason)
     return sigurdos::mesh::channel_name_valid(body, reason);
 }
 
-bool private_scope_prepare(const char* scope_name,
+bool named_scope_prepare(const char* scope_name,
                            char* out_name, size_t out_name_len,
                            uint8_t key16[16],
                            const char** reason,
@@ -91,11 +91,11 @@ bool private_scope_prepare(const char* scope_name,
     if (!scope_name || !scope_name[0]) {
         return true;
     }
-    if (!private_scope_name_valid(scope_name, reason)) {
+    if (!named_scope_name_valid(scope_name, reason)) {
         return false;
     }
 
-    const char* body = private_scope_body(scope_name);
+    const char* body = named_scope_body(scope_name);
     int written = std::snprintf(out_name, out_name_len, "$%s", body);
     if (written < 0 || (size_t)written >= out_name_len) {
         if (reason) *reason = "Name too long";
@@ -136,8 +136,8 @@ int channel_menu_build(const char* channel, ChannelMenuItem* out, int max)
         }
     };
 
-    if (channel_supports_private_scope(channel)) {
-        push(ChannelAction::ChooseScope, "Random routing scope...");
+    if (channel_supports_named_scope(channel)) {
+        push(ChannelAction::ChooseScope, "Named routing scope...");
     }
     push(ChannelAction::MarkRead,     "Mark all read");
     if (!sigurdos::mesh::isPublicChannelName(channel)) {

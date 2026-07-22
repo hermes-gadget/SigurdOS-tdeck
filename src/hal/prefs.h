@@ -219,6 +219,19 @@ bool             prefs_set(const NodePrefs& p);
 // leave the cross-variant BLE keys untouched.
 bool prefs_set_ble_enabled(bool enabled);
 
+struct ChatScopePreference {
+    char conversation[38];
+    char scope_name[31];
+    uint8_t scope_key[16];
+};
+
+// Persist each named routing scope as one atomic NVS blob. The display name is
+// local metadata; scope_key is independently generated routing material.
+int  loadChatScopePreferences(ChatScopePreference* out, int max);
+bool saveChatScopePreference(const char* conversation, const char* scope_name,
+                             const uint8_t scope_key[16]);
+bool removeChatScopePreference(const char* conversation);
+
 // ── Saved repeater passwords (persist across firmware updates in NVS) ──
 bool saveRepeaterPassword(const char* name, const char* password);
 bool loadRepeaterPassword(const char* name, char* password, size_t max_len);

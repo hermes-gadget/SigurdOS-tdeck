@@ -50,4 +50,8 @@ bool prefs_set_ble_enabled(bool enabled) {
     return true;
 }
 
+int loadChatScopePreferences(ChatScopePreference*, int) { return 0; }
+bool saveChatScopePreference(const char*, const char*, const uint8_t[16]) { return true; }
+bool removeChatScopePreference(const char*) { return true; }
+
 } // namespace sigurdos

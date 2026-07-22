@@ -40,7 +40,7 @@ test/
 |-- test_build/                     Header inclusion and cross-module sanity checks
 |-- test_build_info/                Firmware version string and build info defaults
 |-- test_buzzer/                    Buzzer notification patterns and duration bounds
-|-- test_channel_menu/              Channel menu actions and private scopes
+|-- test_channel_menu/              Channel menu actions and named random-key scopes
 |-- test_channel_store/             Transactional two-bank channel persistence
 |-- test_channel_validation/        Channel name validation and sanitising
 |-- test_chat_config/               Chat message cap clamping and config bounds
