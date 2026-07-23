@@ -21,6 +21,7 @@
 #include <cstring>
 
 #include "hal/wifi_ota.h"
+#include "hal/wifi_coordinator.h"
 
 namespace {
 
@@ -32,6 +33,12 @@ sigurdos::wifi_scan::APInfo make_ap(const char* ssid, int rssi, int channel,
     ap.channel = channel;
     ap.encrypted = encrypted;
     return ap;
+}
+
+sigurdos::wifi::RadioMode requested_mode(sigurdos::wifi::Owner owner) {
+    using sigurdos::wifi::Owner;
+    using sigurdos::wifi::RadioMode;
+    return owner == Owner::ApOta ? RadioMode::Ap : RadioMode::Sta;
 }
 
 TEST(WifiScanTest, MaxApCountIsDocumentedLimit) {
@@ -92,6 +99,92 @@ TEST(WifiScanTest, SortByRssiHandlesNullAndTrivialInputs) {
 
     EXPECT_STREQ(ap.ssid, "solo");
     EXPECT_EQ(ap.rssi, -50);
+}
+
+TEST(WifiCoordinatorTest, EveryOwnerPairHasAnExplicitTransitionPolicy) {
+    using sigurdos::wifi::Coordinator;
+    using sigurdos::wifi::Owner;
+    using sigurdos::wifi::RadioMode;
+    constexpr Owner owners[] = {
+        Owner::Sta, Owner::Scan, Owner::ApOta, Owner::GitHubOta,
+    };
+
+    for (Owner active : owners) {
+        for (Owner requested : owners) {
+            Coordinator coordinator;
+            ASSERT_TRUE(coordinator.acquire(active, requested_mode(active),
+                                            RadioMode::Off));
+            const bool expected = requested == active ||
+                                  (active == Owner::Sta && requested != Owner::Sta);
+            EXPECT_EQ(coordinator.canAcquire(requested), expected);
+            EXPECT_EQ(coordinator.acquire(requested, requested_mode(requested),
+                                          coordinator.currentMode()), expected);
+            EXPECT_EQ(coordinator.currentOwner(), expected ? requested : active);
+        }
+    }
+}
+
+TEST(WifiCoordinatorTest, ScanAndOtaCleanupRestoreSuspendedStaLease) {
+    using sigurdos::wifi::Coordinator;
+    using sigurdos::wifi::Owner;
+    using sigurdos::wifi::RadioMode;
+    constexpr Owner transient_owners[] = {
+        Owner::Scan, Owner::ApOta, Owner::GitHubOta,
+    };
+
+    for (Owner transient : transient_owners) {
+        Coordinator coordinator;
+        ASSERT_TRUE(coordinator.acquire(Owner::Sta, RadioMode::Sta,
+                                        RadioMode::Off));
+        ASSERT_TRUE(coordinator.acquire(transient, requested_mode(transient),
+                                        RadioMode::Sta));
+
+        const auto transient_release = coordinator.release(transient);
+        EXPECT_TRUE(transient_release.released);
+        EXPECT_EQ(transient_release.restored_owner, Owner::Sta);
+        EXPECT_EQ(transient_release.restored_mode, RadioMode::Sta);
+        EXPECT_EQ(coordinator.currentOwner(), Owner::Sta);
+
+        const auto sta_release = coordinator.release(Owner::Sta);
+        EXPECT_TRUE(sta_release.released);
+        EXPECT_EQ(sta_release.restored_owner, Owner::None);
+        EXPECT_EQ(sta_release.restored_mode, RadioMode::Off);
+    }
+}
+
+TEST(WifiCoordinatorTest, TimeoutOrErrorCleanupRestoresPreexistingMode) {
+    using sigurdos::wifi::Coordinator;
+    using sigurdos::wifi::Owner;
+    using sigurdos::wifi::RadioMode;
+    constexpr Owner owners[] = {
+        Owner::Sta, Owner::Scan, Owner::ApOta, Owner::GitHubOta,
+    };
+
+    for (Owner owner : owners) {
+        Coordinator coordinator;
+        ASSERT_TRUE(coordinator.acquire(owner, requested_mode(owner),
+                                        RadioMode::ApSta));
+        const auto cleanup = coordinator.release(owner);
+        EXPECT_TRUE(cleanup.released);
+        EXPECT_EQ(cleanup.restored_owner, Owner::None);
+        EXPECT_EQ(cleanup.restored_mode, RadioMode::ApSta);
+        EXPECT_EQ(coordinator.currentMode(), RadioMode::ApSta);
+    }
+}
+
+TEST(WifiCoordinatorTest, ConflictAndWrongReleaseNeverMutateActiveLease) {
+    using sigurdos::wifi::Coordinator;
+    using sigurdos::wifi::Owner;
+    using sigurdos::wifi::RadioMode;
+    Coordinator coordinator;
+    ASSERT_TRUE(coordinator.acquire(Owner::GitHubOta, RadioMode::Sta,
+                                    RadioMode::Off));
+
+    EXPECT_FALSE(coordinator.acquire(Owner::Scan, RadioMode::Sta,
+                                     RadioMode::Sta));
+    EXPECT_FALSE(coordinator.release(Owner::Scan).released);
+    EXPECT_EQ(coordinator.currentOwner(), Owner::GitHubOta);
+    EXPECT_EQ(coordinator.depth(), 1);
 }
 
 } // namespace

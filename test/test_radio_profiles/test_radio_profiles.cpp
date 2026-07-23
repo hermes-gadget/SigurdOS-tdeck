@@ -145,4 +145,38 @@ TEST(RadioProfilesTest, CompanionRepeatAcceptanceUsesAdvertisedFrequencyUnion) {
     EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(869500));
 }
 
+TEST(RadioProfilesTest, RegulatoryProfileFrequencyBoundariesAreInclusive) {
+    const auto* us = sigurdos::radio_profile_find("us_902_928");
+    const auto* eu = sigurdos::radio_profile_find("eu_868");
+    ASSERT_NE(nullptr, us);
+    ASSERT_NE(nullptr, eu);
+
+    EXPECT_TRUE(sigurdos::radio_profile_frequency_allowed(*us, 902.0f));
+    EXPECT_TRUE(sigurdos::radio_profile_frequency_allowed(*us, 928.0f));
+    EXPECT_FALSE(sigurdos::radio_profile_frequency_allowed(*us, 901.999f));
+    EXPECT_FALSE(sigurdos::radio_profile_frequency_allowed(*us, 928.001f));
+    EXPECT_TRUE(sigurdos::radio_profile_frequency_allowed(*eu, 863.0f));
+    EXPECT_TRUE(sigurdos::radio_profile_frequency_allowed(*eu, 870.0f));
+    EXPECT_FALSE(sigurdos::radio_profile_frequency_allowed(*eu, 870.001f));
+}
+
+TEST(RadioProfilesTest, NamedProfileRejectsTupleDriftAndUnknownPolicy) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    const auto* profile = sigurdos::radio_profile_find("uk_869_525");
+    ASSERT_NE(nullptr, profile);
+    sigurdos::radio_profile_apply(*profile, prefs);
+    EXPECT_TRUE(sigurdos::radio_profile_configuration_valid(prefs));
+
+    prefs.freq = 869.600f;
+    EXPECT_FALSE(sigurdos::radio_profile_configuration_valid(prefs));
+
+    std::strncpy(prefs.radio_profile, "unknown", sizeof(prefs.radio_profile));
+    prefs.radio_profile[sizeof(prefs.radio_profile) - 1] = '\0';
+    EXPECT_FALSE(sigurdos::radio_profile_configuration_valid(prefs));
+
+    sigurdos::radio_profile_set_custom(prefs);
+    EXPECT_TRUE(sigurdos::radio_profile_configuration_valid(prefs));
+}
+
 } // namespace

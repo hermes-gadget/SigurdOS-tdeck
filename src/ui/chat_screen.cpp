@@ -698,7 +698,12 @@ static void populate_channel_rows(lv_obj_t* list) {
                 lv_obj_center(cfl_lb);
                 lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ce) {
                     int idx2 = (int)(intptr_t)lv_event_get_user_data(ce);
-                    sigurdos::mesh::removeChannel(idx2);
+                    if (!sigurdos::mesh::removeChannel(idx2)) {
+                        notifications_post(
+                            NotificationEvent::UiError,
+                            "Channel removal was not saved");
+                        return;
+                    }
                     lv_obj_t* s2 = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(ce));
                     if (s2) refresh_chat_list_view(s2);
                     lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
@@ -2160,7 +2165,10 @@ static void show_add_channel_options(lv_obj_t* parent) {
             lv_obj_del_async(d);
             refresh_chat_list_view(sc);
         } else {
-            if (feedback) lv_label_set_text(feedback, "Invalid or full");
+            if (feedback) {
+                lv_label_set_text(
+                    feedback, "Invalid, full, or save failed");
+            }
         }
     };
 
@@ -2203,7 +2211,10 @@ static void show_add_channel_options(lv_obj_t* parent) {
                 lv_obj_del_async(d);
                 refresh_chat_list_view(sc);
             } else {
-                if (feedback) lv_label_set_text(feedback, "Invalid or full");
+                if (feedback) {
+                    lv_label_set_text(
+                        feedback, "Invalid, full, or save failed");
+                }
             }
         }
     }, LV_EVENT_ALL, (void*)fb);
@@ -2245,7 +2256,10 @@ static void show_add_channel_options(lv_obj_t* parent) {
             lv_obj_del_async(d);
             refresh_chat_list_view(sc);
         } else {
-            if (feedback) lv_label_set_text(feedback, "Invalid or full");
+            if (feedback) {
+                lv_label_set_text(
+                    feedback, "Invalid, full, or save failed");
+            }
         }
     }, LV_EVENT_ALL, (void*)fb);
 }

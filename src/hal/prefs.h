@@ -55,7 +55,7 @@ struct NodePrefs {
     bool     ble_bond_reset_pending;   // block advertising until old BLE bonds are purged
     uint8_t  telemetry_modes;          // bitmask for companion telemetry modes
     uint8_t  manual_add_contacts;      // companion manual-add-contacts mode (0=auto, 1=prompt)
-    char     default_scope_key_hex[33];  // hex-encoded 16-byte companion default flood-scope key
+    char     default_scope_key_hex[33];  // legacy private-scope overlay; migrated into /regions2 v2
     char     wifi_ssid[33];            // WiFi STA SSID for GitHub OTA (empty = not set)
     char     wifi_password[64];        // WiFi STA password
     char     active_region[31];        // active flood scope region name (empty = wildcard/unscoped)
@@ -107,7 +107,7 @@ struct NodePrefs {
         ble_bond_reset_pending = false;
         telemetry_modes = 0;          // default: no telemetry sharing
         manual_add_contacts = 0;      // default: auto-add contacts
-        default_scope_key_hex[0] = '\0';  // default: no companion flood scope
+        default_scope_key_hex[0] = '\0';  // default: no legacy scope-key overlay
         wifi_ssid[0] = '\0';          // default: no WiFi
         wifi_password[0] = '\0';
         active_region[0] = '\0';       // default: wildcard (unscoped flood)
@@ -177,10 +177,10 @@ inline bool normalizeAndValidate(NodePrefs& prefs) {
         prefs.radio_profile[0] = '\0';
         return true;
     }
-    const bool valid = std::isfinite(prefs.freq) && prefs.freq >= 400.0f &&
-        prefs.freq <= 930.0f && validRadioBandwidth(prefs.bw) &&
-        prefs.sf >= 6 && prefs.sf <= 12 && prefs.cr >= 5 && prefs.cr <= 8 &&
-        prefs.tx_power_dbm >= 2 && prefs.tx_power_dbm <= 22;
+    const bool valid = std::isfinite(prefs.freq) && prefs.freq >= 150.0f &&
+        prefs.freq <= 960.0f && validRadioBandwidth(prefs.bw) &&
+        prefs.sf >= 5 && prefs.sf <= 12 && prefs.cr >= 5 && prefs.cr <= 8 &&
+        prefs.tx_power_dbm >= -9 && prefs.tx_power_dbm <= 22;
     if (!valid) {
         prefs.configured = false;
         prefs.freq = prefs.bw = 0.0f;

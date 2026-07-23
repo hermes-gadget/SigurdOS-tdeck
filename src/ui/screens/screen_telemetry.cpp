@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../screen_lifetime.h"
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -30,6 +31,9 @@ namespace sigurdos::ui {
 using namespace theme;
 using namespace responsive;
 
+static lv_timer_t* g_telemetry_poll_timer = nullptr;
+static ScreenLifetime g_telemetry_lifetime;
+
 // ════════════════════════════════════════════════════════
 // Telemetry screen (Phase 4.3)
 // ════════════════════════════════════════════════════════
@@ -37,6 +41,8 @@ void telemetry_screen_show()
 {
     static constexpr int ROW_H = 20;
     lv_obj_t* scr = make_screen_full("Telemetry");
+    g_telemetry_lifetime.bind(scr);
+    g_telemetry_lifetime.trackTimer(&g_telemetry_poll_timer);
 
     lv_obj_t* list = lv_obj_create(scr);
     lv_obj_set_size(list, LV_PCT(100), CONTENT_H - 24);
@@ -92,8 +98,45 @@ void telemetry_screen_show()
         sigurdos::mesh::clearResponses();
     } else {
         lv_obj_t* waiting = lv_label_create(list);
-        lv_label_set_text(waiting, "Requesting telemetry...\nWaiting for response...");
-        lv_obj_set_style_text_color(waiting, lv_color_hex(TEXT_SECONDARY), 0);
+        lv_obj_set_style_text_color(
+            waiting, lv_color_hex(TEXT_SECONDARY), 0);
+        if (sigurdos::mesh::telemetryRequestTimedOut()) {
+            lv_label_set_text(waiting, "Telemetry request timed out");
+            lv_obj_set_style_text_color(
+                waiting, lv_color_hex(ACCENT_RED), 0);
+        } else if (!sigurdos::mesh::telemetryRequestPending()) {
+            lv_label_set_text(waiting, "Telemetry request could not be sent");
+            lv_obj_set_style_text_color(
+                waiting, lv_color_hex(ACCENT_RED), 0);
+        } else {
+            lv_label_set_text(
+                waiting, "Requesting telemetry...\nWaiting for response...");
+            g_telemetry_poll_timer = lv_timer_create([](lv_timer_t* timer) {
+                lv_obj_t* label = static_cast<lv_obj_t*>(
+                    lv_timer_get_user_data(timer));
+                if (sigurdos::mesh::hasTelemetryResponse()) {
+                    lv_timer_del(timer);
+                    if (g_telemetry_poll_timer == timer) {
+                        g_telemetry_poll_timer = nullptr;
+                    }
+                    telemetry_screen_show();
+                    return;
+                }
+                if (sigurdos::mesh::telemetryRequestTimedOut() ||
+                    !sigurdos::mesh::telemetryRequestPending()) {
+                    if (label) {
+                        lv_label_set_text(
+                            label, "Telemetry request timed out");
+                        lv_obj_set_style_text_color(
+                            label, lv_color_hex(ACCENT_RED), 0);
+                    }
+                    lv_timer_del(timer);
+                    if (g_telemetry_poll_timer == timer) {
+                        g_telemetry_poll_timer = nullptr;
+                    }
+                }
+            }, 250, waiting);
+        }
         lv_obj_set_style_text_font(waiting, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(waiting, LV_ALIGN_CENTER, 0, 0);
     }

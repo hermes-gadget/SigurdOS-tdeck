@@ -258,6 +258,8 @@ TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {
 
 TEST(MeshContractTest, NodeStatusWireSizeMatchesDeclaredResponseSize) {
     EXPECT_EQ(NODE_STATUS_RESPONSE_SIZE, 56);
+    EXPECT_EQ(sigurdos::mesh::NODE_STATUS_TAG_SIZE, 4u);
+    EXPECT_EQ(sigurdos::mesh::NODE_STATUS_WIRE_SIZE, 60u);
     EXPECT_EQ(sizeof(NodeStatus), static_cast<std::size_t>(NODE_STATUS_RESPONSE_SIZE));
 }
 

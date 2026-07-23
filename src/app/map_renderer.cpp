@@ -33,6 +33,7 @@
 #include <cstdarg>
 #include <strings.h>
 #include <lodepng.h>
+#include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 #include "../diagnostics/debug_cfg.h"
 #include "../mesh/mesh_wrapper.h"
@@ -448,12 +449,6 @@ static bool entry_is_png_tile(const struct dirent* e) {
     return true;
 }
 
-static void map_scan_progress() {
-    sigurdos::hal::boot_watchdog_progress(
-        sigurdos::hal::BootStage::MapDiscovery);
-    delay(1);
-}
-
 static bool scan_y_range(int zoom, int x, int* min_y, int* max_y, int* sample_y) {
     if (!min_y || !max_y || !sample_y) return false;
 
@@ -465,10 +460,8 @@ static bool scan_y_range(int zoom, int x, int* min_y, int* max_y, int* sample_y)
 
     int mn_y = -1;
     int mx_y = -1;
-    int scanned_entries = 0;
     struct dirent* ye;
     while ((ye = readdir(yd)) != nullptr) {
-        if ((++scanned_entries % 32) == 0) map_scan_progress();
         if (!entry_is_png_tile(ye)) continue;
         const char* ext = strrchr(ye->d_name, '.');
         int y = -1;
@@ -479,6 +472,7 @@ static bool scan_y_range(int zoom, int x, int* min_y, int* max_y, int* sample_y)
         }
         if (mn_y < 0) {
             mn_y = mx_y = y;
+            *sample_y = y;
         } else {
             if (y < mn_y) mn_y = y;
             if (y > mx_y) mx_y = y;
@@ -489,39 +483,11 @@ static bool scan_y_range(int zoom, int x, int* min_y, int* max_y, int* sample_y)
     if (mn_y < 0) return false;
     *min_y = mn_y;
     *max_y = mx_y;
-
-    double mid_y = (mn_y + mx_y) / 2.0;
-    int best_y = -1;
-    double best_dist = 0.0;
-
-    yd = opendir(y_path);
-    if (!yd) return false;
-    scanned_entries = 0;
-    while ((ye = readdir(yd)) != nullptr) {
-        if ((++scanned_entries % 32) == 0) map_scan_progress();
-        if (!entry_is_png_tile(ye)) continue;
-        const char* ext = strrchr(ye->d_name, '.');
-        int y = -1;
-        if (!ext || !sigurdos_map_parse_tile_index(
-                        ye->d_name, static_cast<size_t>(ext - ye->d_name),
-                        zoom, &y)) {
-            continue;
-        }
-        double dist = fabs((double)y - mid_y);
-        if (best_y < 0 || dist < best_dist) {
-            best_y = y;
-            best_dist = dist;
-        }
-    }
-    closedir(yd);
-
-    if (best_y < 0) return false;
-    *sample_y = best_y;
     return true;
 }
 
-// Cached per-x-column result from the first scan pass, reused in the second pass
-// to avoid re-opening every x directory on SD card (saves ~50% of SD ops).
+// Cached per-X result used for bounded coverage and sample selection after the
+// single Y-directory pass. The cache lives in PSRAM rather than loopTask stack.
 struct XColCache {
     int x;
     int min_y;
@@ -533,303 +499,283 @@ struct XColCache {
 static constexpr int MAX_XCOLS = 2048;
 static XColCache* discovery_xcache = nullptr;
 
-static bool scan_zoom_coverage(int z, TileCoverage* out) {
-    if (!out) return false;
+enum class DiscoveryPhase : uint8_t {
+    Idle,
+    CheckStorage,
+    TryIndex,
+    OpenZoom,
+    ScanX,
+    OpenY,
+    ScanY,
+    RecordColumn,
+    SortColumns,
+    DeduplicateColumns,
+    FindLargestGap,
+    PrepareSample,
+    SelectSample,
+    FinishZoom,
+    FinishAll,
+};
 
-    char x_path[48];
-    snprintf(x_path, sizeof(x_path), SIGURDOS_SD_MOUNTPOINT "/tiles/%d", z);
-    DIR* xd = opendir(x_path);
-    if (!xd) return false;
-
-    // First pass: collect bounds + cache each x-column's scan_y_range result
-    // so the second pass can reuse them without re-opening directories.
-    // 2048 entries × 20 bytes = 40 KB — too large for the ESP32-S3 loopTask
-    // stack (~4 KB) and wasteful to keep permanently in internal DRAM. Allocate
-    // once from PSRAM (DRAM fallback) and reuse across scans. Map rendering
-    // already depends on PSRAM, so this adds no new requirement.
-    // Overflow detection below logs a warning if the cache is exhausted.
-    if (!discovery_xcache) {
-        discovery_xcache =
-            (XColCache*)map_alloc(sizeof(XColCache) * MAX_XCOLS);
-    }
-    if (!discovery_xcache) {
-        MAP_DEBUG_PRINTLN("[map] scan: xcache alloc failed");
-        closedir(xd);
-        return false;
-    }
+struct DiscoveryState {
+    DiscoveryPhase phase = DiscoveryPhase::Idle;
+    SigurdosMapDiscoveryResult result = SigurdosMapDiscoveryResult::Idle;
+    int zoom = MIN_ZOOM;
+    DIR* zoom_dir = nullptr;
+    DIR* y_dir = nullptr;
+    int current_x = -1;
+    int min_y = -1;
+    int max_y = -1;
+    int sample_y = -1;
+    TileCoverage coverage = {false, false, 0, 0, 0, 0, 0, 0};
     int xcache_count = 0;
     bool cache_overflow = false;
-
-    TileCoverage c = {false, false, 0, 0, 0, 0, 0, 0};
-    const int tiles_per_axis = sigurdos_map_tiles_per_axis(z);
-    int scanned = 0;
-    struct dirent* xe;
-    while ((xe = readdir(xd)) != nullptr) {
-        if ((++scanned % 16) == 0) map_scan_progress();
-        if (xe->d_name[0] == '.') continue;
-        if (!is_decimal_name(xe->d_name)) continue;
-
-        int x = atoi(xe->d_name);
-        if (x < 0 || x >= tiles_per_axis) continue;
-        int mn_y = -1;
-        int mx_y = -1;
-        int sample_y = -1;
-        if (!scan_y_range(z, x, &mn_y, &mx_y, &sample_y)) continue;
-
-        // Detect and warn on cache overflow, but continue scanning for bounds
-        if (xcache_count >= MAX_XCOLS) {
-            if (!cache_overflow) {
-                MAP_DEBUG_PRINTF("[map] WARNING: zoom %d has >%d x-columns (found x=%d). "
-                                 "X-column cache exhausted; coverage bounds include all "
-                                 "columns but second-pass sample selection is truncated.\n",
-                                 z, MAX_XCOLS, x);
-                cache_overflow = true;
-            }
-            // Still update coverage bounds for entries beyond cache
-            if (x < c.min_x) c.min_x = x;
-            if (x > c.max_x) c.max_x = x;
-            if (mn_y < c.min_y) c.min_y = mn_y;
-            if (mx_y > c.max_y) c.max_y = mx_y;
-            continue;
-        }
-
-        discovery_xcache[xcache_count].x = x;
-        discovery_xcache[xcache_count].min_y = mn_y;
-        discovery_xcache[xcache_count].max_y = mx_y;
-        discovery_xcache[xcache_count].sample_y = sample_y;
-        discovery_xcache[xcache_count].valid = true;
-        xcache_count++;
-
-        if (!c.valid) {
-            c.valid = true;
-            c.min_x = c.max_x = x;
-            c.min_y = mn_y;
-            c.max_y = mx_y;
-            c.sample_x = x;
-            c.sample_y = sample_y;
-        } else {
-            if (x < c.min_x) c.min_x = x;
-            if (x > c.max_x) c.max_x = x;
-            if (mn_y < c.min_y) c.min_y = mn_y;
-            if (mx_y > c.max_y) c.max_y = mx_y;
-        }
-
-    }
-    closedir(xd);
-
-    if (!c.valid) return false;
-
-    // Represent X coverage as the smallest circular interval. A range with
-    // min_x > max_x crosses the antimeridian (for example n-1 through 0).
-    // If the bounded cache overflowed, retain the conservative linear bounds
-    // because not every column is available to identify the largest gap.
-    if (!cache_overflow) {
-        std::sort(discovery_xcache, discovery_xcache + xcache_count,
-                  [](const XColCache& a, const XColCache& b) {
-                      return a.x < b.x;
-                  });
-        int unique_count = 0;
-        for (int i = 0; i < xcache_count; ++i) {
-            if (unique_count > 0 &&
-                discovery_xcache[i].x == discovery_xcache[unique_count - 1].x) {
-                continue;
-            }
-            discovery_xcache[unique_count++] = discovery_xcache[i];
-        }
-        xcache_count = unique_count;
-
-        int largest_gap = -1;
-        for (int i = 0; i < xcache_count; ++i) {
-            const int next_x = (i + 1 < xcache_count)
-                ? discovery_xcache[i + 1].x
-                : discovery_xcache[0].x + tiles_per_axis;
-            const int gap = next_x - discovery_xcache[i].x - 1;
-            if (gap > largest_gap) {
-                largest_gap = gap;
-                c.min_x = next_x % tiles_per_axis;
-                c.max_x = discovery_xcache[i].x;
-            }
-        }
-        c.wraps_x = c.min_x > c.max_x;
-    }
-
-    // Second pass: find sample closest to the circular coverage center — use
-    // cached data, with no SD card re-scans needed.
-    const double x_span =
-        sigurdos_map_wrap_tile_x((double)c.max_x - c.min_x, z);
-    const double mid_x = sigurdos_map_wrap_tile_x(c.min_x + x_span / 2.0, z);
-    double mid_y = (c.min_y + c.max_y) / 2.0;
-    double best_dist = 0.0;
+    int index = 0;
+    int unique_count = 0;
+    int largest_gap = -1;
+    double mid_x = 0.0;
+    double mid_y = 0.0;
+    double best_distance = 0.0;
     bool have_sample = false;
+    bool stop_after_zoom = false;
+    uint32_t entries_processed = 0;
+    bool used_index = false;
+};
 
-    for (int i = 0; i < xcache_count; i++) {
-        if (!discovery_xcache[i].valid) continue;
+static DiscoveryState discovery;
 
-        double dist_x = sigurdos_map_shortest_tile_x_delta(
-            mid_x, (double)discovery_xcache[i].x, z);
-        double dist_y = (double)discovery_xcache[i].sample_y - mid_y;
-        double dist = dist_x * dist_x + dist_y * dist_y;
-        if (!have_sample || dist < best_dist) {
-            c.sample_x = discovery_xcache[i].x;
-            c.sample_y = discovery_xcache[i].sample_y;
-            best_dist = dist;
-            have_sample = true;
-        }
+static void close_discovery_directories() {
+    if (discovery.y_dir) {
+        closedir(discovery.y_dir);
+        discovery.y_dir = nullptr;
+    }
+    if (discovery.zoom_dir) {
+        closedir(discovery.zoom_dir);
+        discovery.zoom_dir = nullptr;
+    }
+}
 
-        if ((++scanned % 16) == 0) map_scan_progress();
+static void reset_discovery_state() {
+    close_discovery_directories();
+    discovery = DiscoveryState{};
+}
+
+static void record_discovery_column() {
+    TileCoverage& coverage = discovery.coverage;
+    const int x = discovery.current_x;
+    if (!coverage.valid) {
+        coverage = {true, false, x, x, discovery.min_y, discovery.max_y,
+                    x, discovery.sample_y};
+    } else {
+        coverage.min_x = std::min(coverage.min_x, x);
+        coverage.max_x = std::max(coverage.max_x, x);
+        coverage.min_y = std::min(coverage.min_y, discovery.min_y);
+        coverage.max_y = std::max(coverage.max_y, discovery.max_y);
     }
 
-    if (!have_sample) return false;
-    *out = c;
+    if (discovery.xcache_count < MAX_XCOLS) {
+        discovery_xcache[discovery.xcache_count++] = {
+            x, discovery.min_y, discovery.max_y, discovery.sample_y, true};
+    } else {
+        discovery.cache_overflow = true;
+    }
+}
+
+static void commit_discovery_zoom() {
+    if (!discovery.coverage.valid || !discovery.have_sample) return;
+    tile_coverage[discovery.zoom] = discovery.coverage;
+    if (!have_tile_coverage) {
+        min_available_zoom = max_available_zoom = discovery.zoom;
+        have_tile_coverage = true;
+    } else {
+        min_available_zoom = std::min(min_available_zoom, discovery.zoom);
+        max_available_zoom = std::max(max_available_zoom, discovery.zoom);
+    }
+}
+
+static bool read_index_integer(JsonObjectConst object, const char* key,
+                               int* out) {
+    JsonVariantConst value = object[key];
+    if (!out || !value.is<int>()) return false;
+    *out = value.as<int>();
     return true;
 }
 
-static void discover_tiles() {
-    if (!sigurdos_sdcard_mounted()) {
-        // Lazy retry — SD may have been absent at boot but inserted since
-        if (!sigurdos_sdcard_retry()) {
-            MAP_DEBUG_PRINTLN("[map] discover: SD not mounted");
-            return;
+static bool load_tile_index() {
+    FILE* file = fopen(SIGURDOS_SD_MOUNTPOINT "/tiles/index.json", "rb");
+    if (!file) return false;
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return false;
+    }
+    const long file_size = ftell(file);
+    if (file_size <= 0 ||
+        static_cast<unsigned long>(file_size) > SIGURDOS_MAP_INDEX_MAX_BYTES ||
+        fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return false;
+    }
+
+    char* input = static_cast<char*>(
+        map_alloc(static_cast<size_t>(file_size) + 1));
+    if (!input) {
+        fclose(file);
+        return false;
+    }
+    const size_t bytes_read = fread(
+        input, 1, static_cast<size_t>(file_size), file);
+    fclose(file);
+    if (bytes_read != static_cast<size_t>(file_size)) {
+        map_free(input);
+        return false;
+    }
+    input[bytes_read] = '\0';
+
+    JsonDocument document;
+    const DeserializationError error = deserializeJson(document, input, bytes_read);
+    map_free(input);
+    if (error) return false;
+
+    JsonObjectConst root = document.as<JsonObjectConst>();
+    JsonVariantConst version = root["version"];
+    JsonVariantConst tile_size = root["tile_size"];
+    JsonArrayConst zooms = root["zooms"].as<JsonArrayConst>();
+    if (!version.is<int>() || version.as<int>() != 1 ||
+        !tile_size.is<int>() || tile_size.as<int>() != TILE_SIZE ||
+        zooms.isNull() || zooms.size() == 0 || zooms.size() > MAX_ZOOM + 1) {
+        return false;
+    }
+
+    TileCoverage indexed[MAX_ZOOM + 1] = {};
+    bool seen[MAX_ZOOM + 1] = {};
+    int indexed_min = MAX_ZOOM;
+    int indexed_max = MIN_ZOOM;
+    for (JsonObjectConst object : zooms) {
+        SigurdosMapTileIndexEntry entry{};
+        if (!read_index_integer(object, "z", &entry.zoom) ||
+            !read_index_integer(object, "min_x", &entry.min_x) ||
+            !read_index_integer(object, "max_x", &entry.max_x) ||
+            !read_index_integer(object, "min_y", &entry.min_y) ||
+            !read_index_integer(object, "max_y", &entry.max_y) ||
+            !read_index_integer(object, "sample_x", &entry.sample_x) ||
+            !read_index_integer(object, "sample_y", &entry.sample_y)) {
+            return false;
         }
+        JsonVariantConst count = object["count"];
+        if (!count.is<uint32_t>()) return false;
+        entry.tile_count = count.as<uint32_t>();
+        if (!sigurdos_map_tile_index_entry_valid(entry) || seen[entry.zoom]) {
+            return false;
+        }
+
+        char sample_path[72];
+        snprintf(sample_path, sizeof(sample_path),
+                 SIGURDOS_SD_MOUNTPOINT "/tiles/%d/%d/%d.png",
+                 entry.zoom, entry.sample_x, entry.sample_y);
+        FILE* sample = fopen(sample_path, "rb");
+        if (!sample) return false;
+        fclose(sample);
+
+        seen[entry.zoom] = true;
+        indexed[entry.zoom] = {true, false, entry.min_x, entry.max_x,
+                               entry.min_y, entry.max_y,
+                               entry.sample_x, entry.sample_y};
+        indexed_min = std::min(indexed_min, entry.zoom);
+        indexed_max = std::max(indexed_max, entry.zoom);
+        ++discovery.entries_processed;
     }
 
     reset_tile_coverage();
-
-    const char* tiles_path = SIGURDOS_SD_MOUNTPOINT "/tiles";
-    DIR* tiles_dir = opendir(tiles_path);
-    if (!tiles_dir) {
-        MAP_DEBUG_PRINTF("[map] discover: opendir(%s) failed\n", tiles_path);
-        return;
+    for (int zoom = indexed_min; zoom <= indexed_max; ++zoom) {
+        if (seen[zoom]) tile_coverage[zoom] = indexed[zoom];
     }
-    closedir(tiles_dir);
-
-    for (int z = MIN_ZOOM; z <= MAX_ZOOM; z++) {
-        map_scan_progress();
-        TileCoverage c;
-        if (!scan_zoom_coverage(z, &c)) {
-            MAP_DEBUG_PRINTF("[map] discover: zoom %d has no png tiles\n", z);
-            continue;
-        }
-        tile_coverage[z] = c;
-        if (!have_tile_coverage) {
-            min_available_zoom = z;
-            max_available_zoom = z;
-            have_tile_coverage = true;
-        } else {
-            if (z < min_available_zoom) min_available_zoom = z;
-            if (z > max_available_zoom) max_available_zoom = z;
-        }
-
-        MAP_DEBUG_PRINTF("[map] discover: zoom=%d x=%d-%d y=%d-%d sample=%d/%d\n",
-                         z, c.min_x, c.max_x, c.min_y, c.max_y,
-                         c.sample_x, c.sample_y);
-    }
-
-    if (!have_tile_coverage) {
-        MAP_DEBUG_PRINTLN("[map] discover: no png tiles found");
-        return;
-    }
-
-    zoom_level = max_available_zoom;
-    const TileCoverage& c = tile_coverage[zoom_level];
-    center_lon = tile_x_to_lon((double)c.sample_x + 0.5, zoom_level);
-    center_lat = tile_y_to_lat((double)c.sample_y + 0.5, zoom_level);
-    clamp_view_to_coverage();
-
-    MAP_DEBUG_PRINTF("[map] discover: center=%.4f,%.4f zoom=%d available=%d-%d\n",
-                     center_lat, center_lon, zoom_level,
-                     min_available_zoom, max_available_zoom);
+    min_available_zoom = indexed_min;
+    max_available_zoom = indexed_max;
+    have_tile_coverage = true;
+    discovery.used_index = true;
+    return true;
 }
 
-// ── Auto-localization: center the map on whatever data is available ──
-// Priority chain:
-//   1. SD card tile coverage (auto-centers on geographic center of available tiles)
-//   2. metadata.json bounds (user-provided overrides for the tile set)
-//   3. GPS fix (device's current position — works anywhere, no SD needed)
-//   4. Radio profile preset (US/Canada regional defaults from onboarding)
-//   5. Hardcoded fallback (London — static initializers, line 60-62)
-//
-// Each level only activates if ALL higher-priority levels are unavailable.
-static void load_metadata() {
-    // ── Level 1: SD card tile auto-discovery ─────────────
-    // This is the best option: it automatically centers on whatever tiles
-    // the user has, no matter where they are in the world.
-    if (sigurdos_sdcard_mounted() || sigurdos_sdcard_retry()) {
-        discover_tiles();
+static void apply_metadata_bounds() {
+    FILE* file = fopen(SIGURDOS_SD_MOUNTPOINT "/tiles/metadata.json", "r");
+    if (!file) return;
+    char buffer[512];
+    const size_t length = fread(buffer, 1, sizeof(buffer) - 1, file);
+    fclose(file);
+    if (length == 0) return;
+    buffer[length] = '\0';
 
-        if (have_tile_coverage) {
-            // ── Level 2: metadata.json bounds refine ─────
-            FILE* f = fopen(SIGURDOS_SD_MOUNTPOINT "/tiles/metadata.json", "r");
-            if (f) {
-                char buf[512];
-                size_t len = fread(buf, 1, sizeof(buf) - 1, f);
-                fclose(f);
-                if (len > 0) {
-                    buf[len] = '\0';
-                    const char* p = strstr(buf, "\"bounds\"");
-                    if (p) {
-                        p = strchr(p, '[');
-                        if (p) {
-                            p++;
-                            double bounds[4];
-                            int n = 0;
-                            while (n < 4 && *p) {
-                                while (*p && (*p == ' ' || *p == ',' || *p == '\n')) p++;
-                                char* end;
-                                bounds[n] = strtod(p, &end);
-                                if (end == p) break;
-                                p = end;
-                                n++;
-                            }
-                            while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') p++;
-                            if (n == 4 && *p == ']' && sigurdos_map_bounds_valid(bounds)) {
-                                center_lat = (bounds[1] + bounds[3]) / 2.0;
-                                center_lon = (bounds[0] + bounds[2]) / 2.0;
-                                clamp_view_to_coverage();
-                                MAP_DEBUG_PRINTF("[map] metadata: center=%.4f,%.4f\n",
-                                                 center_lat, center_lon);
-                            }
-                        }
-                    }
-                }
-            }
-            return; // Tiles win — best auto-localization
-        }
+    const char* cursor = strstr(buffer, "\"bounds\"");
+    if (!cursor || !(cursor = strchr(cursor, '['))) return;
+    ++cursor;
+    double bounds[4];
+    int count = 0;
+    while (count < 4 && *cursor) {
+        while (*cursor == ' ' || *cursor == ',' || *cursor == '\n') ++cursor;
+        char* end = nullptr;
+        bounds[count] = strtod(cursor, &end);
+        if (end == cursor) break;
+        cursor = end;
+        ++count;
     }
+    while (*cursor == ' ' || *cursor == '\n' || *cursor == '\r' ||
+           *cursor == '\t') {
+        ++cursor;
+    }
+    if (count == 4 && *cursor == ']' && sigurdos_map_bounds_valid(bounds)) {
+        center_lat = (bounds[1] + bounds[3]) / 2.0;
+        center_lon = (bounds[0] + bounds[2]) / 2.0;
+        clamp_view_to_coverage();
+    }
+}
 
-    // ── Level 3: GPS position ────────────────────────────
-    // No tiles found, but the device knows where it is.
-    // Center on the user's actual position at street-level zoom.
+static void apply_fallback_view() {
     if (sigurdos_gps_has_fix()) {
         center_lat = sigurdos_gps_latitude();
         center_lon = sigurdos_gps_longitude();
         zoom_level = sigurdos_map_clamp_int(15, MIN_ZOOM, MAX_ZOOM);
-        MAP_DEBUG_PRINTF("[map] gps: center=%.4f,%.4f zoom=15\n",
-                         center_lat, center_lon);
         return;
     }
-
-    // ── Level 4: Radio profile preset ────────────────────
-    // User selected a region during onboarding (US, Canada, UK, EU).
-    // Only apply if a profile is actually set — NULL/empty means "not chosen."
     const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
     if (prefs.radio_profile && prefs.radio_profile[0] != '\0') {
         apply_preset_default_view();
-        MAP_DEBUG_PRINTF("[map] profile: center=%.4f,%.4f zoom=%d (profile=%s)\n",
-                         center_lat, center_lon, zoom_level, prefs.radio_profile);
-        return;
     }
-
-    // ── Level 5: Hardcoded London fallback ───────────────
-    // Already set by static initializers (line 60-62).
-    // London is a neutral default that has map tiles widely available.
-    MAP_DEBUG_PRINTF("[map] fallback: center=%.4f,%.4f zoom=%d\n",
-                     center_lat, center_lon, zoom_level);
 }
 
-// ════════════════════════════════════════════════════════
-// PUBLIC API
-// ════════════════════════════════════════════════════════
+static void finish_discovery() {
+    close_discovery_directories();
+    if (have_tile_coverage) {
+        zoom_level = max_available_zoom;
+        const TileCoverage& coverage = tile_coverage[zoom_level];
+        center_lon = tile_x_to_lon(
+            static_cast<double>(coverage.sample_x) + 0.5, zoom_level);
+        center_lat = tile_y_to_lat(
+            static_cast<double>(coverage.sample_y) + 0.5, zoom_level);
+        clamp_view_to_coverage();
+        apply_metadata_bounds();
+        if (discovery.result == SigurdosMapDiscoveryResult::InProgress) {
+            discovery.result = discovery.used_index
+                ? SigurdosMapDiscoveryResult::IndexLoaded
+                : SigurdosMapDiscoveryResult::Scanned;
+        }
+    } else {
+        apply_fallback_view();
+        if (discovery.result == SigurdosMapDiscoveryResult::InProgress) {
+            discovery.result = SigurdosMapDiscoveryResult::NoTiles;
+        }
+    }
+    discovery.phase = DiscoveryPhase::Idle;
+    sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Runtime);
+}
+
+static void stop_at_entry_limit() {
+    discovery.result = SigurdosMapDiscoveryResult::LimitReached;
+    discovery.stop_after_zoom = true;
+    close_discovery_directories();
+    discovery.phase = discovery.coverage.valid
+        ? DiscoveryPhase::SortColumns
+        : DiscoveryPhase::FinishAll;
+}
 
 static bool delete_cb_registered = false;
 
@@ -888,18 +834,297 @@ void sigurdos_map_reparent(lv_obj_t* new_parent) {
 }
 
 void sigurdos_map_discover_tiles() {
-    // Tile discovery follows an SD insertion/re-entry. Both positive and
-    // negative cache entries may refer to files from the previous card state.
+    reset_discovery_state();
+    reset_tile_coverage();
     sigurdos::hal::boot_watchdog_progress(
         sigurdos::hal::BootStage::MapDiscovery);
     tile_cache_clear(tile_cache, TILE_CACHE_SIZE, map_free);
     cache_clock = 0;
     missing_tile_cache_init(missing_tile_cache, MISSING_TILE_CACHE_SIZE);
-    load_metadata();
+    discovery.result = SigurdosMapDiscoveryResult::InProgress;
+    discovery.phase = DiscoveryPhase::CheckStorage;
+}
+
+bool sigurdos_map_discovery_step(int max_items, uint32_t max_ms) {
+    if (discovery.phase == DiscoveryPhase::Idle) return false;
+    if (max_items <= 0 || max_ms == 0) return true;
+
+    SigurdosMapDiscoveryBudget budget(max_items);
+    const uint32_t started_at = millis();
+    const auto consume_operation = [&]() {
+        if (budget.used() > 0 && sigurdos_map_discovery_deadline_reached(
+                started_at, millis(), max_ms)) {
+            return false;
+        }
+        return budget.consume();
+    };
+
+    while (discovery.phase != DiscoveryPhase::Idle) {
+        if (discovery.entries_processed >= SIGURDOS_MAP_DISCOVERY_MAX_ENTRIES &&
+            (discovery.phase == DiscoveryPhase::ScanX ||
+             discovery.phase == DiscoveryPhase::ScanY ||
+             discovery.phase == DiscoveryPhase::OpenY)) {
+            stop_at_entry_limit();
+        }
+
+        switch (discovery.phase) {
+            case DiscoveryPhase::Idle:
+                return false;
+
+            case DiscoveryPhase::CheckStorage:
+                if (!consume_operation()) return true;
+                discovery.phase =
+                    (sigurdos_sdcard_mounted() || sigurdos_sdcard_retry())
+                        ? DiscoveryPhase::TryIndex
+                        : DiscoveryPhase::FinishAll;
+                break;
+
+            case DiscoveryPhase::TryIndex:
+                if (!consume_operation()) return true;
+                if (load_tile_index()) {
+                    discovery.zoom = max_available_zoom;
+                    discovery.phase = DiscoveryPhase::FinishAll;
+                    break;
+                }
+                if (!discovery_xcache) {
+                    discovery_xcache = static_cast<XColCache*>(
+                        map_alloc(sizeof(XColCache) * MAX_XCOLS));
+                }
+                discovery.phase = discovery_xcache
+                    ? DiscoveryPhase::OpenZoom
+                    : DiscoveryPhase::FinishAll;
+                break;
+
+            case DiscoveryPhase::OpenZoom: {
+                if (discovery.zoom > MAX_ZOOM || discovery.stop_after_zoom) {
+                    discovery.phase = DiscoveryPhase::FinishAll;
+                    break;
+                }
+                if (!consume_operation()) return true;
+                discovery.coverage = {false, false, 0, 0, 0, 0, 0, 0};
+                discovery.xcache_count = 0;
+                discovery.cache_overflow = false;
+                discovery.have_sample = false;
+                char path[48];
+                snprintf(path, sizeof(path),
+                         SIGURDOS_SD_MOUNTPOINT "/tiles/%d", discovery.zoom);
+                discovery.zoom_dir = opendir(path);
+                if (discovery.zoom_dir) {
+                    discovery.phase = DiscoveryPhase::ScanX;
+                } else {
+                    ++discovery.zoom;
+                }
+                break;
+            }
+
+            case DiscoveryPhase::ScanX: {
+                if (!consume_operation()) return true;
+                struct dirent* entry = readdir(discovery.zoom_dir);
+                if (!entry) {
+                    closedir(discovery.zoom_dir);
+                    discovery.zoom_dir = nullptr;
+                    discovery.phase = discovery.coverage.valid
+                        ? DiscoveryPhase::SortColumns
+                        : DiscoveryPhase::FinishZoom;
+                    break;
+                }
+                ++discovery.entries_processed;
+                if (entry->d_name[0] == '.') break;
+                int x = -1;
+                if (!sigurdos_map_parse_tile_index(
+                        entry->d_name, strlen(entry->d_name),
+                        discovery.zoom, &x)) {
+                    break;
+                }
+                discovery.current_x = x;
+                discovery.min_y = -1;
+                discovery.max_y = -1;
+                discovery.sample_y = -1;
+                discovery.phase = DiscoveryPhase::OpenY;
+                break;
+            }
+
+            case DiscoveryPhase::OpenY: {
+                if (!consume_operation()) return true;
+                char path[64];
+                snprintf(path, sizeof(path),
+                         SIGURDOS_SD_MOUNTPOINT "/tiles/%d/%d",
+                         discovery.zoom, discovery.current_x);
+                discovery.y_dir = opendir(path);
+                discovery.phase = discovery.y_dir
+                    ? DiscoveryPhase::ScanY
+                    : DiscoveryPhase::ScanX;
+                break;
+            }
+
+            case DiscoveryPhase::ScanY: {
+                if (!consume_operation()) return true;
+                struct dirent* entry = readdir(discovery.y_dir);
+                if (!entry) {
+                    closedir(discovery.y_dir);
+                    discovery.y_dir = nullptr;
+                    discovery.phase = discovery.sample_y >= 0
+                        ? DiscoveryPhase::RecordColumn
+                        : DiscoveryPhase::ScanX;
+                    break;
+                }
+                ++discovery.entries_processed;
+                if (!entry_is_png_tile(entry)) break;
+                const char* extension = strrchr(entry->d_name, '.');
+                int y = -1;
+                if (!extension || !sigurdos_map_parse_tile_index(
+                        entry->d_name,
+                        static_cast<size_t>(extension - entry->d_name),
+                        discovery.zoom, &y)) {
+                    break;
+                }
+                if (discovery.sample_y < 0) {
+                    discovery.min_y = discovery.max_y = discovery.sample_y = y;
+                } else {
+                    discovery.min_y = std::min(discovery.min_y, y);
+                    discovery.max_y = std::max(discovery.max_y, y);
+                }
+                break;
+            }
+
+            case DiscoveryPhase::RecordColumn:
+                record_discovery_column();
+                discovery.phase = DiscoveryPhase::ScanX;
+                break;
+
+            case DiscoveryPhase::SortColumns:
+                if (!consume_operation()) return true;
+                std::sort(discovery_xcache,
+                          discovery_xcache + discovery.xcache_count,
+                          [](const XColCache& left, const XColCache& right) {
+                              return left.x < right.x;
+                          });
+                discovery.index = 0;
+                discovery.unique_count = 0;
+                discovery.phase = DiscoveryPhase::DeduplicateColumns;
+                break;
+
+            case DiscoveryPhase::DeduplicateColumns:
+                if (discovery.index >= discovery.xcache_count) {
+                    discovery.xcache_count = discovery.unique_count;
+                    discovery.index = 0;
+                    discovery.largest_gap = -1;
+                    discovery.phase = discovery.cache_overflow
+                        ? DiscoveryPhase::PrepareSample
+                        : DiscoveryPhase::FindLargestGap;
+                    break;
+                }
+                if (!consume_operation()) return true;
+                if (discovery.unique_count == 0 ||
+                    discovery_xcache[discovery.index].x !=
+                        discovery_xcache[discovery.unique_count - 1].x) {
+                    discovery_xcache[discovery.unique_count++] =
+                        discovery_xcache[discovery.index];
+                }
+                ++discovery.index;
+                break;
+
+            case DiscoveryPhase::FindLargestGap: {
+                if (discovery.index >= discovery.xcache_count) {
+                    discovery.coverage.wraps_x =
+                        discovery.coverage.min_x > discovery.coverage.max_x;
+                    discovery.phase = DiscoveryPhase::PrepareSample;
+                    break;
+                }
+                if (!consume_operation()) return true;
+                const int next_x =
+                    discovery.index + 1 < discovery.xcache_count
+                        ? discovery_xcache[discovery.index + 1].x
+                        : discovery_xcache[0].x +
+                              sigurdos_map_tiles_per_axis(discovery.zoom);
+                const int gap =
+                    next_x - discovery_xcache[discovery.index].x - 1;
+                if (gap > discovery.largest_gap) {
+                    discovery.largest_gap = gap;
+                    discovery.coverage.min_x = next_x %
+                        sigurdos_map_tiles_per_axis(discovery.zoom);
+                    discovery.coverage.max_x =
+                        discovery_xcache[discovery.index].x;
+                }
+                ++discovery.index;
+                break;
+            }
+
+            case DiscoveryPhase::PrepareSample: {
+                const double x_span = sigurdos_map_wrap_tile_x(
+                    static_cast<double>(discovery.coverage.max_x) -
+                        discovery.coverage.min_x,
+                    discovery.zoom);
+                discovery.mid_x = sigurdos_map_wrap_tile_x(
+                    discovery.coverage.min_x + x_span / 2.0,
+                    discovery.zoom);
+                discovery.mid_y =
+                    (discovery.coverage.min_y + discovery.coverage.max_y) / 2.0;
+                discovery.index = 0;
+                discovery.have_sample = false;
+                discovery.phase = DiscoveryPhase::SelectSample;
+                break;
+            }
+
+            case DiscoveryPhase::SelectSample: {
+                if (discovery.index >= discovery.xcache_count) {
+                    discovery.phase = DiscoveryPhase::FinishZoom;
+                    break;
+                }
+                if (!consume_operation()) return true;
+                const XColCache& column =
+                    discovery_xcache[discovery.index++];
+                const double dx = sigurdos_map_shortest_tile_x_delta(
+                    discovery.mid_x, static_cast<double>(column.x),
+                    discovery.zoom);
+                const double dy = column.sample_y - discovery.mid_y;
+                const double distance = dx * dx + dy * dy;
+                if (!discovery.have_sample ||
+                    distance < discovery.best_distance) {
+                    discovery.coverage.sample_x = column.x;
+                    discovery.coverage.sample_y = column.sample_y;
+                    discovery.best_distance = distance;
+                    discovery.have_sample = true;
+                }
+                break;
+            }
+
+            case DiscoveryPhase::FinishZoom:
+                commit_discovery_zoom();
+                ++discovery.zoom;
+                discovery.phase = discovery.stop_after_zoom
+                    ? DiscoveryPhase::FinishAll
+                    : DiscoveryPhase::OpenZoom;
+                break;
+
+            case DiscoveryPhase::FinishAll:
+                finish_discovery();
+                return false;
+        }
+    }
+    return false;
+}
+
+bool sigurdos_map_discovery_in_progress() {
+    return discovery.phase != DiscoveryPhase::Idle;
+}
+
+void sigurdos_map_cancel_discovery() {
+    if (discovery.phase == DiscoveryPhase::Idle) return;
+    close_discovery_directories();
+    reset_tile_coverage();
+    discovery = DiscoveryState{};
+    discovery.result = SigurdosMapDiscoveryResult::Cancelled;
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Runtime);
 }
 
+SigurdosMapDiscoveryProgress sigurdos_map_discovery_progress() {
+    return {discovery.result, discovery.zoom,
+            discovery.entries_processed, discovery.used_index};
+}
+
 void sigurdos_map_deinit() {
+    sigurdos_map_cancel_discovery();
     sigurdos_map_release_owned_buffer(discovery_xcache, map_free);
     if (!initialized) return;
     delete_cb_registered = false;

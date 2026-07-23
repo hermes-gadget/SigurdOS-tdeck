@@ -22,6 +22,9 @@ struct RadioProfile {
     uint8_t sf;
     uint8_t cr;
     int8_t tx_power_dbm;
+    float min_freq_mhz;
+    float max_freq_mhz;
+    int8_t max_tx_power_dbm;
 };
 
 size_t radio_profile_count();
@@ -34,6 +37,9 @@ const RadioProfile* radio_profile_match(float freq_mhz, float bw_khz,
 const RadioProfile* radio_profile_match(const NodePrefs& prefs);
 void radio_profile_apply(const RadioProfile& profile, NodePrefs& prefs);
 void radio_profile_set_custom(NodePrefs& prefs);
+bool radio_profile_frequency_allowed(const RadioProfile& profile,
+                                     float frequency_mhz);
+bool radio_profile_configuration_valid(const NodePrefs& prefs);
 
 // Client-repeat is only advertised/enabled for a configured, recognized
 // profile. The protocol encodes allowed ranges as kHz pairs; SigurdOS profiles

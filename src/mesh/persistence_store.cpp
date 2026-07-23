@@ -296,10 +296,15 @@ int channelStoreLoad(ChannelLoadFn load, void* ctx)
 namespace {
 
 static constexpr uint8_t REGION_MAGIC[3] = {'S', 'R', 1};
+static constexpr uint8_t REGION_TRANSACTIONAL_MAGIC[3] = {'S', 'R', 2};
 static constexpr size_t REGION_LEGACY_HEADER_SIZE = 10;
 static constexpr size_t REGION_LEGACY_RECORD_SIZE = 164;
 static constexpr size_t REGION_CHECKSUM_SIZE = 4;
 static constexpr size_t REGION_MAX_RECORDS = 32;
+static constexpr size_t REGION_TRANSACTIONAL_HEADER_SIZE = 10;
+static constexpr size_t REGION_PRIVATE_KEY_SIZE = 16;
+static constexpr size_t REGION_KEY_RECORD_SIZE = 2 + REGION_PRIVATE_KEY_SIZE;
+static constexpr size_t REGION_MAX_PRIVATE_KEYS = 16;
 
 uint16_t regionReadU16(const uint8_t* data)
 {
@@ -318,6 +323,12 @@ void regionWriteU32(uint8_t* data, uint32_t value)
     data[1] = (uint8_t)((value >> 8) & 0xFFU);
     data[2] = (uint8_t)((value >> 16) & 0xFFU);
     data[3] = (uint8_t)((value >> 24) & 0xFFU);
+}
+
+void regionWriteU16(uint8_t* data, uint16_t value)
+{
+    data[0] = (uint8_t)(value & 0xFFU);
+    data[1] = (uint8_t)(value >> 8);
 }
 
 uint32_t regionCrcUpdate(uint32_t crc, const uint8_t* data, size_t length)
@@ -341,15 +352,22 @@ bool regionIdPresent(uint16_t id, const uint16_t* ids, size_t count)
     return false;
 }
 
+struct RegionStructureInfo {
+    size_t count = 0;
+    uint16_t ids[REGION_MAX_RECORDS]{};
+    bool private_region[REGION_MAX_RECORDS]{};
+};
+
 bool validateRegionStructure(sigurdos::storage::AtomicFileReader& reader,
-                             size_t raw_size, bool current)
+                             size_t raw_offset, size_t raw_size, bool current,
+                             RegionStructureInfo* info = nullptr)
 {
     if (raw_size < REGION_LEGACY_HEADER_SIZE ||
         (raw_size - REGION_LEGACY_HEADER_SIZE) %
             REGION_LEGACY_RECORD_SIZE != 0) return false;
     const size_t count = (raw_size - REGION_LEGACY_HEADER_SIZE) /
         REGION_LEGACY_RECORD_SIZE;
-    if (count > REGION_MAX_RECORDS || !reader.seek(0)) return false;
+    if (count > REGION_MAX_RECORDS || !reader.seek(raw_offset)) return false;
 
     uint8_t header[REGION_LEGACY_HEADER_SIZE];
     if (reader.read(header, sizeof(header)) != sizeof(header)) return false;
@@ -382,6 +400,10 @@ bool validateRegionStructure(sigurdos::storage::AtomicFileReader& reader,
         }
         ids[i] = id;
         parents[i] = parent;
+        if (info) {
+            info->ids[i] = id;
+            info->private_region[i] = name[0] == '$';
+        }
         if (id > max_id) max_id = id;
     }
 
@@ -406,6 +428,7 @@ bool validateRegionStructure(sigurdos::storage::AtomicFileReader& reader,
             cursor = parents[parent_index];
         }
     }
+    if (info) info->count = count;
     return true;
 }
 
@@ -429,13 +452,96 @@ bool validateCurrentRegionFile(sigurdos::storage::AtomicFileReader& reader,
     uint8_t stored_crc[REGION_CHECKSUM_SIZE];
     if (reader.read(stored_crc, sizeof(stored_crc)) != sizeof(stored_crc) ||
         (crc ^ 0xFFFFFFFFU) != regionReadU32(stored_crc)) return false;
-    return validateRegionStructure(reader, raw_size, true);
+    return validateRegionStructure(reader, 0, raw_size, true);
 }
 
 bool validateLegacyRegionFile(sigurdos::storage::AtomicFileReader& reader,
                               void*)
 {
-    return validateRegionStructure(reader, reader.size(), false);
+    return validateRegionStructure(reader, 0, reader.size(), false);
+}
+
+bool regionPrivateIdPresent(const RegionStructureInfo& info, uint16_t id)
+{
+    for (size_t i = 0; i < info.count; ++i) {
+        if (info.ids[i] == id) return info.private_region[i];
+    }
+    return false;
+}
+
+bool validateTransactionalRegionFile(
+    sigurdos::storage::AtomicFileReader& reader, void*)
+{
+    const size_t size = reader.size();
+    if (size < REGION_TRANSACTIONAL_HEADER_SIZE +
+                   REGION_LEGACY_HEADER_SIZE + REGION_CHECKSUM_SIZE ||
+        !reader.seek(0)) {
+        return false;
+    }
+
+    uint8_t header[REGION_TRANSACTIONAL_HEADER_SIZE];
+    if (reader.read(header, sizeof(header)) != sizeof(header) ||
+        std::memcmp(header, REGION_TRANSACTIONAL_MAGIC,
+                    sizeof(REGION_TRANSACTIONAL_MAGIC)) != 0 ||
+        header[8] != 0 || header[9] != 0) {
+        return false;
+    }
+    const size_t raw_size = regionReadU32(&header[3]);
+    const size_t key_count = header[7];
+    if (key_count > REGION_MAX_PRIVATE_KEYS ||
+        size != REGION_TRANSACTIONAL_HEADER_SIZE + raw_size +
+                    key_count * REGION_KEY_RECORD_SIZE +
+                    REGION_CHECKSUM_SIZE) {
+        return false;
+    }
+
+    RegionStructureInfo structure{};
+    if (!validateRegionStructure(reader, REGION_TRANSACTIONAL_HEADER_SIZE,
+                                 raw_size, false, &structure)) {
+        return false;
+    }
+
+    uint16_t key_ids[REGION_MAX_PRIVATE_KEYS]{};
+    if (!reader.seek(REGION_TRANSACTIONAL_HEADER_SIZE + raw_size)) return false;
+    for (size_t i = 0; i < key_count; ++i) {
+        uint8_t record[REGION_KEY_RECORD_SIZE];
+        if (reader.read(record, sizeof(record)) != sizeof(record)) return false;
+        const uint16_t id = regionReadU16(record);
+        if (id == 0 || !regionPrivateIdPresent(structure, id)) return false;
+        uint8_t combined = 0;
+        for (size_t byte = 2; byte < sizeof(record); ++byte) {
+            combined |= record[byte];
+        }
+        if (combined == 0) return false;
+        for (size_t previous = 0; previous < i; ++previous) {
+            if (key_ids[previous] == id) return false;
+        }
+        key_ids[i] = id;
+    }
+
+    const size_t content_size = size - REGION_CHECKSUM_SIZE;
+    if (!reader.seek(0)) return false;
+    uint32_t crc = 0xFFFFFFFFU;
+    size_t remaining = content_size;
+    uint8_t buffer[128];
+    while (remaining > 0) {
+        const size_t chunk = remaining < sizeof(buffer)
+            ? remaining : sizeof(buffer);
+        if (reader.read(buffer, chunk) != chunk) return false;
+        crc = regionCrcUpdate(crc, buffer, chunk);
+        remaining -= chunk;
+    }
+    uint8_t stored_crc[REGION_CHECKSUM_SIZE];
+    return reader.read(stored_crc, sizeof(stored_crc)) ==
+               sizeof(stored_crc) &&
+        (crc ^ 0xFFFFFFFFU) == regionReadU32(stored_crc);
+}
+
+bool validateAnyCurrentRegionFile(
+    sigurdos::storage::AtomicFileReader& reader, void*)
+{
+    return validateTransactionalRegionFile(reader, nullptr) ||
+        validateCurrentRegionFile(reader, nullptr);
 }
 
 bool validateRegionPath(const char* path,
@@ -510,6 +616,168 @@ bool writeRegionEnvelope(sigurdos::storage::AtomicFileWriter& writer,
     return writer.write(encoded_crc, sizeof(encoded_crc)) == sizeof(encoded_crc);
 }
 
+bool regionPathSize(const char* path, size_t& size_out)
+{
+    size_out = 0;
+#if defined(ESP32_PLATFORM)
+    File source = SPIFFS.open(path, "r");
+    if (!source) return false;
+    size_out = source.size();
+    source.close();
+    return true;
+#else
+    FILE* source = std::fopen(path, "rb");
+    if (!source) return false;
+    if (std::fseek(source, 0, SEEK_END) != 0) {
+        std::fclose(source);
+        return false;
+    }
+    const long end = std::ftell(source);
+    std::fclose(source);
+    if (end < 0) return false;
+    size_out = static_cast<size_t>(end);
+    return true;
+#endif
+}
+
+struct RegionTransactionalWriteCtx {
+    const char* source_path;
+    size_t source_size;
+    int key_count;
+    detail::RegionKeyReadFn read_key;
+    void* read_ctx;
+};
+
+bool writeTransactionalRegionEnvelope(
+    sigurdos::storage::AtomicFileWriter& writer, void* raw_ctx)
+{
+    auto* ctx = static_cast<RegionTransactionalWriteCtx*>(raw_ctx);
+    if (!ctx || !ctx->source_path ||
+        ctx->source_size < REGION_LEGACY_HEADER_SIZE ||
+        ctx->source_size > UINT32_MAX || ctx->key_count < 0 ||
+        ctx->key_count > static_cast<int>(REGION_MAX_PRIVATE_KEYS) ||
+        (ctx->key_count > 0 && !ctx->read_key)) {
+        return false;
+    }
+
+    uint8_t header[REGION_TRANSACTIONAL_HEADER_SIZE]{};
+    std::memcpy(header, REGION_TRANSACTIONAL_MAGIC,
+                sizeof(REGION_TRANSACTIONAL_MAGIC));
+    regionWriteU32(&header[3], static_cast<uint32_t>(ctx->source_size));
+    header[7] = static_cast<uint8_t>(ctx->key_count);
+    uint32_t crc = regionCrcUpdate(0xFFFFFFFFU, header, sizeof(header));
+    if (writer.write(header, sizeof(header)) != sizeof(header)) return false;
+
+#if defined(ESP32_PLATFORM)
+    File source = SPIFFS.open(ctx->source_path, "r");
+    if (!source) return false;
+#else
+    FILE* source = std::fopen(ctx->source_path, "rb");
+    if (!source) return false;
+#endif
+    bool ok = true;
+    size_t offset = 0;
+    uint8_t buffer[128];
+    while (ok && offset < ctx->source_size) {
+        const size_t chunk = ctx->source_size - offset < sizeof(buffer)
+            ? ctx->source_size - offset : sizeof(buffer);
+#if defined(ESP32_PLATFORM)
+        const size_t read = source.read(buffer, chunk);
+#else
+        const size_t read = std::fread(buffer, 1, chunk, source);
+#endif
+        if (read != chunk) {
+            ok = false;
+            break;
+        }
+        crc = regionCrcUpdate(crc, buffer, chunk);
+        ok = writer.write(buffer, chunk) == chunk;
+        offset += chunk;
+    }
+#if defined(ESP32_PLATFORM)
+    source.close();
+#else
+    std::fclose(source);
+#endif
+    if (!ok) return false;
+
+    for (int i = 0; i < ctx->key_count; ++i) {
+        uint8_t record[REGION_KEY_RECORD_SIZE]{};
+        uint16_t region_id = 0;
+        if (!ctx->read_key(i, &region_id, &record[2], ctx->read_ctx)) {
+            return false;
+        }
+        regionWriteU16(record, region_id);
+        crc = regionCrcUpdate(crc, record, sizeof(record));
+        if (writer.write(record, sizeof(record)) != sizeof(record)) return false;
+    }
+
+    uint8_t encoded_crc[REGION_CHECKSUM_SIZE];
+    regionWriteU32(encoded_crc, crc ^ 0xFFFFFFFFU);
+    return writer.write(encoded_crc, sizeof(encoded_crc)) ==
+        sizeof(encoded_crc);
+}
+
+bool copyTransactionalRegionMap(const char* path, const char* legacy_path)
+{
+    if (!validateRegionPath(path, validateTransactionalRegionFile)) return false;
+#if defined(ESP32_PLATFORM)
+    File source = SPIFFS.open(path, "r");
+    File destination = SPIFFS.open(legacy_path, "w");
+    if (!source || !destination) {
+        if (source) source.close();
+        if (destination) destination.close();
+        return false;
+    }
+#else
+    FILE* source = std::fopen(path, "rb");
+    FILE* destination = std::fopen(legacy_path, "wb");
+    if (!source || !destination) {
+        if (source) std::fclose(source);
+        if (destination) std::fclose(destination);
+        return false;
+    }
+#endif
+
+    uint8_t header[REGION_TRANSACTIONAL_HEADER_SIZE];
+#if defined(ESP32_PLATFORM)
+    bool ok = source.read(header, sizeof(header)) == sizeof(header);
+#else
+    bool ok = std::fread(header, 1, sizeof(header), source) == sizeof(header);
+#endif
+    size_t remaining = ok ? regionReadU32(&header[3]) : 0;
+    uint8_t buffer[128];
+    while (ok && remaining > 0) {
+        const size_t chunk = remaining < sizeof(buffer)
+            ? remaining : sizeof(buffer);
+#if defined(ESP32_PLATFORM)
+        const size_t read = source.read(buffer, chunk);
+        const size_t written = destination.write(buffer, chunk);
+#else
+        const size_t read = std::fread(buffer, 1, chunk, source);
+        const size_t written = std::fwrite(buffer, 1, chunk, destination);
+#endif
+        ok = read == chunk && written == chunk;
+        remaining -= chunk;
+    }
+#if defined(ESP32_PLATFORM)
+    source.close();
+    destination.close();
+#else
+    if (std::fclose(source) != 0) ok = false;
+    if (std::fclose(destination) != 0) ok = false;
+#endif
+    if (!ok || !validateRegionPath(legacy_path, validateLegacyRegionFile)) {
+#if defined(ESP32_PLATFORM)
+        SPIFFS.remove(legacy_path);
+#else
+        std::remove(legacy_path);
+#endif
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 namespace detail {
@@ -556,6 +824,86 @@ bool regionStoreSaveLegacyFile(const char* path, const char* legacy_path)
         validateCurrentRegionFile, nullptr);
 }
 
+bool regionStoreSaveTransactionalFile(const char* path,
+                                      const char* legacy_path,
+                                      int key_count, RegionKeyReadFn read_key,
+                                      void* ctx)
+{
+    if (!path || !legacy_path || key_count < 0 ||
+        key_count > static_cast<int>(REGION_MAX_PRIVATE_KEYS) ||
+        (key_count > 0 && !read_key) ||
+        !validateRegionPath(legacy_path, validateLegacyRegionFile)) {
+        return false;
+    }
+
+    // Finish an interrupted v2 commit before staging the next complete
+    // metadata+keys snapshot. During first migration, a valid v1/legacy live
+    // file is also an acceptable rollback source.
+    const bool recovered = sigurdos::storage::atomicFileRecover(
+        path, validateAnyCurrentRegionFile, nullptr);
+    if (!recovered) {
+        char temp_path[192];
+        if (!sigurdos::storage::atomicFileTempPath(
+                path, temp_path, sizeof(temp_path)) ||
+            validateRegionPath(temp_path, validateAnyCurrentRegionFile) ||
+            (!validateRegionPath(path, validateTransactionalRegionFile) &&
+             !validateRegionPath(path, validateCurrentRegionFile) &&
+             !validateRegionPath(path, validateLegacyRegionFile))) {
+            return false;
+        }
+    }
+
+    size_t source_size = 0;
+    if (!regionPathSize(legacy_path, source_size)) return false;
+    RegionTransactionalWriteCtx write_ctx{
+        legacy_path, source_size, key_count, read_key, ctx};
+    return sigurdos::storage::atomicFileReplace(
+        path, writeTransactionalRegionEnvelope, &write_ctx,
+        validateTransactionalRegionFile, nullptr);
+}
+
+bool regionStoreExtractTransactionalMap(const char* path,
+                                        const char* legacy_path)
+{
+    return path && legacy_path &&
+        copyTransactionalRegionMap(path, legacy_path);
+}
+
+int regionStoreLoadTransactionalKeys(const char* path,
+                                     RegionKeyLoadFn load_key, void* ctx)
+{
+    if (!path || !validateRegionPath(path, validateTransactionalRegionFile)) {
+        return -1;
+    }
+#if defined(ESP32_PLATFORM)
+    File file = SPIFFS.open(path, "r");
+    if (!file) return -1;
+    sigurdos::storage::AtomicFileReader reader(&file);
+#else
+    FILE* file = std::fopen(path, "rb");
+    if (!file) return -1;
+    sigurdos::storage::AtomicFileReader reader(file);
+#endif
+
+    uint8_t header[REGION_TRANSACTIONAL_HEADER_SIZE];
+    bool ok = reader.seek(0) &&
+        reader.read(header, sizeof(header)) == sizeof(header);
+    const size_t raw_size = ok ? regionReadU32(&header[3]) : 0;
+    const int key_count = ok ? header[7] : 0;
+    ok = ok && reader.seek(REGION_TRANSACTIONAL_HEADER_SIZE + raw_size);
+    for (int i = 0; ok && i < key_count; ++i) {
+        uint8_t record[REGION_KEY_RECORD_SIZE];
+        ok = reader.read(record, sizeof(record)) == sizeof(record) &&
+            (!load_key || load_key(regionReadU16(record), &record[2], ctx));
+    }
+#if defined(ESP32_PLATFORM)
+    file.close();
+#else
+    std::fclose(file);
+#endif
+    return ok ? key_count : -1;
+}
+
 RegionStoreFormat regionStorePrepareLoad(const char* path)
 {
     if (!path) return RegionStoreFormat::Invalid;
@@ -563,7 +911,10 @@ RegionStoreFormat regionStorePrepareLoad(const char* path)
     // legacy live file. It still removes the bad temp, so classify the live
     // file independently below.
     sigurdos::storage::atomicFileRecover(
-        path, validateCurrentRegionFile, nullptr);
+        path, validateAnyCurrentRegionFile, nullptr);
+    if (validateRegionPath(path, validateTransactionalRegionFile)) {
+        return RegionStoreFormat::Transactional;
+    }
     if (validateRegionPath(path, validateCurrentRegionFile)) {
         return RegionStoreFormat::Current;
     }
