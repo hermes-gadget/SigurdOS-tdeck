@@ -343,7 +343,7 @@ public:
         }
         if (send_result == MSG_SEND_FAILED) return result;
         if (expected_ack) {
-            mesh_ptr()->addPendingAck(contact->name, ts, expected_ack, est_timeout);
+            mesh_ptr()->addPendingAck(*contact, ts, expected_ack, est_timeout);
         }
 
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];

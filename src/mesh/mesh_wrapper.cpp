@@ -323,7 +323,17 @@ static bool presentIncomingMessage(void* raw)
     MeshMessage m{};
     strncpy(m.sender, ctx->sender, sizeof(m.sender) - 1);
     m.sender[sizeof(m.sender) - 1] = '\0';
-    strncpy(m.channel, ctx->channel ? ctx->channel : "", sizeof(m.channel) - 1);
+    if ((!ctx->channel || !ctx->channel[0]) && ctx->sender_prefix) {
+        char contact_id[
+            sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN]{};
+        if (sigurdos::mesh::contactIdFromPubKey(
+                ctx->sender_prefix, contact_id, sizeof(contact_id))) {
+            snprintf(m.channel, sizeof(m.channel), "DM: %s", contact_id);
+        }
+    } else {
+        strncpy(m.channel, ctx->channel ? ctx->channel : "",
+                sizeof(m.channel) - 1);
+    }
     m.channel[sizeof(m.channel) - 1] = '\0';
     sigurdos::utf8_copy_truncate(m.text, sizeof(m.text), ctx->text);
     m.timestamp = ctx->sender_timestamp
@@ -544,7 +554,7 @@ void sigurdos::mesh::meshQueuePushOutgoing(const char* conversation, const char*
 // ════════════════════════════════════════════════════
 static constexpr int MAX_ACKED = 32;
 struct AckedMsg {
-    char dest[32];
+    char dest[sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN];
     uint32_t timestamp;
 };
 static AckedMsg _acked_msgs[MAX_ACKED];
@@ -610,6 +620,30 @@ bool __attribute__((unused)) ensurePublicChannelPresent(bool persist)
 bool radioTxAllowed()
 {
     return sigurdos_mesh_radio_tx_allowed();
+}
+
+::ContactInfo* resolveContact(const char* contact_ref)
+{
+    if (!g_mesh || !contact_ref || !contact_ref[0]) return nullptr;
+    ContactReferenceResolver resolver(contact_ref);
+    for (int i = 0; i < g_mesh->getContactCount(); ++i) {
+        const ::ContactInfo* candidate = g_mesh->getContact(i);
+        if (candidate) {
+            resolver.consider(
+                i, candidate->name, candidate->id.pub_key);
+        }
+    }
+    const int index = resolver.result();
+    if (index < 0) return nullptr;
+    const ::ContactInfo* contact = g_mesh->getContact(index);
+    return contact
+        ? g_mesh->lookupContactByPubKey(contact->id.pub_key, PUB_KEY_SIZE)
+        : nullptr;
+}
+
+bool stableContactId(const ::ContactInfo& contact, char* out, size_t out_size)
+{
+    return contactIdFromPubKey(contact.id.pub_key, out, out_size);
 }
 
 struct ChannelSnapshot {
@@ -692,7 +726,9 @@ void registerAckedMessage(const char* dest, uint32_t ts) {
     _ack_counter++;
     _delivery_counter++;
     char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
-    formatDmConversation(conversation, sizeof(conversation), dest);
+    ::ContactInfo* contact = resolveContact(dest);
+    formatDmConversation(
+        conversation, sizeof(conversation), contact ? contact->name : dest);
     sigurdos::mesh::messageStoreMarkAcked(conversation, ts);
 #if SIGURDOS_DEBUG_MESH
     Serial.printf("[mesh] ACK for %s (ts=%lu) — %d total tracked\n", dest, (unsigned long)ts, _acked_count);
@@ -709,7 +745,9 @@ void registerConfirmationLost(const char* dest, uint32_t ts) {
     if (_lost_count < MAX_ACKED) _lost_count++;
     _delivery_counter++;
     char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
-    formatDmConversation(conversation, sizeof(conversation), dest);
+    ::ContactInfo* contact = resolveContact(dest);
+    formatDmConversation(
+        conversation, sizeof(conversation), contact ? contact->name : dest);
     sigurdos::mesh::messageStoreMarkConfirmationLost(conversation, ts);
 #if SIGURDOS_DEBUG_MESH
     Serial.printf("[mesh] confirmation lost for %s (ts=%lu)\n",
@@ -760,14 +798,14 @@ uint32_t getPendingAckExpiredCount() {
 // ── REQ/RESPONSE framework (Phase 4.1) ────────
 bool sendRequest(const char* dest_name, uint8_t req_type) {
     if (!radioTxAllowed()) return false;
-    if (!g_mesh || !dest_name) return false;
-    return g_mesh->sendRequest(dest_name, req_type);
+    ::ContactInfo* contact = resolveContact(dest_name);
+    return contact && g_mesh->sendRequest(*contact, req_type);
 }
 
 bool sendRequestWithData(const char* dest_name, const uint8_t* data, uint8_t len) {
     if (!radioTxAllowed()) return false;
-    if (!g_mesh || !dest_name || !data) return false;
-    return g_mesh->sendRequestWithData(dest_name, data, len);
+    ::ContactInfo* contact = resolveContact(dest_name);
+    return contact && data && g_mesh->sendRequestWithData(*contact, data, len);
 }
 
 int getResponseCount() {
@@ -794,7 +832,8 @@ void clearResponses() {
 // ── Room message fetch (Phase 4.6) ───────────────────
 bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name) {
     if (!radioTxAllowed()) return false;
-    return g_mesh ? g_mesh->sendRoomMsgFetchRequest(contact_name, channel_name) : false;
+    ::ContactInfo* contact = resolveContact(contact_name);
+    return contact && g_mesh->sendRoomMsgFetchRequest(*contact, channel_name);
 }
 
 int getRoomMsgFetchCount() {
@@ -850,7 +889,7 @@ int getLoggedInRoomServerCount() {
         if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
             tmp.type == ADV_TYPE_ROOM &&
             tmp.name[0] &&
-            g_mesh->isLoggedIn(tmp.name)) {
+            g_mesh->isLoggedIn(tmp.id.pub_key)) {
             count++;
         }
     }
@@ -866,12 +905,11 @@ const char* getLoggedInRoomServerName(int index) {
         if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
             tmp.type == ADV_TYPE_ROOM &&
             tmp.name[0] &&
-            g_mesh->isLoggedIn(tmp.name)) {
+            g_mesh->isLoggedIn(tmp.id.pub_key)) {
             if (count == index) {
-                static char name_buf[32];
-                strncpy(name_buf, tmp.name, sizeof(name_buf) - 1);
-                name_buf[sizeof(name_buf) - 1] = '\0';
-                return name_buf;
+                static char contact_id[SIGURDOS_CONTACT_ID_BUFFER_LEN];
+                return stableContactId(
+                    tmp, contact_id, sizeof(contact_id)) ? contact_id : "";
             }
             count++;
         }
@@ -882,21 +920,15 @@ const char* getLoggedInRoomServerName(int index) {
 // ── Status request (Phase 4.2) ────────────────
 bool requestStatus(const char* dest_name) {
     if (!radioTxAllowed()) return false;
-    if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    ::ContactInfo contact{};
-    bool found = false;
-    for (int i = 0; i < g_mesh->getNumContacts(); ++i) {
-        if (g_mesh->getContactByIdx((uint32_t)i, contact) &&
-            strcmp(contact.name, dest_name) == 0) { found = true; break; }
-    }
-    if (!found) return false;
+    ::ContactInfo* contact = resolveContact(dest_name);
+    if (!contact) return false;
     _last_status_tag = 0;
     _has_cached_status = false;
     uint32_t tag = 0;
-    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS, &tag);
+    bool ok = g_mesh->sendRequest(*contact, REQ_TYPE_GET_STATUS, &tag);
     if (ok && tag != 0) {
         _last_status_tag = tag;
-        memcpy(_last_status_key, contact.id.pub_key, PUB_KEY_SIZE);
+        memcpy(_last_status_key, contact->id.pub_key, PUB_KEY_SIZE);
         _has_cached_status = false;
     }
     return ok;
@@ -941,22 +973,16 @@ bool getStatusResult(NodeStatus* out) {
 // ── Telemetry queries (Phase 4.3) ────────────
 bool requestTelemetry(const char* dest_name) {
     if (!radioTxAllowed()) return false;
-    if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    ::ContactInfo contact{};
-    bool found = false;
-    for (int i = 0; i < g_mesh->getNumContacts(); ++i) {
-        if (g_mesh->getContactByIdx((uint32_t)i, contact) &&
-            strcmp(contact.name, dest_name) == 0) { found = true; break; }
-    }
-    if (!found) return false;
+    ::ContactInfo* contact = resolveContact(dest_name);
+    if (!contact) return false;
     _last_telemetry_tag = 0;
     _has_cached_telemetry = false;
     uint32_t tag = 0;
     bool ok = g_mesh->sendRequest(
-        dest_name, REQ_TYPE_GET_TELEMETRY_DATA, &tag);
+        *contact, REQ_TYPE_GET_TELEMETRY_DATA, &tag);
     if (ok && tag != 0) {
         _last_telemetry_tag = tag;
-        memcpy(_last_telemetry_key, contact.id.pub_key, PUB_KEY_SIZE);
+        memcpy(_last_telemetry_key, contact->id.pub_key, PUB_KEY_SIZE);
         _has_cached_telemetry = false;
     }
     return ok;
@@ -1004,26 +1030,28 @@ bool getTelemetryResult(TelemetryResult* out) {
 
 // ── Path discovery (Phase 4.4) ────────────────
 uint32_t discoverPath(const char* dest_name) {
-    if (!g_mesh || !dest_name || !dest_name[0]) return 0;
-    return g_mesh->sendPathDiscovery(dest_name);
+    ::ContactInfo* contact = resolveContact(dest_name);
+    return contact ? g_mesh->sendPathDiscovery(*contact) : 0;
 }
 
 bool pathDiscoveryPending(const char* dest_name) {
-    return g_mesh && dest_name && g_mesh->discoveryPending(dest_name);
+    ::ContactInfo* contact = resolveContact(dest_name);
+    return contact && g_mesh->discoveryPending(contact->id.pub_key);
 }
 
 bool pathDiscoveryTimedOut(const char* dest_name) {
-    return g_mesh && dest_name && g_mesh->discoveryTimedOut(dest_name);
+    ::ContactInfo* contact = resolveContact(dest_name);
+    return contact && g_mesh->discoveryTimedOut(contact->id.pub_key);
 }
 
 bool hasPathTo(const char* dest_name) {
-    if (!g_mesh || !dest_name) return false;
-    return g_mesh->getPathLen(dest_name) != OUT_PATH_UNKNOWN;
+    ::ContactInfo* contact = resolveContact(dest_name);
+    return contact && contact->out_path_len != OUT_PATH_UNKNOWN;
 }
 
 uint8_t getContactPathLen(const char* dest_name) {
-    if (!g_mesh || !dest_name) return OUT_PATH_UNKNOWN;
-    return g_mesh->getPathLen(dest_name);
+    ::ContactInfo* contact = resolveContact(dest_name);
+    return contact ? contact->out_path_len : OUT_PATH_UNKNOWN;
 }
 
 // Inject a simulated message into the queue (for remote test mode — no radio)
@@ -1412,18 +1440,19 @@ private:
 };
 
 uint32_t sendMessage(const char* dest, const char* text) {
-    if (!g_mesh) return 0;
+    ::ContactInfo* contact = resolveContact(dest);
+    if (!contact || !text) return 0;
     uint32_t ts = meshRtcTimeUnique();
     if (ts == 0) ts = 1;  // 0 means failure; use 1 as fallback so ACK matching still works
     // sendTextTo now takes a fixed timestamp so the UI and mesh layer agree
     // (see slop_mesh_v2.h sendTextTo overload)
-    bool ok = g_mesh->sendTextTo(dest, text, ts);
+    bool ok = g_mesh->sendTextTo(*contact, text, ts);
     if (ok) {
-        sigurdos::telemetry::push_packet_log("tx", own_name, dest, text, 0);
+        sigurdos::telemetry::push_packet_log(
+            "tx", own_name, contact->name, text, 0);
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
-        formatDmConversation(conversation, sizeof(conversation), dest);
-        const int contact_idx = findContactIndex(dest);
-        const bool sent_flood = contact_idx < 0 || !contactHasPath(contact_idx);
+        formatDmConversation(conversation, sizeof(conversation), contact->name);
+        const bool sent_flood = contact->out_path_len == OUT_PATH_UNKNOWN;
         meshStoreOutgoingMessage(conversation, text, ts, false, sent_flood);
         pushPacketLog(own_name, 0, 0.0f, "TX_DM");
     }
@@ -1493,18 +1522,9 @@ void resetUnreadMessageCount() { unread_count = 0; }
 
 int getContactCount() { return g_mesh ? g_mesh->getContactCount() : 0; }
 
-int exportContacts(char names[][32], int max) {
-    if (!g_mesh || !names || max <= 0) return 0;
-    int n = 0;
-    for (int i = 0; i < g_mesh->getContactCount() && n < max; i++) {
-        auto* c = g_mesh->getContact(i);
-        if (c) { strncpy(names[n], c->name, sizeof(names[n]) - 1); names[n][sizeof(names[n]) - 1] = '\0'; n++; }
-    }
-    return n;
-}
-
 // ContactInfo is declared in mesh_wrapper.h — exportContactsFull uses it
 static void fillContactInfo(ContactInfo& dest, const ::ContactInfo& src) {
+    stableContactId(src, dest.id, sizeof(dest.id));
     strncpy(dest.name, src.name, sizeof(dest.name) - 1);
     dest.name[sizeof(dest.name) - 1] = '\0';
     dest.type = src.type;
@@ -1519,6 +1539,18 @@ static void fillContactInfo(ContactInfo& dest, const ::ContactInfo& src) {
     dest.snr  = g_mesh->getContactSNR(src.id.pub_key);
     dest.last_seen = src.last_advert_timestamp;
     dest.favourite = (src.flags & 0x01) != 0;
+    dest.name_ambiguous = false;
+    if (g_mesh) {
+        for (int i = 0; i < g_mesh->getContactCount(); ++i) {
+            const ::ContactInfo* other = g_mesh->getContact(i);
+            if (other &&
+                memcmp(other->id.pub_key, src.id.pub_key, PUB_KEY_SIZE) != 0 &&
+                strcmp(other->name, src.name) == 0) {
+                dest.name_ambiguous = true;
+                break;
+            }
+        }
+    }
     dest.has_path = src.out_path_len != OUT_PATH_UNKNOWN;
     dest.path_len = src.out_path_len;
 }
@@ -1533,19 +1565,34 @@ int exportContactsFull(ContactInfo* out, int max) {
             n++;
         }
     }
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            if (strcmp(out[i].name, out[j].name) == 0) {
+                out[i].name_ambiguous = true;
+                out[j].name_ambiguous = true;
+            }
+        }
+    }
     return n;
 }
 
 bool getContactByName(const char* name, ContactInfo* out) {
     if (!g_mesh || !name || !name[0] || !out) return false;
-    for (int i = 0; i < g_mesh->getContactCount(); i++) {
-        auto* c = g_mesh->getContact(i);
-        if (c && c->name[0] && strcmp(c->name, name) == 0) {
-            fillContactInfo(*out, *c);
-            return true;
-        }
-    }
-    return false;
+    ::ContactInfo* contact = resolveContact(name);
+    if (!contact) return false;
+    fillContactInfo(*out, *contact);
+    return true;
+}
+
+bool getContactById(const char* contact_id, ContactInfo* out) {
+    if (!out) return false;
+    uint8_t pub_key[PUB_KEY_SIZE]{};
+    if (!contactIdToPubKey(contact_id, pub_key) || !g_mesh) return false;
+    ::ContactInfo* contact =
+        g_mesh->lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    if (!contact) return false;
+    fillContactInfo(*out, *contact);
+    return true;
 }
 
 static bool assignLocalContactRevision(::ContactInfo& contact)
@@ -1582,38 +1629,24 @@ bool meshResetContactPathByPubKeyDurable(const uint8_t* pub_key)
 // ── Favourite contacts ──────────────────────────
 
 bool isContactFavourite(const char* name) {
-    if (!g_mesh || !name) return false;
-    for (int i = 0; i < g_mesh->getContactCount(); i++) {
-        auto* c = g_mesh->getContact(i);
-        if (c && strcmp(c->name, name) == 0) {
-            return (c->flags & 0x01) != 0;
-        }
-    }
-    return false;
+    ::ContactInfo* contact = resolveContact(name);
+    return contact && (contact->flags & 0x01) != 0;
 }
 
 bool setContactFavourite(const char* name, bool favourite) {
-    if (!g_mesh || !name) return false;
-    for (int i = 0; i < g_mesh->getContactCount(); i++) {
-        auto* c = g_mesh->getContact(i);
-        if (c && strcmp(c->name, name) == 0) {
-            ::ContactInfo* live = g_mesh->lookupContactByPubKey(
-                c->id.pub_key, PUB_KEY_SIZE);
-            if (!live) return false;
-            ::ContactInfo before = *live;
-            if (favourite) live->flags |= 0x01;
-            else           live->flags &= ~0x01;
-            // Bump lastmod + persist so a companion app's incremental
-            // CMD_GET_CONTACTS(since=…) picks up the favourite change (R3).
-            if (!assignLocalContactRevision(*live)) {
-                *live = before;
-                return false;
-            }
-            if (saveContacts()) return true;
-            *live = before;
-            return false;
-        }
+    ::ContactInfo* live = resolveContact(name);
+    if (!live) return false;
+    ::ContactInfo before = *live;
+    if (favourite) live->flags |= 0x01;
+    else           live->flags &= ~0x01;
+    // Bump lastmod + persist so a companion app's incremental
+    // CMD_GET_CONTACTS(since=…) picks up the favourite change (R3).
+    if (!assignLocalContactRevision(*live)) {
+        *live = before;
+        return false;
     }
+    if (saveContacts()) return true;
+    *live = before;
     return false;
 }
 
@@ -1843,16 +1876,19 @@ uint32_t makeEpoch(int year, int month, int day, int hour, int minute) {
 static uint32_t trace_tag_counter = 0;
 
 int findContactIndex(const char* name) {
-    if (!g_mesh || !name || !name[0]) return -1;
+    ::ContactInfo* contact = resolveContact(name);
+    if (!contact) return -1;
     for (int i = 0; i < g_mesh->getContactCount(); i++) {
         auto* c = g_mesh->getContact(i);
-        if (c && strcmp(c->name, name) == 0) return i;
+        if (c && memcmp(c->id.pub_key, contact->id.pub_key,
+                        PUB_KEY_SIZE) == 0) return i;
     }
     return -1;
 }
 
-bool sendTrace(int contact_idx, uint32_t* out_tag) {
-    if (!g_mesh) return false;
+bool sendTrace(const char* contact_id, uint32_t* out_tag) {
+    const int contact_idx = findContactIndex(contact_id);
+    if (contact_idx < 0 || !g_mesh) return false;
     uint32_t tag = ++trace_tag_counter;
     if (out_tag) *out_tag = tag;
     return g_mesh->sendTrace(contact_idx, tag);
@@ -2273,57 +2309,35 @@ void setDutyCycle(uint8_t percent) {
 
 // ── Contact management extensions ────────────
     bool removeContact(const char* name) {
-        if (!g_mesh || !name) return false;
-        for (int i = 0; i < g_mesh->getContactCount(); i++) {
-            auto* c = g_mesh->getContact(i);
-            if (c && strcmp(c->name, name) == 0) {
-                uint8_t pub_key[PUB_KEY_SIZE]{};
-                memcpy(pub_key, c->id.pub_key, sizeof(pub_key));
-                return meshRemoveContactByPubKeyDurable(pub_key);
-            }
-        }
-        return false;
+        ::ContactInfo* contact = resolveContact(name);
+        if (!contact) return false;
+        uint8_t pub_key[PUB_KEY_SIZE]{};
+        memcpy(pub_key, contact->id.pub_key, sizeof(pub_key));
+        return meshRemoveContactByPubKeyDurable(pub_key);
     }
 
     bool resetPathTo(const char* name) {
-        if (!g_mesh || !name) return false;
-        int idx = findContactIndex(name);
-        if (idx < 0) return false;
-        const ::ContactInfo* cached = g_mesh->getContact(idx);
-        if (!cached) return false;
+        ::ContactInfo* contact = resolveContact(name);
+        if (!contact) return false;
         uint8_t pub_key[PUB_KEY_SIZE]{};
-        memcpy(pub_key, cached->id.pub_key, sizeof(pub_key));
+        memcpy(pub_key, contact->id.pub_key, sizeof(pub_key));
         return meshResetContactPathByPubKeyDurable(pub_key);
     }
 
     bool setContactPerm(const char* name, uint8_t perm) {
-        if (!g_mesh || !name) return false;
-        ::ContactInfo tmp;
-        for (int i = 0; i < g_mesh->getNumContacts(); i++) {
-            if (g_mesh->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
-                // Get writable pointer to the actual MeshCore ContactInfo
-                ::ContactInfo* live = g_mesh->lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
-                if (!live) return false;
-                const ::ContactInfo before = *live;
-                // Pack perm into flags bits 1-2, preserving bit 0 (favourite)
-                live->flags = (live->flags & 0x01) | ((perm & 0x03) << 1);
-                if (assignLocalContactRevision(*live) && saveContacts()) return true;
-                *live = before;
-                return false;
-            }
-        }
+        ::ContactInfo* live = resolveContact(name);
+        if (!live) return false;
+        const ::ContactInfo before = *live;
+        // Pack perm into flags bits 1-2, preserving bit 0 (favourite)
+        live->flags = (live->flags & 0x01) | ((perm & 0x03) << 1);
+        if (assignLocalContactRevision(*live) && saveContacts()) return true;
+        *live = before;
         return false;
     }
 
     int getContactPerm(const char* name) {
-        if (!g_mesh || !name) return -1;
-        ::ContactInfo tmp;
-        for (int i = 0; i < g_mesh->getNumContacts(); i++) {
-            if (g_mesh->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
-                return (tmp.flags >> 1) & 0x03;
-            }
-        }
-        return -1;
+        ::ContactInfo* contact = resolveContact(name);
+        return contact ? (contact->flags >> 1) & 0x03 : -1;
     }
 
     // ── Channel management extensions ────────────
@@ -2337,52 +2351,29 @@ void setDutyCycle(uint8_t percent) {
 
     // ── Repeater/room login (Phase 4.5) ──────────────
     bool sendLogin(const char* name, const char* password) {
-        if (!g_mesh || !name || !password) return false;
-        for (int i = 0; i < g_mesh->getContactCount(); i++) {
-            auto* c = g_mesh->getContact(i);
-            if (c && strcmp(c->name, name) == 0) {
-                return g_mesh->sendLoginTo(*c, password);
-            }
-        }
-        return false;
+        ::ContactInfo* contact = resolveContact(name);
+        return contact && password && g_mesh->sendLoginTo(*contact, password);
     }
 
     void sendLogout(const char* name) {
-        if (!g_mesh || !name) return;
-        for (int i = 0; i < g_mesh->getContactCount(); i++) {
-            auto* c = g_mesh->getContact(i);
-            if (c && strcmp(c->name, name) == 0) {
-                g_mesh->sendLogoutTo(*c);
-                return;
-            }
-        }
+        ::ContactInfo* contact = resolveContact(name);
+        if (contact) g_mesh->sendLogoutTo(*contact);
     }
 
     bool sendCommand(const char* name, const char* text) {
-        if (!g_mesh || !name || !text) return false;
-        for (int i = 0; i < g_mesh->getContactCount(); i++) {
-            auto* c = g_mesh->getContact(i);
-            if (c && strcmp(c->name, name) == 0) {
-                return g_mesh->sendCommandDataTo(*c, text);
-            }
-        }
-        return false;
+        ::ContactInfo* contact = resolveContact(name);
+        return contact && text && g_mesh->sendCommandDataTo(*contact, text);
     }
 
     bool isLoggedIn(const char* name) {
-        return g_mesh ? g_mesh->isLoggedIn(name) : false;
+        ::ContactInfo* contact = resolveContact(name);
+        return contact && g_mesh->isLoggedIn(contact->id.pub_key);
     }
 
     // Force login state for a contact (test/override only)
     void forceLoginState(const char* name, uint8_t status, uint8_t permission) {
         if (!g_mesh || !name) return;
-        const ::ContactInfo* contact = nullptr;
-        for (int i = 0; i < g_mesh->getContactCount(); ++i) {
-            const ::ContactInfo* candidate = g_mesh->getContact(i);
-            if (!candidate || strcmp(candidate->name, name) != 0) continue;
-            if (contact) return;  // ambiguous display name
-            contact = candidate;
-        }
+        const ::ContactInfo* contact = resolveContact(name);
         if (!contact) return;
 
         int idx = g_mesh->findLoginEntry(contact->id.pub_key);
@@ -2395,11 +2386,14 @@ void setDutyCycle(uint8_t percent) {
     }
 
     uint8_t getLoginPermission(const char* name) {
-        return g_mesh ? g_mesh->getLoginPermission(name) : 0;
+        ::ContactInfo* contact = resolveContact(name);
+        return contact ? g_mesh->getLoginPermission(contact->id.pub_key) : 0;
     }
 
     uint8_t getLoginStatus(const char* name) {
-        return g_mesh ? g_mesh->getLoginStatus(name) : LOGIN_STATUS_NONE;
+        ::ContactInfo* contact = resolveContact(name);
+        return contact ? g_mesh->getLoginStatus(contact->id.pub_key)
+                       : LOGIN_STATUS_NONE;
     }
 
     // ── Anonymous requests (Phase 4.7) ────────────────
@@ -2535,8 +2529,8 @@ int hexToBytes(const char* hex, uint8_t* out, int out_max) {
 
 // ── Advert path (inbound) ─────────────────────
 uint8_t getAdvertPathLen(const char* name) {
-    if (!g_mesh || !name) return 0;
-    return g_mesh->getAdvertPathLen(name);
+    ::ContactInfo* contact = resolveContact(name);
+    return contact ? g_mesh->getAdvertPathLen(contact->id.pub_key) : 0;
 }
 
 int signMessage(const char* data, uint8_t* sig_out) {
@@ -2717,18 +2711,12 @@ bool addChannelByUri(const char* uri) {
 // ── QR code support ─────────────────────────────
 bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz)
 {
-    if (!g_mesh || !name || !hex_out) return false;
+    if (!hex_out) return false;
     // Need 2*PUB_KEY_SIZE hex chars + null terminator
     if (hex_sz < (size_t)(PUB_KEY_SIZE * 2 + 1)) return false;
-    int count = g_mesh->getNumContacts();
-    for (int i = 0; i < count; i++) {
-        ::ContactInfo c;
-        if (g_mesh->getContactByIdx(i, c) && strcmp(c.name, name) == 0) {
-            ::mesh::Utils::toHex(hex_out, c.id.pub_key, PUB_KEY_SIZE);
-            return true;
-        }
-    }
-    return false;
+    ::ContactInfo* contact = resolveContact(name);
+    return contact &&
+        stableContactId(*contact, hex_out, hex_sz);
 }
 
 bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz)

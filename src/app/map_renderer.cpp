@@ -1538,7 +1538,7 @@ static constexpr int CONTACT_DOT_SIZE = 8;
 
 struct ContactDot {
     lv_obj_t* obj;
-    char name[32];
+    char contact_id[65];
 };
 
 static ContactDot g_contact_dots[MAX_CONTACT_DOTS];
@@ -1589,13 +1589,16 @@ void sigurdos_map_contact_init(lv_obj_t* parent, int parent_screen_y) {
         lv_obj_add_flag(dot, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(dot, LV_OBJ_FLAG_CLICKABLE);
         g_contact_dots[i].obj = dot;
-        g_contact_dots[i].name[0] = '\0';
+        g_contact_dots[i].contact_id[0] = '\0';
 
         lv_obj_add_event_cb(dot, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             for (int j = 0; j < MAX_CONTACT_DOTS; j++) {
-                if (g_contact_dots[j].obj == target && g_contact_dots[j].name[0]) {
-                    if (g_contact_tap_cb) g_contact_tap_cb(g_contact_dots[j].name);
+                if (g_contact_dots[j].obj == target &&
+                    g_contact_dots[j].contact_id[0]) {
+                    if (g_contact_tap_cb) {
+                        g_contact_tap_cb(g_contact_dots[j].contact_id);
+                    }
                     break;
                 }
             }
@@ -1638,15 +1641,17 @@ void sigurdos_map_contact_render(const void* contacts_ptr, int count) {
             sigurdos_map_marker_origin(px, 0, CONTACT_DOT_SIZE),
             sigurdos_map_marker_origin(
                 py, g_contact_parent_screen_y, CONTACT_DOT_SIZE));
-        strncpy(g_contact_dots[slot].name, contacts[i].name, sizeof(g_contact_dots[slot].name) - 1);
-        g_contact_dots[slot].name[sizeof(g_contact_dots[slot].name) - 1] = '\0';
+        strncpy(g_contact_dots[slot].contact_id, contacts[i].id,
+                sizeof(g_contact_dots[slot].contact_id) - 1);
+        g_contact_dots[slot]
+            .contact_id[sizeof(g_contact_dots[slot].contact_id) - 1] = '\0';
         slot++;
     }
 
     // Hide unused
     for (int i = slot; i < MAX_CONTACT_DOTS; i++) {
         lv_obj_add_flag(g_contact_dots[i].obj, LV_OBJ_FLAG_HIDDEN);
-        g_contact_dots[i].name[0] = '\0';
+        g_contact_dots[i].contact_id[0] = '\0';
     }
 }
 

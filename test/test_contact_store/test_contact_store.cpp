@@ -501,10 +501,27 @@ TEST_F(ContactStoreTest, InvalidLaterRecordDoesNotApplyEarlierRecord) {
     EXPECT_EQ(out[0].name[0], '\0');
 }
 
-TEST_F(ContactStoreTest, DuplicateNamesOrKeysRejectWholeFile) {
+TEST_F(ContactStoreTest, DuplicateNamesWithDistinctKeysLoad) {
     StoredContact contacts[2] = {
         makeContact(0x20, "Same", ADV_TYPE_CHAT, 0),
         makeContact(0x60, "Same", ADV_TYPE_SENSOR, 0),
+    };
+    std::vector<uint8_t> raw;
+    appendVersionedHeader(raw, 2, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
+    appendRecord(raw, contacts[0]);
+    appendRecord(raw, contacts[1]);
+    writeBytes(path, raw);
+
+    StoredContact out[2]{};
+    ASSERT_EQ(sigurdos::mesh::contactStoreLoadAll(out, 2), 2);
+    EXPECT_STREQ(out[0].name, "Same");
+    EXPECT_STREQ(out[1].name, "Same");
+}
+
+TEST_F(ContactStoreTest, DuplicateFullKeysRejectWholeFile) {
+    StoredContact contacts[2] = {
+        makeContact(0x20, "First", ADV_TYPE_CHAT, 0),
+        makeContact(0x20, "Second", ADV_TYPE_SENSOR, 0),
     };
     std::vector<uint8_t> raw;
     appendVersionedHeader(raw, 2, sigurdos::mesh::detail::CONTACT_STORE_VERSION);
@@ -534,17 +551,95 @@ TEST(ContactImportValidation, RejectsZeroKey) {
         "Alice", zero_key, ADV_TYPE_CHAT));
 }
 
-TEST(ContactImportValidation, DetectsDuplicateNameOrFullKey) {
+TEST(ContactImportValidation, DuplicateNamesAreValidButDuplicateKeysAreNot) {
     uint8_t key_a[SIGURDOS_CONTACT_PUBKEY_LEN]{};
     uint8_t key_b[SIGURDOS_CONTACT_PUBKEY_LEN]{};
     key_a[0] = 1;
     key_b[0] = 2;
-    EXPECT_TRUE(sigurdos::mesh::contactCandidateDuplicates(
+    EXPECT_FALSE(sigurdos::mesh::contactCandidateDuplicates(
         "Alice", key_a, "Alice", key_b));
     EXPECT_TRUE(sigurdos::mesh::contactCandidateDuplicates(
         "Alice", key_a, "Bob", key_a));
     EXPECT_FALSE(sigurdos::mesh::contactCandidateDuplicates(
         "Alice", key_a, "Bob", key_b));
+}
+
+TEST(ContactIdentity, FullPublicKeyRoundTripsAsStableId) {
+    uint8_t key[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    for (size_t i = 0; i < sizeof(key); ++i) key[i] = static_cast<uint8_t>(i);
+    char id[sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN]{};
+    uint8_t decoded[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+
+    ASSERT_TRUE(sigurdos::mesh::contactIdFromPubKey(key, id, sizeof(id)));
+    EXPECT_STREQ(
+        id, "000102030405060708090a0b0c0d0e0f"
+            "101112131415161718191a1b1c1d1e1f");
+    ASSERT_TRUE(sigurdos::mesh::contactIdToPubKey(id, decoded));
+    EXPECT_EQ(0, std::memcmp(key, decoded, sizeof(key)));
+}
+
+TEST(ContactIdentity, StableIdRejectsPrefixesAndMalformedHex) {
+    uint8_t decoded[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    EXPECT_FALSE(sigurdos::mesh::contactIdToPubKey(
+        "0001020304050607", decoded));
+    EXPECT_FALSE(sigurdos::mesh::contactIdToPubKey(
+        "gg0102030405060708090a0b0c0d0e0f"
+        "101112131415161718191a1b1c1d1e1f", decoded));
+}
+
+TEST(ContactIdentity, DuplicateNameUiLabelIncludesStableKeyPrefix) {
+    char label[48]{};
+    ASSERT_TRUE(sigurdos::mesh::contactDisplayLabel(
+        "Alice",
+        "000102030405060708090a0b0c0d0e0f"
+        "101112131415161718191a1b1c1d1e1f",
+        true, label, sizeof(label)));
+    EXPECT_STREQ(label, "Alice [00010203]");
+    ASSERT_TRUE(sigurdos::mesh::contactDisplayLabel(
+        "Alice", "ignored", false, label, sizeof(label)));
+    EXPECT_STREQ(label, "Alice");
+}
+
+TEST(ContactIdentity, EverySensitiveOperationFailsClosedOnDuplicateName) {
+    enum SensitiveOperation {
+        DirectMessage,
+        Request,
+        Login,
+        Trace,
+        Delete,
+        PermissionMutation,
+        FavouriteMutation,
+        AckAttribution,
+        ContactExport,
+        PathDiscovery,
+        RoomMessage,
+        AdminCommand,
+    };
+    const SensitiveOperation operations[] = {
+        DirectMessage, Request, Login, Trace, Delete, PermissionMutation,
+        FavouriteMutation, AckAttribution, ContactExport, PathDiscovery,
+        RoomMessage, AdminCommand,
+    };
+    uint8_t key_a[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    uint8_t key_b[SIGURDOS_CONTACT_PUBKEY_LEN]{};
+    key_a[0] = 0x11;
+    key_b[0] = 0x22;
+    char id_b[sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN]{};
+    ASSERT_TRUE(sigurdos::mesh::contactIdFromPubKey(
+        key_b, id_b, sizeof(id_b)));
+
+    for (SensitiveOperation operation : operations) {
+        SCOPED_TRACE(static_cast<int>(operation));
+        sigurdos::mesh::ContactReferenceResolver by_name("duplicate");
+        by_name.consider(0, "duplicate", key_a);
+        by_name.consider(1, "duplicate", key_b);
+        EXPECT_EQ(-1, by_name.result());
+
+        sigurdos::mesh::ContactReferenceResolver by_id(id_b);
+        by_id.consider(0, "duplicate", key_a);
+        by_id.consider(1, "duplicate", key_b);
+        EXPECT_EQ(1, by_id.result());
+    }
 }
 
 TEST(ContactImportValidation, CanonicalCandidateSupportsEveryAdvertRole) {

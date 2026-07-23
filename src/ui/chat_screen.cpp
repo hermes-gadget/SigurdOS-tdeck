@@ -35,6 +35,7 @@
 #include "../mesh/channel_validation.h"
 #include "../mesh/public_channel.h"
 #include "../mesh/message_store.h"
+#include "../mesh/contact_store.h"
 #include "../hal/prefs.h"
 #include "chat_store_migration.h"
 #include "../fonts/emoji_font.h"
@@ -141,11 +142,12 @@ static constexpr int LIST_ROW_H  = 44;
 // ── Channel state ──────────────────────────────────────────
 static constexpr int MAX_MESH_CHANNELS = CHAT_MESH_CONVERSATION_CAPACITY;
 static constexpr int MAX_CONVERSATIONS = CHAT_CONVERSATION_CAPACITY;
-// Row width of the channel-name table: "DM: " (4) + contact name (31) + null
-// = 36 → 37 for safety. Every buffer that mirrors a dyn_channels entry MUST use
+// Row width also accommodates "DM: " plus a full stable contact ID. Every
+// buffer that mirrors a dyn_channels entry MUST use
 // this constant — a stride mismatch silently corrupts the channel-state snapshot
 // taken in refresh_channels() (see issue #686).
-static constexpr int CHANNEL_NAME_CAP = 37;
+static constexpr int CHANNEL_NAME_CAP =
+    4 + sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN;
 static char  dyn_channels[MAX_CONVERSATIONS][CHANNEL_NAME_CAP];
 static int   dyn_count      = 0;
 static bool  g_skip_channel_list = false;   // Set true to bypass show_channel_list in chat_screen_show
@@ -156,6 +158,19 @@ static bool  chat_render_scroll_bottom = true;
 static lv_obj_t* chat_older_btn = nullptr;
 static lv_obj_t* chat_newer_btn = nullptr;
 static lv_obj_t* chat_no_results = nullptr;
+
+static int export_mesh_channels_to_dynamic()
+{
+    char mesh_channels[MAX_MESH_CHANNELS][37]{};
+    const int count = sigurdos::mesh::exportChannels(
+        mesh_channels, MAX_MESH_CHANNELS);
+    for (int i = 0; i < count; ++i) {
+        strncpy(dyn_channels[i], mesh_channels[i],
+                sizeof(dyn_channels[i]) - 1);
+        dyn_channels[i][sizeof(dyn_channels[i]) - 1] = '\0';
+    }
+    return count;
+}
 static lv_obj_t* chat_bubble_pool[CHAT_RENDER_WINDOW] = {};
 // ── Channel filter mode ────────────────────────────────────
 // 0 = show all, 1 = channels only, 2 = DMs only
@@ -315,9 +330,29 @@ static void show_emoji_picker(lv_obj_t* parent);
 static void show_search_bar();
 static void hide_search();
 
+static void format_conversation_label(const char* conversation,
+                                      char* out, size_t out_size)
+{
+    if (!out || out_size == 0) return;
+    if (conversation && strncmp(conversation, "DM: ", 4) == 0) {
+        sigurdos::mesh::ContactInfo contact{};
+        if (sigurdos::mesh::getContactById(conversation + 4, &contact)) {
+            char contact_label[48]{};
+            sigurdos::mesh::contactDisplayLabel(
+                contact.name, contact.id, contact.name_ambiguous,
+                contact_label, sizeof(contact_label));
+            snprintf(out, out_size, "DM: %s", contact_label);
+            return;
+        }
+    }
+    snprintf(out, out_size, "%s", conversation ? conversation : "");
+}
+
 static int channel_pill_width(const char* name)
 {
-    const size_t len = name ? strnlen(name, 31) : 0;
+    char display[56]{};
+    format_conversation_label(name, display, sizeof(display));
+    const size_t len = strnlen(display, sizeof(display) - 1);
     int width = 20 + (int)len * 7;
     if (width < 48) width = 48;
     if (width > 112) width = 112;
@@ -348,7 +383,9 @@ static lv_obj_t* create_channel_pill(lv_obj_t* parent, int idx)
     lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, LV_STATE_FOCUSED);
 
     lv_obj_t* label = lv_label_create(pill);
-    lv_label_set_text(label, dyn_channels[idx]);
+    char display[56]{};
+    format_conversation_label(dyn_channels[idx], display, sizeof(display));
+    lv_label_set_text(label, display);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(label, width - 8);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -419,10 +456,10 @@ static void refresh_channels()
     }
 
     // ── Get fresh channel list from mesh ─────────────────
-    dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_MESH_CHANNELS);
+    dyn_count = export_mesh_channels_to_dynamic();
     if (dyn_count == 0) {
         if (sigurdos::mesh::joinPublicChannel()) {
-            dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_MESH_CHANNELS);
+            dyn_count = export_mesh_channels_to_dynamic();
         }
         if (dyn_count == 0) {
             strncpy(dyn_channels[0], "#general", sizeof(dyn_channels[0]) - 1);
@@ -573,7 +610,9 @@ static void populate_channel_rows(lv_obj_t* list) {
         lv_obj_center(hash);
 
         lv_obj_t* name_lbl = lv_label_create(row);
-        lv_label_set_text(name_lbl, dyn_channels[i]);
+        char display[56]{};
+        format_conversation_label(dyn_channels[i], display, sizeof(display));
+        lv_label_set_text(name_lbl, display);
         lv_obj_set_style_text_color(name_lbl, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(name_lbl, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 46, 6);
@@ -2655,7 +2694,7 @@ void chat_screen_open_dm(const char* contact_name)
     chat_filter_mode = 0;
     refresh_channels();
 
-    // Buffer must fit "DM: " (4) + max contact name (31) + null (1) = 36
+    // Buffer fits "DM: " plus the complete stable contact ID.
     char dm_name[CHANNEL_NAME_CAP];
     const int written = snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
     if (written < 0 || static_cast<size_t>(written) >= sizeof(dm_name)) {
@@ -2966,9 +3005,9 @@ static bool migrate_legacy_history_message(const char* channel,
 void chat_load_messages()
 {
     if (dyn_count == 0) {
-        dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_MESH_CHANNELS);
+        dyn_count = export_mesh_channels_to_dynamic();
         if (dyn_count == 0 && sigurdos::mesh::joinPublicChannel()) {
-            dyn_count = sigurdos::mesh::exportChannels(dyn_channels, MAX_MESH_CHANNELS);
+            dyn_count = export_mesh_channels_to_dynamic();
         }
         if (dyn_count == 0) {
             strncpy(dyn_channels[0], "#general", sizeof(dyn_channels[0]) - 1);

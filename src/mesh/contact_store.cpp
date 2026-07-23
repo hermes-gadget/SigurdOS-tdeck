@@ -425,9 +425,80 @@ bool contactCandidateDuplicates(const char* name, const uint8_t* pub_key,
                                 const uint8_t* existing_pub_key)
 {
     if (!name || !pub_key || !existing_name || !existing_pub_key) return false;
-    return std::strncmp(name, existing_name, SIGURDOS_CONTACT_NAME_LEN) == 0 ||
-           std::memcmp(pub_key, existing_pub_key,
+    return std::memcmp(pub_key, existing_pub_key,
                        SIGURDOS_CONTACT_PUBKEY_LEN) == 0;
+}
+
+bool contactIdFromPubKey(const uint8_t* pub_key, char* out, size_t out_size)
+{
+    if (!pub_key || !out || out_size < SIGURDOS_CONTACT_ID_BUFFER_LEN) {
+        return false;
+    }
+    static constexpr char HEX_DIGITS[] = "0123456789abcdef";
+    for (size_t i = 0; i < SIGURDOS_CONTACT_PUBKEY_LEN; ++i) {
+        out[i * 2] = HEX_DIGITS[pub_key[i] >> 4];
+        out[i * 2 + 1] = HEX_DIGITS[pub_key[i] & 0x0F];
+    }
+    out[SIGURDOS_CONTACT_ID_LEN] = '\0';
+    return true;
+}
+
+bool contactIdToPubKey(const char* contact_id, uint8_t* out_pub_key)
+{
+    if (!contact_id || !out_pub_key ||
+        strnlen(contact_id, SIGURDOS_CONTACT_ID_BUFFER_LEN) !=
+            SIGURDOS_CONTACT_ID_LEN) {
+        return false;
+    }
+    auto nibble = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < SIGURDOS_CONTACT_PUBKEY_LEN; ++i) {
+        const int high = nibble(contact_id[i * 2]);
+        const int low = nibble(contact_id[i * 2 + 1]);
+        if (high < 0 || low < 0) return false;
+        out_pub_key[i] = static_cast<uint8_t>((high << 4) | low);
+    }
+    return true;
+}
+
+bool contactDisplayLabel(const char* name, const char* contact_id,
+                         bool disambiguate, char* out, size_t out_size)
+{
+    if (!name || !contact_id || !out || out_size == 0) return false;
+    const int written = disambiguate
+        ? std::snprintf(out, out_size, "%s [%.*s]", name, 8, contact_id)
+        : std::snprintf(out, out_size, "%s", name);
+    return written >= 0 && static_cast<size_t>(written) < out_size;
+}
+
+ContactReferenceResolver::ContactReferenceResolver(const char* reference)
+    : _reference(reference), _pub_key{}, _match(-1),
+      _stable_id(contactIdToPubKey(reference, _pub_key)), _ambiguous(false)
+{
+}
+
+void ContactReferenceResolver::consider(int index, const char* name,
+                                        const uint8_t* pub_key)
+{
+    if (index < 0 || !name || !pub_key || !_reference || _ambiguous) return;
+    const bool matches = _stable_id
+        ? std::memcmp(_pub_key, pub_key, SIGURDOS_CONTACT_PUBKEY_LEN) == 0
+        : std::strcmp(_reference, name) == 0;
+    if (!matches) return;
+    if (_match >= 0) {
+        _ambiguous = true;
+        return;
+    }
+    _match = index;
+}
+
+int ContactReferenceResolver::result() const
+{
+    return _ambiguous ? -1 : _match;
 }
 
 #if !defined(ESP32_PLATFORM)

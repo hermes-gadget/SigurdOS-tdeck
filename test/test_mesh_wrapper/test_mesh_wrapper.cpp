@@ -471,13 +471,6 @@ TEST_F(MeshWrapperTest, SNRInRealisticRange) {
 }
 
 // ── Recent nodes returns valid count ────────────────────
-TEST_F(MeshWrapperTest, GetRecentNodesReturnsNonNegative) {
-    char names[4][32];
-    int count = sigurdos::mesh::exportContacts(names, 4);
-    EXPECT_GE(count, 0);
-    EXPECT_LE(count, 4);
-}
-
 // ── ContactInfo struct includes type field ──────────────
 TEST_F(MeshWrapperTest, ContactInfoHasTypeField) {
     sigurdos::mesh::ContactInfo ci;
@@ -485,6 +478,13 @@ TEST_F(MeshWrapperTest, ContactInfoHasTypeField) {
     // In native test mode (no mesh init), exportContactsFull returns 0,
     // but the struct layout is what we're testing.
     EXPECT_EQ(sizeof(ci.type), sizeof(uint8_t));
+}
+
+TEST_F(MeshWrapperTest, ContactInfoCarriesFullStablePublicKeyId) {
+    sigurdos::mesh::ContactInfo contact{};
+    EXPECT_EQ(sizeof(contact.id), 65U);
+    using lookup_fn = bool (*)(const char*, sigurdos::mesh::ContactInfo*);
+    (void)static_cast<lookup_fn>(sigurdos::mesh::getContactById);
 }
 
 TEST_F(MeshWrapperTest, ContactInfoHasLocationFields) {

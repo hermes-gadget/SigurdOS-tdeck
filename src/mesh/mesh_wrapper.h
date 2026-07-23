@@ -34,8 +34,8 @@ namespace mesh {
 // path-length byte through to the companion bridge so the phone app shows the
 // correct time and hop count. Defaults (0 / 0xFF) suit callers without a packet:
 // the timestamp falls back to the local clock and 0xFF means "direct/unknown".
-// sender_prefix (6 bytes) is the exact pubkey prefix from packet metadata —
-// null falls back to a name-based lookup. txt_type, extra, and extra_len
+// sender_prefix points to the sender's complete public key when available;
+// null falls back to display-only routing. txt_type, extra, and extra_len
 // preserve the MeshCore companion text type and signed-message extra.
 void mesh_v2_queue_push(const char* sender, const char* channel,
                          const char* text, int rssi, float snr,
@@ -87,7 +87,7 @@ void mesh_v2_companion_trace_push(uint32_t tag, uint32_t auth, uint8_t flags,
 
 struct MeshMessage {
     char sender[32];
-    char channel[32];
+    char channel[4 + 65];
     char text[256];
     uint32_t timestamp;
     uint32_t store_id;
@@ -95,6 +95,8 @@ struct MeshMessage {
 };
 
 struct ContactInfo {
+    // Canonical identity: lowercase hex of the complete 32-byte public key.
+    char id[65];
     char name[32];
     uint8_t type;  // ADV_TYPE_* (ADV_TYPE_CHAT=companion, ADV_TYPE_REPEATER, ADV_TYPE_ROOM, etc.)
     uint8_t perm;  // PERM_ACL_* (0=guest, 1=read-only, 2=read-write, 3=admin), default 0
@@ -105,6 +107,7 @@ struct ContactInfo {
     float snr;
     uint32_t last_seen;
     bool favourite;
+    bool name_ambiguous;
     bool has_path;
     uint8_t path_len;
 };
@@ -122,10 +125,12 @@ void loop();
 
 // Returns 0 on failure, or the epoch-second timestamp the mesh layer used for ACK tracking.
 // The UI must store this returned timestamp so isMessageAcked() can match against it later.
-uint32_t sendMessage(const char* dest_name, const char* text);
+// Contact references are stable IDs. For compatibility, a unique display name
+// is accepted; duplicate display names always fail closed.
+uint32_t sendMessage(const char* contact_id, const char* text);
 bool sendChannelMessage(const char* channel_name, const char* text);
 // Scoped variants temporarily stamp this send with key16. A null key sends unscoped.
-uint32_t sendMessageWithScopeKey(const char* dest_name, const char* text, const uint8_t* key16);
+uint32_t sendMessageWithScopeKey(const char* contact_id, const char* text, const uint8_t* key16);
 bool sendChannelMessageWithScopeKey(const char* channel_name, const char* text, const uint8_t* key16);
 
 int  pollMessages(MeshMessage* out, int max);
@@ -135,12 +140,12 @@ int  getUnreadMessageCount();
 void resetUnreadMessageCount();
 
 int  getContactCount();
-int  exportContacts(char names[][32], int max);
 int  exportContactsFull(ContactInfo* out, int max);
 bool getContactByName(const char* name, ContactInfo* out);
+bool getContactById(const char* contact_id, ContactInfo* out);
 bool addContactManual(const char* name, const char* pubkey_hex, uint8_t type = ADV_TYPE_CHAT);
-bool isContactFavourite(const char* name);
-bool setContactFavourite(const char* name, bool favourite);
+bool isContactFavourite(const char* contact_id);
+bool setContactFavourite(const char* contact_id, bool favourite);
 
 int  getChannelCount();
 int  exportChannels(char names[][37], int max);
@@ -221,8 +226,8 @@ void pushPacketLog(const char* source, int rssi, float snr, const char* type);
 void injectMessage(const char* sender, const char* channel, const char* text);
 
 // Trace route
-bool sendTrace(int contact_idx, uint32_t* out_tag);
-int  findContactIndex(const char* name);
+bool sendTrace(const char* contact_id, uint32_t* out_tag);
+int  findContactIndex(const char* contact_id);
 bool hasTraceResult();
 uint32_t getTraceResultTag();
 uint8_t getTracePathLen();
@@ -257,8 +262,8 @@ bool revertRadioParams();
 int16_t getLastRadioConfigError();
 
 // ── REQ/RESPONSE framework (Phase 4.1) ────────
-bool sendRequest(const char* dest_name, uint8_t req_type);
-bool sendRequestWithData(const char* dest_name, const uint8_t* data, uint8_t len);
+bool sendRequest(const char* contact_id, uint8_t req_type);
+bool sendRequestWithData(const char* contact_id, const uint8_t* data, uint8_t len);
 int  getResponseCount();
 // Required lengths are reported even when a requested destination is too
 // small. No payload/name bytes are copied unless every requested buffer fits.
@@ -273,10 +278,10 @@ unsigned long getRemainingTxBudget();
 void setDutyCycle(uint8_t percent);
 
 // ── Contact management extensions ────────────
-bool removeContact(const char* name);
-bool resetPathTo(const char* name);
-bool setContactPerm(const char* name, uint8_t perm);
-int  getContactPerm(const char* name);
+bool removeContact(const char* contact_id);
+bool resetPathTo(const char* contact_id);
+bool setContactPerm(const char* contact_id, uint8_t perm);
+int  getContactPerm(const char* contact_id);
 
 // ── Channel management extensions ────────────
 bool removeChannel(int idx);
@@ -292,7 +297,7 @@ uint32_t getPendingAckDropCount();
 uint32_t getPendingAckExpiredCount();
 
 // ── Room message fetch (Phase 4.6) ────────────────
-bool sendRoomMsgFetchRequest(const char* contact_name, const char* channel_name);
+bool sendRoomMsgFetchRequest(const char* contact_id, const char* channel_name);
 int  getRoomMsgFetchCount();
 bool getRoomMsgFetchEntry(int index, char* sender_out, int sender_sz,
                           char* text_out, int text_sz,
@@ -302,17 +307,17 @@ void clearRoomMsgFetch();
 
 // Send a text message to a room server contact as a peer TXT_MSG.
 // Returns the timestamp used for ACK tracking, or 0 on failure.
-uint32_t sendRoomMessage(const char* contact_name, const char* channel_name, const char* text);
+uint32_t sendRoomMessage(const char* contact_id, const char* channel_name, const char* text);
 
 // Count room server contacts that are currently logged in.
 int getLoggedInRoomServerCount();
 
-// Get the name of a logged-in room server contact by index (0..count-1).
-// Returns the contact name or empty string if not found.
+// Get the stable ID of a logged-in room server contact by index (0..count-1).
+// Returns the full public-key ID or empty string if not found.
 const char* getLoggedInRoomServerName(int index);
 
 // ── Status request (Phase 4.2) ────────────────
-bool requestStatus(const char* dest_name);
+bool requestStatus(const char* contact_id);
 bool hasStatusResponse();
 bool statusRequestPending();
 bool statusRequestTimedOut();
@@ -333,7 +338,7 @@ struct TelemetryResult {
     TelemetryItem items[MAX_TELEMETRY_ITEMS];
 };
 
-bool requestTelemetry(const char* dest_name);
+bool requestTelemetry(const char* contact_id);
 bool hasTelemetryResponse();
 bool telemetryRequestPending();
 bool telemetryRequestTimedOut();
@@ -342,12 +347,12 @@ bool getTelemetryResult(TelemetryResult* out);
 // ── Path discovery (Phase 4.4) ────────────────
 // Sends a flood request to discover the route to a contact.
 // Returns a discovery tag (>0) on success, or 0 on failure.
-uint32_t discoverPath(const char* dest_name);
-bool pathDiscoveryPending(const char* dest_name);
-bool pathDiscoveryTimedOut(const char* dest_name);
+uint32_t discoverPath(const char* contact_id);
+bool pathDiscoveryPending(const char* contact_id);
+bool pathDiscoveryTimedOut(const char* contact_id);
 // Check if a path has been learned for a contact (path_len > 0 || path_len == 0xFF unknown)
-bool hasPathTo(const char* dest_name);
-uint8_t getContactPathLen(const char* dest_name);
+bool hasPathTo(const char* contact_id);
+uint8_t getContactPathLen(const char* contact_id);
 
 // ── Advert path (inbound) ─────────────────────
 // Returns the number of hops the advert from this contact traversed
@@ -363,13 +368,13 @@ uint8_t getAdvertPathLen(const char* name);
 #define LOGIN_STATUS_DROPPED 5   // negotiated keep-alive connection expired
 
 // ── Repeater/room login (Phase 4.5) ──────────────
-bool sendLogin(const char* name, const char* password);
-void sendLogout(const char* name);
-bool sendCommand(const char* name, const char* text);
-bool isLoggedIn(const char* name);
-uint8_t getLoginPermission(const char* name);
-uint8_t getLoginStatus(const char* name);
-void forceLoginState(const char* name, uint8_t status, uint8_t permission);
+bool sendLogin(const char* contact_id, const char* password);
+void sendLogout(const char* contact_id);
+bool sendCommand(const char* contact_id, const char* text);
+bool isLoggedIn(const char* contact_id);
+uint8_t getLoginPermission(const char* contact_id);
+uint8_t getLoginStatus(const char* contact_id);
+void forceLoginState(const char* contact_id, uint8_t status, uint8_t permission);
 
 
 // ── Command response ring buffer (for terminal UI) ──
@@ -450,7 +455,7 @@ bool addChannelByUri(const char* uri);
 // Look up a contact by name and write its 64-hex-char public key to hex_out.
 // hex_sz must be at least PUB_KEY_SIZE * 2 + 1 (65). Returns false if
 // g_mesh is null, the contact is not found, or the buffer is too small.
-bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz);
+bool getContactPubkeyHex(const char* contact_id, char* hex_out, size_t hex_sz);
 
 // Write the 64-hex-char channel secret for the given channel index to hex_out.
 // hex_sz must be at least PUB_KEY_SIZE * 2 + 1 (65). Returns false if

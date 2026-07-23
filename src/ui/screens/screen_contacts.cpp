@@ -29,6 +29,7 @@
 #include "../generation_owner.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../mesh/contact_store.h"
 #include "../../app/qr_show.h"
 #include "../../diagnostics/log.h"
 #include "../../fonts/emoji_font.h"
@@ -372,7 +373,11 @@ void contacts_screen_show()
 
         // Name
         lv_obj_t* name_l = lv_label_create(row);
-        lv_label_set_text(name_l, c.name);
+        char display_name[48]{};
+        sigurdos::mesh::contactDisplayLabel(
+            c.name, c.id, c.name_ambiguous,
+            display_name, sizeof(display_name));
+        lv_label_set_text(name_l, display_name);
         lv_obj_set_width(name_l, CONTENT_W - 100);
         lv_label_set_long_mode(name_l, LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
@@ -389,20 +394,20 @@ void contacts_screen_show()
         lv_obj_set_style_text_font(quality_l, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(quality_l, LV_ALIGN_RIGHT_MID, -6, 0);
 
-        // Store name + type for click handler
+        // Store stable identity + type for click handler.
         // Room servers open the detail screen; chat nodes open DM
-        struct ContactRowData { char* name; uint8_t type; };
-        ContactRowData* row_data = new ContactRowData{strdup(c.name), c.type};
+        struct ContactRowData { char* id; uint8_t type; };
+        ContactRowData* row_data = new ContactRowData{strdup(c.id), c.type};
         lv_obj_set_user_data(row, row_data);
 
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
             lv_obj_t* target = (lv_obj_t*)lv_event_get_current_target(e);
             ContactRowData* d = (ContactRowData*)lv_obj_get_user_data(target);
-            if (d && d->name) {
+            if (d && d->id) {
                 if (d->type == ADV_TYPE_ROOM) {
-                    navigate_to_repeater_detail(d->name);
+                    navigate_to_repeater_detail(d->id);
                 } else {
-                    chat_screen_open_dm(d->name);
+                    chat_screen_open_dm(d->id);
                 }
             }
         }, LV_EVENT_CLICKED, nullptr);
@@ -410,7 +415,7 @@ void contacts_screen_show()
         // Free the heap-allocated name copy when the row is deleted
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
             ContactRowData* d = (ContactRowData*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_current_target(e));
-            if (d) { free(d->name); delete d; }
+            if (d) { free(d->id); delete d; }
         }, LV_EVENT_DELETE, nullptr);
     }
 
@@ -1270,7 +1275,11 @@ void contact_detail_screen_show(const char* contact_name)
 
     // Name (large, top)
     lv_obj_t* name_l = lv_label_create(list);
-    lv_label_set_text(name_l, target->name);
+    char detail_name[48]{};
+    sigurdos::mesh::contactDisplayLabel(
+        target->name, target->id, target->name_ambiguous,
+        detail_name, sizeof(detail_name));
+    lv_label_set_text(name_l, detail_name);
     lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_14, 0);
     lv_obj_set_style_pad_left(name_l, 8, 0);
@@ -1493,8 +1502,7 @@ void contact_detail_screen_show(const char* contact_name)
     }
 
     // Send Trace button (skip for room/repeater)
-    int trace_idx = sigurdos::mesh::findContactIndex(contact_name);
-    if (!is_room_type && trace_idx >= 0) {
+    if (!is_room_type && target->has_path) {
         lv_obj_t* trace_btn = lv_btn_create(btn_row);
         lv_obj_set_size(trace_btn, 110, 24);
         lv_obj_set_style_bg_color(trace_btn, lv_color_hex(BG_TERTIARY), 0);
@@ -1503,20 +1511,23 @@ void contact_detail_screen_show(const char* contact_name)
         lv_label_set_text(trace_lbl, LV_SYMBOL_SHUFFLE " Trace");
         lv_obj_center(trace_lbl);
         lv_obj_set_style_text_color(trace_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-        // Store contact_idx in user_data (value fits in intptr_t, no heap alloc needed)
-        lv_obj_set_user_data(trace_btn, (void*)(intptr_t)trace_idx);
+        char* trace_id = strdup(contact_name);
+        lv_obj_set_user_data(trace_btn, trace_id);
         lv_obj_add_event_cb(trace_btn, [](lv_event_t* e) {
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-            int idx = (int)(intptr_t)lv_obj_get_user_data(btn);
-            if (idx >= 0) {
+            const char* id =
+                static_cast<const char*>(lv_obj_get_user_data(btn));
+            if (id) {
                 uint32_t tag = 0;
-                sigurdos::mesh::sendTrace(idx, &tag);
+                sigurdos::mesh::sendTrace(id, &tag);
                 // Brief snackbar-style feedback — navigate to trace screen
                 // so the user can see the result
                 sigurdos::ui::navigate_to(sigurdos::ui::Screen::Trace);
             }
         }, LV_EVENT_CLICKED, nullptr);
-        // No LV_EVENT_DELETE handler needed — no heap allocation
+        lv_obj_add_event_cb(trace_btn, [](lv_event_t* e) {
+            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+        }, LV_EVENT_DELETE, nullptr);
     }
 
     // Request Status button
@@ -1779,7 +1790,7 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_add_event_cb(confirm, [](lv_event_t* ce) {
                 const char* value = (const char*)lv_obj_get_user_data(
                     (lv_obj_t*)lv_event_get_target(ce));
-                char copy[32] = {};
+                char copy[sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN] = {};
                 if (value) strncpy(copy, value, sizeof(copy) - 1);
                 if (copy[0] && sigurdos::mesh::resetPathTo(copy)) {
                     contact_detail_screen_show(copy);

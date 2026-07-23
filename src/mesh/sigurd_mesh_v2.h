@@ -265,6 +265,8 @@ public:
 
     // Send a custom-data REQ to a contact by name.
     bool sendRequestWithData(const char* name, const uint8_t* data, uint8_t data_len);
+    bool sendRequestWithData(const ::ContactInfo& contact,
+                             const uint8_t* data, uint8_t data_len);
 
     // Companion CMD_SEND_BINARY_REQ: sends arbitrary request bytes to a known
     // contact and registers the tag for an asynchronous BINARY_RESPONSE push.
@@ -306,6 +308,8 @@ public:
     // Sends a REQ with REQ_TYPE_GET_ROOM_MSGS, data = channel_name.
     // Responses populate _room_fetch_buf and are also pushed to mesh_v2_queue.
     bool sendRoomMsgFetchRequest(const char* name, const char* channel_name);
+    bool sendRoomMsgFetchRequest(const ::ContactInfo& contact,
+                                 const char* channel_name);
 
 
     // Polling API for fetched room messages
@@ -341,6 +345,7 @@ public:
         // Without these, dest_name/timestamp/expected_ack/sent_at_ms hold
         // garbage until first write, which is fragile for ACK matching.
         char dest_name[32] = {};
+        uint8_t dest_key[PUB_KEY_SIZE] = {};
         uint32_t timestamp = 0;
         uint32_t expected_ack = 0;
         uint32_t sent_at_ms = 0;
@@ -352,7 +357,8 @@ public:
     uint32_t _ack_drop_count = 0;  // incremented when full table evicts
     uint32_t _ack_expired_count = 0;
 
-    void addPendingAck(const char* name, uint32_t ts, uint32_t expected_ack,
+    void addPendingAck(const ::ContactInfo& contact, uint32_t ts,
+                       uint32_t expected_ack,
                        uint32_t estimated_timeout_ms = 0);
     void expirePendingAcks();
     uint32_t getAckDropCount() const { return _ack_drop_count; }
@@ -417,6 +423,7 @@ public:
     static constexpr int MAX_DISCOVERY_PENDING = 4;
     struct DiscoveryPending {
         char     dest_name[32] = {};
+        uint8_t  dest_key[PUB_KEY_SIZE] = {};
         uint32_t tag = 0;
         bool     in_use = false;
         bool     completed = false;
@@ -429,6 +436,8 @@ public:
     // Send a path discovery request — forces flood routing to learn the return path.
     // Returns the request tag (>0) on success, 0 on failure.
     uint32_t sendPathDiscovery(const char* name, uint32_t* est_timeout_out = nullptr);
+    uint32_t sendPathDiscovery(const ::ContactInfo& contact,
+                               uint32_t* est_timeout_out = nullptr);
 
 
     // Completion is consumed and frees the slot. Timeouts remain observable
@@ -436,19 +445,16 @@ public:
     bool isDiscoveryComplete(const char* name);
     bool discoveryPending(const char* name);
     bool discoveryTimedOut(const char* name);
+    bool discoveryPending(const uint8_t* pub_key);
+    bool discoveryTimedOut(const uint8_t* pub_key);
 
     void expirePendingOperations(uint32_t now_ms);
 
     // Get path length for a contact (OUT_PATH_UNKNOWN = 0xFF if unknown)
     uint8_t getPathLen(const char* name) {
-        int n = getNumContacts();
-        ::ContactInfo tmp;
-        for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
-                return tmp.out_path_len;
-            }
-        }
-        return OUT_PATH_UNKNOWN;
+        ::ContactInfo contact{};
+        return findUniqueContact(name, contact)
+            ? contact.out_path_len : OUT_PATH_UNKNOWN;
     }
 
     // ── SPIFFS blob persistence ─────────────────
@@ -611,9 +617,17 @@ public:
         int idx = findLoginEntry(name);
         return idx >= 0 && _login_entries[idx].status == LOGIN_OK;
     }
+    bool isLoggedIn(const uint8_t* pub_key) const {
+        int idx = findLoginEntry(pub_key);
+        return idx >= 0 && _login_entries[idx].status == LOGIN_OK;
+    }
 
     uint8_t getLoginPermission(const char* name) const {
         int idx = findLoginEntry(name);
+        return idx >= 0 ? _login_entries[idx].permission : 0;
+    }
+    uint8_t getLoginPermission(const uint8_t* pub_key) const {
+        int idx = findLoginEntry(pub_key);
         return idx >= 0 ? _login_entries[idx].permission : 0;
     }
 
@@ -621,6 +635,12 @@ public:
         int idx = findLoginEntry(name);
         return idx >= 0 ? static_cast<uint8_t>(_login_entries[idx].status)
                         : static_cast<uint8_t>(LOGIN_NONE);
+    }
+    uint8_t getLoginStatus(const uint8_t* pub_key) const {
+        int idx = findLoginEntry(pub_key);
+        return idx >= 0
+            ? static_cast<uint8_t>(_login_entries[idx].status)
+            : static_cast<uint8_t>(LOGIN_NONE);
     }
 
     // Send a login request to a repeater or room server contact.
@@ -705,6 +725,8 @@ public:
     // can store the same value for ACK matching. Prevents the ~1-2% silent ACK
     // failure caused by timestamps diverging across separate getCurrentTime() calls.
     bool sendTextTo(const char* name, const char* text, uint32_t fixed_ts);
+    bool sendTextTo(const ::ContactInfo& contact, const char* text,
+                    uint32_t fixed_ts);
 
 
     bool sendGroupText(int idx, const char* text);
@@ -824,6 +846,7 @@ public:
 
     // Returns the inbound advert path length (hops) for a contact, or 0 if unknown.
     uint8_t getAdvertPathLen(const char* name) const;
+    uint8_t getAdvertPathLen(const uint8_t* pub_key) const;
     // Look up a stored advert path entry by pubkey prefix. Returns nullptr if not found.
     const AdvertPathEntry* getAdvertPathByKey(const uint8_t* pub_key) const;
 

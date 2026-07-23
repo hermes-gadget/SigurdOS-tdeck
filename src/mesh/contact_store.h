@@ -10,6 +10,10 @@ namespace sigurdos {
 namespace mesh {
 
 static constexpr size_t SIGURDOS_CONTACT_PUBKEY_LEN = 32;
+static constexpr size_t SIGURDOS_CONTACT_ID_LEN =
+    SIGURDOS_CONTACT_PUBKEY_LEN * 2;
+static constexpr size_t SIGURDOS_CONTACT_ID_BUFFER_LEN =
+    SIGURDOS_CONTACT_ID_LEN + 1;
 static constexpr size_t SIGURDOS_CONTACT_NAME_LEN = 32;
 static constexpr size_t SIGURDOS_CONTACT_PATH_LEN = 64;
 static constexpr uint8_t SIGURDOS_CONTACT_PATH_UNKNOWN = 0xFF;
@@ -84,6 +88,27 @@ bool contactCandidateValid(const char* name, const uint8_t* pub_key,
 bool contactCandidateDuplicates(const char* name, const uint8_t* pub_key,
                                 const char* existing_name,
                                 const uint8_t* existing_pub_key);
+
+// Stable contact IDs are the lowercase hexadecimal encoding of the complete
+// MeshCore public key. Display names are intentionally not part of identity.
+bool contactIdFromPubKey(const uint8_t* pub_key, char* out, size_t out_size);
+bool contactIdToPubKey(const char* contact_id, uint8_t* out_pub_key);
+bool contactDisplayLabel(const char* name, const char* contact_id,
+                         bool disambiguate, char* out, size_t out_size);
+
+class ContactReferenceResolver {
+public:
+    explicit ContactReferenceResolver(const char* reference);
+    void consider(int index, const char* name, const uint8_t* pub_key);
+    int result() const;
+
+private:
+    const char* _reference;
+    uint8_t _pub_key[SIGURDOS_CONTACT_PUBKEY_LEN];
+    int _match;
+    bool _stable_id;
+    bool _ambiguous;
+};
 
 /// Returns a strictly increasing local contact revision, or false if the
 /// persisted high-water mark can no longer be advanced.

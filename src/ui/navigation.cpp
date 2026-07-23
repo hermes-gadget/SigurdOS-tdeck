@@ -24,6 +24,7 @@
 #include "screens_common.h"
 #include "onboarding_screen.h"
 #include "../hal/prefs.h"
+#include "../mesh/contact_store.h"
 #include <lvgl.h>
 #include <cstdint>
 #include <cstring>
@@ -66,8 +67,10 @@ static bool history_empty() {
 }
 
 static int back_swipe_commit = 0; // counter for two-swipe commit
-static char contact_detail_name[32] = {};
-static char repeater_detail_name[32] = {};
+static char contact_detail_name[
+    sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN] = {};
+static char repeater_detail_name[
+    sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN] = {};
 static bool repeater_detail_skip_login = false;
 static bool forced_navigation = false;
 static Screen forced_screen = Screen::Home;

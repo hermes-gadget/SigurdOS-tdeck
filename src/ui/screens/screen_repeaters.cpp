@@ -27,6 +27,7 @@
 #include "../notifications.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../mesh/contact_store.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -182,14 +183,18 @@ void repeaters_screen_show()
 
         // Name
         lv_obj_t* name_l = lv_label_create(row);
-        lv_label_set_text(name_l, c.name);
+        char display_name[48]{};
+        sigurdos::mesh::contactDisplayLabel(
+            c.name, c.id, c.name_ambiguous,
+            display_name, sizeof(display_name));
+        lv_label_set_text(name_l, display_name);
         lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(name_l, LV_ALIGN_LEFT_MID, 28, 0);
 
-        // Store name for click handler
-        char* name_dup = strdup(c.name);
-        lv_obj_set_user_data(row, name_dup);
+        // Store stable identity for click handler.
+        char* id_dup = strdup(c.id);
+        lv_obj_set_user_data(row, id_dup);
 
         // RSSI
         char rssi_buf[12];
@@ -411,6 +416,10 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
 
     uint8_t login_st = sigurdos::mesh::getLoginStatus(contact_name);
     bool is_fav = sigurdos::mesh::isContactFavourite(contact_name);
+    char display_name[48]{};
+    sigurdos::mesh::contactDisplayLabel(
+        target->name, target->id, target->name_ambiguous,
+        display_name, sizeof(display_name));
 
     // ── Content list ──────────────────────────────────
     lv_obj_t* list = lv_list_create(scr);
@@ -442,7 +451,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         lv_obj_clear_flag(title_row, LV_OBJ_FLAG_CLICKABLE);
         {
             lv_obj_t* title_lbl = lv_label_create(title_row);
-            lv_label_set_text(title_lbl, contact_name);
+            lv_label_set_text(title_lbl, display_name);
             lv_obj_set_style_text_color(title_lbl, lv_color_hex(TEXT_PRIMARY), 0);
             lv_obj_set_style_text_font(title_lbl, emoji_wrapped_montserrat_14, 0);
             lv_obj_align(title_lbl, LV_ALIGN_LEFT_MID, 8, 0);

@@ -23,9 +23,12 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../mesh/contact_store.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <cstdint>
 
 namespace sigurdos::ui {
@@ -56,8 +59,8 @@ void trace_screen_show()
     g_trace_lifetime.track(&trace_result_label);
     g_trace_lifetime.trackTimer(&g_trace_poll_timer);
 
-    char names[32][32];
-    int total = sigurdos::mesh::exportContacts(names, 32);
+    static sigurdos::mesh::ContactInfo contacts[32];
+    int total = sigurdos::mesh::exportContactsFull(contacts, 32);
 
     lv_obj_t* info = lv_label_create(scr);
     lv_obj_set_width(info, CONTENT_W);
@@ -90,7 +93,7 @@ void trace_screen_show()
     static constexpr int ROW_H = 32;
 
     for (int i = 0; i < total; i++) {
-        bool has_path = sigurdos::mesh::contactHasPath(i);
+        bool has_path = contacts[i].has_path;
 
         lv_obj_t* row = lv_obj_create(list);
         lv_obj_set_size(row, LV_PCT(100), ROW_H);
@@ -114,7 +117,11 @@ void trace_screen_show()
 
         // Name
         lv_obj_t* name_l = lv_label_create(row);
-        lv_label_set_text(name_l, names[i]);
+        char display_name[48]{};
+        sigurdos::mesh::contactDisplayLabel(
+            contacts[i].name, contacts[i].id, contacts[i].name_ambiguous,
+            display_name, sizeof(display_name));
+        lv_label_set_text(name_l, display_name);
         lv_obj_set_style_text_color(name_l, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(name_l, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(name_l, LV_ALIGN_LEFT_MID, 28, 0);
@@ -127,12 +134,15 @@ void trace_screen_show()
         lv_obj_align(status_l, LV_ALIGN_RIGHT_MID, -6, 0);
 
         if (has_path) {
-            int contact_idx = i;
+            char* contact_id = strdup(contacts[i].id);
+            lv_obj_set_user_data(row, contact_id);
             lv_obj_add_event_cb(row, [](lv_event_t* e) {
-                int idx = (int)(intptr_t)lv_event_get_user_data(e);
+                const char* id = static_cast<const char*>(
+                    lv_obj_get_user_data(
+                        static_cast<lv_obj_t*>(lv_event_get_current_target(e))));
                 uint32_t tag;
                 sigurdos::mesh::clearTraceResult();
-                if (sigurdos::mesh::sendTrace(idx, &tag)) {
+                if (id && sigurdos::mesh::sendTrace(id, &tag)) {
                     g_trace_expected_tag = tag;
                     g_trace_deadline_ms = millis() + TRACE_TIMEOUT_MS;
                     lv_obj_t* scr_ref = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
@@ -199,7 +209,11 @@ void trace_screen_show()
                         }
                     }, 500, nullptr);
                 }
-            }, LV_EVENT_CLICKED, (void*)(intptr_t)contact_idx);
+            }, LV_EVENT_CLICKED, nullptr);
+            lv_obj_add_event_cb(row, [](lv_event_t* e) {
+                free(lv_obj_get_user_data(
+                    static_cast<lv_obj_t*>(lv_event_get_current_target(e))));
+            }, LV_EVENT_DELETE, nullptr);
         }
     }
 

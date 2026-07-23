@@ -17,6 +17,7 @@
 #include "utils/utf8_util.h"
 #include "channel_validation.h"
 #include "channel_slot_policy.h"
+#include "contact_store.h"
 #include "strict_base64.h"
 #include "telemetry_response_policy.h"
 #include <cstring>
@@ -462,6 +463,13 @@ namespace mesh {
         if (!name || !name[0] || !data || data_len == 0) return false;
         ::ContactInfo contact{};
         if (!findUniqueContact(name, contact)) return false;
+        return sendRequestWithData(contact, data, data_len);
+    }
+
+    bool SigurdMeshV2::sendRequestWithData(const ::ContactInfo& contact,
+                                            const uint8_t* data,
+                                            uint8_t data_len) {
+        if (!data || data_len == 0) return false;
         const int pending = reservePendingRequest(
             contact, /*req_type=*/0, /*companion_binary=*/false);
         if (pending < 0) return false;
@@ -597,9 +605,15 @@ namespace mesh {
 
     bool SigurdMeshV2::sendRoomMsgFetchRequest(const char* name, const char* channel_name) {
         if (!name || !name[0] || !channel_name || !channel_name[0]) return false;
-        _n_room_fetched = 0;
         ::ContactInfo contact{};
         if (!findUniqueContact(name, contact)) return false;
+        return sendRoomMsgFetchRequest(contact, channel_name);
+    }
+
+    bool SigurdMeshV2::sendRoomMsgFetchRequest(
+            const ::ContactInfo& contact, const char* channel_name) {
+        if (!channel_name || !channel_name[0]) return false;
+        _n_room_fetched = 0;
         const int pending = reservePendingRequest(
             contact, REQ_TYPE_GET_ROOM_MSGS, /*companion_binary=*/false,
             channel_name);
@@ -687,17 +701,20 @@ namespace mesh {
         sigurdos::mesh::mesh_v2_companion_contact_deleted_push(pub_key);
     }
 
-    void SigurdMeshV2::addPendingAck(const char* name, uint32_t ts,
+    void SigurdMeshV2::addPendingAck(const ::ContactInfo& contact, uint32_t ts,
                                      uint32_t expected_ack,
                                      uint32_t estimated_timeout_ms) {
-        if (!name || !name[0] || expected_ack == 0) return;
+        if (expected_ack == 0) return;
         expirePendingAcks();
         const uint32_t now = _ms->getMillis();
         const uint32_t expires = now + pendingAckLifetimeMs(estimated_timeout_ms);
         for (int i = 0; i < MAX_PENDING_ACKS; i++) {
             if (!_pending_acks[i].in_use) {
-                strncpy(_pending_acks[i].dest_name, name, sizeof(_pending_acks[i].dest_name)-1);
+                strncpy(_pending_acks[i].dest_name, contact.name,
+                        sizeof(_pending_acks[i].dest_name)-1);
                 _pending_acks[i].dest_name[sizeof(_pending_acks[i].dest_name)-1] = '\0';
+                memcpy(_pending_acks[i].dest_key, contact.id.pub_key,
+                       PUB_KEY_SIZE);
                 _pending_acks[i].timestamp = ts;
                 _pending_acks[i].expected_ack = expected_ack;
                 _pending_acks[i].sent_at_ms = now;
@@ -717,10 +734,17 @@ namespace mesh {
             }
         }
         _ack_drop_count++;
-        sigurdos::mesh::registerConfirmationLost(_pending_acks[oldest].dest_name,
-                                                  _pending_acks[oldest].timestamp);
-        strncpy(_pending_acks[oldest].dest_name, name, sizeof(_pending_acks[oldest].dest_name)-1);
+        char evicted_id[SIGURDOS_CONTACT_ID_BUFFER_LEN]{};
+        if (contactIdFromPubKey(_pending_acks[oldest].dest_key, evicted_id,
+                                sizeof(evicted_id))) {
+            sigurdos::mesh::registerConfirmationLost(
+                evicted_id, _pending_acks[oldest].timestamp);
+        }
+        strncpy(_pending_acks[oldest].dest_name, contact.name,
+                sizeof(_pending_acks[oldest].dest_name)-1);
         _pending_acks[oldest].dest_name[sizeof(_pending_acks[oldest].dest_name)-1] = '\0';
+        memcpy(_pending_acks[oldest].dest_key, contact.id.pub_key,
+               PUB_KEY_SIZE);
         _pending_acks[oldest].timestamp = ts;
         _pending_acks[oldest].expected_ack = expected_ack;
         _pending_acks[oldest].sent_at_ms = now;
@@ -738,8 +762,12 @@ namespace mesh {
             }
             pending.in_use = false;
             _ack_expired_count++;
-            sigurdos::mesh::registerConfirmationLost(pending.dest_name,
-                                                      pending.timestamp);
+            char contact_id[SIGURDOS_CONTACT_ID_BUFFER_LEN]{};
+            if (contactIdFromPubKey(pending.dest_key, contact_id,
+                                    sizeof(contact_id))) {
+                sigurdos::mesh::registerConfirmationLost(
+                    contact_id, pending.timestamp);
+            }
         }
     }
 
@@ -753,19 +781,19 @@ namespace mesh {
                 _pending_acks[i].in_use = false;
                 uint32_t trip_ms = _ms->getMillis() - _pending_acks[i].sent_at_ms;
                 // Notify wrapper layer (local UI + persistent store)
-                sigurdos::mesh::registerAckedMessage(_pending_acks[i].dest_name, _pending_acks[i].timestamp);
+                char contact_id[SIGURDOS_CONTACT_ID_BUFFER_LEN]{};
+                if (contactIdFromPubKey(_pending_acks[i].dest_key, contact_id,
+                                        sizeof(contact_id))) {
+                    sigurdos::mesh::registerAckedMessage(
+                        contact_id, _pending_acks[i].timestamp);
+                }
                 // Notify the phone app so it marks the sent message delivered.
                 sigurdos::mesh::mesh_v2_notify_send_confirmed(ack_val, trip_ms);
                 // Return the correct contact for BaseChatMesh internal processing
                 // (e.g. handleReturnPathRetry). Must match the contact that actually
                 // sent the ACK, not the first entry in the contact list (BUG-004).
-                for (int j = 0; j < getNumContacts(); j++) {
-                    if (getContactByIdx((uint32_t)j, _contact_cache) &&
-                        strcmp(_contact_cache.name, _pending_acks[i].dest_name) == 0) {
-                        return &_contact_cache;
-                    }
-                }
-                return nullptr;  // contact gone — can't return the right one
+                return lookupContactByPubKey(
+                    _pending_acks[i].dest_key, PUB_KEY_SIZE);
             }
         }
         return ack_val == 0 ? nullptr : BaseChatMesh::checkConnectionsAck(data);
@@ -1054,11 +1082,14 @@ namespace mesh {
 
     uint32_t SigurdMeshV2::sendPathDiscovery(const char* name,
                                               uint32_t* est_timeout_out) {
-        if (est_timeout_out) *est_timeout_out = 0;
-        if (!name || !name[0]) return 0;
-
         ::ContactInfo contact{};
         if (!findUniqueContact(name, contact)) return 0;
+        return sendPathDiscovery(contact, est_timeout_out);
+    }
+
+    uint32_t SigurdMeshV2::sendPathDiscovery(
+            const ::ContactInfo& contact, uint32_t* est_timeout_out) {
+        if (est_timeout_out) *est_timeout_out = 0;
         ::ContactInfo* recipient =
             lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
         if (!recipient) return 0;
@@ -1070,7 +1101,8 @@ namespace mesh {
         for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
             if (!_discovery_pending[i].in_use &&
                 _discovery_pending[i].timed_out &&
-                strcmp(_discovery_pending[i].dest_name, name) == 0) {
+                memcmp(_discovery_pending[i].dest_key, contact.id.pub_key,
+                       PUB_KEY_SIZE) == 0) {
                 _discovery_pending[i] = DiscoveryPending{};
             }
         }
@@ -1080,7 +1112,9 @@ namespace mesh {
 
         DiscoveryPending& pending = _discovery_pending[pending_slot];
         pending = DiscoveryPending{};
-        strncpy(pending.dest_name, name, sizeof(pending.dest_name) - 1);
+        strncpy(pending.dest_name, contact.name,
+                sizeof(pending.dest_name) - 1);
+        memcpy(pending.dest_key, contact.id.pub_key, PUB_KEY_SIZE);
         pending.in_use = true;
         pending.started_at_ms = now;
         pending.timeout_ms = login_session::normalizeTimeout(0);
@@ -1125,12 +1159,14 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::isDiscoveryComplete(const char* name) {
-        if (!name || !name[0]) return false;
+        ::ContactInfo contact{};
+        if (!findUniqueContact(name, contact)) return false;
         expirePendingOperations(_ms->getMillis());
         for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
             DiscoveryPending& pending = _discovery_pending[i];
             if (pending.in_use && pending.completed &&
-                strcmp(pending.dest_name, name) == 0) {
+                memcmp(pending.dest_key, contact.id.pub_key,
+                       PUB_KEY_SIZE) == 0) {
                 pending = DiscoveryPending{};
                 return true;
             }
@@ -1139,12 +1175,19 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::discoveryPending(const char* name) {
-        if (!name || !name[0]) return false;
+        ::ContactInfo contact{};
+        return findUniqueContact(name, contact) &&
+               discoveryPending(contact.id.pub_key);
+    }
+
+    bool SigurdMeshV2::discoveryPending(const uint8_t* pub_key) {
+        if (!pub_key) return false;
         expirePendingOperations(_ms->getMillis());
         for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
             if (_discovery_pending[i].in_use &&
                 !_discovery_pending[i].completed &&
-                strcmp(_discovery_pending[i].dest_name, name) == 0) {
+                memcmp(_discovery_pending[i].dest_key, pub_key,
+                       PUB_KEY_SIZE) == 0) {
                 return true;
             }
         }
@@ -1152,12 +1195,18 @@ namespace mesh {
     }
 
     bool SigurdMeshV2::discoveryTimedOut(const char* name) {
-        if (!name || !name[0]) return false;
+        ::ContactInfo contact{};
+        return findUniqueContact(name, contact) &&
+               discoveryTimedOut(contact.id.pub_key);
+    }
+
+    bool SigurdMeshV2::discoveryTimedOut(const uint8_t* pub_key) {
+        if (!pub_key) return false;
         expirePendingOperations(_ms->getMillis());
         for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
             const DiscoveryPending& pending = _discovery_pending[i];
             if (!pending.in_use && pending.timed_out &&
-                strcmp(pending.dest_name, name) == 0) {
+                memcmp(pending.dest_key, pub_key, PUB_KEY_SIZE) == 0) {
                 return true;
             }
         }
@@ -1533,43 +1582,30 @@ namespace mesh {
 
     bool SigurdMeshV2::sendTextTo(const char* name, const char* text) {
         if (!name || !text) return false;
-        char safe_text[MAX_TEXT_LEN];
-        sigurdos::utf8_copy_truncate(safe_text, sizeof(safe_text), text);
-        int n = getNumContacts();
-        ::ContactInfo tmp;
-        for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
-                uint32_t expected_ack = 0, est_timeout = 0;
-                uint32_t ts = getRTCClock()->getCurrentTimeUnique();
-                int r = BaseChatMesh::sendMessage(tmp, ts, 0, safe_text,
-                                                  expected_ack, est_timeout);
-                if (r != MSG_SEND_FAILED) {
-                    addPendingAck(name, ts, expected_ack, est_timeout);
-                }
-                return r != MSG_SEND_FAILED;
-            }
-        }
-        return false;
+        ::ContactInfo contact{};
+        if (!findUniqueContact(name, contact)) return false;
+        return sendTextTo(contact, text, getRTCClock()->getCurrentTimeUnique());
     }
 
     bool SigurdMeshV2::sendTextTo(const char* name, const char* text, uint32_t fixed_ts) {
         if (!name || !text) return false;
+        ::ContactInfo contact{};
+        if (!findUniqueContact(name, contact)) return false;
+        return sendTextTo(contact, text, fixed_ts);
+    }
+
+    bool SigurdMeshV2::sendTextTo(const ::ContactInfo& contact,
+                                  const char* text, uint32_t fixed_ts) {
+        if (!text) return false;
         char safe_text[MAX_TEXT_LEN];
         sigurdos::utf8_copy_truncate(safe_text, sizeof(safe_text), text);
-        int n = getNumContacts();
-        ::ContactInfo tmp;
-        for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
-                uint32_t expected_ack = 0, est_timeout = 0;
-                int r = BaseChatMesh::sendMessage(tmp, fixed_ts, 0, safe_text,
-                                                  expected_ack, est_timeout);
-                if (r != MSG_SEND_FAILED) {
-                    addPendingAck(name, fixed_ts, expected_ack, est_timeout);
-                }
-                return r != MSG_SEND_FAILED;
-            }
+        uint32_t expected_ack = 0, est_timeout = 0;
+        int r = BaseChatMesh::sendMessage(contact, fixed_ts, 0, safe_text,
+                                          expected_ack, est_timeout);
+        if (r != MSG_SEND_FAILED) {
+            addPendingAck(contact, fixed_ts, expected_ack, est_timeout);
         }
-        return false;
+        return r != MSG_SEND_FAILED;
     }
 
     bool SigurdMeshV2::sendGroupText(int idx, const char* text) {
@@ -1757,6 +1793,11 @@ namespace mesh {
             }
         }
         return 0;
+    }
+
+    uint8_t SigurdMeshV2::getAdvertPathLen(const uint8_t* pub_key) const {
+        const AdvertPathEntry* entry = getAdvertPathByKey(pub_key);
+        return entry ? path::hashCount(entry->encoded_path_len) : 0;
     }
 
     const SigurdMeshV2::AdvertPathEntry*
