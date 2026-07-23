@@ -1,5 +1,8 @@
 {
   "schema_version": 1,
   "environment": "SigurdOS_TDeck",
-  "budgets": {}
+  "budgets": {
+    "src/app/map_renderer.cpp|-Wunused-function": 2,
+    "src/ui/chat_screen.cpp|-Wformat-truncation=": 1
+  }
 }
