@@ -52,6 +52,8 @@ TEST(PrefsDefaultsTest, IdentityAndPrivacyDefaultsAreDeterministic) {
     EXPECT_EQ(0, prefs.advert_loc_policy);
     EXPECT_FALSE(prefs.gps_enabled);
     EXPECT_EQ(5, prefs.gps_interval);
+    EXPECT_FALSE(prefs.gps_track_enabled);
+    EXPECT_EQ(15u, prefs.gps_track_interval);
     EXPECT_EQ(0u, prefs.device_pin);
     EXPECT_EQ(0u, prefs.ble_pin);
     EXPECT_FALSE(prefs.ble_bond_reset_pending);

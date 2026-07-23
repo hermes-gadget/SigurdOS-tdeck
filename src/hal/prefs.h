@@ -41,6 +41,8 @@ struct NodePrefs {
     uint8_t  advert_type;            // ADV_TYPE_CHAT(1)/REPEATER(2)/ROOM(3)/SENSOR(4)
     bool     gps_enabled;            // GPS polling enabled
     uint32_t gps_interval;           // background fix publication interval (seconds, 0..86400)
+    bool     gps_track_enabled;      // persist GPS fixes to the breadcrumb track log
+    uint32_t gps_track_interval;     // track waypoint interval in seconds (1..3600)
     uint8_t  autoadd_config;         // bitmask: bit1=chat, bit2=repeater, bit3=room, bit4=sensor
     uint8_t  autoadd_max_hops;       // 0=no limit, max flood hops for auto-add
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
@@ -93,6 +95,8 @@ struct NodePrefs {
         advert_type = 1;              // 1 = ADV_TYPE_CHAT (default: chat companion)
         gps_enabled = false;          // GPS off by default (privacy, battery)
         gps_interval = 5;             // background position update cadence
+        gps_track_enabled = false;    // explicit opt-in for location history
+        gps_track_interval = 15;      // breadcrumb recording cadence
         autoadd_config = 0x1E;        // auto-add: chat|repeater|room|sensor (bits 1-4), no overwrite (bit 0)
         autoadd_max_hops = 0;         // 0 = no limit
         theme_id = 0;                 // default theme
@@ -155,6 +159,9 @@ inline bool validRadioBandwidth(float bw) {
 
 inline bool normalizeAndValidate(NodePrefs& prefs) {
     if (prefs.gps_interval > 86400) prefs.gps_interval = 86400;
+    if (prefs.gps_track_interval < 1 || prefs.gps_track_interval > 3600) {
+        prefs.gps_track_interval = 15;
+    }
     if (prefs.kbd_layout >= 12) prefs.kbd_layout = 0;
     if (prefs.display_brightness < 20) prefs.display_brightness = 20;
     if (prefs.display_brightness > 240) prefs.display_brightness = 240;

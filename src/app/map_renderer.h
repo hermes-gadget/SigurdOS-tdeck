@@ -24,6 +24,8 @@
 #include <cstring>
 #include <lvgl.h>
 
+#include "gps_track_log.h"
+
 static constexpr int SIGURDOS_MAP_TILE_SIZE = 256;
 static constexpr int SIGURDOS_MAP_MAX_ZOOM = 18;
 static constexpr int SIGURDOS_MAP_MIN_ZOOM = 0;
@@ -460,6 +462,10 @@ void sigurdos_map_pixel_to_latlon(int px, int py, double* out_lat, double* out_l
 
 // Convert lat/lon to screen pixel (inverse of above). Both outputs are required.
 void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_py);
+
+// Draw a bounded GPS breadcrumb trail over the rendered map canvas.
+void sigurdos_map_track_render(const sigurdos::app::GpsTrackPoint* points,
+                               std::size_t count);
 
 // Contact marker overlay (pool of pre-allocated dots)
 // Call after map_init, before first render. parent = the non-null map overlay object.

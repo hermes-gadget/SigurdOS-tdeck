@@ -108,6 +108,10 @@ inline bool prefsWriteAll(const NodePrefs& prefs, const PrefsNvsWriter& writer,
     if (!wrote("buzz_q", writer.setU8(writer.context, "buzz_q", prefs.buzzer_quiet ? 1 : 0))) return false;
     if (!wrote("gps_en", writer.setU8(writer.context, "gps_en", prefs.gps_enabled ? 1 : 0))) return false;
     if (!wrote("gps_int32", writer.setU32(writer.context, "gps_int32", prefs.gps_interval))) return false;
+    if (!wrote("gps_trk_en", writer.setU8(
+            writer.context, "gps_trk_en", prefs.gps_track_enabled ? 1 : 0))) return false;
+    if (!wrote("gps_trk_int", writer.setU32(
+            writer.context, "gps_trk_int", prefs.gps_track_interval))) return false;
     if (!wrote("autoadd_cfg", writer.setU8(writer.context, "autoadd_cfg", prefs.autoadd_config))) return false;
     if (!wrote("autoadd_mh", writer.setU8(writer.context, "autoadd_mh", prefs.autoadd_max_hops))) return false;
     if (!wrote("clirep", writer.setU8(writer.context, "clirep", prefs.client_repeat))) return false;

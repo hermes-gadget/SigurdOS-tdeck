@@ -374,7 +374,7 @@ TEST(PrefsWritePolicyTest, EveryNvsSetFailureIsReturnedWithoutCommit) {
     sigurdos::detail::PrefsWriteFailure failure;
     ASSERT_TRUE(sigurdos::detail::prefsWriteAll(
         prefs, successful.ops(), sigurdos::detail::BlePrefsWriteMode::Write, &failure));
-    ASSERT_EQ(49, successful.write_calls);
+    ASSERT_EQ(51, successful.write_calls);
     ASSERT_EQ(3, successful.ble_write_calls);
     ASSERT_EQ(1, successful.commit_calls);
 
@@ -401,7 +401,7 @@ TEST(PrefsWritePolicyTest, CommitFailureIsReturned) {
 
     EXPECT_FALSE(sigurdos::detail::prefsWriteAll(
         prefs, failing.ops(), sigurdos::detail::BlePrefsWriteMode::Write, &failure));
-    EXPECT_EQ(49, failing.write_calls);
+    EXPECT_EQ(51, failing.write_calls);
     EXPECT_EQ(1, failing.commit_calls);
     EXPECT_STREQ("commit", failure.key);
     EXPECT_EQ(failing.error, failure.error);
@@ -416,7 +416,7 @@ TEST(PrefsWritePolicyTest, PreserveModeLeavesCrossVariantBleKeysUntouched) {
 
     EXPECT_TRUE(sigurdos::detail::prefsWriteAll(
         prefs, writer.ops(), sigurdos::detail::BlePrefsWriteMode::Preserve));
-    EXPECT_EQ(46, writer.write_calls);
+    EXPECT_EQ(48, writer.write_calls);
     EXPECT_EQ(0, writer.ble_write_calls);
     EXPECT_EQ(1, writer.commit_calls);
 }

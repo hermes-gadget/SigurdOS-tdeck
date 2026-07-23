@@ -22,6 +22,7 @@
 #include "../responsive.h"
 #include "../../hal/prefs.h"
 #include "../../hal/gps.h"
+#include "../../app/gps_track_log.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
@@ -34,8 +35,76 @@ using namespace responsive;
 
 static constexpr uint16_t GPS_INT_VALUES[] = {5, 10, 30, 60};
 static constexpr const char* GPS_INT_LABELS[] = {"5s", "10s", "30s", "60s"};
+static constexpr uint32_t TRACK_INT_VALUES[] = {5, 15, 30, 60};
+static constexpr const char* TRACK_INT_LABELS[] = {"5s", "15s", "30s", "60s"};
 static lv_timer_t* g_gps_sync_timer = nullptr;
 static lv_obj_t* g_gps_sync_row = nullptr;
+static lv_obj_t* g_track_stats_row = nullptr;
+
+static void refresh_track_stats_row()
+{
+    if (!g_track_stats_row) return;
+    sigurdos::app::GpsTrackStats stats{};
+    if (!sigurdos::app::gpsTrackGetStats(&stats)) {
+        update_row_label(g_track_stats_row, "  Track: storage unavailable");
+        return;
+    }
+    char text[96];
+    if (stats.distance_m >= 1000.0) {
+        snprintf(text, sizeof(text), "  Track: %u pts, %.1f km, %lu min",
+                 static_cast<unsigned>(stats.waypoint_count),
+                 stats.distance_m / 1000.0,
+                 static_cast<unsigned long>(stats.duration_s / 60UL));
+    } else {
+        snprintf(text, sizeof(text), "  Track: %u pts, %.0f m, %lu min",
+                 static_cast<unsigned>(stats.waypoint_count), stats.distance_m,
+                 static_cast<unsigned long>(stats.duration_s / 60UL));
+    }
+    update_row_label(g_track_stats_row, text);
+}
+
+static void show_clear_track_dialog(lv_obj_t* screen)
+{
+    if (!screen) return;
+    auto size = dialog_size(220, 88);
+    lv_obj_t* dialog = lv_obj_create(screen);
+    lv_obj_set_size(dialog, size.w, size.h);
+    lv_obj_center(dialog);
+    apply_pixel_card_accent(dialog);
+    lv_obj_t* title = lv_label_create(dialog);
+    lv_label_set_text(title, "Clear GPS track log?");
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t* clear = lv_btn_create(dialog);
+    lv_obj_set_size(clear, 82, 26);
+    lv_obj_align(clear, LV_ALIGN_BOTTOM_LEFT, 8, -6);
+    lv_obj_set_style_bg_color(clear, lv_color_hex(ACCENT_RED), 0);
+    lv_obj_set_style_radius(clear, 0, 0);
+    lv_obj_t* clear_label = lv_label_create(clear);
+    lv_label_set_text(clear_label, "CLEAR");
+    lv_obj_center(clear_label);
+    lv_obj_add_event_cb(clear, [](lv_event_t* event) {
+        lv_obj_t* dialog =
+            lv_obj_get_parent(static_cast<lv_obj_t*>(lv_event_get_target(event)));
+        (void)sigurdos::app::gpsTrackClear();
+        refresh_track_stats_row();
+        lv_obj_del_async(dialog);
+    }, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* cancel = lv_btn_create(dialog);
+    lv_obj_set_size(cancel, 82, 26);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, -8, -6);
+    apply_pixel_btn_outline(cancel);
+    lv_obj_t* cancel_label = lv_label_create(cancel);
+    lv_label_set_text(cancel_label, "CANCEL");
+    lv_obj_center(cancel_label);
+    lv_obj_add_event_cb(cancel, [](lv_event_t* event) {
+        lv_obj_t* dialog =
+            lv_obj_get_parent(static_cast<lv_obj_t*>(lv_event_get_target(event)));
+        lv_obj_del_async(dialog);
+    }, LV_EVENT_CLICKED, nullptr);
+}
 
 static void gps_sync_timer_cb(lv_timer_t* timer)
 {
@@ -296,6 +365,91 @@ void settings_gps_show()
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 
+    // Breadcrumb recording controls are independent from location sharing.
+    snprintf(buf, sizeof(buf), "  Track recording: %s",
+             p.gps_track_enabled ? "ON" : "OFF");
+    lv_obj_t* track_toggle = lv_list_add_btn(list, LV_SYMBOL_GPS, buf);
+    lv_obj_set_style_bg_color(track_toggle, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(track_toggle, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(track_toggle, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(track_toggle, [](lv_event_t* event) {
+        lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
+        sigurdos::NodePrefs prefs = sigurdos::prefs_get();
+        prefs.gps_track_enabled = !prefs.gps_track_enabled;
+        if (!sigurdos::prefs_set(prefs)) return;
+        char text[64];
+        snprintf(text, sizeof(text), "  Track recording: %s",
+                 prefs.gps_track_enabled ? "ON" : "OFF");
+        update_row_label(target, text);
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    int track_interval_index = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (p.gps_track_interval == TRACK_INT_VALUES[i]) {
+            track_interval_index = i;
+            break;
+        }
+    }
+    snprintf(buf, sizeof(buf), "  Track interval: %s",
+             TRACK_INT_LABELS[track_interval_index]);
+    lv_obj_t* track_interval = lv_list_add_btn(list, LV_SYMBOL_REFRESH, buf);
+    lv_obj_set_style_bg_color(track_interval, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_bg_opa(track_interval, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(track_interval, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(track_interval, [](lv_event_t* event) {
+        lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
+        sigurdos::NodePrefs prefs = sigurdos::prefs_get();
+        int index = 0;
+        for (int i = 0; i < 4; ++i) {
+            if (prefs.gps_track_interval == TRACK_INT_VALUES[i]) {
+                index = i;
+                break;
+            }
+        }
+        index = (index + 1) % 4;
+        prefs.gps_track_interval = TRACK_INT_VALUES[index];
+        if (!sigurdos::prefs_set(prefs)) return;
+        char text[64];
+        snprintf(text, sizeof(text), "  Track interval: %s",
+                 TRACK_INT_LABELS[index]);
+        update_row_label(target, text);
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    g_track_stats_row = lv_list_add_btn(list, LV_SYMBOL_LIST, "");
+    lv_obj_set_style_bg_color(g_track_stats_row, lv_color_hex(BG_INPUT), 0);
+    lv_obj_set_style_bg_opa(g_track_stats_row, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(g_track_stats_row, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(g_track_stats_row, [](lv_event_t*) {
+        refresh_track_stats_row();
+    }, LV_EVENT_CLICKED, nullptr);
+    refresh_track_stats_row();
+    row++;
+
+    lv_obj_t* trim_track =
+        lv_list_add_btn(list, LV_SYMBOL_CUT, "  Trim track to newest 1024");
+    lv_obj_set_style_bg_color(trim_track, lv_color_hex(BG_TERTIARY), 0);
+    lv_obj_set_style_bg_opa(trim_track, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(trim_track, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(trim_track, [](lv_event_t*) {
+        (void)sigurdos::app::gpsTrackTrim();
+        refresh_track_stats_row();
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
+    lv_obj_t* clear_track =
+        lv_list_add_btn(list, LV_SYMBOL_TRASH, "  Clear track log");
+    lv_obj_set_style_bg_color(clear_track, lv_color_hex(ACCENT_RED), 0);
+    lv_obj_set_style_bg_opa(clear_track, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(
+        clear_track, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
+    lv_obj_add_event_cb(clear_track, [](lv_event_t* event) {
+        lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
+        show_clear_track_dialog(lv_obj_get_screen(target));
+    }, LV_EVENT_CLICKED, nullptr);
+    row++;
+
     // Share location toggle
     snprintf(buf, sizeof(buf), "  Share location: %s", p.advert_loc_policy ? "ON" : "OFF");
     lv_obj_t* btn_share = lv_list_add_btn(list, LV_SYMBOL_GPS, buf);
@@ -323,6 +477,7 @@ void settings_gps_show()
         }
         sigurdos_gps_cancel_time_sync();
         g_gps_sync_row = nullptr;
+        g_track_stats_row = nullptr;
     }, LV_EVENT_DELETE, nullptr);
     show_screen(scr);
 }

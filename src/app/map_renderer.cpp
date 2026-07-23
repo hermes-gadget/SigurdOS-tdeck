@@ -1532,6 +1532,73 @@ void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_
     *out_py = center_py + (int)((tile_y - center_ty) * px_per_tile);
 }
 
+void sigurdos_map_track_render(const sigurdos::app::GpsTrackPoint* points,
+                               std::size_t count)
+{
+    if (!initialized || !map_canvas || !canvas_pixels || !points || count == 0) {
+        return;
+    }
+    if (count > sigurdos::app::GPS_TRACK_MAP_POINTS) {
+        count = sigurdos::app::GPS_TRACK_MAP_POINTS;
+    }
+
+    lv_layer_t layer;
+    lv_canvas_init_layer(map_canvas, &layer);
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = lv_color_hex(sigurdos::theme::ACCENT);
+    line.width = 2;
+    line.opa = LV_OPA_70;
+
+    lv_draw_rect_dsc_t dot;
+    lv_draw_rect_dsc_init(&dot);
+    dot.bg_color = lv_color_hex(sigurdos::theme::ACCENT);
+    dot.bg_opa = LV_OPA_COVER;
+    dot.radius = 0;
+
+    int previous_x = 0;
+    int previous_y = 0;
+    bool have_previous = false;
+    for (std::size_t i = 0; i < count; ++i) {
+        const double latitude = sigurdos::app::gpsTrackLatitude(points[i]);
+        const double longitude = sigurdos::app::gpsTrackLongitude(points[i]);
+        if (!sigurdos_map_position_valid(
+                sigurdos::app::gpsTrackCoordinateValid(latitude, longitude),
+                latitude, longitude)) {
+            have_previous = false;
+            continue;
+        }
+        int x = 0;
+        int y = 0;
+        sigurdos_map_latlon_to_pixel(latitude, longitude, &x, &y);
+        const bool visible = x >= -2 && x <= TFT_WIDTH + 2 &&
+            y >= -2 && y <= TFT_HEIGHT + 2;
+        if (have_previous) {
+            const bool segment_near_view =
+                (previous_x >= -TFT_WIDTH && previous_x <= TFT_WIDTH * 2 &&
+                 previous_y >= -TFT_HEIGHT && previous_y <= TFT_HEIGHT * 2) ||
+                (x >= -TFT_WIDTH && x <= TFT_WIDTH * 2 &&
+                 y >= -TFT_HEIGHT && y <= TFT_HEIGHT * 2);
+            if (segment_near_view) {
+                line.p1.x = previous_x;
+                line.p1.y = previous_y;
+                line.p2.x = x;
+                line.p2.y = y;
+                lv_draw_line(&layer, &line);
+            }
+        }
+        if (visible) {
+            lv_area_t area{x - 1, y - 1, x + 1, y + 1};
+            lv_draw_rect(&layer, &dot, &area);
+        }
+        previous_x = x;
+        previous_y = y;
+        have_previous = true;
+    }
+    lv_canvas_finish_layer(map_canvas, &layer);
+    lv_obj_invalidate(map_canvas);
+}
+
 // ── Contact marker pool ─────────────────────────────────────
 static constexpr int MAX_CONTACT_DOTS = 32;
 static constexpr int CONTACT_DOT_SIZE = 8;

@@ -180,6 +180,11 @@ bool prefs_load(NodePrefs& p) {
     // uint32 key so existing installations migrate without a type mismatch.
     p.gps_interval = nvs.getULong("gps_int32", nvs.getUShort("gps_int", 5));
     if (p.gps_interval > 86400) p.gps_interval = 86400;
+    p.gps_track_enabled = nvs.getBool("gps_trk_en", false);
+    p.gps_track_interval = nvs.getULong("gps_trk_int", 15);
+    if (p.gps_track_interval < 1 || p.gps_track_interval > 3600) {
+        p.gps_track_interval = 15;
+    }
     p.autoadd_config = nvs.getUChar("autoadd_cfg", 0x1E);
     p.autoadd_max_hops = nvs.getUChar("autoadd_mh", 0);
     p.client_repeat = nvs.getUChar("clirep", 0);

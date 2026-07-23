@@ -18,6 +18,7 @@
 #include "hal/display_retry_state.h"
 #include "hal/ota_boot_health.h"
 #include "app/map_renderer.h"
+#include "app/gps_track_log.h"
 #include "app/gps_clock_handoff.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/ui.h"
@@ -178,7 +179,7 @@ void setup()
         boot_status("Input degraded");
     }
 
-    if (p.gps_enabled) {
+    if (p.gps_enabled || p.gps_track_enabled) {
         sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Gps);
         boot_status("Starting GPS...");
         sigurdos_gps_init();
@@ -292,8 +293,18 @@ void loop()
     }
     {   // Persisted background cadence plus explicit map/time-sync demand.
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();
-        sigurdos_gps_service(gp.gps_enabled, gp.gps_interval);
-        const bool gps_time_requested = gp.gps_enabled ||
+        const bool track_recording = gp.gps_track_enabled;
+        const bool gps_background_enabled = gp.gps_enabled || track_recording;
+        const uint32_t gps_interval =
+            sigurdos::app::gpsTrackGpsDemandInterval(
+                gp.gps_enabled, gp.gps_interval, track_recording,
+                gp.gps_track_interval);
+        sigurdos_gps_service(gps_background_enabled, gps_interval);
+        sigurdos::app::gpsTrackService(
+            track_recording, gp.gps_track_interval, sigurdos_gps_has_fix(),
+            sigurdos_gps_latitude(), sigurdos_gps_longitude(),
+            sigurdos::mesh::getCurrentTime(), millis());
+        const bool gps_time_requested = gps_background_enabled ||
             sigurdos_gps_time_sync_status() == SigurdOSGpsSyncStatus::Waiting;
         if (gps_time_requested) {
             sigurdos::app::serviceGpsClock(

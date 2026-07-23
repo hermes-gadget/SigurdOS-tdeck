@@ -23,7 +23,9 @@
 #include "../screen_lifetime.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/map_renderer.h"
+#include "../../app/gps_track_log.h"
 #include "../../hal/gps.h"
+#include "../../hal/prefs.h"
 #include <Arduino.h>
 #include <lvgl.h>
 #include <new>
@@ -78,11 +80,54 @@ static lv_timer_t* g_map_warmup_timer = nullptr;
 static lv_timer_t* g_map_discovery_timer = nullptr;
 static lv_obj_t* g_map_discovery_status = nullptr;
 static lv_obj_t* g_map_discovery_cancel = nullptr;
+static lv_obj_t* g_map_track_status = nullptr;
+static lv_obj_t* g_map_track_toggle = nullptr;
+static lv_timer_t* g_map_track_timer = nullptr;
+static sigurdos::app::GpsTrackPoint* g_map_track_points = nullptr;
+static std::size_t g_map_track_count = 0;
+static std::size_t g_map_track_total_count = 0;
 static int g_map_warmup_passes = 0;
 static ScreenLifetime g_map_lifetime;
 
+static void update_track_status()
+{
+    if (!g_map_track_status || !g_map_track_toggle) return;
+    const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
+    lv_obj_t* toggle_label = lv_obj_get_child(g_map_track_toggle, 0);
+    if (toggle_label) {
+        lv_label_set_text(toggle_label,
+                          prefs.gps_track_enabled ? "REC ON" : "REC OFF");
+    }
+    sigurdos::app::GpsTrackStats stats{};
+    if (!sigurdos::app::gpsTrackGetStats(&stats)) {
+        lv_label_set_text(g_map_track_status, "Track unavailable");
+        return;
+    }
+    g_map_track_total_count = stats.waypoint_count;
+    char distance[20];
+    if (stats.distance_m >= 1000.0) {
+        snprintf(distance, sizeof(distance), "%.1f km", stats.distance_m / 1000.0);
+    } else {
+        snprintf(distance, sizeof(distance), "%.0f m", stats.distance_m);
+    }
+    const unsigned long hours = stats.duration_s / 3600UL;
+    const unsigned long minutes = (stats.duration_s % 3600UL) / 60UL;
+    lv_label_set_text_fmt(
+        g_map_track_status, "%u pts  %s  %lu:%02lu",
+        static_cast<unsigned>(stats.waypoint_count), distance, hours, minutes);
+}
+
 static void render_map_with_contacts() {
     sigurdos_map_render();
+    if (!g_map_track_points) {
+        g_map_track_points = new(std::nothrow)
+            sigurdos::app::GpsTrackPoint[sigurdos::app::GPS_TRACK_MAP_POINTS];
+    }
+    g_map_track_count = g_map_track_points
+        ? sigurdos::app::gpsTrackLoadRecent(
+              g_map_track_points, sigurdos::app::GPS_TRACK_MAP_POINTS)
+        : 0;
+    sigurdos_map_track_render(g_map_track_points, g_map_track_count);
     if (!map_contacts) {
         map_contacts = new(std::nothrow) sigurdos::mesh::ContactInfo[MAX_CONTACTS];
     }
@@ -99,7 +144,7 @@ static void render_map_with_contacts() {
 static void start_map_warmup() {
     g_map_warmup_passes = 3;
     g_map_warmup_timer = lv_timer_create([](lv_timer_t* timer) {
-        sigurdos_map_render();
+        render_map_with_contacts();
         if (sigurdos_map_last_deferred_tiles() == 0 ||
             --g_map_warmup_passes <= 0) {
             lv_timer_del(timer);
@@ -126,13 +171,20 @@ void map_screen_show()
     g_map_lifetime.bind(scr);
     g_map_lifetime.trackTimer(&g_map_warmup_timer);
     g_map_lifetime.trackTimer(&g_map_discovery_timer);
+    g_map_lifetime.trackTimer(&g_map_track_timer);
     g_map_lifetime.track(&g_map_discovery_status);
     g_map_lifetime.track(&g_map_discovery_cancel);
+    g_map_lifetime.track(&g_map_track_status);
+    g_map_lifetime.track(&g_map_track_toggle);
     g_map_lifetime.onDelete([] {
         sigurdos_map_cancel_discovery();
         sigurdos_gps_set_map_high_rate(false);
         delete[] map_contacts;
         map_contacts = nullptr;
+        delete[] g_map_track_points;
+        g_map_track_points = nullptr;
+        g_map_track_count = 0;
+        g_map_track_total_count = 0;
         g_map_warmup_passes = 0;
     });
 
@@ -161,6 +213,36 @@ void map_screen_show()
     sigurdos_map_contact_set_tap_cb(navigate_to_contact_detail);
 
     render_map_with_contacts();
+
+    g_map_track_toggle = lv_btn_create(map);
+    lv_obj_set_size(g_map_track_toggle, 72, 28);
+    lv_obj_align(g_map_track_toggle, LV_ALIGN_TOP_LEFT, 8, 8);
+    apply_pixel_btn_outline(g_map_track_toggle);
+    lv_obj_t* track_toggle_label = lv_label_create(g_map_track_toggle);
+    lv_obj_center(track_toggle_label);
+    lv_obj_add_event_cb(g_map_track_toggle, [](lv_event_t*) {
+        sigurdos::NodePrefs prefs = sigurdos::prefs_get();
+        prefs.gps_track_enabled = !prefs.gps_track_enabled;
+        if (sigurdos::prefs_set(prefs)) update_track_status();
+    }, LV_EVENT_CLICKED, nullptr);
+
+    g_map_track_status = lv_label_create(map);
+    lv_obj_set_style_text_color(
+        g_map_track_status, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_bg_color(
+        g_map_track_status, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(g_map_track_status, LV_OPA_90, 0);
+    lv_obj_set_style_pad_all(g_map_track_status, 4, 0);
+    lv_obj_align(g_map_track_status, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+    update_track_status();
+
+    g_map_track_timer = lv_timer_create([](lv_timer_t*) {
+        const std::size_t previous_count = g_map_track_total_count;
+        update_track_status();
+        if (g_map_track_total_count != previous_count) {
+            render_map_with_contacts();
+        }
+    }, 2000, nullptr);
 
     static int drag_start_x = 0, drag_start_y = 0;
     static uint32_t map_last_render_ms = 0;

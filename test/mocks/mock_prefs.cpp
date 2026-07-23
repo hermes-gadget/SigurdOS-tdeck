@@ -55,6 +55,9 @@ bool prefs_set(const NodePrefs& p) {
     if (!g_prefs_set_result) return false;
     g_prefs = p;
     if (g_prefs.gps_interval > 86400) g_prefs.gps_interval = 86400;
+    if (g_prefs.gps_track_interval < 1 || g_prefs.gps_track_interval > 3600) {
+        g_prefs.gps_track_interval = 15;
+    }
     return true;
 }
 
