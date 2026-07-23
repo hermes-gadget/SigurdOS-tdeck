@@ -23,6 +23,7 @@
 #include "../lv_timer_owner.h"
 #include "../wifi_credentials_policy.h"
 #include "../../hal/wifi_ota.h"
+#include "../../hal/wifi_coordinator.h"
 #include "../../hal/prefs.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
@@ -201,7 +202,16 @@ static void show_wifi_password_dialog(lv_obj_t* screen, const char* ssid)
         lv_obj_add_state(owned->save_btn, LV_STATE_DISABLED);
         lv_label_set_text(owned->title, "Connecting...");
         lv_obj_set_style_text_color(owned->title, lv_color_hex(ACCENT), 0);
-        sigurdos::wifi_sta::beginConnect(owned->staged.ssid, owned->staged.password);
+        if (!sigurdos::wifi_sta::beginConnect(owned->staged.ssid,
+                                              owned->staged.password)) {
+            char busy[80];
+            snprintf(busy, sizeof(busy), "WiFi busy: %s",
+                     sigurdos::wifi::ownerName(sigurdos::wifi::currentOwner()));
+            lv_label_set_text(owned->title, busy);
+            lv_obj_set_style_text_color(owned->title, lv_color_hex(ACCENT_RED), 0);
+            lv_obj_clear_state(owned->save_btn, LV_STATE_DISABLED);
+            return;
+        }
         lv_timer_t* poll = lv_timer_create(wifi_connection_poll, 300, owned);
         if (poll) owned->poll_timer.attach(poll);
         else {
@@ -244,7 +254,16 @@ static void wifi_do_scan(lv_timer_t* timer) {
     
     lv_obj_clean(list);
     
-    if (g_wifi_ap_count <= 0) {
+    if (g_wifi_ap_count == sigurdos::wifi_scan::SIGURDOS_WIFI_SCAN_BUSY) {
+        char busy[80];
+        snprintf(busy, sizeof(busy), "WiFi busy: %s",
+                 sigurdos::wifi::ownerName(sigurdos::wifi::currentOwner()));
+        lv_obj_t* empty = lv_label_create(list);
+        lv_label_set_text(empty, busy);
+        lv_obj_set_style_text_color(empty, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_set_style_text_font(empty, emoji_wrapped_montserrat_12, 0);
+        lv_obj_center(empty);
+    } else if (g_wifi_ap_count <= 0) {
         lv_obj_t* empty = lv_label_create(list);
         lv_label_set_text(empty, "No networks found");
         lv_obj_set_style_text_color(empty, lv_color_hex(TEXT_SECONDARY), 0);
@@ -298,11 +317,6 @@ static void wifi_do_scan(lv_timer_t* timer) {
 
 void wifi_networks_screen_show()
 {
-    // Guard against active OTA
-    if (sigurdos::ota::isActive()) {
-        sigurdos::ota::stop();
-    }
-    
     lv_obj_t* scr = make_screen_full("WiFi");
     
     // Content container
@@ -320,6 +334,16 @@ void wifi_networks_screen_show()
     lv_obj_set_style_text_color(scanning, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(scanning, emoji_wrapped_montserrat_12, 0);
     lv_obj_set_width(scanning, CONTENT_W - 8);
+
+    if (!sigurdos::wifi::canAcquire(sigurdos::wifi::Owner::Scan)) {
+        char busy[80];
+        snprintf(busy, sizeof(busy), "WiFi busy: %s\nTry again when it finishes.",
+                 sigurdos::wifi::ownerName(sigurdos::wifi::currentOwner()));
+        lv_label_set_text(scanning, busy);
+        lv_obj_set_style_text_color(scanning, lv_color_hex(ACCENT_RED), 0);
+        show_screen(scr);
+        return;
+    }
     
     // Results list (scrollable, flex column)
     lv_obj_t* list = lv_obj_create(cont);

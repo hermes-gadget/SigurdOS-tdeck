@@ -167,10 +167,10 @@ inline bool normalizeAndValidate(NodePrefs& prefs) {
         prefs.radio_profile[0] = '\0';
         return true;
     }
-    const bool valid = std::isfinite(prefs.freq) && prefs.freq >= 400.0f &&
-        prefs.freq <= 930.0f && validRadioBandwidth(prefs.bw) &&
-        prefs.sf >= 6 && prefs.sf <= 12 && prefs.cr >= 5 && prefs.cr <= 8 &&
-        prefs.tx_power_dbm >= 2 && prefs.tx_power_dbm <= 22;
+    const bool valid = std::isfinite(prefs.freq) && prefs.freq >= 150.0f &&
+        prefs.freq <= 960.0f && validRadioBandwidth(prefs.bw) &&
+        prefs.sf >= 5 && prefs.sf <= 12 && prefs.cr >= 5 && prefs.cr <= 8 &&
+        prefs.tx_power_dbm >= -9 && prefs.tx_power_dbm <= 22;
     if (!valid) {
         prefs.configured = false;
         prefs.freq = prefs.bw = 0.0f;

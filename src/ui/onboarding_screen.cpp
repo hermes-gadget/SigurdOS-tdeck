@@ -5,6 +5,7 @@
 #include "chat_screen.h"
 #include "screens.h"
 #include "screens_common.h"
+#include "notifications.h"
 #include "../fonts/emoji_font.h"
 #include "../hal/prefs.h"
 #include "../hal/radio_profiles.h"
@@ -404,8 +405,12 @@ static void build_step3()
         // Auto-join the Public channel so new devices can receive group messages
         // immediately. Without this, a freshly-flashed device has zero channels
         // and cannot decrypt any group traffic after restart.
-        sigurdos::mesh::joinPublicChannel();
-        sigurdos::mesh::saveChannels();
+        if (!sigurdos::mesh::joinPublicChannel()) {
+            notifications_post(
+                NotificationEvent::UiError,
+                "Public channel was not saved");
+            return;
+        }
         // Flush and wait for flash writes to complete before restart
         SPIFFS.end();
         delay(200);

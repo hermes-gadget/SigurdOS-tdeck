@@ -75,6 +75,9 @@ bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
 // Helper: render map tiles then overlay contact markers
 static sigurdos::mesh::ContactInfo* map_contacts = nullptr;
 static lv_timer_t* g_map_warmup_timer = nullptr;
+static lv_timer_t* g_map_discovery_timer = nullptr;
+static lv_obj_t* g_map_discovery_status = nullptr;
+static lv_obj_t* g_map_discovery_cancel = nullptr;
 static int g_map_warmup_passes = 0;
 static ScreenLifetime g_map_lifetime;
 
@@ -93,6 +96,27 @@ static void render_map_with_contacts() {
     sigurdos_map_contact_render(map_contacts, n);
 }
 
+static void start_map_warmup() {
+    g_map_warmup_passes = 3;
+    g_map_warmup_timer = lv_timer_create([](lv_timer_t* timer) {
+        sigurdos_map_render();
+        if (sigurdos_map_last_deferred_tiles() == 0 ||
+            --g_map_warmup_passes <= 0) {
+            lv_timer_del(timer);
+            if (g_map_warmup_timer == timer) g_map_warmup_timer = nullptr;
+        }
+    }, 250, nullptr);
+}
+
+static void hide_discovery_controls() {
+    if (g_map_discovery_status) {
+        lv_obj_add_flag(g_map_discovery_status, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (g_map_discovery_cancel) {
+        lv_obj_add_flag(g_map_discovery_cancel, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void map_screen_show()
 {
     // Opening Map is an explicit foreground request for responsive location.
@@ -101,7 +125,11 @@ void map_screen_show()
     lv_obj_t* scr = make_screen_full("Map");
     g_map_lifetime.bind(scr);
     g_map_lifetime.trackTimer(&g_map_warmup_timer);
+    g_map_lifetime.trackTimer(&g_map_discovery_timer);
+    g_map_lifetime.track(&g_map_discovery_status);
+    g_map_lifetime.track(&g_map_discovery_cancel);
     g_map_lifetime.onDelete([] {
+        sigurdos_map_cancel_discovery();
         sigurdos_gps_set_map_high_rate(false);
         delete[] map_contacts;
         map_contacts = nullptr;
@@ -127,9 +155,6 @@ void map_screen_show()
         return;
     }
     sigurdos_map_reparent(scr);
-
-    // Discover tiles on first map visit (deferred from boot to avoid blocking)
-    sigurdos_map_discover_tiles();
 
     // Pre-allocate contact marker dots on top of map BEFORE rendering
     sigurdos_map_contact_init(map, CONTENT_Y);
@@ -195,18 +220,69 @@ void map_screen_show()
     lv_obj_add_event_cb(zoom_out, [](lv_event_t*) { sigurdos_map_zoom_out(); render_map_with_contacts(); },
                         LV_EVENT_CLICKED, nullptr);
 
+    g_map_discovery_status = lv_label_create(map);
+    lv_label_set_text(g_map_discovery_status, "Scanning map tiles...");
+    lv_obj_set_style_text_color(
+        g_map_discovery_status, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_bg_color(
+        g_map_discovery_status, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_bg_opa(g_map_discovery_status, LV_OPA_90, 0);
+    lv_obj_set_style_pad_all(g_map_discovery_status, 4, 0);
+    lv_obj_align(g_map_discovery_status, LV_ALIGN_TOP_MID, 0, 8);
+
+    g_map_discovery_cancel = lv_btn_create(map);
+    lv_obj_set_size(g_map_discovery_cancel, 72, 28);
+    lv_obj_align(g_map_discovery_cancel, LV_ALIGN_TOP_MID, 0, 42);
+    apply_pixel_btn_outline(g_map_discovery_cancel);
+    lv_obj_t* cancel_label = lv_label_create(g_map_discovery_cancel);
+    lv_label_set_text(cancel_label, "CANCEL");
+    lv_obj_center(cancel_label);
+    lv_obj_add_event_cb(g_map_discovery_cancel, [](lv_event_t*) {
+        sigurdos_map_cancel_discovery();
+        if (g_map_discovery_timer) {
+            lv_timer_del(g_map_discovery_timer);
+            g_map_discovery_timer = nullptr;
+        }
+        hide_discovery_controls();
+    }, LV_EVENT_CLICKED, nullptr);
+
     (void)zoom_y_base;
     show_screen(scr);
-    // Two loads per render keep input responsive. Repeat a few bounded warmup
-    // passes so every visible tile can fill without user interaction.
-    g_map_warmup_passes = 3;
-    g_map_warmup_timer = lv_timer_create([](lv_timer_t* t) {
-        sigurdos_map_render();
-        if (sigurdos_map_last_deferred_tiles() == 0 || --g_map_warmup_passes <= 0) {
-            lv_timer_del(t);
-            if (g_map_warmup_timer == t) g_map_warmup_timer = nullptr;
+
+    // Discovery starts only after the screen has been loaded. Each timer tick
+    // is bounded by both directory operations and elapsed time, so LVGL keeps
+    // servicing input even with a very large or malformed tile tree.
+    sigurdos_map_discover_tiles();
+    g_map_discovery_timer = lv_timer_create([](lv_timer_t* timer) {
+        const bool more = sigurdos_map_discovery_step();
+        const SigurdosMapDiscoveryProgress progress =
+            sigurdos_map_discovery_progress();
+        if (g_map_discovery_status && more) {
+            lv_label_set_text_fmt(
+                g_map_discovery_status, "Scanning tiles z%d  %lu",
+                progress.zoom,
+                static_cast<unsigned long>(progress.entries_processed));
         }
-    }, 250, nullptr);
+        if (!more) {
+            lv_timer_del(timer);
+            if (g_map_discovery_timer == timer) {
+                g_map_discovery_timer = nullptr;
+            }
+            if (progress.result == SigurdosMapDiscoveryResult::LimitReached &&
+                g_map_discovery_status) {
+                lv_label_set_text(g_map_discovery_status,
+                                  "Tile scan limit reached");
+                if (g_map_discovery_cancel) {
+                    lv_obj_add_flag(
+                        g_map_discovery_cancel, LV_OBJ_FLAG_HIDDEN);
+                }
+            } else {
+                hide_discovery_controls();
+            }
+            render_map_with_contacts();
+            start_map_warmup();
+        }
+    }, 20, nullptr);
 }
 
 } // namespace sigurdos::ui

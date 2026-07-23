@@ -523,7 +523,8 @@ static void show_manual_contact_dialog()
             return;
         }
         if (!sigurdos::mesh::addContactManual(name_text, key_text, data->type)) {
-            lv_label_set_text(data->error, "Duplicate contact or list full");
+            lv_label_set_text(
+                data->error, "Duplicate, full, or save failed");
             return;
         }
         g_contacts_page = 0;
@@ -1414,7 +1415,12 @@ void contact_detail_screen_show(const char* contact_name)
                 int cur = sigurdos::mesh::getContactPerm(name);
                 if (cur < 0) cur = PERM_ACL_GUEST;
                 int next = (cur == PERM_ACL_GUEST) ? PERM_ACL_GUEST : cur - 1;
-                sigurdos::mesh::setContactPerm(name, next);
+                if (!sigurdos::mesh::setContactPerm(name, next)) {
+                    notifications_post(
+                        NotificationEvent::UiError,
+                        "Contact permission was not saved");
+                    return;
+                }
                 sigurdos::ui::contact_detail_screen_show(name);
             }
         }, LV_EVENT_CLICKED, nullptr);
@@ -1439,7 +1445,12 @@ void contact_detail_screen_show(const char* contact_name)
                 int cur = sigurdos::mesh::getContactPerm(name);
                 if (cur < 0) cur = PERM_ACL_GUEST;
                 int next = (cur >= PERM_ACL_ADMIN) ? PERM_ACL_ADMIN : cur + 1;
-                sigurdos::mesh::setContactPerm(name, next);
+                if (!sigurdos::mesh::setContactPerm(name, next)) {
+                    notifications_post(
+                        NotificationEvent::UiError,
+                        "Contact permission was not saved");
+                    return;
+                }
                 sigurdos::ui::contact_detail_screen_show(name);
             }
         }, LV_EVENT_CLICKED, nullptr);
@@ -1694,7 +1705,12 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_set_user_data(confirm_btn, cn);
             lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ce) {
                 const char* cn = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(ce));
-                sigurdos::mesh::removeContact(cn);
+                if (!sigurdos::mesh::removeContact(cn)) {
+                    notifications_post(
+                        NotificationEvent::UiError,
+                        "Contact removal was not saved");
+                    return;
+                }
                 go_back();
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_set_user_data(dlg, cn);
@@ -1767,6 +1783,10 @@ void contact_detail_screen_show(const char* contact_name)
                 if (value) strncpy(copy, value, sizeof(copy) - 1);
                 if (copy[0] && sigurdos::mesh::resetPathTo(copy)) {
                     contact_detail_screen_show(copy);
+                } else {
+                    notifications_post(
+                        NotificationEvent::UiError,
+                        "Path reset was not saved");
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(dlg, [](lv_event_t* de) {

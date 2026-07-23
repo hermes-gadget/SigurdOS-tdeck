@@ -196,7 +196,9 @@ bool prefs_load(NodePrefs& p) {
     else { p.radio_profile[sizeof(p.radio_profile) - 1] = '\0'; }
 
     nvs.end();
-    detail::normalizeAndValidate(p);
+    if (!detail::normalizeAndValidate(p)) {
+        SIG_LOGE("[prefs] stored radio configuration invalid; radio disabled");
+    }
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
     if (ble_state.needs_migration) {

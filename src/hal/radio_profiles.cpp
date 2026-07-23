@@ -13,15 +13,15 @@ namespace {
 
 static constexpr RadioProfile PROFILES[] = {
     {"us_902_928", "United States", "USA 902-928", "902-928 MHz",
-     915.000f, 62.5f, 8, 5, 22},
+     915.000f, 62.5f, 8, 5, 22, 902.0f, 928.0f, 22},
     {"ca_902_928", "Canada", "Canada 902-928", "902-928 MHz",
-     915.000f, 62.5f, 8, 5, 22},
+     915.000f, 62.5f, 8, 5, 22, 902.0f, 928.0f, 22},
     {"eu_868", "Europe", "EU 868", "868 MHz",
-     868.000f, 62.5f, 8, 5, 22},
+     868.000f, 62.5f, 8, 5, 22, 863.0f, 870.0f, 22},
     {"uk_869_525", "United Kingdom", "UK 869.525", "869 MHz",
-     869.525f, 250.0f, 10, 5, 22},
+     869.525f, 250.0f, 10, 5, 22, 863.0f, 870.0f, 22},
     {"uk_869_618", "United Kingdom alt", "UK 869.618", "869 MHz",
-     869.618f, 62.5f, 8, 5, 22},
+     869.618f, 62.5f, 8, 5, 22, 863.0f, 870.0f, 22},
 };
 
 struct RepeatFrequencyRange {
@@ -123,6 +123,34 @@ void radio_profile_apply(const RadioProfile& profile, NodePrefs& prefs)
 void radio_profile_set_custom(NodePrefs& prefs)
 {
     copy_profile_id(prefs.radio_profile, "custom");
+}
+
+bool radio_profile_frequency_allowed(const RadioProfile& profile,
+                                     float frequency_mhz)
+{
+    return std::isfinite(frequency_mhz) &&
+           frequency_mhz >= profile.min_freq_mhz &&
+           frequency_mhz <= profile.max_freq_mhz;
+}
+
+bool radio_profile_configuration_valid(const NodePrefs& prefs)
+{
+    if (!prefs.configured || prefs.radio_profile[0] == '\0' ||
+        std::strcmp(prefs.radio_profile, "custom") == 0) {
+        return true;
+    }
+    const RadioProfile* profile = radio_profile_find(prefs.radio_profile);
+    if (!profile || !radio_profile_frequency_allowed(*profile, prefs.freq) ||
+        prefs.tx_power_dbm > profile->max_tx_power_dbm) {
+        return false;
+    }
+    // Named profiles are product policy, not free-form presets. Any edited
+    // tuple must first be marked custom so stale/corrupt profile metadata
+    // cannot bypass that distinction at boot.
+    return nearly_equal(prefs.freq, profile->freq_mhz, 0.001f) &&
+           nearly_equal(prefs.bw, profile->bw_khz, 0.01f) &&
+           prefs.sf == profile->sf && prefs.cr == profile->cr &&
+           prefs.tx_power_dbm == profile->tx_power_dbm;
 }
 
 bool radio_profile_repeat_frequency_khz(const NodePrefs& prefs,

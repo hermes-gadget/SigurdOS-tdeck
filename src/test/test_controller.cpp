@@ -1561,7 +1561,6 @@ static void cmd_addchannel(const char* arg) {
         bool ok = sigurdos::mesh::addChannel(name, psk);
         if (ok) {
             Serial.printf("[test] addchannel OK: #%s with PSK\n", name);
-            sigurdos::mesh::saveChannels();
         }
         else Serial.printf("[test] addchannel FAILED: #%s\n", name);
     } else {

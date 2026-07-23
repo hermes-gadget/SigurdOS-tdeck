@@ -46,6 +46,13 @@ void meshRadioDriverStats(MeshRadioDriverStats& out);
 // On failure the current identity, contacts, and login sessions are unchanged.
 bool meshImportSelfIdentity(const uint8_t* private_key);
 
+// Apply companion channel/contact mutations only when their complete durable
+// representation commits. Runtime state is restored on write failure.
+bool meshSetChannelSlotDurable(int index, const char* name,
+                               const uint8_t* secret, size_t secret_len);
+bool meshRemoveContactByPubKeyDurable(const uint8_t* pub_key);
+bool meshResetContactPathByPubKeyDurable(const uint8_t* pub_key);
+
 // Reset bridge state derived from the previous identity after a successful
 // replacement. The import response itself remains deliverable.
 void companionAdapterIdentityChanged();

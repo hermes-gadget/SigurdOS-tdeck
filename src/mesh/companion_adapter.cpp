@@ -10,6 +10,7 @@
 #include "companion_adapter.h"
 #include "utils/utf8_util.h"
 #include "companion_message_policy.h"
+#include "radio_config_policy.h"
 #include "companion_ble_pin.h"
 #include "channel_validation.h"
 #include "mesh_wrapper.h"
@@ -306,13 +307,8 @@ public:
         if (!mesh_ptr() || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
         if (!memchr(channel.name, '\0', sizeof(channel.name))) return false;
         if (channel.name[0] && !sigurdos::mesh::channel_name_valid(channel.name)) return false;
-        ChannelDetails cd{};
-        strncpy(cd.name, channel.name, sizeof(cd.name) - 1);
-        memcpy(cd.channel.secret, channel.secret, sizeof(cd.channel.secret));
-        if (!mesh_ptr()->setChannelSlot(index, cd)) return false;
-        sigurdos::mesh::saveChannels();
-        sigurdos::mesh::syncRegionsFromChannels();
-        return true;
+        return sigurdos::mesh::meshSetChannelSlotDurable(
+            index, channel.name, channel.secret, sizeof(channel.secret));
     }
 
     CompanionSendResult sendTextByPubKeyPrefix(const uint8_t* prefix, size_t prefix_len,
@@ -473,8 +469,8 @@ public:
                         uint8_t sf,
                         uint8_t cr,
                         uint8_t client_repeat) override {
-        if (freq_khz < 150000 || freq_khz > 2500000) return false;
-        if (bw_hz < 7800 || bw_hz > 500000) return false;
+        if (freq_khz < 150000 || freq_khz > 960000) return false;
+        if (!sigurdos::mesh::sx1262BandwidthSupportedHz(bw_hz)) return false;
         if (sf < 5 || sf > 12) return false;
         if (cr < 5 || cr > 8) return false;
         if (client_repeat > 1) return false;
@@ -507,31 +503,22 @@ public:
             return false;
         }
 
-        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
-                                              tx_power, proposed.rx_boosted_gain)) {
-            return false;
-        }
-
-        sigurdos::prefs_set(proposed);
-        return true;
+        return sigurdos::mesh::applyAndPersistRadioPrefs(proposed);
     }
 
     bool setRadioTxPower(int8_t tx_power_dbm) override {
         if (tx_power_dbm < -9 || tx_power_dbm > 22) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
-
-        const float freq = p.configured ? p.freq : LORA_FREQ;
-        const float bw = p.configured ? p.bw : LORA_BW;
-        const int sf = p.configured ? p.sf : LORA_SF;
-        const int cr = p.configured ? p.cr : LORA_CR;
-        if (!sigurdos::mesh::applyRadioParams(freq, bw, sf, cr,
-                                              tx_power_dbm, p.rx_boosted_gain)) {
-            return false;
-        }
-
+        if (!p.configured) return false;
         p.tx_power_dbm = tx_power_dbm;
-        sigurdos::prefs_set(p);
-        return true;
+        const sigurdos::RadioProfile* matched =
+            sigurdos::radio_profile_match(p);
+        if (matched) {
+            sigurdos::radio_profile_apply(*matched, p);
+        } else {
+            sigurdos::radio_profile_set_custom(p);
+        }
+        return sigurdos::mesh::applyAndPersistRadioPrefs(p);
     }
 
     void tuningParams(uint32_t& rx_delay_base_x1000,
@@ -673,25 +660,22 @@ public:
             if (!ok) *existing = previous;
             return ok;
         }
+        // Explicit companion adds fail at capacity rather than invoking the
+        // advert-only overwrite policy, which would make rollback destructive.
+        if (mesh_ptr()->getNumContacts() >= MAX_CONTACTS) return false;
         ok = mesh_ptr()->addContact(ci);
         if (!ok) return false;
         if (sigurdos::mesh::saveContacts()) return true;
-        mesh_ptr()->removeContactByPubKey(c.pub_key);
+        ::ContactInfo* added = mesh_ptr()->lookupContactByPubKey(
+            c.pub_key, 32);
+        if (added) mesh_ptr()->BaseChatMesh::removeContact(*added);
         return false;
     }
     bool removeContactByPubKey(const uint8_t* pub_key) override {
-        if (!mesh_ptr() || !pub_key) return false;
-        bool ok = mesh_ptr()->removeContactByPubKey(pub_key);
-        if (ok) sigurdos::mesh::saveContacts();
-        return ok;
+        return sigurdos::mesh::meshRemoveContactByPubKeyDurable(pub_key);
     }
     bool resetPathByPubKey(const uint8_t* pub_key) override {
-        if (!mesh_ptr() || !pub_key) return false;
-        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
-        if (!c) return false;
-        mesh_ptr()->BaseChatMesh::resetPathTo(*c);
-        sigurdos::mesh::saveContacts();
-        return true;
+        return sigurdos::mesh::meshResetContactPathByPubKeyDurable(pub_key);
     }
     bool shareContactByPubKey(const uint8_t* pub_key) override {
         if (!mesh_ptr() || !pub_key) return false;
@@ -708,9 +692,11 @@ public:
     }
     bool importContact(const uint8_t* data, size_t len) override {
         if (!mesh_ptr() || !data) return false;
-        bool ok = mesh_ptr()->importContact(data, (uint8_t)len);
-        if (ok) sigurdos::mesh::saveContacts();
-        return ok;
+        // Import validates and queues an advert for loopback. The eventual
+        // onDiscoveredContact mutation marks contacts dirty and owns the
+        // deferred, retryable commit; saving here would only persist the old
+        // table before the queued advert is processed.
+        return mesh_ptr()->importContact(data, (uint8_t)len);
     }
     bool hasConnectionTo(const uint8_t* pub_key) const override {
         return mesh_ptr() && pub_key && mesh_ptr()->companionHasConnection(pub_key);
@@ -1022,11 +1008,14 @@ private:
         uint8_t want = telemetry ? (uint8_t)REQ_TYPE_GET_TELEMETRY_DATA
                                  : (uint8_t)REQ_TYPE_GET_STATUS;
         uint32_t tag = 0;
-        if (!mesh_ptr()->sendRequest(*c, want, &tag) || tag == 0) return r;
+        uint32_t timeout = 0;
+        if (!mesh_ptr()->sendRequest(*c, want, &tag, &timeout) || tag == 0) {
+            return r;
+        }
         r.expected_ack = tag;
         r.ok = true;
         r.sent_flood = (c->out_path_len == 0xFF);
-        r.est_timeout = 0;
+        r.est_timeout = timeout;
         return r;
     }
 };

@@ -230,11 +230,11 @@ TEST(PrefsValidationTest, ValidBoundariesSurviveAndTimingCorruptionIsNormalized)
     sigurdos::NodePrefs prefs;
     prefs.set_defaults();
     prefs.configured = true;
-    prefs.freq = 400.0f;
+    prefs.freq = 150.0f;
     prefs.bw = 7.8f;
-    prefs.sf = 6;
+    prefs.sf = 5;
     prefs.cr = 5;
-    prefs.tx_power_dbm = 2;
+    prefs.tx_power_dbm = -9;
     prefs.rx_delay_base = std::numeric_limits<float>::infinity();
     prefs.tx_delay_factor = -1.0f;
     prefs.direct_tx_delay_factor = std::numeric_limits<float>::quiet_NaN();
@@ -243,6 +243,23 @@ TEST(PrefsValidationTest, ValidBoundariesSurviveAndTimingCorruptionIsNormalized)
     EXPECT_FLOAT_EQ(prefs.rx_delay_base, 10.0f);
     EXPECT_FLOAT_EQ(prefs.tx_delay_factor, 1.0f);
     EXPECT_FLOAT_EQ(prefs.direct_tx_delay_factor, 1.0f);
+}
+
+TEST(PrefsValidationTest, Sx1262UpperBoundSurvivesButOutOfRangeDoesNot) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    prefs.configured = true;
+    prefs.freq = 960.0f;
+    prefs.bw = 500.0f;
+    prefs.sf = 12;
+    prefs.cr = 8;
+    prefs.tx_power_dbm = 22;
+
+    EXPECT_TRUE(sigurdos::detail::normalizeAndValidate(prefs));
+
+    prefs.freq = 960.001f;
+    EXPECT_FALSE(sigurdos::detail::normalizeAndValidate(prefs));
+    EXPECT_FALSE(prefs.configured);
 }
 
 TEST(PrefsValidationTest, RepeaterPasswordSchemaMatchesReadBuffers) {

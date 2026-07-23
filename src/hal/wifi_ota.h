@@ -91,6 +91,9 @@ void stop();
 // Returns true if OTA is active.
 bool isActive();
 
+// Human-readable reason for the most recent start failure.
+const char* getLastError();
+
 // Returns the AP IP address as a string ("192.168.4.1" format).
 // Returns empty string if not active.
 const char* getIP();
@@ -111,6 +114,7 @@ struct APInfo {
 };
 
 static constexpr int SIGURDOS_WIFI_SCAN_MAX_APS = 30;
+static constexpr int SIGURDOS_WIFI_SCAN_BUSY = -1;
 
 inline int limitScanCount(int found, int capacity) {
     if (found <= 0 || capacity <= 0) return 0;
@@ -135,10 +139,9 @@ inline void sortByRssi(APInfo* aps, int count) {
     }
 }
 
-// Scan nearby WiFi access points. Returns count of found APs
-// (max 30). Caller provides buffer; results sorted by RSSI
-// (strongest first). WiFi is left in STA mode after scan so
-// beginConnect() can reuse the settled radio path.
+// Scan nearby WiFi access points. Returns count of found APs (max 30), or
+// SIGURDOS_WIFI_SCAN_BUSY when another transient WiFi owner holds the radio.
+// Caller provides the result buffer; results are sorted strongest first.
 int scan(APInfo* out, int max_aps);
 
 }  // namespace wifi_scan
@@ -165,7 +168,8 @@ inline Status advanceConnectingStatus(Status current, bool hardware_connected,
 
 // Start connecting to an access point. Returns immediately.
 // Progress is serviced by loop(); getStatus() is a side-effect-free snapshot.
-void beginConnect(const char* ssid, const char* password);
+// Returns false without changing the radio when a scan or OTA owns it.
+bool beginConnect(const char* ssid, const char* password);
 
 // Returns the current connection status without changing hardware state.
 Status getStatus();

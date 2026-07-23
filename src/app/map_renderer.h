@@ -46,6 +46,85 @@ static constexpr std::size_t SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES =
     static_cast<std::size_t>(SIGURDOS_MAP_TILE_SIZE) *
     (SIGURDOS_MAP_TILE_SIZE * 4 + 1);
 static constexpr std::size_t SIGURDOS_MAP_INTERNAL_FALLBACK_MAX_BYTES = 32U * 1024U;
+static constexpr int SIGURDOS_MAP_DISCOVERY_ITEMS_PER_STEP = 8;
+static constexpr std::uint32_t SIGURDOS_MAP_DISCOVERY_MAX_STEP_MS = 5;
+static constexpr std::uint32_t SIGURDOS_MAP_DISCOVERY_MAX_ENTRIES = 32768;
+static constexpr std::size_t SIGURDOS_MAP_INDEX_MAX_BYTES = 8192;
+
+class SigurdosMapDiscoveryBudget {
+public:
+    explicit SigurdosMapDiscoveryBudget(int limit)
+        : remaining_(limit > 0 ? limit : 0) {}
+
+    bool consume() {
+        if (remaining_ <= 0) return false;
+        --remaining_;
+        ++used_;
+        return true;
+    }
+
+    int used() const { return used_; }
+    int remaining() const { return remaining_; }
+
+private:
+    int remaining_ = 0;
+    int used_ = 0;
+};
+
+inline bool sigurdos_map_discovery_deadline_reached(
+    std::uint32_t started_at, std::uint32_t now,
+    std::uint32_t max_ms = SIGURDOS_MAP_DISCOVERY_MAX_STEP_MS) {
+    return max_ms == 0 ||
+           static_cast<std::uint32_t>(now - started_at) >= max_ms;
+}
+
+struct SigurdosMapTileIndexEntry {
+    int zoom;
+    int min_x;
+    int max_x;
+    int min_y;
+    int max_y;
+    int sample_x;
+    int sample_y;
+    std::uint32_t tile_count;
+};
+
+inline bool sigurdos_map_tile_index_entry_valid(
+    const SigurdosMapTileIndexEntry& entry) {
+    if (entry.zoom < SIGURDOS_MAP_MIN_ZOOM ||
+        entry.zoom > SIGURDOS_MAP_MAX_ZOOM) {
+        return false;
+    }
+    const int tiles_per_axis = 1 << entry.zoom;
+    const auto coordinate_valid = [tiles_per_axis](int coordinate) {
+        return coordinate >= 0 && coordinate < tiles_per_axis;
+    };
+    return entry.tile_count > 0 &&
+           coordinate_valid(entry.min_x) && coordinate_valid(entry.max_x) &&
+           coordinate_valid(entry.min_y) && coordinate_valid(entry.max_y) &&
+           coordinate_valid(entry.sample_x) &&
+           coordinate_valid(entry.sample_y) &&
+           entry.min_x <= entry.max_x && entry.min_y <= entry.max_y &&
+           entry.sample_x >= entry.min_x && entry.sample_x <= entry.max_x &&
+           entry.sample_y >= entry.min_y && entry.sample_y <= entry.max_y;
+}
+
+enum class SigurdosMapDiscoveryResult : std::uint8_t {
+    Idle,
+    InProgress,
+    IndexLoaded,
+    Scanned,
+    NoTiles,
+    Cancelled,
+    LimitReached,
+};
+
+struct SigurdosMapDiscoveryProgress {
+    SigurdosMapDiscoveryResult result;
+    int zoom;
+    std::uint32_t entries_processed;
+    bool used_index;
+};
 
 inline bool sigurdos_map_internal_fallback_allowed(std::size_t size) {
     return size <= SIGURDOS_MAP_INTERNAL_FALLBACK_MAX_BYTES;
@@ -329,8 +408,19 @@ inline bool sigurdos_map_release_owned_buffer(T*& buffer, FreeFn free_fn) {
 void sigurdos_map_init();
 bool sigurdos_map_initialized();
 
-// Discover available tile zoom levels (deferred from boot)
+// Start discovering available tile zoom levels. This resets discovery state
+// but performs no directory traversal; the screen advances it with step().
 void sigurdos_map_discover_tiles();
+
+// Advance discovery within both an operation count and a wall-clock budget.
+// Returns true while more work remains. Discovery can be cancelled safely
+// when the owning screen is deleted.
+bool sigurdos_map_discovery_step(
+    int max_items = SIGURDOS_MAP_DISCOVERY_ITEMS_PER_STEP,
+    std::uint32_t max_ms = SIGURDOS_MAP_DISCOVERY_MAX_STEP_MS);
+bool sigurdos_map_discovery_in_progress();
+void sigurdos_map_cancel_discovery();
+SigurdosMapDiscoveryProgress sigurdos_map_discovery_progress();
 
 // Set the map viewport center (lat/lon) and zoom level
 void sigurdos_map_set_view(double lat, double lon, int zoom);

@@ -19,6 +19,7 @@
 #include "../screens.h"
 #include "../screens_common.h"
 #include "../screen_lifetime.h"
+#include "../notifications.h"
 #include <SPIFFS.h>
 #include "../chat_screen.h"
 #include "../theme.h"
@@ -324,13 +325,14 @@ void custom_rf_screen_show()
             np.tx_power_dbm = (int8_t)s_rf_pwr;
             np.configured   = true;
             sigurdos::radio_profile_set_custom(np);
-            sigurdos::prefs_set(np);
+            if (!sigurdos::mesh::applyAndPersistRadioPrefs(np)) {
+                notifications_post(
+                    NotificationEvent::UiError,
+                    "Radio apply failed; previous settings restored");
+                return;
+            }
         }
         s_selected_profile = nullptr;
-
-        sigurdos::mesh::applyRadioParams(
-            s_rf_freq, s_rf_bw, s_rf_sf, s_rf_cr, s_rf_pwr,
-            sigurdos::prefs_get().rx_boosted_gain);
 
         // Return to the routed Radio Setup parent with updated values.
         go_back();
@@ -731,7 +733,12 @@ void radio_setup_screen_show()
                 sigurdos::radio_profile_set_custom(np);
             }
         }
-        sigurdos::prefs_set(np);
+        if (!sigurdos::mesh::applyAndPersistRadioPrefs(np)) {
+            notifications_post(
+                NotificationEvent::UiError,
+                "Radio save failed; previous settings restored");
+            return;
+        }
         sigurdos::mesh::saveChannels();
         // Flush and wait for flash writes to complete before restart
         SPIFFS.end();

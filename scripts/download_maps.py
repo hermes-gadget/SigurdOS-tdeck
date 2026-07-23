@@ -240,6 +240,88 @@ def write_metadata(output_dir, name, server_config, lat1, lon1, lat2, lon2, zoom
 
     return metadata
 
+
+def build_tile_index(output_dir):
+    """Return validated per-zoom coverage for tiles already on disk."""
+    entries = []
+    if not os.path.isdir(output_dir):
+        return entries
+
+    zoom_names = sorted(
+        (name for name in os.listdir(output_dir) if name.isdecimal()),
+        key=int,
+    )
+    for zoom_name in zoom_names:
+        zoom = int(zoom_name)
+        if zoom < 0 or zoom > 18:
+            continue
+        zoom_dir = os.path.join(output_dir, zoom_name)
+        if not os.path.isdir(zoom_dir):
+            continue
+
+        tiles_per_axis = 1 << zoom
+        min_x = min_y = None
+        max_x = max_y = None
+        sample_x = sample_y = None
+        count = 0
+        x_names = sorted(
+            (name for name in os.listdir(zoom_dir) if name.isdecimal()),
+            key=int,
+        )
+        for x_name in x_names:
+            x = int(x_name)
+            x_dir = os.path.join(zoom_dir, x_name)
+            if x < 0 or x >= tiles_per_axis or not os.path.isdir(x_dir):
+                continue
+            y_names = sorted(os.listdir(x_dir))
+            for filename in y_names:
+                stem, extension = os.path.splitext(filename)
+                if extension.lower() != ".png" or not stem.isdecimal():
+                    continue
+                y = int(stem)
+                path = os.path.join(x_dir, filename)
+                if (y < 0 or y >= tiles_per_axis or
+                        not os.path.isfile(path) or os.path.getsize(path) == 0):
+                    continue
+                if sample_x is None:
+                    sample_x, sample_y = x, y
+                min_x = x if min_x is None else min(min_x, x)
+                max_x = x if max_x is None else max(max_x, x)
+                min_y = y if min_y is None else min(min_y, y)
+                max_y = y if max_y is None else max(max_y, y)
+                count += 1
+
+        if count:
+            entries.append({
+                "z": zoom,
+                "min_x": min_x,
+                "max_x": max_x,
+                "min_y": min_y,
+                "max_y": max_y,
+                "sample_x": sample_x,
+                "sample_y": sample_y,
+                "count": count,
+            })
+    return entries
+
+
+def write_tile_index(output_dir):
+    """Atomically write the bounded index consumed by map discovery."""
+    index = {
+        "version": 1,
+        "tile_size": 256,
+        "zooms": build_tile_index(output_dir),
+    }
+    index_path = os.path.join(output_dir, "index.json")
+    temporary_path = index_path + ".tmp"
+    with open(temporary_path, "w") as index_file:
+        json.dump(index, index_file, indent=2, sort_keys=True)
+        index_file.write("\n")
+        index_file.flush()
+        os.fsync(index_file.fileno())
+    os.replace(temporary_path, index_path)
+    return index
+
 # ── Main ────────────────────────────────────────────────────
 
 def build_parser():
@@ -404,6 +486,7 @@ def main(argv=None):
     # Write metadata
     write_metadata(tiles_dir, args.name, server_config, lat1, lon1, lat2, lon2,
                    zoom_min, zoom_max)
+    write_tile_index(tiles_dir)
 
     print(f"\nDone! {download_stats['done']} tiles downloaded, {download_stats['failed']} failed")
     print(f"Output: {output_dir}/")
