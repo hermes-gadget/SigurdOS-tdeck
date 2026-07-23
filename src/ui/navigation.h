@@ -53,6 +53,7 @@ enum class Screen {
     RepeaterDetail,
     CustomRadioSetup,
     MessageSearch,
+    MeshDashboard,
     COUNT
 };
 

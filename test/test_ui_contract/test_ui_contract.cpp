@@ -68,6 +68,7 @@ TEST(UIContractTest, PrimaryScreenShowApisStayStable) {
     (void)static_cast<void_fn>(sigurdos::ui::trace_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::channels_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::finder_screen_show);
+    (void)static_cast<void_fn>(sigurdos::ui::mesh_dashboard_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::repeaters_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::advertise_screen_show);
     (void)static_cast<void_fn>(sigurdos::ui::radio_setup_screen_show);

@@ -18,6 +18,7 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../navigation.h"
 #include "../finder_contact_policy.h"
 #include "../theme.h"
 #include "../responsive.h"
@@ -86,6 +87,28 @@ void finder_screen_show()
             sigurdos::mesh::sendPingNearby();
             // Recreate screen to show listening state
             finder_screen_show();
+        }, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // ── Mesh Health entry point (top-right of content) ─────
+    {
+        lv_obj_t* health_btn = lv_btn_create(scr);
+        lv_obj_set_size(health_btn, 84, 20);
+        lv_obj_align(health_btn, LV_ALIGN_TOP_RIGHT, -4, CONTENT_Y + 4);
+        lv_obj_set_style_bg_opa(health_btn, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_radius(health_btn, 0, 0);
+        lv_obj_set_style_border_width(health_btn, PIXEL_BORDER, 0);
+        lv_obj_set_style_border_color(health_btn, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_pad_all(health_btn, 0, 0);
+
+        lv_obj_t* hlbl = lv_label_create(health_btn);
+        lv_label_set_text(hlbl, LV_SYMBOL_BARS " Health");
+        lv_obj_set_style_text_color(hlbl, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_text_font(hlbl, emoji_wrapped_montserrat_10, 0);
+        lv_obj_center(hlbl);
+
+        lv_obj_add_event_cb(health_btn, [](lv_event_t*) {
+            navigate_to(Screen::MeshDashboard);
         }, LV_EVENT_CLICKED, nullptr);
     }
 

@@ -191,6 +191,7 @@ static void dispatch_screen_unchecked(Screen screen)
         break;
     case Screen::CustomRadioSetup: custom_rf_screen_show(); break;
     case Screen::MessageSearch:  message_search_screen_show(); break;
+    case Screen::MeshDashboard:    mesh_dashboard_screen_show(); break;
     default: break;
     }
 }

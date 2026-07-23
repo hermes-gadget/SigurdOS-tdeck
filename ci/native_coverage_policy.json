@@ -48,6 +48,7 @@
         "src/ui/screens/screen_settings.cpp", "src/ui/screens/screen_settings_display.cpp",
         "src/ui/screens/screen_settings_gps.cpp", "src/ui/screens/screen_settings_radio.cpp",
         "src/ui/screens/screen_settings_system.cpp", "src/ui/screens/screen_signal.cpp",
+        "src/ui/screens/screen_mesh_dashboard.cpp",
         "src/ui/screens/screen_telemetry.cpp", "src/ui/screens/screen_terminal.cpp",
         "src/ui/screens/screen_trace.cpp", "src/ui/screens/screen_wifi_networks.cpp",
         "src/ui/screens_common.cpp", "src/ui/ui.cpp"

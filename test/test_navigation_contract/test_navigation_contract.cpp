@@ -82,6 +82,7 @@ constexpr std::array<Screen, 29> kScreens = {
     Screen::RepeaterDetail,
     Screen::CustomRadioSetup,
     Screen::MessageSearch,
+    Screen::MeshDashboard,
 };
 
 TEST(NavigationContractTest, ScreenEnumCountMatchesInventory) {
@@ -137,6 +138,7 @@ TEST(NavigationContractTest, NestedRoutesRemainInInventory) {
     EXPECT_EQ(static_cast<int>(Screen::RepeaterDetail), 26);
     EXPECT_EQ(static_cast<int>(Screen::CustomRadioSetup), 27);
     EXPECT_EQ(static_cast<int>(Screen::MessageSearch), 28);
+    EXPECT_EQ(static_cast<int>(Screen::MeshDashboard), 28);
 }
 
 TEST(NavigationContractTest, ParameterizedRouteAPIsExist) {

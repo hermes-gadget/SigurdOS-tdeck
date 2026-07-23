@@ -51,6 +51,7 @@ void wifi_networks_screen_show();
 void bluetooth_screen_show();
 void regions_screen_show();
 void message_search_screen_show();
+void mesh_dashboard_screen_show();
 void update_wifi_status();
 void update_companion_status();
 
