@@ -101,6 +101,83 @@ TEST(WifiScanTest, SortByRssiHandlesNullAndTrivialInputs) {
     EXPECT_EQ(ap.rssi, -50);
 }
 
+TEST(WifiScanTest, LongScanResultsAreConsumedAcrossBoundedBatches) {
+    using sigurdos::wifi_scan::AsyncScanState;
+    using sigurdos::wifi_scan::Status;
+    AsyncScanState state;
+    const uint32_t token = state.start();
+    state.resultsReady(token, 30, 30);
+
+    int consumed = 0;
+    while (state.status(token) == Status::Running) {
+        int batch = 0;
+        int index = -1;
+        while (batch < sigurdos::wifi_scan::SIGURDOS_WIFI_SCAN_RESULTS_PER_POLL &&
+               state.takeNext(token, index)) {
+            EXPECT_EQ(index, consumed++);
+            ++batch;
+        }
+        EXPECT_LE(batch, sigurdos::wifi_scan::SIGURDOS_WIFI_SCAN_RESULTS_PER_POLL);
+    }
+
+    EXPECT_EQ(consumed, 30);
+    EXPECT_EQ(state.status(token), Status::Complete);
+}
+
+TEST(WifiScanTest, LongRunningSurveyRemainsResponsiveAndCancellable) {
+    using sigurdos::wifi_scan::AsyncScanState;
+    using sigurdos::wifi_scan::Status;
+    AsyncScanState state;
+    const uint32_t token = state.start();
+
+    for (int poll = 0; poll < 1000; ++poll) {
+        EXPECT_EQ(state.status(token), Status::Running);
+        EXPECT_EQ(state.count(token), 0);
+    }
+
+    EXPECT_TRUE(state.finish(token, Status::Cancelled));
+    EXPECT_EQ(state.status(token), Status::Cancelled);
+}
+
+TEST(WifiScanTest, NoResultsCompletesWithoutConsumption) {
+    sigurdos::wifi_scan::AsyncScanState state;
+    const uint32_t token = state.start();
+    state.resultsReady(token, 0, 30);
+
+    int index = -1;
+    EXPECT_FALSE(state.takeNext(token, index));
+    EXPECT_EQ(state.count(token), 0);
+    EXPECT_EQ(state.status(token), sigurdos::wifi_scan::Status::Complete);
+}
+
+TEST(WifiScanTest, ErrorAndCancellationAreTerminal) {
+    using sigurdos::wifi_scan::AsyncScanState;
+    using sigurdos::wifi_scan::Status;
+    AsyncScanState state;
+
+    const uint32_t failed = state.start();
+    EXPECT_TRUE(state.finish(failed, Status::Error));
+    EXPECT_EQ(state.status(failed), Status::Error);
+    EXPECT_FALSE(state.finish(failed, Status::Cancelled));
+
+    const uint32_t cancelled = state.start();
+    EXPECT_TRUE(state.finish(cancelled, Status::Cancelled));
+    EXPECT_EQ(state.status(cancelled), Status::Cancelled);
+}
+
+TEST(WifiScanTest, NavigationDeleteCannotCancelNewerScan) {
+    using sigurdos::wifi_scan::AsyncScanState;
+    using sigurdos::wifi_scan::Status;
+    AsyncScanState state;
+    const uint32_t old_screen_token = state.start();
+    EXPECT_TRUE(state.finish(old_screen_token, Status::Cancelled));
+
+    const uint32_t new_screen_token = state.start();
+    EXPECT_NE(old_screen_token, new_screen_token);
+    EXPECT_FALSE(state.finish(old_screen_token, Status::Cancelled));
+    EXPECT_EQ(state.status(new_screen_token), Status::Running);
+}
+
 TEST(WifiCoordinatorTest, EveryOwnerPairHasAnExplicitTransitionPolicy) {
     using sigurdos::wifi::Coordinator;
     using sigurdos::wifi::Owner;

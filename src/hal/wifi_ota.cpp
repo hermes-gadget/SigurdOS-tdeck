@@ -395,35 +395,123 @@ const char* getAPPassword() {
 // ── WiFi Site Survey ─────────────────────────────────────
 namespace wifi_scan {
 
-int scan(APInfo* out, int max_aps) {
-    if (!out || max_aps <= 0) return 0;
+namespace {
 
-    if (!wifi::acquire(wifi::Owner::Scan, wifi::RadioMode::Sta)) {
-        return SIGURDOS_WIFI_SCAN_BUSY;
-    }
-    delay(100);  // let radio settle
+AsyncScanState scan_state;
+bool scan_lease_held = false;
+bool scan_driver_started = false;
+uint32_t scan_acquired_at = 0;
+int scan_driver_count = -1;
+int scan_capacity = 0;
 
-    int n = WiFi.scanNetworks(false, false);  // async=false, show_hidden=false
-    if (n <= 0) {
-        WiFi.scanDelete();
-        wifi::release(wifi::Owner::Scan);
-        return 0;
-    }
-
-    // Collect results, cap at documented and caller-provided limits.
-    n = limitScanCount(n, max_aps);
-    for (int i = 0; i < n; i++) {
-        strncpy(out[i].ssid, WiFi.SSID(i).c_str(), sizeof(out[i].ssid) - 1);
-        out[i].ssid[sizeof(out[i].ssid) - 1] = '\0';
-        out[i].rssi      = WiFi.RSSI(i);
-        out[i].channel   = WiFi.channel(i);
-        out[i].encrypted = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
-    }
-    sortByRssi(out, n);
-
+void releaseScan() {
     WiFi.scanDelete();
-    wifi::release(wifi::Owner::Scan);
-    return n;
+    if (scan_lease_held) {
+        wifi::release(wifi::Owner::Scan);
+        scan_lease_held = false;
+    }
+    scan_driver_started = false;
+    scan_acquired_at = 0;
+    scan_driver_count = -1;
+    scan_capacity = 0;
+}
+
+}  // namespace
+
+StartResult begin() {
+    if (scan_lease_held) return {Status::Busy, 0};
+    if (!wifi::acquire(wifi::Owner::Scan, wifi::RadioMode::Sta)) {
+        return {Status::Busy, 0};
+    }
+    scan_lease_held = true;
+    WiFi.scanDelete();
+
+    const uint32_t token = scan_state.start();
+    scan_acquired_at = millis();
+    return {Status::Running, token};
+}
+
+PollResult poll(uint32_t token, APInfo* out, int max_aps, uint32_t budget_ms) {
+    Status status = scan_state.status(token);
+    if (status != Status::Running) {
+        return {status, scan_state.count(token)};
+    }
+    if (!out || max_aps <= 0) {
+        scan_state.finish(token, Status::Error);
+        releaseScan();
+        return {Status::Error, 0};
+    }
+
+    // Preserve the ESP32-S3 radio settle interval without blocking LVGL.
+    if (!scan_driver_started) {
+        if (millis() - scan_acquired_at < SIGURDOS_WIFI_SCAN_SETTLE_MS) {
+            return {Status::Running, 0};
+        }
+        scan_driver_started = true;
+        const int started = WiFi.scanNetworks(true, false);
+        if (started == WIFI_SCAN_FAILED) {
+            scan_state.finish(token, Status::Error);
+            releaseScan();
+            return {Status::Error, 0};
+        }
+        if (started >= 0) {
+            scan_driver_count = started;
+            if (started == 0) {
+                scan_state.resultsReady(token, 0, max_aps);
+                releaseScan();
+                return {Status::Complete, 0};
+            }
+        }
+    }
+
+    if (scan_capacity == 0) {
+        if (scan_driver_count < 0) {
+            scan_driver_count = WiFi.scanComplete();
+            if (scan_driver_count == WIFI_SCAN_RUNNING) {
+                return {Status::Running, 0};
+            }
+            if (scan_driver_count == WIFI_SCAN_FAILED) {
+                scan_state.finish(token, Status::Error);
+                releaseScan();
+                return {Status::Error, 0};
+            }
+        }
+        scan_capacity = max_aps;
+        scan_state.resultsReady(token, scan_driver_count, max_aps);
+        status = scan_state.status(token);
+        if (status == Status::Complete) {
+            releaseScan();
+            return {status, 0};
+        }
+    }
+
+    const uint32_t started_at = millis();
+    int copied = 0;
+    int index = 0;
+    while (copied < SIGURDOS_WIFI_SCAN_RESULTS_PER_POLL &&
+           scan_state.takeNext(token, index)) {
+        strncpy(out[index].ssid, WiFi.SSID(index).c_str(),
+                sizeof(out[index].ssid) - 1);
+        out[index].ssid[sizeof(out[index].ssid) - 1] = '\0';
+        out[index].rssi = WiFi.RSSI(index);
+        out[index].channel = WiFi.channel(index);
+        out[index].encrypted = WiFi.encryptionType(index) != WIFI_AUTH_OPEN;
+        ++copied;
+        if (budget_ms == 0 || millis() - started_at >= budget_ms) break;
+    }
+
+    status = scan_state.status(token);
+    const int count = scan_state.count(token);
+    if (status == Status::Complete) {
+        sortByRssi(out, count);
+        releaseScan();
+    }
+    return {status, count};
+}
+
+void cancel(uint32_t token) {
+    if (!scan_state.finish(token, Status::Cancelled)) return;
+    releaseScan();
 }
 
 }  // namespace wifi_scan

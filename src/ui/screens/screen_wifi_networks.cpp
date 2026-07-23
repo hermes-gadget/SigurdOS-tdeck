@@ -41,14 +41,14 @@ using namespace responsive;
 // WiFi Networks — full-screen network scanner with trackball
 // ════════════════════════════════════════════════════════
 
-// Global state for the WiFi networks screen
-static bool g_wifi_scan_done = false;
 static sigurdos::wifi_scan::APInfo g_wifi_aps[30];
 static int g_wifi_ap_count = 0;
 
 struct WifiScanCtx {
     lv_obj_t* list;
+    lv_obj_t* status;
     LvTimerOwner timer;
+    uint32_t token = 0;
 };
 
 struct WifiDialogCtx {
@@ -240,79 +240,86 @@ static void show_wifi_password_dialog(lv_obj_t* screen, const char* ssid)
     lv_group_focus_obj(pw_ta);
 }
 
-static void wifi_do_scan(lv_timer_t* timer) {
+static void wifi_render_results(lv_obj_t* list) {
+    lv_obj_clean(list);
+
+    lv_group_t* g = lv_group_get_default();
+    bool first = true;
+    for (int i = 0; i < g_wifi_ap_count && i < 20; i++) {
+        const auto& ap = g_wifi_aps[i];
+        char row_buf[56];
+        const char* lock = ap.encrypted ? "* " : "  ";
+        snprintf(row_buf, sizeof(row_buf), "%s%s   %d dBm  %s",
+                 lock, ap.ssid, ap.rssi, LV_SYMBOL_RIGHT);
+
+        lv_obj_t* btn = lv_btn_create(list);
+        lv_obj_set_size(btn, CONTENT_W - 8, 28);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(i % 2 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(btn, 0, 0);
+        lv_obj_set_style_border_width(btn, 0, 0);
+        lv_obj_set_style_pad_left(btn, 6, 0);
+
+        lv_obj_t* lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, row_buf);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_12, 0);
+        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 2, 0);
+        lv_obj_set_width(lbl, CONTENT_W - 30);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+
+        lv_group_add_obj(g, btn);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(btn, [](lv_event_t* ev) {
+            int index = static_cast<int>(
+                reinterpret_cast<intptr_t>(lv_event_get_user_data(ev))) - 1;
+            if (index < 0 || index >= g_wifi_ap_count || index >= 30) return;
+            lv_obj_t* scr = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(ev));
+            show_wifi_password_dialog(scr, g_wifi_aps[index].ssid);
+        }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(i + 1)));
+
+        if (first) {
+            lv_group_focus_obj(btn);
+            first = false;
+        }
+    }
+}
+
+static void wifi_scan_poll(lv_timer_t* timer) {
     auto* ctx = (WifiScanCtx*)lv_timer_get_user_data(timer);
-    if (!ctx || !lv_obj_is_valid(ctx->list)) {
+    if (!ctx || !lv_obj_is_valid(ctx->list) || !lv_obj_is_valid(ctx->status)) {
         if (ctx) ctx->timer.complete(timer);
         else lv_timer_del(timer);
         return;
     }
-    lv_obj_t* list = ctx->list;
-    
-    g_wifi_ap_count = sigurdos::wifi_scan::scan(g_wifi_aps, 30);
-    g_wifi_scan_done = true;
-    
-    lv_obj_clean(list);
-    
-    if (g_wifi_ap_count == sigurdos::wifi_scan::SIGURDOS_WIFI_SCAN_BUSY) {
-        char busy[80];
-        snprintf(busy, sizeof(busy), "WiFi busy: %s",
-                 sigurdos::wifi::ownerName(sigurdos::wifi::currentOwner()));
-        lv_obj_t* empty = lv_label_create(list);
-        lv_label_set_text(empty, busy);
-        lv_obj_set_style_text_color(empty, lv_color_hex(ACCENT_RED), 0);
-        lv_obj_set_style_text_font(empty, emoji_wrapped_montserrat_12, 0);
-        lv_obj_center(empty);
-    } else if (g_wifi_ap_count <= 0) {
-        lv_obj_t* empty = lv_label_create(list);
-        lv_label_set_text(empty, "No networks found");
-        lv_obj_set_style_text_color(empty, lv_color_hex(TEXT_SECONDARY), 0);
-        lv_obj_set_style_text_font(empty, emoji_wrapped_montserrat_12, 0);
-        lv_obj_center(empty);
-    } else {
-        lv_group_t* g = lv_group_get_default();
-        bool first = true;
-        for (int i = 0; i < g_wifi_ap_count && i < 20; i++) {
-            const auto& ap = g_wifi_aps[i];
-            char row_buf[56];
-            const char* lock = ap.encrypted ? "* " : "  ";
-            snprintf(row_buf, sizeof(row_buf), "%s%s   %d dBm  %s",
-                     lock, ap.ssid, ap.rssi, LV_SYMBOL_RIGHT);
-            
-            lv_obj_t* btn = lv_btn_create(list);
-            lv_obj_set_size(btn, CONTENT_W - 8, 28);
-            lv_obj_set_style_bg_color(btn, lv_color_hex(i % 2 ? BG_TERTIARY : BG_INPUT), 0);
-            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-            lv_obj_set_style_radius(btn, 0, 0);
-            lv_obj_set_style_border_width(btn, 0, 0);
-            lv_obj_set_style_pad_left(btn, 6, 0);
-            
-            lv_obj_t* lbl = lv_label_create(btn);
-            lv_label_set_text(lbl, row_buf);
-            lv_obj_set_style_text_color(lbl, lv_color_hex(TEXT_PRIMARY), 0);
-            lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_12, 0);
-            lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 2, 0);
-            lv_obj_set_width(lbl, CONTENT_W - 30);
-            lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-            
-            // Trackball support
-            lv_group_add_obj(g, btn);
-            lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
-            
-            lv_obj_add_event_cb(btn, [](lv_event_t* ev) {
-                int index = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(ev))) - 1;
-                if (index < 0 || index >= g_wifi_ap_count || index >= 30) return;
-                lv_obj_t* scr = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(ev));
-                show_wifi_password_dialog(scr, g_wifi_aps[index].ssid);
-            }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(i + 1)));
-            
-            if (first) {
-                lv_group_focus_obj(btn);
-                first = false;
-            }
+
+    const auto result = sigurdos::wifi_scan::poll(
+        ctx->token, g_wifi_aps, sigurdos::wifi_scan::SIGURDOS_WIFI_SCAN_MAX_APS);
+    g_wifi_ap_count = result.count;
+
+    if (result.status == sigurdos::wifi_scan::Status::Running) {
+        char progress[48];
+        if (result.count > 0) {
+            snprintf(progress, sizeof(progress), "Reading networks... %d", result.count);
+            lv_label_set_text(ctx->status, progress);
         }
+        return;
     }
+
     ctx->timer.complete(timer);
+    if (result.status == sigurdos::wifi_scan::Status::Complete) {
+        if (result.count == 0) {
+            lv_label_set_text(ctx->status, "No networks found");
+        } else {
+            char found[40];
+            snprintf(found, sizeof(found), "%d networks found", result.count);
+            lv_label_set_text(ctx->status, found);
+            wifi_render_results(ctx->list);
+        }
+    } else if (result.status == sigurdos::wifi_scan::Status::Error) {
+        lv_label_set_text(ctx->status, "WiFi scan failed");
+        lv_obj_set_style_text_color(ctx->status, lv_color_hex(ACCENT_RED), 0);
+    }
 }
 
 void wifi_networks_screen_show()
@@ -359,25 +366,51 @@ void wifi_networks_screen_show()
     lv_group_t* g = lv_group_get_default();
     lv_indev_set_group(lv_indev_get_next(nullptr), g);
     
-    // Reset scan state
-    g_wifi_scan_done = false;
     g_wifi_ap_count = 0;
-    
-    // Defer scan to let the screen render first. The list owns this context,
-    // so navigation cancels the pending timer before LVGL frees the list.
-    auto* scan_ctx = new(std::nothrow) WifiScanCtx{list, {}};
+
+    auto* scan_ctx = new(std::nothrow) WifiScanCtx{};
     if (!scan_ctx) {
         lv_label_set_text(scanning, "Unable to start scan");
         show_screen(scr);
         return;
     }
+    scan_ctx->list = list;
+    scan_ctx->status = scanning;
     lv_obj_add_event_cb(list, [](lv_event_t* e) {
-        delete (WifiScanCtx*)lv_event_get_user_data(e);
+        auto* owned = (WifiScanCtx*)lv_event_get_user_data(e);
+        if (!owned) return;
+        sigurdos::wifi_scan::cancel(owned->token);
+        delete owned;
     }, LV_EVENT_DELETE, scan_ctx);
-    lv_timer_t* scan_timer = lv_timer_create(wifi_do_scan, 400, scan_ctx);
+
+    const auto started = sigurdos::wifi_scan::begin();
+    scan_ctx->token = started.token;
+    if (started.status == sigurdos::wifi_scan::Status::Complete) {
+        lv_label_set_text(scanning, "No networks found");
+        show_screen(scr);
+        return;
+    }
+    if (started.status != sigurdos::wifi_scan::Status::Running) {
+        char failure[80];
+        if (started.status == sigurdos::wifi_scan::Status::Busy) {
+            snprintf(failure, sizeof(failure), "WiFi busy: %s",
+                     sigurdos::wifi::ownerName(sigurdos::wifi::currentOwner()));
+        } else {
+            snprintf(failure, sizeof(failure), "Unable to start scan");
+        }
+        lv_label_set_text(scanning, failure);
+        lv_obj_set_style_text_color(scanning, lv_color_hex(ACCENT_RED), 0);
+        show_screen(scr);
+        return;
+    }
+
+    lv_timer_t* scan_timer = lv_timer_create(wifi_scan_poll, 50, scan_ctx);
     scan_ctx->timer.attach(scan_timer);
-    if (!scan_timer) lv_label_set_text(scanning, "Unable to start scan");
-    
+    if (!scan_timer) {
+        sigurdos::wifi_scan::cancel(scan_ctx->token);
+        lv_label_set_text(scanning, "Unable to start scan");
+    }
+
     show_screen(scr);
 }
 

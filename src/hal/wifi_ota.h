@@ -114,7 +114,89 @@ struct APInfo {
 };
 
 static constexpr int SIGURDOS_WIFI_SCAN_MAX_APS = 30;
-static constexpr int SIGURDOS_WIFI_SCAN_BUSY = -1;
+static constexpr int SIGURDOS_WIFI_SCAN_RESULTS_PER_POLL = 4;
+static constexpr uint32_t SIGURDOS_WIFI_SCAN_SETTLE_MS = 100;
+
+enum class Status : uint8_t {
+    Idle,
+    Running,
+    Complete,
+    Busy,
+    Error,
+    Cancelled,
+};
+
+struct StartResult {
+    StartResult(Status initial_status = Status::Error, uint32_t initial_token = 0)
+        : status(initial_status), token(initial_token) {}
+
+    Status status;
+    uint32_t token;
+};
+
+struct PollResult {
+    PollResult(Status initial_status = Status::Error, int initial_count = 0)
+        : status(initial_status), count(initial_count) {}
+
+    Status status;
+    int count;
+};
+
+inline int limitScanCount(int found, int capacity);
+
+// Token and result-cursor state shared by production and native tests. Tokens
+// prevent a delayed LVGL delete event from cancelling a newer screen's scan.
+class AsyncScanState {
+public:
+    uint32_t start() {
+        ++generation_;
+        if (generation_ == 0) ++generation_;
+        status_ = Status::Running;
+        found_ = 0;
+        next_ = 0;
+        return generation_;
+    }
+
+    bool matches(uint32_t token) const {
+        return token != 0 && token == generation_;
+    }
+
+    Status status(uint32_t token) const {
+        return matches(token) ? status_ : Status::Cancelled;
+    }
+
+    void resultsReady(uint32_t token, int found, int capacity) {
+        if (!matches(token) || status_ != Status::Running) return;
+        found_ = limitScanCount(found, capacity);
+        next_ = 0;
+        if (found_ == 0) status_ = Status::Complete;
+    }
+
+    bool takeNext(uint32_t token, int& index) {
+        if (!matches(token) || status_ != Status::Running || next_ >= found_) {
+            return false;
+        }
+        index = next_++;
+        if (next_ >= found_) status_ = Status::Complete;
+        return true;
+    }
+
+    int count(uint32_t token) const {
+        return matches(token) ? next_ : 0;
+    }
+
+    bool finish(uint32_t token, Status terminal) {
+        if (!matches(token) || status_ != Status::Running) return false;
+        status_ = terminal;
+        return true;
+    }
+
+private:
+    uint32_t generation_ = 0;
+    Status status_ = Status::Idle;
+    int found_ = 0;
+    int next_ = 0;
+};
 
 inline int limitScanCount(int found, int capacity) {
     if (found <= 0 || capacity <= 0) return 0;
@@ -139,10 +221,20 @@ inline void sortByRssi(APInfo* aps, int count) {
     }
 }
 
-// Scan nearby WiFi access points. Returns count of found APs (max 30), or
-// SIGURDOS_WIFI_SCAN_BUSY when another transient WiFi owner holds the radio.
-// Caller provides the result buffer; results are sorted strongest first.
-int scan(APInfo* out, int max_aps);
+// Start a non-blocking site survey through the central WiFi coordinator.
+// The returned token identifies this exact scan and must be used for polling
+// and cancellation.
+StartResult begin();
+
+// Copy a bounded batch of completed driver results into out. The count is
+// cumulative and results are sorted strongest-first once complete. budget_ms
+// bounds driver result extraction in addition to the fixed per-poll cap.
+PollResult poll(uint32_t token, APInfo* out, int max_aps,
+                uint32_t budget_ms = 3);
+
+// Cancel only the scan identified by token. Safe to call after completion or
+// from an LVGL screen delete callback.
+void cancel(uint32_t token);
 
 }  // namespace wifi_scan
 
