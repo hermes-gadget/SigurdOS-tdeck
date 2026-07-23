@@ -132,6 +132,7 @@ inline void clearSavedNetworkCredentialFields(NodePrefs& prefs) {
     std::memset(prefs.default_scope_key_hex, 0,
                 sizeof(prefs.default_scope_key_hex));
     std::memset(prefs.active_region, 0, sizeof(prefs.active_region));
+}
 
 inline bool validRadioBandwidth(float bw) {
     static constexpr float allowed[] = {
@@ -246,9 +247,7 @@ bool removeChatScopePreference(const char* conversation);
 // ── Saved repeater passwords (persist across firmware updates in NVS) ──
 bool saveRepeaterPassword(const char* name, const char* password);
 bool loadRepeaterPassword(const char* name, char* password, size_t max_len);
-void removeRepeaterPassword(const char* name);
-bool clearRepeaterPasswords();
-
 bool removeRepeaterPassword(const char* name);
+bool clearRepeaterPasswords();
 
 } // namespace sigurdos

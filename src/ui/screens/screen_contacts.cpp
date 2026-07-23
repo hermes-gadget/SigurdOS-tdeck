@@ -634,17 +634,6 @@ void show_login_password_dialog(const char* contact_name)
         if (d && d->name) {
             const char* pw = lv_textarea_get_text(d->ta);
             if (pw && pw[0]) {
-                sigurdos::mesh::sendLogin(d->name, pw);
-                // Start a login-polling timer on the main screen
-                start_login_poll_timer(d->name);
-                // Save password to NVS if checkbox is checked
-                if (d->save_cb && (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED)) {
-                    sigurdos::saveRepeaterPassword(d->name, pw);
-                } else {
-                    // Unchecking an existing opt-in must revoke the stored
-                    // password instead of silently retaining the old secret.
-                    sigurdos::removeRepeaterPassword(d->name);
-
                 if (sigurdos::mesh::sendLogin(d->name, pw)) {
                     // Start a login-polling timer on the main screen
                     start_login_poll_timer(d->name);
@@ -652,6 +641,10 @@ void show_login_password_dialog(const char* contact_name)
                     if (d->save_cb &&
                         (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED)) {
                         sigurdos::saveRepeaterPassword(d->name, pw);
+                    } else {
+                        // Unchecking an existing opt-in must revoke the stored
+                        // password instead of silently retaining the old secret.
+                        sigurdos::removeRepeaterPassword(d->name);
                     }
                 } else {
                     notifications_login_failure(

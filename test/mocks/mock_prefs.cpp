@@ -57,7 +57,7 @@ bool clearSavedNetworkCredentials() {
 
 bool saveRepeaterPassword(const char*, const char*) { return true; }
 bool loadRepeaterPassword(const char*, char*, size_t) { return false; }
-void removeRepeaterPassword(const char*) {}
+bool removeRepeaterPassword(const char*) { return true; }
 bool clearRepeaterPasswords() { return true; }
 
 int loadChatScopePreferences(ChatScopePreference*, int) { return 0; }
