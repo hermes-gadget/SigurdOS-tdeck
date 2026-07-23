@@ -46,6 +46,13 @@ static constexpr std::size_t SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES =
     static_cast<std::size_t>(SIGURDOS_MAP_TILE_SIZE) *
     (SIGURDOS_MAP_TILE_SIZE * 4 + 1);
 static constexpr std::size_t SIGURDOS_MAP_INTERNAL_FALLBACK_MAX_BYTES = 32U * 1024U;
+static constexpr std::size_t SIGURDOS_MAP_TILE_RGB565_BYTES =
+    static_cast<std::size_t>(SIGURDOS_MAP_TILE_SIZE) *
+    SIGURDOS_MAP_TILE_SIZE * sizeof(std::uint16_t);
+static constexpr int SIGURDOS_MAP_TILE_REQUEST_QUEUE_LENGTH = 4;
+static constexpr int SIGURDOS_MAP_TILE_COMPLETION_QUEUE_LENGTH = 2;
+static constexpr std::size_t SIGURDOS_MAP_TILE_READ_CHUNK_BYTES = 4096;
+static constexpr std::uint32_t SIGURDOS_MAP_TILE_WORK_MAX_MS = 750;
 static constexpr int SIGURDOS_MAP_DISCOVERY_ITEMS_PER_STEP = 8;
 static constexpr std::uint32_t SIGURDOS_MAP_DISCOVERY_MAX_STEP_MS = 5;
 static constexpr std::uint32_t SIGURDOS_MAP_DISCOVERY_MAX_ENTRIES = 32768;
@@ -77,6 +84,43 @@ inline bool sigurdos_map_discovery_deadline_reached(
     return max_ms == 0 ||
            static_cast<std::uint32_t>(now - started_at) >= max_ms;
 }
+
+inline bool sigurdos_map_tile_worker_deadline_reached(
+    std::uint32_t started_at, std::uint32_t now,
+    std::uint32_t max_ms = SIGURDOS_MAP_TILE_WORK_MAX_MS) {
+    return max_ms == 0 ||
+           static_cast<std::uint32_t>(now - started_at) >= max_ms;
+}
+
+inline bool sigurdos_map_generation_owns(std::uint32_t owner_generation,
+                                         std::uint32_t work_generation) {
+    return owner_generation == work_generation;
+}
+
+enum class SigurdosMapTileCompletionStatus : std::uint8_t {
+    Ready,
+    Missing,
+    Corrupt,
+    OutOfMemory,
+    TimedOut,
+    Cancelled,
+};
+
+struct SigurdosMapTileRequest {
+    int zoom;
+    int tx;
+    int ty;
+    std::uint32_t generation;
+};
+
+struct SigurdosMapTileCompletion {
+    int zoom;
+    int tx;
+    int ty;
+    std::uint32_t generation;
+    SigurdosMapTileCompletionStatus status;
+    std::uint16_t* pixels;
+};
 
 struct SigurdosMapTileIndexEntry {
     int zoom;
@@ -439,6 +483,10 @@ void sigurdos_map_zoom_out();
 
 // Render the current map view to the LVGL canvas
 void sigurdos_map_render();
+
+// Publish worker completions into the UI-owned cache. Must run on the LVGL
+// task. Returns true when a current-generation completion changed the cache.
+bool sigurdos_map_process_tile_completions();
 
 // Reparent the map canvas to a new screen (call from map_screen_show)
 void sigurdos_map_reparent(lv_obj_t* new_parent);

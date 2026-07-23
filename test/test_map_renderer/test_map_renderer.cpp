@@ -358,6 +358,50 @@ TEST_F(MapRendererMathTest, DiscoveryDeadlineHandlesClockWrap) {
         UINT32_MAX - 2U, 2U, 5U));
 }
 
+TEST_F(MapRendererMathTest, SlowTileReadsHitWorkerDeadlineIncludingClockWrap) {
+    EXPECT_FALSE(sigurdos_map_tile_worker_deadline_reached(100, 849, 750));
+    EXPECT_TRUE(sigurdos_map_tile_worker_deadline_reached(100, 850, 750));
+    EXPECT_FALSE(sigurdos_map_tile_worker_deadline_reached(
+        UINT32_MAX - 20U, 10U, 32U));
+    EXPECT_TRUE(sigurdos_map_tile_worker_deadline_reached(
+        UINT32_MAX - 20U, 11U, 32U));
+}
+
+TEST_F(MapRendererMathTest, TilePipelineHasBoundedWorkAndMemory) {
+    EXPECT_EQ(SIGURDOS_MAP_TILE_REQUEST_QUEUE_LENGTH, 4);
+    EXPECT_EQ(SIGURDOS_MAP_TILE_COMPLETION_QUEUE_LENGTH, 2);
+    EXPECT_EQ(SIGURDOS_MAP_TILE_READ_CHUNK_BYTES, 4096U);
+    EXPECT_EQ(SIGURDOS_MAP_TILE_RGB565_BYTES, 128U * 1024U);
+    EXPECT_LE(SIGURDOS_MAP_TILE_WORK_MAX_MS, 1000U);
+}
+
+TEST_F(MapRendererMathTest, OomCompletionCannotPublishPixels) {
+    const SigurdosMapTileCompletion completion{
+        10, 511, 340, 7,
+        SigurdosMapTileCompletionStatus::OutOfMemory, nullptr};
+    EXPECT_EQ(completion.status,
+              SigurdosMapTileCompletionStatus::OutOfMemory);
+    EXPECT_EQ(completion.pixels, nullptr);
+}
+
+TEST_F(MapRendererMathTest, RapidPanAndZoomInvalidateOlderGeneration) {
+    const std::uint32_t initial = 41;
+    const std::uint32_t after_pan = initial + 1;
+    const std::uint32_t after_zoom = after_pan + 1;
+
+    EXPECT_FALSE(sigurdos_map_generation_owns(after_pan, initial));
+    EXPECT_FALSE(sigurdos_map_generation_owns(after_zoom, after_pan));
+    EXPECT_TRUE(sigurdos_map_generation_owns(after_zoom, after_zoom));
+}
+
+TEST_F(MapRendererMathTest, StaleCompletionIsNotOwnedByCurrentView) {
+    const SigurdosMapTileCompletion stale{
+        10, 511, 340, 12, SigurdosMapTileCompletionStatus::Ready,
+        reinterpret_cast<std::uint16_t*>(1)};
+
+    EXPECT_FALSE(sigurdos_map_generation_owns(13, stale.generation));
+}
+
 TEST_F(MapRendererMathTest, TileIndexEntriesRequireBoundedRealSample) {
     const SigurdosMapTileIndexEntry valid = {8, 100, 110, 80, 90,
                                               103, 84, 42};
@@ -390,6 +434,47 @@ TEST_F(MapRendererMathTest, MapScreenShowsBeforeStartingCancellableDiscovery) {
     ASSERT_NE(cancel, std::string::npos);
     EXPECT_LT(show, discover);
     EXPECT_LT(lifetime, cancel);
+}
+
+TEST_F(MapRendererMathTest, TileIoAndDecodeAreOutsideLvglRenderCallback) {
+    const std::string source =
+        read_project_file("src/app/map_renderer.cpp");
+    ASSERT_FALSE(source.empty());
+
+    const size_t render = source.find("void sigurdos_map_render()");
+    const size_t next_function =
+        source.find("bool sigurdos_map_tiles_available()", render);
+    ASSERT_NE(render, std::string::npos);
+    ASSERT_NE(next_function, std::string::npos);
+    const std::string render_body =
+        source.substr(render, next_function - render);
+    EXPECT_EQ(render_body.find("fopen("), std::string::npos);
+    EXPECT_EQ(render_body.find("fread("), std::string::npos);
+    EXPECT_EQ(render_body.find("lodepng_decode("), std::string::npos);
+    EXPECT_NE(render_body.find("request_tile("), std::string::npos);
+}
+
+TEST_F(MapRendererMathTest, NavigationTeardownOwnsTilePollAndCancelsWork) {
+    const std::string screen =
+        read_project_file("src/ui/screens/screen_map.cpp");
+    const std::string renderer =
+        read_project_file("src/app/map_renderer.cpp");
+    ASSERT_FALSE(screen.empty());
+    ASSERT_FALSE(renderer.empty());
+
+    EXPECT_NE(screen.find("g_map_lifetime.trackTimer(&g_map_tile_timer);"),
+              std::string::npos);
+    EXPECT_NE(screen.find("sigurdos_map_process_tile_completions()"),
+              std::string::npos);
+    const size_t deinit = renderer.find("void sigurdos_map_deinit()");
+    const size_t generation =
+        renderer.find("advance_tile_generation();", deinit);
+    const size_t initialized_guard =
+        renderer.find("if (!initialized) return;", deinit);
+    ASSERT_NE(deinit, std::string::npos);
+    ASSERT_NE(generation, std::string::npos);
+    ASSERT_NE(initialized_guard, std::string::npos);
+    EXPECT_LT(generation, initialized_guard);
 }
 
 TEST_F(MapRendererMathTest, OwnedDiscoveryBufferIsFreedExactlyOnce) {

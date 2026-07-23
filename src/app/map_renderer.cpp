@@ -26,6 +26,7 @@
 #include "../hal/prefs.h"
 #include <lvgl.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -35,6 +36,9 @@
 #include <lodepng.h>
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include "../diagnostics/debug_cfg.h"
 #include "../mesh/mesh_wrapper.h"
 #include "../ui/theme.h"
@@ -245,10 +249,14 @@ static MissingTileCacheEntry missing_tile_cache[MISSING_TILE_CACHE_SIZE];
 static int last_load_attempts = 0;
 static int last_negative_hits = 0;
 static int last_deferred_tiles = 0;
+static QueueHandle_t tile_request_queue = nullptr;
+static QueueHandle_t tile_completion_queue = nullptr;
+static TaskHandle_t tile_worker_task_handle = nullptr;
+static std::atomic<uint32_t> tile_generation{1};
 
 enum class TileLoadResult : uint8_t { Ready, Missing, Deferred };
 
-// ── Tile loading (PNG) ─────────────────────────────────────
+// ── Asynchronous tile loading (PNG) ────────────────────────
 
 static TileLoadResult record_tile_failure(int zoom, int tx, int ty,
                                           uint32_t now_ms) {
@@ -257,9 +265,208 @@ static TileLoadResult record_tile_failure(int zoom, int tx, int ty,
     return TileLoadResult::Missing;
 }
 
-static TileLoadResult load_tile(int zoom, int tx, int ty,
-                                TileLoadBudget* budget, uint32_t now_ms,
-                                CachedTile** out) {
+static bool tile_request_still_owned(const SigurdosMapTileRequest& request) {
+    return sigurdos_map_generation_owns(
+        tile_generation.load(std::memory_order_acquire), request.generation);
+}
+
+static SigurdosMapTileCompletion load_tile_off_ui(
+    const SigurdosMapTileRequest& request) {
+    SigurdosMapTileCompletion completion{
+        request.zoom, request.tx, request.ty, request.generation,
+        SigurdosMapTileCompletionStatus::Missing, nullptr};
+    const uint32_t started_at = millis();
+    const auto cancelled_or_timed_out = [&]() {
+        if (!tile_request_still_owned(request)) {
+            completion.status = SigurdosMapTileCompletionStatus::Cancelled;
+            return true;
+        }
+        if (sigurdos_map_tile_worker_deadline_reached(
+                started_at, millis())) {
+            completion.status = SigurdosMapTileCompletionStatus::TimedOut;
+            return true;
+        }
+        return false;
+    };
+
+    char path[64];
+    snprintf(path, sizeof(path), SIGURDOS_SD_MOUNTPOINT "/tiles/%d/%d/%d.png",
+             request.zoom, request.tx, request.ty);
+    FILE* file = fopen(path, "rb");
+    if (!file) return completion;
+
+    long file_size = -1;
+    if (fseek(file, 0, SEEK_END) == 0) {
+        file_size = ftell(file);
+    }
+    if (file_size <= 0 ||
+        static_cast<unsigned long>(file_size) >
+            SIGURDOS_MAP_PNG_MAX_COMPRESSED_BYTES ||
+        fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        completion.status = SigurdosMapTileCompletionStatus::Corrupt;
+        return completion;
+    }
+
+    uint8_t* png = static_cast<uint8_t*>(
+        map_alloc(static_cast<size_t>(file_size)));
+    if (!png) {
+        fclose(file);
+        completion.status = SigurdosMapTileCompletionStatus::OutOfMemory;
+        return completion;
+    }
+
+    size_t offset = 0;
+    while (offset < static_cast<size_t>(file_size)) {
+        const size_t remaining = static_cast<size_t>(file_size) - offset;
+        const size_t chunk = std::min(
+            remaining, SIGURDOS_MAP_TILE_READ_CHUNK_BYTES);
+        const size_t read = fread(png + offset, 1, chunk, file);
+        if (read != chunk) {
+            completion.status = SigurdosMapTileCompletionStatus::Corrupt;
+            break;
+        }
+        offset += read;
+        if (cancelled_or_timed_out()) break;
+    }
+    fclose(file);
+    if (offset != static_cast<size_t>(file_size) ||
+        completion.status != SigurdosMapTileCompletionStatus::Missing) {
+        map_free(png);
+        return completion;
+    }
+
+    unsigned width = 0;
+    unsigned height = 0;
+    LodePNGState header_state;
+    lodepng_state_init(&header_state);
+    const unsigned header_error = lodepng_inspect(
+        &width, &height, &header_state, png, static_cast<size_t>(file_size));
+    const bool header_supported =
+        header_error == 0 &&
+        sigurdos_map_png_ihdr_supported(
+            png, static_cast<size_t>(file_size));
+    lodepng_state_cleanup(&header_state);
+    if (!header_supported) {
+        map_free(png);
+        completion.status = SigurdosMapTileCompletionStatus::Corrupt;
+        return completion;
+    }
+    if (cancelled_or_timed_out()) {
+        map_free(png);
+        return completion;
+    }
+
+    uint8_t* rgba = nullptr;
+    LodePNGState decode_state;
+    lodepng_state_init(&decode_state);
+    decode_state.info_raw.colortype = LCT_RGBA;
+    decode_state.info_raw.bitdepth = 8;
+    decode_state.decoder.zlibsettings.max_output_size =
+        SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES;
+#ifdef LODEPNG_COMPILE_ANCILLARY_CHUNKS
+    decode_state.decoder.read_text_chunks = 0;
+    decode_state.decoder.remember_unknown_chunks = 0;
+#endif
+    const unsigned decode_error = lodepng_decode(
+        &rgba, &width, &height, &decode_state, png,
+        static_cast<size_t>(file_size));
+    lodepng_state_cleanup(&decode_state);
+    map_free(png);
+    if (decode_error != 0 || width != TILE_SIZE || height != TILE_SIZE) {
+        lodepng_free(rgba);
+        completion.status = SigurdosMapTileCompletionStatus::Corrupt;
+        return completion;
+    }
+    if (cancelled_or_timed_out()) {
+        lodepng_free(rgba);
+        return completion;
+    }
+
+    uint16_t* pixels = static_cast<uint16_t*>(
+        map_alloc(SIGURDOS_MAP_TILE_RGB565_BYTES));
+    if (!pixels) {
+        lodepng_free(rgba);
+        completion.status = SigurdosMapTileCompletionStatus::OutOfMemory;
+        return completion;
+    }
+    for (int y = 0; y < TILE_SIZE; ++y) {
+        for (int x = 0; x < TILE_SIZE; ++x) {
+            const int source = (y * TILE_SIZE + x) * 4;
+            const uint16_t red = rgba[source] >> 3;
+            const uint16_t green = rgba[source + 1] >> 2;
+            const uint16_t blue = rgba[source + 2] >> 3;
+            pixels[y * TILE_SIZE + x] =
+                (red << 11) | (green << 5) | blue;
+        }
+        if (cancelled_or_timed_out()) {
+            map_free(pixels);
+            lodepng_free(rgba);
+            return completion;
+        }
+    }
+    lodepng_free(rgba);
+    completion.status = SigurdosMapTileCompletionStatus::Ready;
+    completion.pixels = pixels;
+    return completion;
+}
+
+static void tile_worker_task(void*) {
+    SigurdosMapTileRequest request{};
+    for (;;) {
+        if (xQueueReceive(tile_request_queue, &request, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        if (!tile_request_still_owned(request)) continue;
+        SigurdosMapTileCompletion completion = load_tile_off_ui(request);
+        if (completion.status == SigurdosMapTileCompletionStatus::Cancelled) {
+            if (completion.pixels) map_free(completion.pixels);
+            continue;
+        }
+        if (xQueueSend(tile_completion_queue, &completion, 0) != pdTRUE &&
+            completion.pixels) {
+            map_free(completion.pixels);
+        }
+    }
+}
+
+static bool ensure_tile_worker() {
+    if (tile_worker_task_handle) return true;
+    tile_request_queue = xQueueCreate(
+        SIGURDOS_MAP_TILE_REQUEST_QUEUE_LENGTH,
+        sizeof(SigurdosMapTileRequest));
+    tile_completion_queue = xQueueCreate(
+        SIGURDOS_MAP_TILE_COMPLETION_QUEUE_LENGTH,
+        sizeof(SigurdosMapTileCompletion));
+    if (!tile_request_queue || !tile_completion_queue) {
+        if (tile_request_queue) vQueueDelete(tile_request_queue);
+        if (tile_completion_queue) vQueueDelete(tile_completion_queue);
+        tile_request_queue = nullptr;
+        tile_completion_queue = nullptr;
+        return false;
+    }
+    if (xTaskCreate(tile_worker_task, "map-tile", 6144, nullptr, 1,
+                    &tile_worker_task_handle) != pdPASS) {
+        vQueueDelete(tile_request_queue);
+        vQueueDelete(tile_completion_queue);
+        tile_request_queue = nullptr;
+        tile_completion_queue = nullptr;
+        tile_worker_task_handle = nullptr;
+        return false;
+    }
+    return true;
+}
+
+static uint32_t advance_tile_generation() {
+    const uint32_t next =
+        tile_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+    if (tile_request_queue) xQueueReset(tile_request_queue);
+    return next;
+}
+
+static TileLoadResult request_tile(int zoom, int tx, int ty,
+                                   TileLoadBudget* budget, uint32_t now_ms,
+                                   CachedTile** out) {
     if (out) *out = nullptr;
     CachedTile* cached = tile_cache_lookup(
         tile_cache, TILE_CACHE_SIZE, zoom, tx, ty, &cache_clock);
@@ -281,117 +488,16 @@ static TileLoadResult load_tile(int zoom, int tx, int ty,
         return TileLoadResult::Deferred;
     }
 
-    char path[64];
-    snprintf(path, sizeof(path), SIGURDOS_SD_MOUNTPOINT "/tiles/%d/%d/%d.png", zoom, tx, ty);
-
-    FILE* f = fopen(path, "rb");
-    if (!f) {
-        MAP_DEBUG_PRINTF("[map] tile miss: %s\n", path);
-        set_tile_status("load:fopen fail %d/%d/%d", zoom, tx, ty);
-        return record_tile_failure(zoom, tx, ty, now_ms);
+    const SigurdosMapTileRequest request{
+        zoom, tx, ty, tile_generation.load(std::memory_order_acquire)};
+    if (!tile_request_queue ||
+        xQueueSend(tile_request_queue, &request, 0) != pdTRUE) {
+        last_deferred_tiles++;
+        set_tile_status("load:queue full %d/%d/%d", zoom, tx, ty);
+        return TileLoadResult::Deferred;
     }
-    MAP_DEBUG_PRINTF("[map] tile hit: %s\n", path);
-
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    if (fsize <= 0 ||
-        static_cast<unsigned long>(fsize) > SIGURDOS_MAP_PNG_MAX_COMPRESSED_BYTES) {
-        set_tile_status("load:size %ld %d/%d/%d", fsize, zoom, tx, ty);
-        fclose(f); return record_tile_failure(zoom, tx, ty, now_ms);
-    }
-
-    uint8_t* png_buf = (uint8_t*)map_alloc((size_t)fsize);
-    if (!png_buf) {
-        set_tile_status("load:no png buf %ld", fsize);
-        fclose(f); return record_tile_failure(zoom, tx, ty, now_ms);
-    }
-
-    if (fread(png_buf, 1, (size_t)fsize, f) != (size_t)fsize) {
-        set_tile_status("load:read fail %ld", fsize);
-        fclose(f); map_free(png_buf);
-        return record_tile_failure(zoom, tx, ty, now_ms);
-    }
-    fclose(f);
-
-    unsigned w = 0;
-    unsigned h = 0;
-    LodePNGState header_state;
-    lodepng_state_init(&header_state);
-    const unsigned header_err = lodepng_inspect(
-        &w, &h, &header_state, png_buf, (size_t)fsize);
-    const unsigned source_bit_depth = header_state.info_png.color.bitdepth;
-    const unsigned source_color_type = header_state.info_png.color.colortype;
-    const bool header_supported = header_err == 0 &&
-        sigurdos_map_png_ihdr_supported(png_buf, (size_t)fsize);
-    lodepng_state_cleanup(&header_state);
-
-    if (!header_supported) {
-        set_tile_status("load:ihdr err %u %ux%u b%u c%u",
-                        header_err, w, h, source_bit_depth, source_color_type);
-        map_free(png_buf);
-        return record_tile_failure(zoom, tx, ty, now_ms);
-    }
-
-    uint8_t* rgba = nullptr;
-    LodePNGState decode_state;
-    lodepng_state_init(&decode_state);
-    decode_state.info_raw.colortype = LCT_RGBA;
-    decode_state.info_raw.bitdepth = 8;
-    decode_state.decoder.zlibsettings.max_output_size =
-        SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES;
-#ifdef LODEPNG_COMPILE_ANCILLARY_CHUNKS
-    decode_state.decoder.read_text_chunks = 0;
-    decode_state.decoder.remember_unknown_chunks = 0;
-#endif
-    unsigned err = lodepng_decode(
-        &rgba, &w, &h, &decode_state, png_buf, (size_t)fsize);
-    lodepng_state_cleanup(&decode_state);
-    map_free(png_buf);
-
-    if (err != 0 || w != TILE_SIZE || h != TILE_SIZE) {
-        set_tile_status("load:png err %u %ux%u", err, w, h);
-        lodepng_free(rgba);
-        return record_tile_failure(zoom, tx, ty, now_ms);
-    }
-
-    // Select and release the victim before requesting another full tile
-    // buffer. A full cache therefore never needs a transient fifth RGB565
-    // allocation, which keeps PSRAM pressure from spilling into internal RAM.
-    CachedTile* slot = tile_cache_evict_slot(tile_cache, TILE_CACHE_SIZE);
-    if (!slot) {
-        set_tile_status("load:no cache slot");
-        lodepng_free(rgba);
-        return record_tile_failure(zoom, tx, ty, now_ms);
-    }
-    uint16_t* decoded_pixels = tile_cache_prepare_slot(
-        slot, TILE_SIZE * TILE_SIZE * sizeof(uint16_t), map_alloc);
-    if (!decoded_pixels) {
-        set_tile_status("load:no tile buf");
-        lodepng_free(rgba);
-        return record_tile_failure(zoom, tx, ty, now_ms);
-    }
-
-    for (int y = 0; y < TILE_SIZE; y++) {
-        for (int x = 0; x < TILE_SIZE; x++) {
-            int i = (y * TILE_SIZE + x) * 4;
-            uint16_t r = rgba[i] >> 3;
-            uint16_t g = rgba[i + 1] >> 2;
-            uint16_t b = rgba[i + 2] >> 3;
-            decoded_pixels[y * TILE_SIZE + x] = (r << 11) | (g << 5) | b;
-        }
-    }
-
-    lodepng_free(rgba);
-
-    slot->zoom = zoom;
-    slot->tx = tx;
-    slot->ty = ty;
-    slot->last_used = ++cache_clock;
-    set_tile_status("load:ok %d/%d/%d %ldB", zoom, tx, ty, fsize);
-    if (out) *out = slot;
-    return TileLoadResult::Ready;
+    set_tile_status("load:queued %d/%d/%d", zoom, tx, ty);
+    return TileLoadResult::Deferred;
 }
 
 // ── Draw tile to canvas buffer ─────────────────────────────
@@ -781,6 +887,8 @@ static bool delete_cb_registered = false;
 
 void sigurdos_map_init() {
     if (initialized) return;
+    if (!ensure_tile_worker()) return;
+    advance_tile_generation();
 
     // Reset monotonic clock for fresh cache entries
     cache_clock = 0;
@@ -834,6 +942,7 @@ void sigurdos_map_reparent(lv_obj_t* new_parent) {
 }
 
 void sigurdos_map_discover_tiles() {
+    advance_tile_generation();
     reset_discovery_state();
     reset_tile_coverage();
     sigurdos::hal::boot_watchdog_progress(
@@ -1124,8 +1233,15 @@ SigurdosMapDiscoveryProgress sigurdos_map_discovery_progress() {
 }
 
 void sigurdos_map_deinit() {
+    advance_tile_generation();
     sigurdos_map_cancel_discovery();
     sigurdos_map_release_owned_buffer(discovery_xcache, map_free);
+    if (tile_completion_queue) {
+        SigurdosMapTileCompletion completion{};
+        while (xQueueReceive(tile_completion_queue, &completion, 0) == pdTRUE) {
+            if (completion.pixels) map_free(completion.pixels);
+        }
+    }
     if (!initialized) return;
     delete_cb_registered = false;
 
@@ -1146,6 +1262,7 @@ void sigurdos_map_deinit() {
 }
 
 void sigurdos_map_set_view(double lat, double lon, int zoom) {
+    advance_tile_generation();
     center_lat = clamp_d(lat, MIN_LAT, MAX_LAT);
     center_lon = sigurdos_map_wrap_lon(lon);
     zoom_level = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
@@ -1157,6 +1274,7 @@ double sigurdos_map_get_lon()    { return center_lon; }
 int    sigurdos_map_get_zoom()   { return zoom_level; }
 
 void sigurdos_map_pan(int dx, int dy) {
+    advance_tile_generation();
     // Convert screen pixel delta to tile coordinate delta
     // This properly handles Web Mercator's non-linear latitude scaling
     double tx = lon_to_tile_x(center_lon, zoom_level);
@@ -1171,6 +1289,7 @@ void sigurdos_map_pan(int dx, int dy) {
 }
 
 void sigurdos_map_zoom_in()  {
+    advance_tile_generation();
     zoom_level = have_tile_coverage
         ? sigurdos_map_select_available_zoom(
               zoom_level, 1, min_available_zoom, max_available_zoom,
@@ -1180,6 +1299,7 @@ void sigurdos_map_zoom_in()  {
 }
 
 void sigurdos_map_zoom_out() {
+    advance_tile_generation();
     zoom_level = have_tile_coverage
         ? sigurdos_map_select_available_zoom(
               zoom_level, -1, min_available_zoom, max_available_zoom,
@@ -1302,6 +1422,62 @@ static void sigurdos_map_debug_summary(char* out, size_t out_sz) {
 }
 #endif
 
+bool sigurdos_map_process_tile_completions() {
+    if (!tile_completion_queue) return false;
+
+    bool changed = false;
+    SigurdosMapTileCompletion completion{};
+    const uint32_t owner_generation =
+        tile_generation.load(std::memory_order_acquire);
+    while (xQueueReceive(tile_completion_queue, &completion, 0) == pdTRUE) {
+        if (!sigurdos_map_generation_owns(
+                owner_generation, completion.generation) ||
+            !initialized) {
+            if (completion.pixels) map_free(completion.pixels);
+            continue;
+        }
+
+        if (completion.status == SigurdosMapTileCompletionStatus::Ready &&
+            completion.pixels) {
+            CachedTile* existing = tile_cache_lookup(
+                tile_cache, TILE_CACHE_SIZE, completion.zoom,
+                completion.tx, completion.ty, &cache_clock);
+            if (existing) {
+                map_free(completion.pixels);
+                continue;
+            }
+            CachedTile* slot =
+                tile_cache_evict_slot(tile_cache, TILE_CACHE_SIZE);
+            if (!slot) {
+                map_free(completion.pixels);
+                continue;
+            }
+            if (slot->pixels) map_free(slot->pixels);
+            slot->pixels = completion.pixels;
+            slot->zoom = completion.zoom;
+            slot->tx = completion.tx;
+            slot->ty = completion.ty;
+            slot->last_used = ++cache_clock;
+            set_tile_status("load:ok %d/%d/%d", completion.zoom,
+                            completion.tx, completion.ty);
+            changed = true;
+            continue;
+        }
+
+        if (completion.pixels) map_free(completion.pixels);
+        if (completion.status == SigurdosMapTileCompletionStatus::Missing ||
+            completion.status == SigurdosMapTileCompletionStatus::Corrupt) {
+            record_tile_failure(completion.zoom, completion.tx, completion.ty,
+                                millis());
+            changed = true;
+        }
+        set_tile_status("load:worker fail %u %d/%d/%d",
+                        static_cast<unsigned>(completion.status),
+                        completion.zoom, completion.tx, completion.ty);
+    }
+    return changed;
+}
+
 void sigurdos_map_render() {
     if (!initialized || !map_canvas || !canvas_pixels) return;
 
@@ -1363,12 +1539,12 @@ void sigurdos_map_render() {
                 continue;
             }
 
-            // Try to load and render the tile. Positive/negative cache hits do
-            // not consume the per-render file/decode budget.
+            // Cache lookup and bounded queue publication are the only work
+            // performed here. File I/O and PNG decode run on map-tile.
             CachedTile* cached = nullptr;
             const TileLoadResult result = sd_mounted
-                ? load_tile(zoom_level, tile_x, tile_y, &load_budget,
-                            render_now_ms, &cached)
+                ? request_tile(zoom_level, tile_x, tile_y, &load_budget,
+                               render_now_ms, &cached)
                 : TileLoadResult::Missing;
             if (result == TileLoadResult::Ready && cached) {
                 draw_tile_from_cache(cached, screen_x, screen_y);

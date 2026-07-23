@@ -74,6 +74,7 @@ bool map_screen_handle_trackball(SigurdOSTrackballEvent event) {
 
 // Helper: render map tiles then overlay contact markers
 static sigurdos::mesh::ContactInfo* map_contacts = nullptr;
+static lv_timer_t* g_map_tile_timer = nullptr;
 static lv_timer_t* g_map_warmup_timer = nullptr;
 static lv_timer_t* g_map_discovery_timer = nullptr;
 static lv_obj_t* g_map_discovery_status = nullptr;
@@ -124,6 +125,7 @@ void map_screen_show()
     sigurdos_gps_set_map_high_rate(true);
     lv_obj_t* scr = make_screen_full("Map");
     g_map_lifetime.bind(scr);
+    g_map_lifetime.trackTimer(&g_map_tile_timer);
     g_map_lifetime.trackTimer(&g_map_warmup_timer);
     g_map_lifetime.trackTimer(&g_map_discovery_timer);
     g_map_lifetime.track(&g_map_discovery_status);
@@ -161,6 +163,11 @@ void map_screen_show()
     sigurdos_map_contact_set_tap_cb(navigate_to_contact_detail);
 
     render_map_with_contacts();
+    g_map_tile_timer = lv_timer_create([](lv_timer_t*) {
+        if (sigurdos_map_process_tile_completions()) {
+            render_map_with_contacts();
+        }
+    }, 20, nullptr);
 
     static int drag_start_x = 0, drag_start_y = 0;
     static uint32_t map_last_render_ms = 0;
