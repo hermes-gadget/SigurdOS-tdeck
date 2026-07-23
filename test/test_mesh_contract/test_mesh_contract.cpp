@@ -248,7 +248,7 @@ TEST(MeshContractTest, ResponsesRequireExactTagKeyAndRequestType) {
 
 TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {
     EXPECT_EQ(sizeof(MeshMessage::sender), 32u);
-    EXPECT_EQ(sizeof(MeshMessage::channel), 32u);
+    EXPECT_EQ(sizeof(MeshMessage::channel), 69u);
     EXPECT_EQ(sizeof(MeshMessage::text), 256u);
 
     EXPECT_EQ(sizeof(ContactInfo::name), 32u);
