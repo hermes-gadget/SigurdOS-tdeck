@@ -125,6 +125,9 @@ to be replayed after reconnect, so clients must tolerate duplicate delivery.
 does not forward packets; when enabled it forwards without applying
 repeater-oriented RegionMap deny-flood flags. Region selection controls the
 scope stamped on originated floods, not receive or forwarding policy.
+Companion-provisioned private scope keys are stored with RegionMap metadata in
+the atomic `/regions2` v2 snapshot, so multiple `$` scopes survive switching,
+reboot, and deletion independently.
 
 ## Device-authored message visibility
 

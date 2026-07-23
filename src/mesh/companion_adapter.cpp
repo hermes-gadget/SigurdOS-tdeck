@@ -779,12 +779,9 @@ public:
 
         if (name_out) { memset(name_out, 0, 31); strncpy(name_out, r->name, 30); }
         if (key_out) {
-            // Check if a persisted private key exists (for $private scopes)
-            const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-            if (p.default_scope_key_hex[0] != '\0' && active[0] == '$') {
-                if (!sigurdos::mesh::scopeKeyHexDecode(
-                        p.default_scope_key_hex, key_out)) {
-                    memcpy(key_out, keys[0].key, 16);
+            if (active[0] == '$') {
+                if (!sigurdos::mesh::getPrivateRegionKey(active, key_out)) {
+                    return false;
                 }
             } else {
                 memcpy(key_out, keys[0].key, 16);

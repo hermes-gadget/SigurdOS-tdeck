@@ -44,28 +44,80 @@ RegionMap* getRegionMap() {
 }
 
 bool installPrivateRegionKey(const ::RegionEntry& region, const uint8_t* key16) {
-    if (!g_region_store || region.id == 0 || region.name[0] != '$' || !key16) {
-        return false;
-    }
-    TransportKey key{};
-    memcpy(key.key, key16, sizeof(key.key));
-    if (key.isNull() || !g_region_store->saveKeysFor(region.id, &key, 1)) {
-        return false;
-    }
-    TransportKey check{};
-    return g_region_store->loadKeysFor(region.id, &check, 1) == 1 &&
-        memcmp(check.key, key.key, sizeof(key.key)) == 0;
+    return region.id != 0 && region.name[0] == '$' &&
+        setPrivateRegionKey(region.name, key16);
 }
 
 bool removePrivateRegionKey(const ::RegionEntry& region) {
-    if (!g_region_store || region.id == 0 || region.name[0] != '$' ||
-        !g_region_store->removeKeys(region.id)) return false;
-    TransportKey check{};
-    return g_region_store->loadKeysFor(region.id, &check, 1) == 0;
+    if (!g_region_store || region.id == 0 || region.name[0] != '$') {
+        return false;
+    }
+    TransportKey previous[4]{};
+    const int previous_count = g_region_store->loadKeysFor(
+        region.id, previous, 4);
+    const bool previous_dirty = g_regions_dirty;
+    if (previous_count <= 0 || !g_region_store->removeKeys(region.id)) {
+        return false;
+    }
+    if (regionsSave()) return true;
+    g_region_store->saveKeysFor(region.id, previous, previous_count);
+    g_regions_dirty = previous_dirty;
+    return false;
+}
+
+static int countPrivateRegionKeys() {
+    if (!g_region_map || !g_region_store) return 0;
+    int count = 0;
+    for (int i = 0; i < g_region_map->getCount(); ++i) {
+        const ::RegionEntry* region = g_region_map->getByIdx(i);
+        if (!region || region->name[0] != '$') continue;
+        TransportKey key{};
+        if (g_region_store->loadKeysFor(region->id, &key, 1) == 1 &&
+            !key.isNull()) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static bool readPrivateRegionKey(int index, uint16_t* region_id_out,
+                                 uint8_t key_out[16], void*) {
+    if (!g_region_map || !g_region_store || index < 0 || !region_id_out ||
+        !key_out) {
+        return false;
+    }
+    int output_index = 0;
+    for (int i = 0; i < g_region_map->getCount(); ++i) {
+        const ::RegionEntry* region = g_region_map->getByIdx(i);
+        if (!region || region->name[0] != '$') continue;
+        TransportKey key{};
+        if (g_region_store->loadKeysFor(region->id, &key, 1) != 1 ||
+            key.isNull()) {
+            continue;
+        }
+        if (output_index++ != index) continue;
+        *region_id_out = region->id;
+        memcpy(key_out, key.key, sizeof(key.key));
+        return true;
+    }
+    return false;
+}
+
+static bool loadPrivateRegionKey(uint16_t region_id, const uint8_t key[16],
+                                 void*) {
+    if (!g_region_map || !g_region_store || region_id == 0 || !key) {
+        return false;
+    }
+    ::RegionEntry* region = g_region_map->findById(region_id);
+    if (!region || region->name[0] != '$') return false;
+    TransportKey transport_key{};
+    memcpy(transport_key.key, key, sizeof(transport_key.key));
+    return !transport_key.isNull() &&
+        g_region_store->saveKeysFor(region_id, &transport_key, 1);
 }
 
 bool regionsLoad() {
-    if (!g_region_map) return false;
+    if (!g_region_map || !g_region_store) return false;
     if (!SPIFFS.begin(false)) {
         g_regions_dirty = true;
         return false;
@@ -73,15 +125,30 @@ bool regionsLoad() {
 
     const detail::RegionStoreFormat format =
         detail::regionStorePrepareLoad(REGION_PATH);
-    bool ok = format != detail::RegionStoreFormat::Invalid &&
-        g_region_map->load(&SPIFFS, REGION_PATH);
-    g_regions_dirty = !ok;
+    const bool transactional =
+        format == detail::RegionStoreFormat::Transactional;
+    bool ok = format != detail::RegionStoreFormat::Invalid;
+    if (ok && transactional) {
+        SPIFFS.remove(REGION_RAW_PATH);
+        ok = detail::regionStoreExtractTransactionalMap(
+            REGION_PATH, REGION_RAW_PATH);
+    }
+    const char* map_path = transactional ? REGION_RAW_PATH : REGION_PATH;
+    if (ok) ok = g_region_map->load(&SPIFFS, map_path);
+    if (transactional) SPIFFS.remove(REGION_RAW_PATH);
 
-    // A validated upstream-format file is safe to load, then immediately
-    // upgraded. If the upgrade cannot commit, retain the loaded map and its
-    // dirty flag so a later regionsSave() can retry it.
-    if (ok && format == detail::RegionStoreFormat::Legacy) {
-        regionsSave();
+    // TransportKeyStore is RAM-only upstream. Rebuild it exclusively from the
+    // same validated v2 snapshot as the RegionMap so names/IDs and private key
+    // material can never come from different commits.
+    g_region_store->clear();
+    if (ok && transactional) {
+        ok = detail::regionStoreLoadTransactionalKeys(
+            REGION_PATH, loadPrivateRegionKey, nullptr) >= 0;
+    }
+    g_regions_dirty = !ok;
+    if (!ok) {
+        g_active_name[0] = '\0';
+        return false;
     }
 
     NodePrefs np = prefs_get();
@@ -98,8 +165,6 @@ bool regionsLoad() {
             prefs_quarantined = true;
         }
     }
-    if (prefs_quarantined) prefs_set(np);
-
     // RegionMap's default is the canonical persisted scope. Migrate the older
     // active_region-only model once, then keep the compatibility preference in
     // lockstep with the canonical name.
@@ -108,7 +173,7 @@ bool regionsLoad() {
         canonical = g_region_map->findByName(np.active_region);
         if (canonical) {
             g_region_map->setDefaultRegion(canonical);
-            regionsSave();
+            g_regions_dirty = true;
         }
     }
 
@@ -119,19 +184,41 @@ bool regionsLoad() {
         g_active_name[0] = '\0';
     }
 
-    if (canonical && canonical->name[0] == '$' &&
+    // V1 stored only the active private key in NodePrefs. Install that overlay
+    // in RAM before the one-time v2 commit. A valid v2 file always wins over a
+    // stale preference left behind by an interrupted NVS cleanup.
+    if (ok && !transactional && canonical && canonical->name[0] == '$' &&
+        strcmp(np.active_region, canonical->name) == 0 &&
         strlen(np.default_scope_key_hex) == SCOPE_KEY_HEX_LEN) {
         uint8_t key[16];
         if (scopeKeyHexDecode(np.default_scope_key_hex, key)) {
-            installPrivateRegionKey(*canonical, key);
+            TransportKey transport_key{};
+            memcpy(transport_key.key, key, sizeof(transport_key.key));
+            if (!transport_key.isNull()) {
+                g_region_store->saveKeysFor(
+                    canonical->id, &transport_key, 1);
+            }
         }
+    }
+
+    // Every valid legacy/v1 map is upgraded after the preference overlay has
+    // been applied, producing the first transactional metadata+keys snapshot.
+    const bool upgraded = ok && !transactional && regionsSave();
+    if (ok && !transactional && !upgraded) g_regions_dirty = true;
+
+    if (ok && (transactional || upgraded) &&
+        np.default_scope_key_hex[0] != '\0') {
+        np.default_scope_key_hex[0] = '\0';
+        prefs_quarantined = true;
     }
 
     if (strcmp(np.active_region, g_active_name) != 0) {
         strncpy(np.active_region, g_active_name, sizeof(np.active_region) - 1);
         np.active_region[sizeof(np.active_region) - 1] = '\0';
-        prefs_set(np);
+        prefs_quarantined = true;
     }
+
+    if (prefs_quarantined) prefs_set(np);
 
     return ok;
 }
@@ -145,8 +232,11 @@ bool regionsSave() {
 
     SPIFFS.remove(REGION_RAW_PATH);
     const bool serialized = g_region_map->save(&SPIFFS, REGION_RAW_PATH);
-    const bool ok = serialized && detail::regionStoreSaveLegacyFile(
-        REGION_PATH, REGION_RAW_PATH);
+    const int key_count = countPrivateRegionKeys();
+    const bool ok = serialized &&
+        detail::regionStoreSaveTransactionalFile(
+            REGION_PATH, REGION_RAW_PATH, key_count,
+            readPrivateRegionKey, nullptr);
     SPIFFS.remove(REGION_RAW_PATH);
     g_regions_dirty = !ok;
     return ok;
@@ -203,7 +293,12 @@ bool regionsPersistenceDirty() {
 
 ::RegionEntry* addPrivateRegion(const char* name, const uint8_t key[16],
                                 const char* parent_name) {
-    if (!name || name[0] != '$' || !key || !g_region_store) return nullptr;
+    if (!name || name[0] != '$' || !key || !g_region_map || !g_region_store ||
+        !regionNameValid(name) ||
+        (parent_name && parent_name[0] && !regionNameValid(parent_name)) ||
+        g_region_map->findByName(name)) {
+        return nullptr;
+    }
     TransportKey transport_key{};
     memcpy(transport_key.key, key, sizeof(transport_key.key));
     if (transport_key.isNull()) return nullptr;
@@ -244,6 +339,7 @@ bool setPrivateRegionKey(const char* name, const uint8_t key[16]) {
     TransportKey previous[4]{};
     const int previous_count = g_region_store->loadKeysFor(
         region->id, previous, 4);
+    const bool previous_dirty = g_regions_dirty;
     TransportKey transport_key{};
     memcpy(transport_key.key, key, sizeof(transport_key.key));
     if (transport_key.isNull()) return false;
@@ -254,6 +350,7 @@ bool setPrivateRegionKey(const char* name, const uint8_t key[16]) {
     } else {
         g_region_store->removeKeys(region->id);
     }
+    g_regions_dirty = previous_dirty;
     return false;
 }
 
@@ -470,13 +567,10 @@ static bool commitActiveRegionPrefs(const char* name, const char* key_hex,
         np.active_region[0] = '\0';
     }
     if (replace_key) {
-        if (key_hex) {
-            strncpy(np.default_scope_key_hex, key_hex,
-                    sizeof(np.default_scope_key_hex) - 1);
-            np.default_scope_key_hex[sizeof(np.default_scope_key_hex) - 1] = '\0';
-        } else {
-            np.default_scope_key_hex[0] = '\0';
-        }
+        // Private key material is part of the transactional /regions2 v2
+        // snapshot. This legacy NVS field is accepted only as a migration
+        // input and must not become a second source of truth again.
+        np.default_scope_key_hex[0] = '\0';
     }
     if (!prefs_set(np)) return false;
 

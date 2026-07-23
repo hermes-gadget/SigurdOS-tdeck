@@ -634,6 +634,22 @@ Each channel stores three NVS keys:
 
 Channel count is stored as `ch_cnt` (uint8_t). On boot, `loadChannels()` is called during `init()` after `g_mesh->begin()` to restore all previously joined channels.
 
+### Region and private-scope persistence
+
+Flood-scope metadata and private (`$`) transport keys are committed together
+in the versioned `/regions2` v2 store. The CRC-protected atomic replacement
+contains the complete upstream `RegionMap` payload plus up to 16 private keys,
+so a reboot cannot combine region IDs from one generation with key material
+from another. Adding, changing, or deleting a private scope rewrites that one
+snapshot; a full key store or interrupted write leaves a validated old or new
+generation available for recovery.
+
+Legacy raw/v1 RegionMap files are accepted at boot. The former active private
+key overlay in `NodePrefs::default_scope_key_hex` is installed once, included
+in the v2 commit, and then cleared. After migration, `TransportKeyStore` is
+rebuilt exclusively from `/regions2`, preserving multiple private scopes while
+switching defaults or rebooting.
+
 ### Persistence Store Module (`persistence_store.h/cpp`)
 
 The `sigurdos::mesh::persistence_store` module provides the low-level NVS and
