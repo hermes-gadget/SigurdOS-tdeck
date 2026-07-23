@@ -5,14 +5,16 @@
 // companion adapter a real translation-unit boundary (ARCH-001, #820):
 // the flood-scope key hex codec (scope_key_hex.h) and the shared
 // "DM: <name>" conversation-key formatter (mesh_wrapper_internal.h).
-// These pin the legacy semantics exactly.
+// These pin the validated codec semantics.
 
 #include <gtest/gtest.h>
 #include "mesh/scope_key_hex.h"
+#include "mesh/anonymous_message_policy.h"
 #include "mesh/mesh_init_lifecycle.h"
 #include "mesh/mesh_wrapper_internal.h"
 
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -22,6 +24,39 @@ using sigurdos::mesh::scopeKeyHexDecode;
 using sigurdos::mesh::scopeKeyBase64Decode;
 using sigurdos::mesh::formatDmConversation;
 using sigurdos::mesh::detail::MeshInitState;
+
+TEST(AnonymousMessagePolicy, EnforcesExactAsciiTextBoundary)
+{
+    const std::string accepted(sigurdos::mesh::MAX_ANON_TEXT_BYTES, 'a');
+    const std::string rejected(sigurdos::mesh::MAX_ANON_TEXT_BYTES + 1, 'a');
+    size_t text_len = 0;
+
+    EXPECT_TRUE(sigurdos::mesh::anonymousTextFits(accepted.c_str(), &text_len));
+    EXPECT_EQ(text_len, sigurdos::mesh::MAX_ANON_TEXT_BYTES);
+    EXPECT_FALSE(sigurdos::mesh::anonymousTextFits(rejected.c_str(), &text_len));
+    EXPECT_EQ(text_len, 0u);
+}
+
+TEST(AnonymousMessagePolicy, CountsUtf8PayloadInBytes)
+{
+    const std::string accepted(173, 'a');
+    const std::string rejected(174, 'a');
+
+    EXPECT_TRUE(sigurdos::mesh::anonymousTextFits(
+        (accepted + "\xC3\xA9").c_str()));
+    EXPECT_FALSE(sigurdos::mesh::anonymousTextFits(
+        (rejected + "\xC3\xA9").c_str()));
+}
+
+TEST(AnonymousMessagePolicy, EnforcesInnerRequestBudget)
+{
+    EXPECT_TRUE(sigurdos::mesh::anonymousRequestFits(
+        sigurdos::mesh::MAX_ANON_REQUEST_BYTES));
+    EXPECT_FALSE(sigurdos::mesh::anonymousRequestFits(
+        sigurdos::mesh::MAX_ANON_REQUEST_BYTES + 1));
+    EXPECT_FALSE(sigurdos::mesh::anonymousTextFits(nullptr));
+    EXPECT_FALSE(sigurdos::mesh::anonymousTextFits(""));
+}
 
 TEST(ScopeKeyHex, EncodeEmitsLowercaseAndNulTerminates)
 {
@@ -41,31 +76,31 @@ TEST(ScopeKeyHex, RoundTripPreservesAllBytes)
     char hex[33];
     scopeKeyHexEncode(key, hex);
     uint8_t back[16] = {0};
-    scopeKeyHexDecode(hex, back);
+    ASSERT_TRUE(scopeKeyHexDecode(hex, back));
     EXPECT_EQ(memcmp(key, back, 16), 0);
 }
 
 TEST(ScopeKeyHex, DecodeIsCaseInsensitive)
 {
     uint8_t lower[16], upper[16];
-    scopeKeyHexDecode("00010a0f107f80abcdefff42995aa53c", lower);
-    scopeKeyHexDecode("00010A0F107F80ABCDEFFF42995AA53C", upper);
+    ASSERT_TRUE(scopeKeyHexDecode(
+        "00010a0f107f80abcdefff42995aa53c", lower));
+    ASSERT_TRUE(scopeKeyHexDecode(
+        "00010A0F107F80ABCDEFFF42995AA53C", upper));
     EXPECT_EQ(memcmp(lower, upper, 16), 0);
     EXPECT_EQ(lower[7], 0xAB);
 }
 
-TEST(ScopeKeyHex, NonHexCharactersDecodeToZeroNibbles)
+TEST(ScopeKeyHex, RejectsMalformedAndZeroKeysWithoutPartialOutput)
 {
-    // Legacy behavior: an invalid character contributes a zero nibble
-    // instead of failing the decode.
     uint8_t out[16];
     memset(out, 0xEE, sizeof(out));
-    scopeKeyHexDecode("zzg57Zz9!!~~--++..##qqrrssttuuvv", out);
-    EXPECT_EQ(out[0], 0x00);  // "zz"
-    EXPECT_EQ(out[1], 0x05);  // "g5" — only the low nibble is valid
-    EXPECT_EQ(out[2], 0x70);  // "7Z" — only the high nibble is valid
-    EXPECT_EQ(out[3], 0x09);  // "z9"
-    for (int i = 4; i < 16; i++) EXPECT_EQ(out[i], 0x00) << "byte " << i;
+    EXPECT_FALSE(scopeKeyHexDecode(
+        "zzg57Zz9!!~~--++..##qqrrssttuuvv", out));
+    EXPECT_FALSE(scopeKeyHexDecode("1234", out));
+    EXPECT_FALSE(scopeKeyHexDecode(
+        "00000000000000000000000000000000", out));
+    for (uint8_t byte : out) EXPECT_EQ(byte, 0xEE);
 }
 
 TEST(ScopeKeyHex, NullArgumentsAreNoOps)
@@ -76,9 +111,9 @@ TEST(ScopeKeyHex, NullArgumentsAreNoOps)
     EXPECT_STREQ(hex, "unchanged");
     scopeKeyHexEncode(key, nullptr);   // must not crash
     uint8_t out[16] = {7};
-    scopeKeyHexDecode(nullptr, out);
+    EXPECT_FALSE(scopeKeyHexDecode(nullptr, out));
     EXPECT_EQ(out[0], 7);
-    scopeKeyHexDecode("00", nullptr);  // must not crash
+    EXPECT_FALSE(scopeKeyHexDecode("00", nullptr));
 }
 
 TEST(ScopeKeyBase64, DecodesCanonicalPrivateRegionKey)
@@ -95,6 +130,7 @@ TEST(ScopeKeyBase64, RejectsMalformedOrNonCanonicalKeys)
     EXPECT_FALSE(scopeKeyBase64Decode("AAECAwQFBgcICQoLDA0ODw=", out));
     EXPECT_FALSE(scopeKeyBase64Decode("AAECAwQFBgcICQoLDA0ODw=!", out));
     EXPECT_FALSE(scopeKeyBase64Decode("AAECAwQFBgcICQoLDA0ODx==", out));
+    EXPECT_FALSE(scopeKeyBase64Decode("AAAAAAAAAAAAAAAAAAAAAA==", out));
     EXPECT_FALSE(scopeKeyBase64Decode("AAECAwQFBgcICQoLDA0ODw==", nullptr));
 }
 

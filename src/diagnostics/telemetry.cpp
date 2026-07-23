@@ -20,6 +20,7 @@
 #include "telemetry_input.h"
 #include "telemetry_hb_ring.h"
 #include "telemetry_drift.h"
+#include "telemetry_policy.h"
 
 namespace sigurdos {
 namespace telemetry {
@@ -42,6 +43,7 @@ struct HeartbeatSnapshot {
     uint8_t  batt_pct;
     int16_t  rssi_x4;
     uint16_t widget_count;
+    bool     widget_count_truncated;
     bool     valid;
 };
 
@@ -66,37 +68,7 @@ static uint16_t s_sleep_count       = 0;
 
 // ── Screen name mapping ──────────────────────────────
 static const char* screen_name_str(uint8_t scr) {
-    using namespace sigurdos::ui;
-    switch (static_cast<Screen>(scr)) {
-        case Screen::Home:              return "Home";
-        case Screen::Chat:              return "Chat";
-        case Screen::Contacts:          return "Contacts";
-        case Screen::Channels:          return "Channels";
-        case Screen::Network:           return "Network";
-        case Screen::Heard:             return "Heard";
-        case Screen::Map:               return "Map";
-        case Screen::Advertise:         return "Advertise";
-        case Screen::Settings:          return "Settings";
-        case Screen::Trace:             return "Trace";
-        case Screen::Terminal:          return "Terminal";
-        case Screen::Signal:            return "Signal";
-        case Screen::RadioSetup:        return "RadioSetup";
-        case Screen::Repeaters:         return "Repeaters";
-        case Screen::Onboarding:        return "Onboarding";
-        case Screen::ContactDetail:     return "ContactDetail";
-        case Screen::SettingsRadio:     return "SettingsRadio";
-        case Screen::SettingsGPS:       return "SettingsGPS";
-        case Screen::SettingsDisplay:   return "SettingsDisplay";
-        case Screen::SettingsSystem:    return "SettingsSystem";
-        case Screen::NodeStats:         return "NodeStats";
-        case Screen::Telemetry:         return "Telemetry";
-        case Screen::NodeStatus:        return "NodeStatus";
-        case Screen::WiFiNetworks:      return "WiFiNetworks";
-        case Screen::Regions:          return "Regions";
-        case Screen::RepeaterDetail:    return "RepeaterDetail";
-        case Screen::CustomRadioSetup:  return "CustomRadioSetup";
-        default:                        return "?";
-    }
+    return screen_name(static_cast<sigurdos::ui::Screen>(scr));
 }
 
 // ── Drift detection ───────────────────────────────────
@@ -109,19 +81,14 @@ static uint32_t s_drift_window_ms = 60000;  // 60s window
 
 static uint32_t now_ms() { return millis(); }
 
-static uint16_t count_lvgl_widgets() {
+static WidgetTreeCount count_lvgl_widgets() {
     lv_obj_t* act = lv_scr_act();
-    if (!act) return 0;
-    // Count all children recursively (shallow enough for embedded)
-    uint32_t count = 1;  // screen itself
-    uint32_t child_cnt = lv_obj_get_child_count(act);
-    count += child_cnt;
-    for (uint32_t i = 0; i < child_cnt && i < 100; i++) {
-        lv_obj_t* child = lv_obj_get_child(act, i);
-        if (child) count += lv_obj_get_child_count(child);
-    }
-    // Cap to avoid counting too deep in pathological cases
-    return count > 65535U ? 65535U : static_cast<uint16_t>(count);
+    return count_widget_tree(
+        act,
+        [](lv_obj_t* obj) { return lv_obj_get_child_count(obj); },
+        [](lv_obj_t* obj, uint32_t index) {
+            return lv_obj_get_child(obj, static_cast<int32_t>(index));
+        });
 }
 
 static HeartbeatSnapshot capture_heartbeat_snapshot() {
@@ -131,7 +98,9 @@ static HeartbeatSnapshot capture_heartbeat_snapshot() {
     snapshot.free_psram = ESP.getFreePsram();
     snapshot.batt_pct = sigurdos_battery_pct();
     snapshot.rssi_x4 = static_cast<int16_t>(sigurdos::mesh::getLastRSSI() * 4);
-    snapshot.widget_count = count_lvgl_widgets();
+    const WidgetTreeCount widgets = count_lvgl_widgets();
+    snapshot.widget_count = widgets.count;
+    snapshot.widget_count_truncated = widgets.truncated;
     snapshot.valid = true;
     return snapshot;
 }
@@ -161,6 +130,11 @@ static void emit_build_info() {
     emit_sep(); emit_kv_s(key::PART, build.partitions);
     emit_sep(); emit_kv_s(key::BOARD, build.board);
     emit_sep(); emit_kv_s(key::MCU, build.mcu);
+    emit_sep(); emit_kv_s(key::BUILD_SOURCE, build.build_source);
+    emit_sep(); emit_kv_s(key::RUN_ID, build.actions_run_id);
+    emit_sep(); emit_kv_s(key::RUN_ATTEMPT, build.actions_run_attempt);
+    emit_sep(); emit_kv_s(key::REF, build.actions_ref);
+    emit_sep(); emit_kv_s(key::RUN_URL, build.actions_run_url);
     emit_end();
 }
 
@@ -169,6 +143,7 @@ static constexpr uint32_t PKTLOG_SIZE = 32;
 
 struct PktLogEntry {
     uint32_t timestamp;
+    char     direction[4];
     char     sender[32];
     char     channel[32];
     char     text[64];
@@ -191,17 +166,20 @@ static void init_pktlog() {
     }
 }
 
-void push_packet_log(const char* sender, const char* channel,
-                     const char* text, int rssi) {
+void push_packet_log(const char* direction, const char* sender,
+                     const char* channel, const char* text, int rssi) {
     if (!s_pktlog) return;
     const char* sender_safe = packet_log_field_or_empty(sender);
     const char* channel_safe = packet_log_field_or_empty(channel);
     const char* text_safe = packet_log_field_or_empty(text);
     uint32_t idx = s_pktlog_head;
     s_pktlog[idx].timestamp = millis() / 1000;
+    packet_log_copy_field(s_pktlog[idx].direction,
+                          sizeof(s_pktlog[idx].direction), direction);
     packet_log_copy_field(s_pktlog[idx].sender, sizeof(s_pktlog[idx].sender), sender_safe);
     packet_log_copy_field(s_pktlog[idx].channel, sizeof(s_pktlog[idx].channel), channel_safe);
-    packet_log_copy_field(s_pktlog[idx].text, sizeof(s_pktlog[idx].text), text_safe);
+    packet_log_copy_field(s_pktlog[idx].text, sizeof(s_pktlog[idx].text),
+                          packet_log_text_by_policy(text_safe));
     s_pktlog[idx].rssi = rssi;
     s_pktlog_head = (s_pktlog_head + 1) % PKTLOG_SIZE;
     if (s_pktlog_count < UINT32_MAX) s_pktlog_count++;
@@ -231,6 +209,8 @@ static uint32_t emit_pktlog() {
         emit_tag(tag::PKT);
         emit_sep();
         emit_kv_u(key::I, idx);
+        emit_sep();
+        emit_kv_s(key::TYPE, e.direction);
         emit_sep();
         emit_kv_s(key::SRC, e.sender);
         emit_sep();
@@ -286,6 +266,9 @@ static void emit_full_heartbeat() {
     emit_kv(key::RSSI, snapshot.rssi_x4 / 4);
     emit_sep();
     emit_kv_u(key::WIDGETS, snapshot.widget_count);
+    emit_sep();
+    emit_kv_u(key::WIDGETS_TRUNCATED,
+              snapshot.widget_count_truncated ? 1U : 0U);
     // Phase 1 heartbeat fields — screen, loop, display
     emit_sep();
     emit_kv_s(key::SCREEN, screen_name_str(s_active_screen));
@@ -389,6 +372,8 @@ static void emit_diff_heartbeat() {
         emit_sep(); emit_kv_u(key::B, snapshot.batt_pct);
         emit_sep(); emit_kv(key::RSSI, snapshot.rssi_x4 / 4);
         emit_sep(); emit_kv_u(key::WIDGETS, snapshot.widget_count);
+        emit_sep(); emit_kv_u(key::WIDGETS_TRUNCATED,
+                              snapshot.widget_count_truncated ? 1U : 0U);
         emit_end();
     }
 
@@ -521,7 +506,7 @@ void report_loop_timing(uint32_t elapsed_us) {
         s_peak_loop_us = elapsed_us;
     }
     // Auto-emit alert if loop exceeds 500ms
-    if (elapsed_us > 500000) {
+    if (s_enabled && elapsed_us > 500000) {
         emit_tag(tag::ALERT);
         emit_sep();
         emit_kv_s(key::DESC, "loop_blocked");
@@ -534,6 +519,7 @@ void report_loop_timing(uint32_t elapsed_us) {
 void report_display_wake() {
     s_display_on = true;
     s_wake_count++;
+    if (!s_enabled) return;
     emit_tag(tag::ALERT);
     emit_sep();
     emit_kv_s(key::DESC, "display_wake");
@@ -545,6 +531,7 @@ void report_display_wake() {
 void report_display_sleep() {
     s_display_on = false;
     s_sleep_count++;
+    if (!s_enabled) return;
     emit_tag(tag::ALERT);
     emit_sep();
     emit_kv_s(key::DESC, "display_sleep");
@@ -556,15 +543,15 @@ void report_display_sleep() {
 // ── Phase 2+3+4 hook implementations ───────────────────
 
 void report_key_event(uint8_t keycode) {
-    input::report_key_event(keycode);
+    input::report_key_event(keycode, s_enabled);
 }
 
 void report_touch_event(uint16_t x, uint16_t y) {
-    input::report_touch_event(x, y);
+    input::report_touch_event(x, y, s_enabled);
 }
 
 void report_trackball_event(uint8_t direction) {
-    input::report_trackball_event(direction);
+    input::report_trackball_event(direction, s_enabled);
 }
 
 void report_render_flush() {
@@ -636,14 +623,19 @@ void cmd_query(const char* arg) {
         emit_sep(); emit_kv_u(key::MV, sigurdos_battery_mv());
         emit_sep(); emit_kv(key::RSSI, sigurdos::mesh::getLastRSSI());
         emit_sep(); emit_kv(key::SNR, (int32_t)(sigurdos::mesh::getLastSNR() * 10));
-        emit_sep(); emit_kv_u(key::WIDGETS, count_lvgl_widgets());
+        const WidgetTreeCount heap_widgets = count_lvgl_widgets();
+        emit_sep(); emit_kv_u(key::WIDGETS, heap_widgets.count);
+        emit_sep(); emit_kv_u(key::WIDGETS_TRUNCATED,
+                              heap_widgets.truncated ? 1U : 0U);
         emit_end();
         n++;
 
         // @lvgl
         emit_tag(tag::LVGL);
-        {   uint16_t wt = count_lvgl_widgets();
-            emit_sep(); emit_kv_u(key::WIDGETS, wt);
+        {   const WidgetTreeCount widgets = count_lvgl_widgets();
+            emit_sep(); emit_kv_u(key::WIDGETS, widgets.count);
+            emit_sep(); emit_kv_u(key::WIDGETS_TRUNCATED,
+                                  widgets.truncated ? 1U : 0U);
 #if !LV_MEM_CUSTOM
             lv_mem_monitor_t mon;
             lv_mem_monitor(&mon);
@@ -694,7 +686,10 @@ void cmd_query(const char* arg) {
         emit_sep(); emit_kv_u(key::B, sigurdos_battery_pct());
         emit_sep(); emit_kv_u(key::MV, sigurdos_battery_mv());
         emit_sep(); emit_kv(key::RSSI, sigurdos::mesh::getLastRSSI());
-        emit_sep(); emit_kv_u(key::WIDGETS, count_lvgl_widgets());
+        const WidgetTreeCount hb_widgets = count_lvgl_widgets();
+        emit_sep(); emit_kv_u(key::WIDGETS, hb_widgets.count);
+        emit_sep(); emit_kv_u(key::WIDGETS_TRUNCATED,
+                              hb_widgets.truncated ? 1U : 0U);
         emit_sep(); emit_kv_s(key::SCREEN, screen_name_str(s_active_screen));
         emit_sep(); emit_kv_u(key::SCREEN_MS, s_screen_birth_ms ? (millis() - s_screen_birth_ms) : 0);
         emit_sep(); emit_kv_u(key::LOOP_US, s_last_loop_us);
@@ -724,15 +719,20 @@ void cmd_query(const char* arg) {
         emit_sep(); emit_kv_u(key::MV, sigurdos_battery_mv());
         emit_sep(); emit_kv(key::RSSI, sigurdos::mesh::getLastRSSI());
         emit_sep(); emit_kv(key::SNR, (int32_t)(sigurdos::mesh::getLastSNR() * 10));
-        emit_sep(); emit_kv_u(key::WIDGETS, count_lvgl_widgets());
+        const WidgetTreeCount heap_widgets = count_lvgl_widgets();
+        emit_sep(); emit_kv_u(key::WIDGETS, heap_widgets.count);
+        emit_sep(); emit_kv_u(key::WIDGETS_TRUNCATED,
+                              heap_widgets.truncated ? 1U : 0U);
         emit_end();
         n = 1;
     }
 
     if (strcmp(arg, "state") == 0 || strcmp(arg, "lvgl") == 0) {
         emit_tag(tag::LVGL);
-        uint16_t wt = count_lvgl_widgets();
-        emit_sep(); emit_kv_u(key::WIDGETS, wt);
+        const WidgetTreeCount widgets = count_lvgl_widgets();
+        emit_sep(); emit_kv_u(key::WIDGETS, widgets.count);
+        emit_sep(); emit_kv_u(key::WIDGETS_TRUNCATED,
+                              widgets.truncated ? 1U : 0U);
 #if !LV_MEM_CUSTOM
         lv_mem_monitor_t mon;
         lv_mem_monitor(&mon);
@@ -843,6 +843,7 @@ void cmd_query(const char* arg) {
         const char* sub = arg + 6;
         if (strcmp(sub, "clear") == 0) {
             crash::clear();
+            emit_end_resp("crash clear", 1, micros() - start);
             return;
         } else if (strcmp(sub, "test") == 0) {
             crash::test();
@@ -858,6 +859,7 @@ void cmd_crash(const char* arg) {
         crash::query();
     } else if (strcmp(arg, "clear") == 0) {
         crash::clear();
+        emit_end_resp("crash clear", 1);
     } else if (strcmp(arg, "test") == 0) {
         crash::test();
     } else {

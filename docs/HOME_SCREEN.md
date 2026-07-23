@@ -11,7 +11,7 @@ The Home screen is SigurdOS's main launcher — a 4×3 icon grid that provides a
 | `src/ui/home_screen.h` | Public API — `home_screen_create()`, `home_screen_show()`, `home_screen_handle_trackball()`, runtime update functions (battery, time, signal, channels) |
 | `src/ui/home_screen.cpp` | Full implementation — top bar, bottom bar, adaptive icon grid, tile creation, selection rendering, trackball handler |
 | `src/ui/responsive.h` | Display-size-agnostic layout constants — `TOP_BAR_H`, `BOT_BAR_H`, `CONTENT_H`, `compute_grid()`, `HASHTAG_LABEL_W()` |
-|| `src/ui/theme.h` | Pixel theme colours, helpers — `apply_dark_bg()`, `create_signal_dots()`, `rssi_to_dots()` |
+| `src/ui/theme.h` | Pixel theme colours, helpers — `apply_dark_bg()`, `create_signal_dots()`, `rssi_to_dots()` |
 | `src/ui/navigation.cpp` | Screen routing — `navigate_to(Screen)` dispatches to the target screen when a tile is activated |
 
 ---
@@ -75,7 +75,7 @@ Created by `create_bottom_bar()` in `home_screen.cpp`. Slightly shorter than the
 | Element | Position | Details |
 |---------|----------|---------|
 | **Device name** | Left-aligned (x=4) | From `mesh::getOwnName()`, `montserrat_10`, `TEXT_SECONDARY` (`#949BA4`) |
-|| **Signal dots** | Center (x=-20) | iOS-style 5-dot RSSI indicator from `create_signal_dots()` in `theme.h`. Active dots are `ACCENT` cyan filled; inactive dots are `TEXT_MUTED` outlines. Updated via `home_screen_update_signal()` which calls `rssi_to_dots()` |
+| **Signal dots** | Center (x=-20) | iOS-style 5-dot RSSI indicator from `create_signal_dots()` in `theme.h`. Active dots are `ACCENT` cyan filled; inactive dots are `TEXT_MUTED` outlines. Updated via `home_screen_update_signal()` which calls `rssi_to_dots()` |
 | **Battery percentage** | Right-aligned (x=-4) | Initially `"--%"`, updated via `home_screen_update_battery()`. `montserrat_10`, `ACCENT` cyan normally, turns `ACCENT_RED` (`#ED4245`) below 20% |
 
 Styling: `BG_SECONDARY` (`#181818`) background, zero padding, zero border width.
@@ -128,7 +128,12 @@ Each tile is created by `create_icon_tile()` in `home_screen.cpp`:
 
 ### Badge (CHATS Tile)
 
-Only the CHATS tile has `badge = true`. This creates an **18×12px red unread counter** in the top-right corner of the tile. `home_screen_update_badges()` reads `sigurdos::mesh::getUnreadMessageCount()`, hides the badge when the count is zero, and shows a capped numeric count (`99` max) when unread messages exist. Opening Chat resets the mesh unread counter.
+Only the CHATS tile has `badge = true`. This creates an **18×12px red unread
+counter** in the top-right corner of the tile. `home_screen_update_badges()`
+reads the aggregate of the chat UI's stable per-conversation unread registry,
+hides the badge when the count is zero, and caps the displayed count. A
+conversation is cleared only when its messaging view is opened or it is
+explicitly marked read; opening a filtered list does not clear hidden chats.
 
 ---
 
@@ -144,7 +149,7 @@ The 5-direction trackball provides full keyboard-less navigation of the icon gri
 | **Right** | Move selection to the next tile in the same row | Wraps to the first tile of that row |
 | **Up** | Move selection up one row (same column) | Wraps to the bottom row; skips past-the-end tiles if the last row has fewer columns |
 | **Down** | Move selection down one row (same column) | Wraps to the top row; skips past-the-end tiles if the last row has fewer columns |
-| **Click** | Activate the selected tile | Calls `navigate_to(icons[selected_icon].target)` |
+| **Click** | Activate the selected tile | Uses the same activation path as touch, applying the CHATS/DMs/ROOMS filter before navigation |
 
 ### Active Grid Dimensions
 
@@ -212,7 +217,7 @@ constexpr int CONTENT_W  = DISPLAY_W;
 | `CONTENT_Y` | 23px | Grid top edge (below top bar + divider) |
 | `CONTENT_H` | 196px | Grid height (240 - 22 - 1 - 1 - 20) |
 | `CONTENT_W` | 320px | Full display width (landscape) |
-|| Grid columns | 4 | `CONTENT_W = 320 ≥ 300` (landscape layout) |
+| Grid columns | 4 | `CONTENT_W = 320 ≥ 300` (landscape layout) |
 | Grid rows | 3 | 12 tiles / 4 cols |
 | Tile width | ~75px | `(320 - 6 - 9) / 4` with 3px gap |
 | Tile height | ~62px | `(196 - 6 - 6) / 3` with 3px gap |
@@ -244,6 +249,8 @@ Both `create()` and `show()` call the internal `build_home_screen()` function, w
 ### `home_screen_handle_trackball(SigurdOSTrackballEvent event)`
 
 Routes a trackball event to the icon grid navigation. See [Trackball Navigation](#trackball-navigation). Called from `ui::handle_trackball_event()` in `ui.cpp`.
+Trackball Click and touch Click both call the shared tile activator, so neither
+input method can inherit a stale chat or contact filter.
 
 ### `home_screen_update_battery(int pct)`
 

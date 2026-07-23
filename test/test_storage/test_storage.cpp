@@ -14,6 +14,7 @@
 #include "esp_partition.h"
 
 #include "hal/storage.h"
+#include "validation/gps_validation_storage.h"
 
 namespace {
 
@@ -86,6 +87,58 @@ TEST_F(StorageTest, DoesNotFormatNonErasedPartition) {
     SPIFFS.mock_set_mount_result(false);
 
     EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_FALSE(SPIFFS.mock_was_formatted());
+    EXPECT_FALSE(sigurdos::storage_available());
+}
+
+TEST_F(StorageTest, DoesNotFormatWhenOnlyPrefixIsErased) {
+    sigurdos::test::mock_spiffs_partition(true, true);
+    sigurdos::test::mock_spiffs_programmed_byte(
+        MOCK_SPIFFS_PARTITION_SIZE - 1);
+    SPIFFS.mock_set_mount_result(false);
+
+    EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_FALSE(SPIFFS.mock_was_formatted());
+    EXPECT_FALSE(sigurdos::storage_available());
+}
+
+TEST_F(StorageTest, DoesNotFormatWhenPartitionReadFails) {
+    sigurdos::test::mock_spiffs_partition(true, true);
+    sigurdos::test::mock_spiffs_read_error(1024);
+    SPIFFS.mock_set_mount_result(false);
+
+    EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_FALSE(SPIFFS.mock_was_formatted());
+    EXPECT_FALSE(sigurdos::storage_available());
+}
+
+TEST_F(StorageTest, ReportsFormatFailure) {
+    sigurdos::test::mock_spiffs_partition(true, true);
+    SPIFFS.mock_set_mount_result(false);
+    SPIFFS.mock_set_format_result(false);
+
+    EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_FALSE(SPIFFS.mock_was_formatted());
+    EXPECT_FALSE(sigurdos::storage_available());
+}
+
+TEST_F(StorageTest, ReportsRemountFailureAfterFormat) {
+    sigurdos::test::mock_spiffs_partition(true, true);
+    SPIFFS.mock_set_mount_result(false);
+    SPIFFS.mock_set_format_result(true);
+    SPIFFS.mock_set_post_format_mount_result(false);
+
+    EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_TRUE(SPIFFS.mock_was_formatted());
+    EXPECT_FALSE(sigurdos::storage_available());
+}
+
+TEST_F(StorageTest, GpsValidationUsesFailClosedProductionPolicy) {
+    sigurdos::test::mock_spiffs_partition(true, true);
+    sigurdos::test::mock_spiffs_programmed_byte(8192);
+    SPIFFS.mock_set_mount_result(false);
+
+    EXPECT_FALSE(sigurdos::gps_validation::init_storage());
     EXPECT_FALSE(SPIFFS.mock_was_formatted());
     EXPECT_FALSE(sigurdos::storage_available());
 }

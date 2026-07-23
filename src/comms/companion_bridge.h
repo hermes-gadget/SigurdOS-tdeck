@@ -251,7 +251,7 @@ static constexpr size_t SIGURDOS_COMPANION_SIGNATURE_SIZE = 64;
 static constexpr size_t SIGURDOS_COMPANION_MAX_SIGN_DATA = 8192;
 
 #ifndef SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT
-#define SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT 1
+#define SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT 0
 #endif
 
 #ifndef SIGURDOS_ENABLE_PRIVATE_KEY_IMPORT
@@ -403,6 +403,8 @@ public:
     bool setEnabled(bool enabled);
     uint32_t lastSyncTime() const { return _last_sync_time; }
     uint8_t appTargetVersion() const { return _app_target_ver; }
+    uint32_t pushDropCount() const { return _push_drop_count; }
+    bool sensitiveBuffersClearedForTest() const;
 
     bool enqueueMessage(const sigurdos::mesh::StoredMessage& msg);
     bool enqueueChannelData(uint8_t channel_index,
@@ -455,14 +457,19 @@ private:
     void writeDisabledFrame();
     // RESP_CODE_SENT (10 bytes) on success, else an error frame.
     void writeSentOrErr(const CompanionSendResult& r);
-    void writeContactFrame(uint8_t code, const CompanionContact& contact);
+    bool writeContactFrame(uint8_t code, const CompanionContact& contact,
+                           bool command_response = true);
     void writeNoMoreMessages();
+    bool sendResponseFrame(const uint8_t* frame, size_t len);
+    bool sendPushFrame(const uint8_t* frame, size_t len);
+    bool flushPendingResponse();
+    void resetConnectionSession();
     bool offlineFrameExists(const uint8_t* frame, size_t len) const;
     bool addToOfflineQueue(uint32_t store_id, bool persistent,
                            const uint8_t* frame, size_t len);
     bool refillOfflineQueueFromStore(bool notify_waiting);
-    // Peek does not dequeue. removeFirstOfflineFrame() is called only after the
-    // transport accepts the complete frame.
+    // Peek does not dequeue. Durable records remain at the head while in-flight
+    // and leave only after the same authenticated session's implicit ACK.
     int  peekOfflineQueue(uint8_t* frame, uint32_t* store_id, bool* persistent);
     void removeFirstOfflineFrame();
     bool buildMessageFrame(const sigurdos::mesh::StoredMessage& msg,
@@ -471,6 +478,9 @@ private:
     int findFreePendingBinary() const;
     void expirePendingBinary();
     void clearPendingBinary();
+    void refreshConnectionSession();
+    void clearInflightMessage();
+    void clearSigningState();
 
     struct PendingBinaryRequest {
         uint32_t tag = 0;
@@ -482,6 +492,7 @@ private:
     BaseSerialInterface* _serial = nullptr;
     CompanionBridgeHost* _host = nullptr;
     uint8_t _app_target_ver = 3;
+    bool _version_negotiated = true;
     uint32_t _last_sync_time = 0;
     uint32_t _iter_filter_since = 0;
     uint32_t _most_recent_lastmod = 0;
@@ -490,14 +501,20 @@ private:
     Frame _offline[OFFLINE_QUEUE_SIZE];
     sigurdos::mesh::StoredMessage _offline_snapshot[OFFLINE_QUEUE_SIZE]{};
     PendingBinaryRequest _pending_binary[MAX_PENDING_BINARY_REQUESTS]{};
-    uint8_t _cmd_frame[MAX_FRAME_SIZE + 1];
-    uint8_t _out_frame[MAX_FRAME_SIZE + 1];
+    uint8_t _cmd_frame[MAX_FRAME_SIZE + 1]{};
+    uint8_t _out_frame[MAX_FRAME_SIZE + 1]{};
+    uint8_t _pending_response[MAX_FRAME_SIZE]{};
+    uint8_t _pending_response_len = 0;
+    uint32_t _push_drop_count = 0;
 
     // CMD_SIGN_START/DATA/FINISH accumulate data here between frames.
-    uint8_t _sign_buf[SIGURDOS_COMPANION_MAX_SIGN_DATA];
+    uint8_t _sign_buf[SIGURDOS_COMPANION_MAX_SIGN_DATA]{};
     size_t  _sign_len = 0;
     bool    _sign_active = false;
     bool    _was_connected = false;  // detect BLE disconnect to clear signing state (#712)
+    uint32_t _connection_generation = 0;
+    uint32_t _inflight_store_id = 0;
+    uint32_t _inflight_generation = 0;
 
 };
 

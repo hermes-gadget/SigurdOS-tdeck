@@ -6,10 +6,18 @@
 // can compile and link without real NVS (Preferences) hardware.
 
 #include "hal/prefs.h"
+#include "mocks/mock_state.h"
 
 namespace sigurdos {
 
 static NodePrefs g_prefs;
+static bool g_prefs_set_result = true;
+
+void prefs_mock_set_save_result(bool result) { g_prefs_set_result = result; }
+
+void prefs_mock_reset() {
+    g_prefs = NodePrefs{};
+}
 
 bool prefs_load(NodePrefs& p) {
     p = g_prefs;
@@ -30,6 +38,7 @@ const NodePrefs& prefs_get() {
 }
 
 bool prefs_set(const NodePrefs& p) {
+    if (!g_prefs_set_result) return false;
     g_prefs = p;
     if (g_prefs.gps_interval > 86400) g_prefs.gps_interval = 86400;
     return true;
@@ -50,5 +59,9 @@ bool saveRepeaterPassword(const char*, const char*) { return true; }
 bool loadRepeaterPassword(const char*, char*, size_t) { return false; }
 void removeRepeaterPassword(const char*) {}
 bool clearRepeaterPasswords() { return true; }
+
+int loadChatScopePreferences(ChatScopePreference*, int) { return 0; }
+bool saveChatScopePreference(const char*, const char*, const uint8_t[16]) { return true; }
+bool removeChatScopePreference(const char*) { return true; }
 
 } // namespace sigurdos

@@ -20,9 +20,12 @@ class EpochTest : public ::testing::TestWithParam<EpochCase> {};
 TEST_P(EpochTest, ConvertsUtcUsingProductionArithmetic)
 {
     const auto& c = GetParam();
+    uint32_t checked = 0;
+    ASSERT_TRUE(sigurdos::mesh::utcToEpochChecked(
+        c.year, c.month, c.day, c.hour, c.minute, c.second, &checked));
+    EXPECT_EQ(checked, c.expected);
     EXPECT_EQ(sigurdos::mesh::utcToEpoch(
-                  c.year, c.month, c.day, c.hour, c.minute, c.second),
-              c.expected);
+        c.year, c.month, c.day, c.hour, c.minute, c.second), c.expected);
 }
 
 INSTANTIATE_TEST_SUITE_P(EpochTable, EpochTest,
@@ -34,6 +37,36 @@ INSTANTIATE_TEST_SUITE_P(EpochTable, EpochTest,
         EpochCase{2026, 7, 10, 12, 0, 0, 1783684800U},
         EpochCase{2030, 12, 31, 23, 59, 59, 1924991999U}
     ));
+
+TEST(EpochValidation, RejectsImpossibleCalendarAndClockValues)
+{
+    uint32_t epoch = 123;
+    EXPECT_FALSE(sigurdos::mesh::utcToEpochChecked(
+        2023, 2, 29, 0, 0, 0, &epoch));
+    EXPECT_FALSE(sigurdos::mesh::utcToEpochChecked(
+        2024, 13, 1, 0, 0, 0, &epoch));
+    EXPECT_FALSE(sigurdos::mesh::utcToEpochChecked(
+        2024, 1, 1, 24, 0, 0, &epoch));
+    EXPECT_FALSE(sigurdos::mesh::utcToEpochChecked(
+        2024, 1, 1, 0, 60, 0, &epoch));
+    EXPECT_FALSE(sigurdos::mesh::utcToEpochChecked(
+        2024, 1, 1, 0, 0, 60, &epoch));
+    EXPECT_EQ(epoch, 123U);
+}
+
+TEST(EpochValidation, RejectsValuesOutsideUnsignedUnixRange)
+{
+    uint32_t epoch = 0;
+    EXPECT_FALSE(sigurdos::mesh::utcToEpochChecked(
+        1969, 12, 31, 23, 59, 59, &epoch));
+    EXPECT_FALSE(sigurdos::mesh::utcToEpochChecked(
+        2106, 2, 7, 6, 28, 16, &epoch));
+    EXPECT_TRUE(sigurdos::mesh::utcToEpochChecked(
+        2106, 2, 7, 6, 28, 15, &epoch));
+    EXPECT_EQ(epoch, UINT32_MAX);
+    EXPECT_FALSE(sigurdos::mesh::utcToEpochChecked(
+        1970, 1, 1, 0, 0, 0, nullptr));
+}
 
 TEST(TimeSyncTrackerTest, StartsUnknownAndResetsCleanly)
 {

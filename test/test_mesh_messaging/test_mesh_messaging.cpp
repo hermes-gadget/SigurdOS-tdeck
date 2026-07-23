@@ -31,6 +31,8 @@
 #include "mesh/durable_fanout.h"
 #include "mesh/pending_ack_policy.h"
 #include "mesh/companion_message_policy.h"
+#include "mesh/incoming_message_policy.h"
+#include "mesh/mesh_safety_policy.h"
 
 namespace {
 
@@ -225,11 +227,13 @@ class MeshSession {
     MessageQueue inbox;
     MessageQueue outbox;
     char own_name[32] = "TDeck+";
+    int unread_count = 0;
 
 public:
     void reset() {
         inbox.reset();
         outbox.reset();
+        unread_count = 0;
     }
 
     void setOwnName(const char* name) {
@@ -258,7 +262,9 @@ public:
         strncpy(msg.text, text, sizeof(msg.text) - 1);
         msg.timestamp = ts;
         msg.is_self = false;
-        return inbox.push(msg);
+        const bool queued = inbox.push(msg);
+        if (queued) unread_count++;
+        return queued;
     }
 
     // Poll for pending received messages (returns count drained)
@@ -271,6 +277,7 @@ public:
     }
 
     int pending_count() const { return inbox.size(); }
+    int unread() const { return unread_count; }
 };
 
 // ── Message validation ───────────────────────────────────
@@ -335,6 +342,11 @@ TEST_F(MeshMessagingTest, QueueStartsEmpty) {
 TEST_F(MeshMessagingTest, ReceiveMessageIncrementsCount) {
     mesh.receive_message("Alice", "Hello!", 100);
     EXPECT_EQ(mesh.pending_count(), 1);
+}
+
+TEST_F(MeshMessagingTest, MatchingDisplayNameStillIncrementsUnread) {
+    mesh.receive_message(mesh.getOwnName(), "remote name collision", 100);
+    EXPECT_EQ(mesh.unread(), 1);
 }
 
 TEST_F(MeshMessagingTest, PollDrainsQueue) {
@@ -784,13 +796,34 @@ TEST_F(ReceivePipelineTest, GroupTextPayloadBoundary) {
     }
 }
 
-// ── Anon data boundary: exactly at 4-byte header ────────
-// If len == 4, onAnonDataRecv returns early (no text).
-TEST_F(ReceivePipelineTest, AnonDataPayloadBoundary) {
-    uint8_t buf[4] = {0, 0, 0, 0};
-    // onAnonDataRecv checks (len <= 4) → return, so 4 byte payload is rejected
-    // This is the correct behavior — no text payload with only header
-    SUCCEED();
+TEST_F(ReceivePipelineTest, AnonymousChatDecodesTimestampAfterRequestTag) {
+    const uint8_t payload[] = {
+        0xAA, 0xBB, 0xCC, 0xDD,
+        0x78, 0x56, 0x34, 0x12,
+        'H', 'e', 'l', 'l', 'o', 0
+    };
+    uint32_t timestamp = 0;
+    char text[16];
+    ASSERT_TRUE(sigurdos::mesh::decodeAnonymousChat(
+        payload, sizeof(payload), timestamp, text, sizeof(text)));
+    EXPECT_EQ(timestamp, 0x12345678U);
+    EXPECT_STREQ(text, "Hello");
+}
+
+TEST_F(ReceivePipelineTest, AnonymousChatRejectsMissingTextHeader) {
+    const uint8_t payload[8] = {};
+    uint32_t timestamp = 123;
+    char text[8];
+    EXPECT_FALSE(sigurdos::mesh::decodeAnonymousChat(
+        payload, sizeof(payload), timestamp, text, sizeof(text)));
+}
+
+TEST_F(ReceivePipelineTest, AnonymousSenderUsesStableSixBytePrefix) {
+    const uint8_t public_key[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+    char sender[20];
+    sigurdos::mesh::formatAnonymousSender(
+        public_key, sender, sizeof(sender));
+    EXPECT_STREQ(sender, "anon_001122334455");
 }
 
 // ── DM payload boundary: 5-byte header minimum ──────────
@@ -808,55 +841,49 @@ TEST_F(ReceivePipelineTest, DmPayloadBoundary) {
     EXPECT_EQ(buf[4], '\0');
 }
 
-// ── Strstr guard: parse_group_sender handles missing colon ─
+// ── Group sender parsing preserves malformed wire content ─
 TEST_F(ReceivePipelineTest, ParseGroupSenderNoColon) {
-    // Replicate parse_group_sender from slop_mesh.h
-    auto parse = [](const char* raw, char* sender, size_t cap, const char** text) {
-        const char* colon = strstr(raw, ": ");
-        if (colon && colon > raw) {
-            size_t name_len = colon - raw;
-            if (name_len >= cap) name_len = cap - 1;
-            memcpy(sender, raw, name_len);
-            sender[name_len] = '\0';
-            *text = colon + 2;
-        } else {
-            strncpy(sender, raw, cap - 1);
-            sender[cap - 1] = '\0';
-            *text = "";
-        }
-    };
-
     char sender[32];
-    const char* msg;
+    char msg[64];
 
-    // Normal case
-    parse("Alice: Hello!", sender, sizeof(sender), &msg);
+    EXPECT_TRUE(sigurdos::mesh::parseGroupText(
+        "Alice: Hello!", sender, sizeof(sender), msg, sizeof(msg)));
     EXPECT_STREQ(sender, "Alice");
     EXPECT_STREQ(msg, "Hello!");
 
-    // No colon — entire text is sender
-    parse("JustARawText", sender, sizeof(sender), &msg);
-    EXPECT_STREQ(sender, "JustARawText");
-    EXPECT_STREQ(msg, "");
+    EXPECT_FALSE(sigurdos::mesh::parseGroupText(
+        "JustARawText", sender, sizeof(sender), msg, sizeof(msg)));
+    EXPECT_STREQ(sender, "unknown");
+    EXPECT_STREQ(msg, "JustARawText");
 
-    // Empty string
-    parse("", sender, sizeof(sender), &msg);
-    EXPECT_STREQ(sender, "");
+    EXPECT_FALSE(sigurdos::mesh::parseGroupText(
+        ": message", sender, sizeof(sender), msg, sizeof(msg)));
+    EXPECT_STREQ(sender, "unknown");
+    EXPECT_STREQ(msg, ": message");
+}
 
-    // Colon at start (edge case: colon == raw_text, so colon > raw is false)
-    parse(": message", sender, sizeof(sender), &msg);
-    EXPECT_STREQ(sender, ": message");  // falls to else — entire raw is sender
-    EXPECT_STREQ(msg, "");
+TEST_F(ReceivePipelineTest, ParseGroupSenderRejectsOversizedName) {
+    char sender[8];
+    char msg[64];
+    EXPECT_FALSE(sigurdos::mesh::parseGroupText(
+        "sender-too-long: payload", sender, sizeof(sender), msg, sizeof(msg)));
+    EXPECT_STREQ(sender, "unknown");
+    EXPECT_STREQ(msg, "sender-too-long: payload");
+}
 
-    // Multiple colons — split at first
-    parse("Node: hello: world", sender, sizeof(sender), &msg);
-    EXPECT_STREQ(sender, "Node");
-    EXPECT_STREQ(msg, "hello: world");
+TEST(MeshSafetyPolicy, ReceiveBufferMustFitWholeDatagram) {
+    uint8_t output[4] = {};
+    EXPECT_TRUE(sigurdos::mesh::receiveBufferFits(output, 4, 4));
+    EXPECT_FALSE(sigurdos::mesh::receiveBufferFits(output, 3, 4));
+    EXPECT_FALSE(sigurdos::mesh::receiveBufferFits(output, -1, 0));
+    EXPECT_FALSE(sigurdos::mesh::receiveBufferFits(nullptr, 4, 4));
+    EXPECT_TRUE(sigurdos::mesh::receiveBufferFits(nullptr, 0, 0));
+}
 
-    // Just ": " with nothing after
-    parse("Node: ", sender, sizeof(sender), &msg);
-    EXPECT_STREQ(sender, "Node");
-    EXPECT_STREQ(msg, "");
+TEST(MeshSafetyPolicy, AdvertRequiresOneNewOutboundPacket) {
+    EXPECT_TRUE(sigurdos::mesh::outboundQueueAccepted(3, 4));
+    EXPECT_FALSE(sigurdos::mesh::outboundQueueAccepted(3, 3));
+    EXPECT_FALSE(sigurdos::mesh::outboundQueueAccepted(-1, 0));
 }
 
 // ── Channel hash match: 1-byte vs full compare ──────────

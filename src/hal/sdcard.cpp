@@ -217,6 +217,12 @@ static bool sdcard_mount_once(SigurdosSdMountSource source)
     // Pre-radio probing may reset SPI2 for the card's CMD0 handshake. After
     // radio startup, retries must preserve the active SX1262 peripheral state.
     if (sigurdos_sdcard_may_reset_bus(bus_reset_locked)) {
+        if (!sigurdos_shared_spi_reset(PIN_LORA_SCLK, PIN_LORA_MISO,
+                                       PIN_LORA_MOSI, PIN_SD_CS)) {
+            sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_BEGIN_FAILED;
+            return false;
+        }
+    } else {
         sigurdos_shared_spi_begin(PIN_LORA_SCLK, PIN_LORA_MISO,
                                   PIN_LORA_MOSI, PIN_SD_CS);
     }

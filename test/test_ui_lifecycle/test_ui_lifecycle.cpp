@@ -7,6 +7,7 @@
 #include "ui/lv_timer_owner.h"
 
 using sigurdos::ui::LvTimerOwner;
+using sigurdos::ui::chat_history_cap_reduces_history;
 using sigurdos::ui::normalize_auto_off_timeout;
 
 using sigurdos::hal::DisplayAutoOffDeadline;
@@ -63,6 +64,13 @@ TEST(AutoOffTimeout, NormalizesUnsupportedValuesToThirtySeconds)
     EXPECT_EQ(normalize_auto_off_timeout(1), 30);
     EXPECT_EQ(normalize_auto_off_timeout(45), 30);
     EXPECT_EQ(normalize_auto_off_timeout(65535), 30);
+}
+
+TEST(ChatHistoryCap, WarnsOnlyWhenTheConfirmedValueWouldTrimHistory)
+{
+    EXPECT_TRUE(chat_history_cap_reduces_history(64, 48));
+    EXPECT_FALSE(chat_history_cap_reduces_history(64, 64));
+    EXPECT_FALSE(chat_history_cap_reduces_history(64, 80));
 }
 
 TEST(AutoOffDeadline, FiresAtTheDeadlineNotBefore)

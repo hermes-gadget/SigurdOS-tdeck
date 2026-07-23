@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace sigurdos {
@@ -17,6 +18,29 @@ enum Status : uint8_t {
     TIMED_OUT = 4,
     DROPPED = 5,
 };
+
+inline bool isTerminal(Status status)
+{
+    return status == FAILED || status == TIMED_OUT || status == DROPPED;
+}
+
+// Prefer never-used slots so terminal results remain observable when capacity
+// permits. Once the table is otherwise full, a terminal result is reclaimable;
+// pending and active sessions are never evicted.
+template <typename Entry>
+inline int selectReservationSlot(const Entry* entries, size_t count)
+{
+    if (!entries) return -1;
+    for (size_t i = 0; i < count; ++i) {
+        if (!entries[i].in_use) return static_cast<int>(i);
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (isTerminal(static_cast<Status>(entries[i].status))) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
 
 static constexpr uint32_t MIN_TIMEOUT_MS = 10000;
 static constexpr uint32_t TIMEOUT_GRACE_MS = 2000;

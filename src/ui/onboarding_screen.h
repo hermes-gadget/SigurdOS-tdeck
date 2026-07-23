@@ -5,6 +5,15 @@
 
 namespace sigurdos::ui {
 
+// 2026-06-01 00:00:00 UTC. Earlier values indicate that first-boot time
+// setup has not completed (or no trusted time source has run yet).
+static constexpr uint32_t ONBOARDING_MIN_VALID_EPOCH = 1780272000U;
+
+inline bool onboarding_clock_valid(uint32_t epoch)
+{
+    return epoch >= ONBOARDING_MIN_VALID_EPOCH;
+}
+
 inline bool onboarding_is_leap_year(int year)
 {
     return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);

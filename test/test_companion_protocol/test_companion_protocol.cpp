@@ -15,6 +15,7 @@ public:
     bool enabled = false;
     bool connected = true;
     bool busy = false;
+    uint32_t generation = 1;
     int fail_writes = 0;
     std::vector<std::vector<uint8_t>> writes;
 
@@ -22,6 +23,9 @@ public:
     void disable() override { enabled = false; }
     bool isEnabled() const override { return enabled; }
     bool isConnected() const override { return connected; }
+    uint32_t connectionGeneration() const override {
+        return connected ? generation : 0;
+    }
     bool isWriteBusy() const override { return busy; }
     size_t writeFrame(const uint8_t src[], size_t len) override {
         if (!connected || busy || fail_writes > 0) {
@@ -615,6 +619,81 @@ TEST_F(CompanionProtocolTest, DeviceTimeRejectsBackwardUpdates) {
               (std::vector<uint8_t>{sigurdos::comms::RESP_CODE_OK}));
 }
 
+TEST_F(CompanionProtocolTest, CongestedCommandResponseIsRetriedBeforeNextCommand) {
+    serial.enabled = true;
+    serial.fail_writes = 1;
+    const uint8_t first[] = {sigurdos::comms::CMD_SET_ADVERT_NAME,
+                             'f', 'i', 'r', 's', 't'};
+    ASSERT_TRUE(bridge.handleFrame(first, sizeof(first)));
+    EXPECT_TRUE(host.set_advert_name_called);
+    EXPECT_STREQ(host.advert_name, "first");
+    EXPECT_TRUE(serial.writes.empty());
+
+    host.set_advert_name_called = false;
+    const uint8_t second[] = {sigurdos::comms::CMD_SET_ADVERT_NAME,
+                              's', 'e', 'c', 'o', 'n', 'd'};
+    EXPECT_FALSE(bridge.handleFrame(second, sizeof(second)));
+    EXPECT_FALSE(host.set_advert_name_called);
+
+    bridge.loop();
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0],
+              (std::vector<uint8_t>{sigurdos::comms::RESP_CODE_OK}));
+
+    ASSERT_TRUE(bridge.handleFrame(second, sizeof(second)));
+    EXPECT_TRUE(host.set_advert_name_called);
+    EXPECT_STREQ(host.advert_name, "second");
+}
+
+TEST_F(CompanionProtocolTest, CongestedLowPriorityPushReportsDrop) {
+    serial.busy = true;
+    EXPECT_FALSE(bridge.pushContactsFull());
+    EXPECT_EQ(bridge.pushDropCount(), 1u);
+
+    serial.busy = false;
+    EXPECT_TRUE(bridge.pushContactsFull());
+    EXPECT_EQ(bridge.pushDropCount(), 1u);
+}
+
+TEST_F(CompanionProtocolTest, DisconnectResetsVersionAndPreencodedOfflineFrames) {
+    serial.enabled = true;
+    bridge.loop();  // observe the connected session
+
+    const uint8_t legacy_query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 2};
+    ASSERT_TRUE(bridge.handleFrame(legacy_query, sizeof(legacy_query)));
+    EXPECT_EQ(bridge.appTargetVersion(), 2);
+
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "new session", sizeof(msg.text) - 1);
+    msg.timestamp = 77;
+    for (int i = 0; i < 6; ++i) msg.sender_prefix[i] = (uint8_t)(0xA0 + i);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+
+    const uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    serial.connected = false;
+    bridge.loop();
+    EXPECT_EQ(bridge.appTargetVersion(), 3);
+
+    serial.connected = true;
+    serial.writes.clear();
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_FALSE(serial.writes.empty());
+    EXPECT_EQ(serial.writes.back(), (std::vector<uint8_t>{
+        sigurdos::comms::RESP_CODE_ERR, sigurdos::comms::ERR_CODE_BAD_STATE}));
+
+    const uint8_t v3_query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
+    ASSERT_TRUE(bridge.handleFrame(v3_query, sizeof(v3_query)));
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_FALSE(serial.writes.empty());
+    EXPECT_EQ(serial.writes.back()[0],
+              sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+}
+
 TEST_F(CompanionProtocolTest, UndersizedKnownCommandsReturnIllegalArgument) {
     namespace cc = sigurdos::comms;
     const uint8_t commands[] = {
@@ -716,6 +795,11 @@ TEST_F(CompanionProtocolTest, AppStartSeedsPersistedMessagesForSync) {
     sigurdos::mesh::StoredMessage stored{};
     ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
     EXPECT_EQ(stored.store_id, 1U);
+    EXPECT_FALSE(stored.companion_sent);
+
+    // The next request from this authenticated session acknowledges the frame.
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
     EXPECT_TRUE(stored.companion_sent);
 }
 
@@ -774,6 +858,97 @@ TEST_F(CompanionProtocolTest, SyncRefillsUntilCompletePersistentBacklogDrains) {
 
     ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
     ASSERT_EQ(serial.writes.size(), 3u + backlog_size);
+    EXPECT_EQ(serial.writes.back()[0],
+              sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
+
+    std::vector<sigurdos::mesh::StoredMessage> stored(backlog_size);
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(
+                  stored.data(), static_cast<int>(stored.size())),
+              static_cast<int>(backlog_size));
+    for (const auto& msg : stored) EXPECT_TRUE(msg.companion_sent);
+}
+
+TEST_F(CompanionProtocolTest,
+       DeterministicStatefulSyncPreservesOrderAcrossRetriesAndReconnects) {
+    constexpr uint32_t backlog_size = 64;
+    for (uint32_t i = 0; i < backlog_size; ++i) {
+        sigurdos::mesh::StoredMessage msg{};
+        std::strncpy(msg.conversation, "DM: Alice",
+                     sizeof(msg.conversation) - 1);
+        std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+        std::snprintf(msg.text, sizeof(msg.text), "sequence-%lu",
+                      (unsigned long)i);
+        msg.timestamp = 5000 + i;
+        for (int p = 0; p < 6; ++p) {
+            msg.sender_prefix[p] = (uint8_t)(0xA0 + p);
+        }
+        ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+    }
+
+    const uint8_t start[8] = {sigurdos::comms::CMD_APP_START};
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    const uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+
+    uint32_t sequence = 0x5EED1234u;
+    uint32_t retry_count = 0;
+    uint32_t reconnect_count = 0;
+    uint32_t restart_count = 0;
+    for (uint32_t expected = 0; expected < backlog_size; ++expected) {
+        // Fixed-seed scheduling makes this repeatable while exercising
+        // interactions between page refill, repeated APP_START, failed writes,
+        // and transport disconnects instead of testing each event in isolation.
+        sequence = sequence * 1664525u + 1013904223u;
+
+        if (sequence & 0x01u) {
+            ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+            ++restart_count;
+        }
+        if (sequence & 0x02u) {
+            const size_t before = serial.writes.size();
+            serial.fail_writes = 1;
+            ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+            EXPECT_EQ(serial.writes.size(), before);
+            ++retry_count;
+        }
+        if (sequence & 0x04u) {
+            const size_t before = serial.writes.size();
+            serial.connected = false;
+            bridge.loop();
+            EXPECT_EQ(serial.writes.size(), before);
+            serial.connected = true;
+            serial.generation++;
+            ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
+            ASSERT_EQ(serial.writes.size(), before + 1);
+            EXPECT_EQ(serial.writes.back()[0],
+                      sigurdos::comms::RESP_CODE_DEVICE_INFO);
+            ++reconnect_count;
+        }
+
+        // A reconnect before the next SYNC deliberately replays the prior
+        // in-flight record. Consume that at-least-once duplicate, then require
+        // the next unique record to remain in strict order.
+        for (;;) {
+            const size_t before = serial.writes.size();
+            ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+            ASSERT_EQ(serial.writes.size(), before + 1);
+            const auto& frame = serial.writes.back();
+            ASSERT_GE(frame.size(), 16U);
+            EXPECT_EQ(frame[0],
+                      sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+            uint32_t timestamp = 0;
+            std::memcpy(&timestamp, &frame[12], sizeof(timestamp));
+            if (timestamp == 5000u + expected) break;
+            ASSERT_GT(expected, 0U);
+            EXPECT_EQ(timestamp, 5000u + expected - 1U);
+        }
+    }
+
+    EXPECT_GT(retry_count, 0U);
+    EXPECT_GT(reconnect_count, 0U);
+    EXPECT_GT(restart_count, 0U);
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_FALSE(serial.writes.empty());
     EXPECT_EQ(serial.writes.back()[0],
               sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
 
@@ -920,22 +1095,36 @@ TEST_F(CompanionProtocolTest, MarkFailureRetainsDeliveredFrameForRetry) {
     EXPECT_EQ(serial.writes[0], serial.writes[1]);
 }
 
-TEST_F(CompanionProtocolTest, DisconnectDuringDrainKeepsFrameForReconnect) {
+TEST_F(CompanionProtocolTest, DisconnectDuringInflightDeliveryRetriesForNewSession) {
     sigurdos::mesh::StoredMessage msg{};
     std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
     std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
     std::strncpy(msg.text, "reconnect", sizeof(msg.text) - 1);
     msg.timestamp = 78;
-    msg.store_id = 43;
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg, &msg.store_id));
     ASSERT_TRUE(bridge.enqueueMessage(msg));
     uint8_t cmd[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
 
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(serial.writes.size(), 2U); // tickle + first-session frame
+
     serial.connected = false;
-    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    bridge.loop();
     serial.connected = true;
+    serial.generation++;
+    const uint8_t query[] = {sigurdos::comms::CMD_DEVICE_QUERY, 3};
+    ASSERT_TRUE(bridge.handleFrame(query, sizeof(query)));
     ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
-    ASSERT_EQ(serial.writes.size(), 2U); // tickle + retried frame
-    EXPECT_EQ(serial.writes[1][0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+    ASSERT_EQ(serial.writes.size(), 4U); // query response + durable retry
+    EXPECT_EQ(serial.writes[1], serial.writes[3]);
+
+    sigurdos::mesh::StoredMessage stored{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
+    EXPECT_FALSE(stored.companion_sent);
+
+    ASSERT_TRUE(bridge.handleFrame(cmd, sizeof(cmd)));
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
+    EXPECT_TRUE(stored.companion_sent);
 }
 
 TEST_F(CompanionProtocolTest, ChannelFrameCarriesRealPathLenAndTimestamp) {
@@ -1329,10 +1518,13 @@ TEST(CompanionBlePinPrefs, UpdatesPairingPinWithoutChangingDeviceLockPin) {
     ASSERT_TRUE(sigurdos::mesh::applyCompanionBlePin(prefs, 654321));
     EXPECT_EQ(prefs.ble_pin, 654321u);
     EXPECT_EQ(prefs.device_pin, 4321u);
+    EXPECT_TRUE(prefs.ble_bond_reset_pending);
 
+    prefs.ble_bond_reset_pending = false;
     EXPECT_FALSE(sigurdos::mesh::applyCompanionBlePin(prefs, 99999));
     EXPECT_EQ(prefs.ble_pin, 654321u);
     EXPECT_EQ(prefs.device_pin, 4321u);
+    EXPECT_FALSE(prefs.ble_bond_reset_pending);
 }
 
 TEST_F(CompanionProtocolTest, RebootAndFactoryResetGuarded) {
@@ -1491,6 +1683,7 @@ TEST_F(CompanionProtocolTest, SignFlow) {
     ASSERT_EQ(serial.writes[0].size(), 1u + 64u);
     EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_SIGNATURE);
     EXPECT_EQ(host.sign_len_seen, 4);
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
 }
 
 TEST_F(CompanionProtocolTest, IdentityChangeClearsSigningSession) {
@@ -1502,12 +1695,45 @@ TEST_F(CompanionProtocolTest, IdentityChangeClearsSigningSession) {
     ASSERT_TRUE(bridge.handleFrame(data, sizeof(data)));
 
     bridge.onIdentityChanged();
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
     serial.writes.clear();
     uint8_t finish[1] = { cc::CMD_SIGN_FINISH };
     ASSERT_TRUE(bridge.handleFrame(finish, sizeof(finish)));
     ASSERT_EQ(serial.writes.size(), 1u);
     EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
     EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_BAD_STATE);
+}
+
+TEST_F(CompanionProtocolTest, DisconnectWipesSigningAndCommandBuffers) {
+    uint8_t start[] = { cc::CMD_SIGN_START };
+    uint8_t data[] = { cc::CMD_SIGN_DATA, 0xA5, 0x5A, 0xC3 };
+    ASSERT_TRUE(bridge.handleFrame(start, sizeof(start)));
+    ASSERT_TRUE(bridge.handleFrame(data, sizeof(data)));
+    EXPECT_FALSE(bridge.sensitiveBuffersClearedForTest());
+
+    serial.enabled = true;
+    serial.connected = true;
+    bridge.loop();
+    serial.connected = false;
+    bridge.loop();
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
+}
+
+TEST_F(CompanionProtocolTest, PrivateKeyImportInputIsWipedAndExportIsDisabledByDefault) {
+    uint8_t import_frame[65];
+    std::memset(import_frame, 0xD7, sizeof(import_frame));
+    import_frame[0] = cc::CMD_IMPORT_PRIVATE_KEY;
+    ASSERT_TRUE(bridge.handleFrame(import_frame, sizeof(import_frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_OK);
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
+
+    serial.writes.clear();
+    uint8_t export_frame[] = { cc::CMD_EXPORT_PRIVATE_KEY };
+    ASSERT_TRUE(bridge.handleFrame(export_frame, sizeof(export_frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_DISABLED);
+    EXPECT_TRUE(bridge.sensitiveBuffersClearedForTest());
 }
 
 TEST_F(CompanionProtocolTest, SignDataBeforeStartFails) {
@@ -2613,6 +2839,13 @@ TEST_F(CompanionProtocolTest, SyncDrainMarksPerRecordNotAll) {
     sigurdos::mesh::StoredMessage verify[4]{};
     n = sigurdos::mesh::messageStoreLoadAll(verify, 4);
     ASSERT_EQ(n, 2);
+    EXPECT_FALSE(verify[0].companion_sent);
+    EXPECT_FALSE(verify[1].companion_sent);
+
+    // Asking for the next record acknowledges only the prior in-flight one.
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    n = sigurdos::mesh::messageStoreLoadAll(verify, 4);
+    ASSERT_EQ(n, 2);
     EXPECT_TRUE(verify[0].companion_sent);
     EXPECT_FALSE(verify[1].companion_sent);
 }
@@ -2724,6 +2957,9 @@ TEST_F(CompanionProtocolTest, PersistedCliDataSurvivesOfflineV3Sync) {
     sigurdos::mesh::StoredMessage stored{};
     ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
     EXPECT_EQ(stored.txt_type, sigurdos::comms::COMPANION_TXT_CLI_DATA);
+    EXPECT_FALSE(stored.companion_sent);
+    ASSERT_TRUE(bridge.handleFrame(sync, sizeof(sync)));
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&stored, 1), 1);
     EXPECT_TRUE(stored.companion_sent);
 }
 

@@ -1,0 +1,9 @@
+{
+  "name": "sigurdos-font-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned tooling for reproducible LVGL font assets",
+  "dependencies": {
+    "lv_font_conv": "1.5.3"
+  }
+}

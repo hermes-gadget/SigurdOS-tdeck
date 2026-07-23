@@ -4,13 +4,16 @@
 
 # SigurdOS T-Deck
 
-**Status: Beta testing** — several users have flashed successfully. See [Known Issues](#known-issues) below.
+**Status: Beta testing** — several users have flashed successfully. See [Known Issues](docs/KNOWN_ISSUES.md).
 
 Standalone off-grid LoRa mesh messaging firmware for the **LilyGo T-Deck** (ESP32-S3 + SX1262 + ST7789 240×320 TFT touchscreen + physical QWERTY keyboard).
 
 Built on the [MeshCore](https://github.com/meshcore-dev/MeshCore) mesh networking protocol. Core messaging interoperates with existing MeshCore repeaters, room servers, and companion radios; see the [companion command support matrix](docs/COMPANION_SUPPORT.md) for explicit protocol limits.
 
-Current firmware snapshot: `SIGURDOS_VERSION` in [`src/hal/tdeck_pins.h`](src/hal/tdeck_pins.h) is `beta-0.1.44-RC6`.
+The current firmware version is derived from Git tags during builds, with
+`SIGURDOS_VERSION` in [`src/hal/tdeck_pins.h`](src/hal/tdeck_pins.h) as the
+source-build fallback. Download immutable versions from
+[GitHub Releases](https://github.com/hermes-gadget/SigurdOS-tdeck/releases).
 
 Full credit to the MeshCore Dev team! I won't ever accept any money or donations for this project but if you wish to put your money to good use, and not the AI hivemind, then sponsor https://github.com/meshcore-dev/MeshCore
 

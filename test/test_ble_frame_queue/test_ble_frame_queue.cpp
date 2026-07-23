@@ -5,7 +5,11 @@
 #include "comms/ble_frame_queue.h"
 #include "comms/ble_init_gate.h"
 #include "comms/ble_auth_watchdog.h"
+#include "comms/ble_bond_rotation.h"
+#include "comms/ble_auth_throttle.h"
+#include "comms/secure_wipe.h"
 #include "comms/ble_task_mutex.h"
+#include "helpers/esp32/BleFramePolicy.h"
 
 #include <atomic>
 #include <cstring>
@@ -16,13 +20,133 @@ namespace {
 
 using sigurdos::comms::BleFrameQueue;
 using sigurdos::comms::BleInitGate;
+using sigurdos::comms::BleInitState;
+using sigurdos::comms::BleFrameQueuePushResult;
+using sigurdos::comms::BleRxAdmissionAction;
 using sigurdos::comms::BleAuthWatchdog;
+using sigurdos::comms::BleBondRotationState;
+using sigurdos::comms::BleAuthThrottle;
+using sigurdos::comms::BlePeerAddress;
 using sigurdos::comms::BleTaskMutex;
+
+TEST(BleAttPayloadPolicy, AccountsForThreeByteAttHeaderAtBoundaries)
+{
+    using meshcore::ble::frameFitsMtu;
+    EXPECT_TRUE(frameFitsMtu(20, 23));
+    EXPECT_FALSE(frameFitsMtu(21, 23));
+    EXPECT_TRUE(frameFitsMtu(173, 176));
+    EXPECT_FALSE(frameFitsMtu(174, 176));
+    EXPECT_FALSE(frameFitsMtu(176, 176));
+    EXPECT_TRUE(frameFitsMtu(176, 179));
+    EXPECT_TRUE(frameFitsMtu(176, meshcore::ble::PREFERRED_ATT_MTU));
+}
+
+TEST(BleAttPayloadPolicy, RejectsEmptyFramesAndInvalidMtu)
+{
+    EXPECT_FALSE(meshcore::ble::frameFitsMtu(0, 23));
+    EXPECT_FALSE(meshcore::ble::frameFitsMtu(1, 3));
+    EXPECT_EQ(meshcore::ble::payloadCapacity(2), 0u);
+}
 
 constexpr size_t MAX_LEN = 176;   // MAX_FRAME_SIZE on target
 constexpr size_t CAPACITY = 4;    // FRAME_QUEUE_SIZE on target
 
+TEST(BleBondRotationState, LiveRequestAllowsResponseGraceBeforePurge)
+{
+    BleBondRotationState state;
+    state.request(100, true);
+    EXPECT_TRUE(state.pending());
+    EXPECT_FALSE(state.actionDue(1099));
+    state.expedite(200);
+    EXPECT_TRUE(state.actionDue(200));
+    state.request(100, true);
+    EXPECT_TRUE(state.actionDue(1100));
+
+    state.purgeSubmitted(1100);
+    EXPECT_TRUE(state.purgeStarted());
+    EXPECT_FALSE(state.actionDue(1349));
+    EXPECT_TRUE(state.actionDue(1350));
+}
+
+TEST(BleBondRotationState, BootRequestIsImmediateAndWrapSafe)
+{
+    BleBondRotationState state;
+    state.request(0xFFFFFFF0u, false);
+    EXPECT_TRUE(state.actionDue(0xFFFFFFF0u));
+    state.retryLater(0xFFFFFFF0u);
+    EXPECT_FALSE(state.actionDue(0x00000020u));
+    EXPECT_TRUE(state.actionDue(0x000000EAu));
+    state.clear();
+    EXPECT_FALSE(state.pending());
+}
+
 using Queue = BleFrameQueue<MAX_LEN, CAPACITY>;
+
+BlePeerAddress peer(uint8_t last)
+{
+    BlePeerAddress value{};
+    value.bytes[5] = last;
+    return value;
+}
+
+TEST(BleAuthThrottle, NewPeersRequireLocalPairingWindowButBondsReconnect)
+{
+    BleAuthThrottle throttle;
+    EXPECT_FALSE(throttle.attemptAllowed(peer(1), false, 100));
+    EXPECT_TRUE(throttle.attemptAllowed(peer(1), true, 100));
+
+    throttle.openPairingWindow(100);
+    EXPECT_TRUE(throttle.attemptAllowed(peer(1), false, 101));
+    EXPECT_FALSE(throttle.pairingWindowOpen(120100));
+    EXPECT_FALSE(throttle.attemptAllowed(peer(1), false, 120100));
+}
+
+TEST(BleAuthThrottle, RepeatedFailuresUseBoundedPeerAwareBackoff)
+{
+    BleAuthThrottle throttle;
+    throttle.openPairingWindow(0);
+    uint32_t now = 10;
+    uint32_t delay = 0;
+    for (int i = 0; i < 20; ++i) {
+        delay = throttle.recordFailure(peer(1), now);
+        EXPECT_LE(delay, sigurdos::comms::BLE_AUTH_BACKOFF_MAX_MS);
+        now += delay;
+    }
+    EXPECT_EQ(delay, sigurdos::comms::BLE_AUTH_BACKOFF_MAX_MS);
+    EXPECT_GT(throttle.peerFailureCount(peer(1)), 0);
+    EXPECT_GT(throttle.globalFailureCount(), throttle.peerFailureCount(peer(2)));
+}
+
+TEST(BleAuthThrottle, CooldownAndPairingWindowHandleMillisWrap)
+{
+    BleAuthThrottle throttle;
+    throttle.openPairingWindow(0xFFFFFFF0u);
+    const uint32_t delay = throttle.recordFailure(peer(1), 0xFFFFFFF0u);
+    EXPECT_TRUE(throttle.blocked(0x00000020u));
+    EXPECT_FALSE(throttle.blocked(0xFFFFFFF0u + delay));
+}
+
+TEST(BleAuthThrottle, SuccessAndExplicitLocalActionClearFailures)
+{
+    BleAuthThrottle throttle;
+    throttle.recordFailure(peer(1), 100);
+    throttle.recordSuccess();
+    EXPECT_EQ(throttle.globalFailureCount(), 0);
+    EXPECT_TRUE(throttle.attemptAllowed(peer(1), true, 101));
+
+    throttle.recordFailure(peer(2), 200);
+    throttle.openPairingWindow(201);
+    EXPECT_EQ(throttle.globalFailureCount(), 0);
+    EXPECT_TRUE(throttle.attemptAllowed(peer(3), false, 202));
+}
+
+TEST(SecureWipe, ClearsEveryByte)
+{
+    uint8_t secret[64];
+    std::memset(secret, 0xA5, sizeof(secret));
+    sigurdos::comms::secureWipe(secret, sizeof(secret));
+    for (uint8_t byte : secret) EXPECT_EQ(byte, 0);
+}
 
 TEST(BleAuthWatchdog, ExpiresOnceAndHandlesMillisWrap)
 {
@@ -72,14 +196,14 @@ TEST(BleInitGate, ConfigurationDoesNotInitializeController)
     EXPECT_FALSE(gate.initialized());
     EXPECT_EQ(init_calls, 0);
 
-    EXPECT_TRUE(gate.ensureInitialized([&] {
+    EXPECT_TRUE(gate.ensureInitialized(0, [&] {
         ++init_calls;
         return true;
     }));
     EXPECT_TRUE(gate.initialized());
     EXPECT_EQ(init_calls, 1);
 
-    EXPECT_TRUE(gate.ensureInitialized([&] {
+    EXPECT_TRUE(gate.ensureInitialized(0, [&] {
         ++init_calls;
         return true;
     }));
@@ -90,26 +214,43 @@ TEST(BleInitGate, RequiresConfigurationAndRetriesFailedInitialization)
 {
     BleInitGate gate;
     int init_calls = 0;
-    EXPECT_FALSE(gate.ensureInitialized([&] {
+    EXPECT_FALSE(gate.ensureInitialized(0, [&] {
         ++init_calls;
         return true;
     }));
     EXPECT_EQ(init_calls, 0);
 
     gate.configure();
-    EXPECT_FALSE(gate.ensureInitialized([&] {
+    EXPECT_FALSE(gate.ensureInitialized(0, [&] {
         ++init_calls;
         return false;
     }));
     EXPECT_FALSE(gate.initialized());
+    EXPECT_EQ(gate.state(), BleInitState::Failed);
     EXPECT_EQ(init_calls, 1);
 
-    EXPECT_TRUE(gate.ensureInitialized([&] {
+    EXPECT_FALSE(gate.ensureInitialized(999, [&] {
+        ++init_calls;
+        return true;
+    }));
+    EXPECT_EQ(init_calls, 1);
+
+    EXPECT_TRUE(gate.ensureInitialized(1000, [&] {
         ++init_calls;
         return true;
     }));
     EXPECT_TRUE(gate.initialized());
     EXPECT_EQ(init_calls, 2);
+}
+
+TEST(BleInitGate, RetryDeadlineHandlesMillisWrap)
+{
+    BleInitGate gate(32);
+    gate.configure();
+    EXPECT_FALSE(gate.ensureInitialized(0xFFFFFFF0u, [] { return false; }));
+    EXPECT_EQ(gate.retryAtMs(), 0x00000010u);
+    EXPECT_FALSE(gate.ensureInitialized(0x0000000Fu, [] { return true; }));
+    EXPECT_TRUE(gate.ensureInitialized(0x00000010u, [] { return true; }));
 }
 
 // Frames carry a 32-bit sequence number followed by a deterministic fill so
@@ -156,6 +297,7 @@ TEST(BleFrameQueue, PreservesFifoOrderAndContents)
         EXPECT_EQ(seq, expected);
     }
     EXPECT_EQ(queue.size(), 0u);
+    EXPECT_TRUE(queue.storageClearedForTest());
 }
 
 TEST(BleFrameQueue, DropsWhenFullAndRejectsBadFrames)
@@ -170,6 +312,7 @@ TEST(BleFrameQueue, DropsWhenFullAndRejectsBadFrames)
 
     queue.clear();
     EXPECT_EQ(queue.size(), 0u);
+    EXPECT_TRUE(queue.storageClearedForTest());
     EXPECT_FALSE(queue.push(nullptr, 8));        // null data
     EXPECT_FALSE(queue.push(frame, 0));          // empty
     EXPECT_FALSE(queue.push(frame, MAX_LEN + 1));// oversize
@@ -177,6 +320,23 @@ TEST(BleFrameQueue, DropsWhenFullAndRejectsBadFrames)
     uint8_t out[MAX_LEN];
     EXPECT_EQ(queue.pop(out), 0u);               // empty pop
     EXPECT_EQ(queue.pop(nullptr), 0u);           // null dest
+}
+
+TEST(BleFrameQueue, SaturationRequiresExternallyVisibleDisconnect)
+{
+    Queue queue;
+    uint8_t frame[MAX_LEN] = {1};
+    for (size_t i = 0; i < CAPACITY; i++) {
+        ASSERT_EQ(queue.tryPush(frame, 8), BleFrameQueuePushResult::Accepted);
+    }
+
+    const auto full_result = queue.tryPush(frame, 8);
+    EXPECT_EQ(full_result, BleFrameQueuePushResult::Full);
+    EXPECT_EQ(sigurdos::comms::rxAdmissionAction(full_result),
+              BleRxAdmissionAction::DisconnectPeer);
+    EXPECT_EQ(sigurdos::comms::rxAdmissionAction(
+                  queue.tryPush(frame, MAX_LEN + 1)),
+              BleRxAdmissionAction::DisconnectPeer);
 }
 
 TEST(BleFrameQueue, WrapsAroundRepeatedly)

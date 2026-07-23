@@ -7,11 +7,13 @@
 #include "../diagnostics/log.h"
 #include "launcher_env.h"
 #include "ota_allocation_policy.h"
+#include "ota_security_epoch.h"
 #include "prefs.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
 #include <esp_random.h>
+#include <esp_ota_ops.h>
 #include <new>
 
 namespace sigurdos {
@@ -20,7 +22,7 @@ namespace ota {
 static WebServer* server = nullptr;
 static bool active = false;
 static char server_ip[16] = "";
-static char ap_password[17] = "";
+static char ap_password[64] = "";
 static uint32_t session_started_at = 0;
 static String csrf_token;  // regenerated per OTA session
 static OtaUploadSessionState upload_state;
@@ -28,6 +30,13 @@ static OtaUploadSessionState upload_state;
 // OTA PIN brute-force protection (SEC-001)
 static constexpr int MAX_PIN_FAILURES = 5;
 static int pin_fail_count = 0;
+
+static uint32_t currentSecurityEpoch() {
+    uint32_t epoch = SIGURDOS_SECURITY_EPOCH;
+    const esp_app_desc_t* running = esp_ota_get_app_description();
+    if (running && running->secure_version > epoch) epoch = running->secure_version;
+    return epoch;
+}
 
 static void* createOtaServer(void*, hal::OtaAllocationKind kind) {
     if (kind != hal::OtaAllocationKind::WebServer) return nullptr;
@@ -40,6 +49,11 @@ static const hal::OtaAllocationOps OTA_SERVER_ALLOCATOR{
 
 bool start(const char* ssid, const char* password) {
     if (active) return true;
+
+    if (!otaAccessPointInputsValid(ssid, password)) {
+        SIG_LOGW("[ota] REFUSED: invalid AP SSID or password length");
+        return false;
+    }
 
     if (sigurdos_is_under_launcher()) {
         SIG_LOGW("[ota] REFUSED: OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
@@ -78,7 +92,11 @@ bool start(const char* ssid, const char* password) {
             }
             ap_password[12] = '\0';
         }
-        WiFi.softAP(ssid, ap_password);
+        if (!WiFi.softAP(ssid, ap_password)) {
+            SIG_LOGE("[ota] WiFi AP startup failed");
+            stop();
+            return false;
+        }
 
         ip = WiFi.softAPIP();
         snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
@@ -232,6 +250,23 @@ bool start(const char* ssid, const char* password) {
                 }
             } else if (upload.status == UPLOAD_FILE_WRITE) {
                 if (!otaUploadAcceptsChunk(upload_state)) return;
+                if (!upload_state.epoch_checked) {
+                    uint32_t incoming_epoch = 0;
+                    const hal::OtaEpochStatus epoch_status = hal::otaCheckSecurityEpoch(
+                        upload.buf, upload.currentSize, currentSecurityEpoch(),
+                        &incoming_epoch);
+                    if (epoch_status != hal::OtaEpochStatus::Allowed) {
+                        upload_state.failed = true;
+                        upload_state.started = false;
+                        Update.abort();
+                        SIG_LOGW("[ota] Upload rejected: %s security epoch (%u)",
+                                 epoch_status == hal::OtaEpochStatus::Downgrade
+                                     ? "downgrade" : "malformed",
+                                 static_cast<unsigned>(incoming_epoch));
+                        return;
+                    }
+                    upload_state.epoch_checked = true;
+                }
                 const size_t written = Update.write(upload.buf, upload.currentSize);
                 if (written != upload.currentSize) {
                     upload_state.failed = true;

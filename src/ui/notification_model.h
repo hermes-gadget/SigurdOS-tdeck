@@ -21,6 +21,7 @@ enum class NotificationEvent : uint8_t {
     LowBattery,
     StorageFull,
     OtaFailure,
+    UiError,
 };
 
 enum class NotificationLevel : uint8_t { Info, Important, Critical };
@@ -68,6 +69,7 @@ inline NotificationPolicy notification_policy(NotificationEvent event)
     switch (event) {
         case NotificationEvent::Mention:
         case NotificationEvent::LoginFailure:
+        case NotificationEvent::UiError:
             return {NotificationLevel::Important, 6000, false};
         case NotificationEvent::LowBattery:
         case NotificationEvent::StorageFull:
@@ -110,6 +112,18 @@ inline bool notification_contains_mention(const char* text, const char* own_name
     return false;
 }
 
+inline bool notification_mention_text(char* out, size_t out_size,
+                                      const char* sender, const char* channel)
+{
+    if (!out || out_size == 0) return false;
+    const char* safe_sender = sender ? sender : "Unknown";
+    const char* safe_channel = channel ? channel : "";
+    const char* marker = safe_channel[0] == '#' ? "" : "#";
+    const int written = std::snprintf(out, out_size, "Mention from %s in %s%s",
+                                      safe_sender, marker, safe_channel);
+    return written >= 0 && static_cast<size_t>(written) < out_size;
+}
+
 struct NotificationItem {
     NotificationEvent event = NotificationEvent::DirectMessage;
     NotificationLevel level = NotificationLevel::Info;
@@ -141,6 +155,11 @@ public:
         if (text) {
             std::strncpy(item.text, text, sizeof(item.text) - 1);
             item.text[sizeof(item.text) - 1] = '\0';
+        }
+
+        if (_active && same_item(_current, item)) return;
+        for (uint8_t i = 0; i < _count; ++i) {
+            if (same_item(_pending[i], item)) return;
         }
 
         if (!_active) {
@@ -181,19 +200,41 @@ private:
 
     void enqueue(const NotificationItem& item)
     {
-        if (_count == CAPACITY - 1) {
-            for (uint8_t i = 1; i < _count; ++i) _pending[i - 1] = _pending[i];
-            --_count;
-        }
+        if (!make_room(item)) return;
         _pending[_count++] = item;
     }
 
     void enqueue_front(const NotificationItem& item)
     {
-        if (_count == CAPACITY - 1) --_count;
+        if (!make_room(item)) return;
         for (uint8_t i = _count; i > 0; --i) _pending[i] = _pending[i - 1];
         _pending[0] = item;
         ++_count;
+    }
+
+    static bool same_item(const NotificationItem& lhs, const NotificationItem& rhs)
+    {
+        return lhs.event == rhs.event && std::strcmp(lhs.text, rhs.text) == 0;
+    }
+
+    bool make_room(const NotificationItem& incoming)
+    {
+        if (_count < CAPACITY - 1) return true;
+        int victim = -1;
+        for (uint8_t i = 0; i < _count; ++i) {
+            if (_pending[i].sticky) continue;
+            if (victim < 0 || static_cast<uint8_t>(_pending[i].level) <
+                                static_cast<uint8_t>(_pending[victim].level)) {
+                victim = i;
+            }
+        }
+        if (victim < 0 || static_cast<uint8_t>(_pending[victim].level) >
+                              static_cast<uint8_t>(incoming.level)) return false;
+        for (uint8_t i = static_cast<uint8_t>(victim + 1); i < _count; ++i) {
+            _pending[i - 1] = _pending[i];
+        }
+        --_count;
+        return true;
     }
 
     void advance(uint32_t now_ms)

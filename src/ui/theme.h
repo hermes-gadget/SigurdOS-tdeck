@@ -32,6 +32,20 @@ constexpr uint32_t ACCENT_RED   = 0xed4245;
 constexpr uint32_t ACCENT_ORANGE= 0xfaa61a;
 constexpr uint32_t ACCENT_YELLOW= 0xfee75c;
 
+inline uint32_t semantic_foreground(uint32_t background)
+{
+    return contrast_foreground(background);
+}
+
+inline void apply_semantic_btn(lv_obj_t* obj, uint32_t background)
+{
+    lv_obj_set_style_bg_color(obj, lv_color_hex(background), 0);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(obj, lv_color_hex(semantic_foreground(background)), 0);
+    lv_obj_set_style_radius(obj, 0, 0);
+    lv_obj_set_style_border_width(obj, 2, 0);
+}
+
 // ── Message bubbles ──────────────────────────────────────
 constexpr uint32_t MSG_INCOMING = 0x3a4560;
 

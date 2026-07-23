@@ -10,6 +10,8 @@ The Chat screen is SigurdOS's primary messaging interface — a Discord-inspired
 |------|---------|
 | `src/ui/chat_screen.h` | Public API — `chat_screen_show()`, `chat_screen_open_dm()`, `chat_screen_add_msg()`, `chat_screen_handle_trackball()`, message cap get/set, unified-store restore |
 | `src/ui/chat_screen.cpp` | Full implementation — channel list, messaging view, message bubbles, input bar, emoji picker, send logic, trackball handler, unified-store restore |
+| `src/ui/channel_menu.*` | Named routing-scope validation and hardware-random key generation |
+| `src/hal/prefs.*` | Atomic NVS persistence for per-conversation scope names and keys |
 | `src/mesh/message_store.*` | Single durable message log shared by the UI and companion offline sync |
 | `src/ui/chat_history_store.*` | Read-only one-time migration codec for the retired `/msgs` snapshot |
 | `src/ui/navigation.cpp` | Screen routing — `navigate_to(Screen::Chat)` dispatches to `chat_screen_show()` |
@@ -62,7 +64,9 @@ Each row in the list shows:
 - **Channel name** — from mesh, e.g. `#general`, `DM: Alice`
 - **Last message preview** — truncated with `LV_LABEL_LONG_DOT`
 - **Timestamp** — 24h format `HH:MM` or `--:--` if no time available
-- **Unread badge** — accent-cyan square with count (capped at `9+`)
+- **Unread badge** — accent-cyan square with count (capped at `9+`). Counts
+  live in a stable conversation-keyed registry, so opening a channels-only or
+  DMs-only list cannot clear unread state for conversations hidden by that filter.
 - Alternating row backgrounds: even = `BG_TERTIARY` (`0x1e1e1e`), odd = `BG_INPUT` (`0x252525`)
 
 #### Top Bar (List View)
@@ -112,8 +116,8 @@ Opened by tapping a channel row or calling `chat_screen_open_dm()`.
 │ │ What's up?                 │   │
 │ └────────────────────────────┘   │
 ├──────────────────────────────────┤
-│ ┌───────────────┐ 😀 [Send]      │  ← input bar: textarea, emoji button, send button
-│ │ Message       │               │
+│ [PUBLIC] ┌──────┐ 😀 [Send]      │  ← persistent route badge, textarea, emoji, send
+│          │Message│               │
 │ └───────────────┘               │
 ├──────────────────────────────────┤
 │ SigurdOS T-Deck   ▂▄▆█       72%  │  ← bottom bar
@@ -169,7 +173,8 @@ Located between the message list and bottom bar.
 
 | Element | Details |
 |---------|---------|
-| **Textarea** | `apply_pixel_input()` styling, one-line mode, max length = `MAX_MSG_BYTES` (149), placeholder "Message #channel" |
+| **Route badge** | Always shows `PUBLIC` or the active `$name`, including while text is being entered |
+| **Textarea** | `apply_pixel_input()` styling, one-line mode, max length = `MAX_MSG_BYTES` (149), placeholder "Message" |
 | **Emoji button** | 😀 label, opens emoji picker dialog on click |
 | **Send button** | "Send" label, accent background, dispatches `do_send()` on click |
 
@@ -212,8 +217,9 @@ Dialog features:
 
 Channels are pulled from the MeshCore mesh layer via `mesh::exportChannels()`.
 
-- **Max channels**: `MAX_CHANNELS` = 16
-- **Storage**: `dyn_channels[MAX_CHANNELS][32]` — fixed-size char array
+- **Mesh channel capacity**: 16 exported group channels
+- **Conversation registry**: 32 canonical entries — 16 mesh channels plus 16 synthetic DMs
+- **Filtered views**: CHATS and DMs store non-owning indices into the registry, so switching views never removes hidden histories or unread counts
 - **Sorting**: MRU (most recently used) — `active_channel` tracks the current selection
 - **Auto-join**: On first load, if no channels exist, `mesh::joinPublicChannel()` is called
 - **Fallback**: If the mesh still returns no channels, `#general` is created as a synthetic fallback
@@ -230,10 +236,24 @@ In the messaging view's top bar, channels are rendered as clickable pills in a h
 
 DMs are synthetic channels prefixed with `"DM: "` followed by the contact name.
 
-- **Creation**: `chat_screen_open_dm(contact_name)` checks if a DM channel already exists; if not, appends one to the channel list and opens its messaging view
+- **Creation**: `chat_screen_open_dm(contact_name)` resolves or reserves a DM
+  slot before changing navigation. If all 16 conversation slots are occupied,
+  the current screen remains active and a bounded error toast is shown.
 - **Routing**: When sending, the prefix is stripped and `mesh::sendMessage(dest, text)` is called instead of `mesh::sendChannelMessage()`
 - **Incoming DM routing**: When a message arrives with an empty channel field, the sender's name is wrapped as `"DM: sender"` to map it to the correct conversation
 - **Signal indicator**: DM conversations show the contact's RSSI-based signal bars inline in the top bar
+
+### Named routing scopes
+
+The channel menu can assign a local `$name` to an individual conversation's
+routing scope. Firmware generates the 16-byte routing key independently with
+the ESP32 hardware RNG; the display name neither reveals nor reconstructs that
+key, and entering the same name on another device does not join the same scope.
+
+The name and random key are persisted together as one NVS blob per
+conversation. The composer keeps a dedicated `PUBLIC`/`$name` badge visible,
+and a failed save or clear leaves the previous effective state active so a
+storage error cannot silently switch a chat to public routing.
 
 ---
 
@@ -254,7 +274,7 @@ struct ChannelMessage {
 
 ### Per-Channel Storage
 
-Each channel (up to 16) gets a circular buffer allocated on first use:
+Each conversation (up to 32: 16 mesh channels and 16 DMs) gets a circular buffer allocated on first use:
 
 - **PSRAM path**: `heap_caps_malloc(CHAT_MSGS_MAX * sizeof(ChannelMessage), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` → capacity = 200
 - **DRAM fallback**: If PSRAM is exhausted, falls back to internal DRAM at reduced capacity (`CHAT_MSGS_MIN_CAP` = 8)
@@ -469,7 +489,7 @@ Opens or creates a direct message conversation with a contact.
 Adds a message to the per-channel history. The primary entry point for incoming mesh messages (called from `ui::loop()` → `mesh::pollMessages()`).
 
 - Empty `channel` is auto-mapped to `"DM: <sender>"` (DM routing)
-- Unknown channels are auto-created (up to `MAX_CHANNELS`)
+- Unknown conversations are auto-created while the 32-entry registry has capacity
 - If the channel's messaging view is currently visible, the bubble is rendered immediately
 - Unread count is incremented for background channels
 - Automatically trims excess LVGL label widgets if display cap is exceeded

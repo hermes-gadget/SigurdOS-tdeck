@@ -64,6 +64,19 @@ TEST(TelemetryInputTest, InvalidTrackballDirectionsDoNotAdvanceSampling)
     EXPECT_EQ(telemetry_input_test_emit_count(), 2u);
 }
 
+TEST(TelemetryInputTest, DisabledOutputStillUpdatesSamplingWithoutEmitting)
+{
+    const uint32_t before = telemetry_input_test_emit_count();
+    for (int i = 0; i < 5; ++i) {
+        report_trackball_event(1, false);
+    }
+    report_trackball_event(5, false);
+    EXPECT_EQ(telemetry_input_test_emit_count(), before);
+
+    report_trackball_event(5, true);
+    EXPECT_EQ(telemetry_input_test_emit_count(), before + 1);
+}
+
 }  // anonymous namespace
 
 int main(int argc, char** argv)

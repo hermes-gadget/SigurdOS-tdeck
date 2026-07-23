@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstring>
 
+namespace sigurdos { void prefs_mock_set_save_result(bool result); }
+
 namespace {
 
 using sigurdos::keyboard_layouts::CycleGesture;
@@ -18,6 +20,7 @@ class KeyboardLayoutsTest : public ::testing::Test {
 protected:
     void SetUp() override
     {
+        sigurdos::prefs_mock_set_save_result(true);
         sigurdos::NodePrefs prefs;
         prefs.set_defaults();
         sigurdos::prefs_set(prefs);
@@ -78,13 +81,27 @@ TEST_F(KeyboardLayoutsTest, InvalidPersistedLayoutFallsBackToEnglish)
 TEST_F(KeyboardLayoutsTest, CyclePersistsAndWraps)
 {
     ASSERT_TRUE(sigurdos::keyboard_layouts::set_active(Id::Italian, false));
-    EXPECT_EQ(Id::English, sigurdos::keyboard_layouts::cycle());
+    Id selected = Id::Italian;
+    ASSERT_TRUE(sigurdos::keyboard_layouts::cycle(&selected));
+    EXPECT_EQ(Id::English, selected);
     EXPECT_EQ(0, sigurdos::prefs_get().kbd_layout);
 
     for (size_t i = 1; i < sigurdos::keyboard_layouts::COUNT; ++i) {
-        EXPECT_EQ(static_cast<Id>(i), sigurdos::keyboard_layouts::cycle());
+        ASSERT_TRUE(sigurdos::keyboard_layouts::cycle(&selected));
+        EXPECT_EQ(static_cast<Id>(i), selected);
     }
     EXPECT_EQ(static_cast<uint8_t>(Id::Italian), sigurdos::prefs_get().kbd_layout);
+}
+
+TEST_F(KeyboardLayoutsTest, PersistenceFailureDoesNotChangeActiveLayout)
+{
+    ASSERT_TRUE(sigurdos::keyboard_layouts::set_active(Id::German, false));
+    sigurdos::prefs_mock_set_save_result(false);
+
+    EXPECT_FALSE(sigurdos::keyboard_layouts::set_active(Id::French));
+    EXPECT_EQ(Id::German, sigurdos::keyboard_layouts::active());
+    EXPECT_FALSE(sigurdos::keyboard_layouts::cycle());
+    EXPECT_EQ(Id::German, sigurdos::keyboard_layouts::active());
 }
 
 TEST_F(KeyboardLayoutsTest, MapsCyrillicGreekAndArabicLetters)

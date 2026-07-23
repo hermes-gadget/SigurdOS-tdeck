@@ -32,6 +32,8 @@
 // Include our mesh wrapper header (uses mocks for MeshCore)
 #include "mesh/mesh_wrapper.h"
 #include "mesh/durable_mutation.h"
+#include "mocks/mock_mesh_state.h"
+#include "mesh/state_checkpoint.h"
 
 namespace {
 
@@ -39,8 +41,28 @@ class MeshWrapperTest : public ::testing::Test {
 protected:
     void SetUp() override {
         arduino_mock::reset();
+        sigurdos::mesh::mock_reset_all();
     }
 };
+
+TEST_F(MeshWrapperTest, ResetRestoresEveryPublishedMockMetric) {
+    sigurdos::mesh::mock_set_noise(-42);
+    sigurdos::mesh::mock_set_rssi(-12);
+    sigurdos::mesh::mock_set_snr(9.5f);
+    sigurdos::mesh::mock_set_drop_count(7);
+    sigurdos::mesh::setOwnName("changed");
+
+    sigurdos::mesh::mock_reset_all();
+
+    EXPECT_EQ(sigurdos::mesh::getNoiseFloor(), -120);
+    EXPECT_EQ(sigurdos::mesh::getLastRSSI(), -80);
+    EXPECT_FLOAT_EQ(sigurdos::mesh::getLastSNR(), 5.0f);
+    EXPECT_EQ(sigurdos::mesh::getQueueDropCount(), 0U);
+    EXPECT_STREQ(sigurdos::mesh::getOwnName(), "MockNode");
+    EXPECT_EQ(sigurdos::mesh::getPacketLogCount(), 0);
+    EXPECT_EQ(sigurdos::mesh::getAckCounter(), 0);
+    EXPECT_EQ(sigurdos::mesh::getDeliveryCounter(), 0);
+}
 
 // ── API function signatures compile and link ────────────
 TEST_F(MeshWrapperTest, InitFunctionExists) {
@@ -126,6 +148,32 @@ TEST_F(MeshWrapperTest, PersistenceApisReportCommitStatus) {
     (void)static_cast<save_fn>(sigurdos::mesh::saveContacts);
     (void)static_cast<favourite_fn>(sigurdos::mesh::setContactFavourite);
     SUCCEED();
+}
+
+TEST_F(MeshWrapperTest, StateCheckpointAttemptsEveryStoreAfterFailure) {
+    int calls = 0;
+    const bool saved = sigurdos::mesh::detail::saveStateCheckpoint(
+        true,
+        [&]() { ++calls; return false; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; });
+    EXPECT_FALSE(saved);
+    EXPECT_EQ(calls, 5);
+}
+
+TEST_F(MeshWrapperTest, CleanRegionStoreIsNotRewritten) {
+    int calls = 0;
+    const bool saved = sigurdos::mesh::detail::saveStateCheckpoint(
+        false,
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return true; },
+        [&]() { ++calls; return false; });
+    EXPECT_TRUE(saved);
+    EXPECT_EQ(calls, 4);
 }
 
 TEST_F(MeshWrapperTest, FailedDurableCommitRollsBackRuntimeMutation) {

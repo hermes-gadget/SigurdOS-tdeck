@@ -20,6 +20,7 @@
 
 #include <lvgl.h>
 #include "navigation.h"
+#include "../hal/trackball.h"
 
 namespace sigurdos::ui {
 
@@ -41,8 +42,12 @@ void update_companion_status();
 
 // Device PIN gate — true while a previous unlock is within the grace window.
 bool pin_grace_active();
+// Clear any privileged grace window before sleep, shutdown, or explicit lock.
+void pin_clear_grace();
 // Show the PIN entry screen; loads target_screen on successful entry.
 void pin_entry_show(Screen target_screen);
+bool is_pin_entry_active();
+bool pin_entry_handle_trackball(SigurdOSTrackballEvent event);
 
 // Contact-list helpers shared by the Contacts and Repeaters screens
 // (implemented in screens/screen_contacts.cpp).

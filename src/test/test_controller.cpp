@@ -22,6 +22,7 @@
 //   stresschat [cycles]           Stress Chat/Home lifecycle (default 50)
 
 #include "test_controller.h"
+#include "test_controller_command.h"
 #include "hal/display.h"
 #include "hal/trackball.h"
 #include "hal/touch.h"
@@ -31,6 +32,7 @@
 #include "mesh/mesh_wrapper.h"
 #include "ui/navigation.h"
 #include "diagnostics/debug.h"
+#include "diagnostics/build_info.h"
 #include "diagnostics/telemetry.h"
 #include "ui/screens.h"
 #include "ui/chat_screen.h"
@@ -373,6 +375,7 @@ static void print_help() {
 
     Serial.println(F("║  screen      Show current screen     ║"));
     Serial.println(F("║  status      Show device state       ║"));
+    Serial.println(F("║  buildinfo   Show build provenance   ║"));
     Serial.println(F("║  stresschat [n] Chat/Home LVGL stress ║"));
     Serial.println(F("║  keydiag     Dump keyboard diagnostics║"));
     Serial.println(F("║  inputdiag   Dump touch/trackball diag║"));
@@ -1522,7 +1525,7 @@ static void cmd_sendmessage(const char* arg) {
                   name, (int)strlen(text));
 
     char dm_channel[64];
-    snprintf(dm_channel, sizeof(dm_channel), "DM: %s", name);
+    snprintf(dm_channel, sizeof(dm_channel), "DM: %.59s", name);
     const char* own = sigurdos::mesh::getOwnName();
     sigurdos::ui::chat_screen_add_msg_at(
         dm_channel, own ? own : "self", text, send_ts, true);
@@ -1766,6 +1769,13 @@ static void dump_focused_widget() {
 }
 
 // ── Cmd: getrf ────────────────────────────────────────────
+static void cmd_buildinfo() {
+    const auto& build = sigurdos::build::info();
+    Serial.printf("[test] build: git=%s|dirty=%d|mcore=%s|env=%s\n",
+                  build.git_sha, build.git_dirty ? 1 : 0,
+                  build.meshcore_sha, build.build_env);
+}
+
 static void cmd_getrf() {
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
 
@@ -2044,22 +2054,16 @@ static void service_stress_chat() {
 
 // ── Command parsing ──────────────────────────────────────
 static bool dispatch(const char* line) {
-    // Skip empty lines and comments
-    if (!line || line[0] == '\0' || line[0] == '#' || line[0] == ';') return false;
-
-    char buf[CMD_BUF_SIZE];
-    strncpy(buf, line, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';
-
-    char* cmd = strtok(buf, " ");
-    if (!cmd) return false;
-
-    char* arg = strtok(nullptr, "");  // rest of line after command
-    if (arg) {
-        // Trim leading whitespace
-        while (*arg == ' ') arg++;
-        if (*arg == '\0') arg = nullptr;
+    SigurdOSTestCommandLine parsed{};
+    const SigurdOSTestCommandParseResult parse_result =
+        sigurdos_test_controller_parse_command(line, &parsed);
+    if (parse_result == SigurdOSTestCommandParseResult::Empty) return false;
+    if (parse_result != SigurdOSTestCommandParseResult::Ok) {
+        Serial.printf("[test] unknown or malformed command (try 'help')\n");
+        return false;
     }
+    const char* cmd = parsed.command;
+    char* arg = parsed.arguments[0] ? parsed.arguments : nullptr;
 
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
         print_help();
@@ -2310,6 +2314,8 @@ static bool dispatch(const char* line) {
         channel[sizeof(channel) - 1] = '\0';
         bool ok = sigurdos::mesh::sendRoomMsgFetchRequest(name, channel);
         Serial.printf("[test] fetchmsgs %s channel=%s: %s\n", name, channel, ok ? "OK" : "FAILED");
+    } else if (strcmp(cmd, "buildinfo") == 0) {
+        cmd_buildinfo();
     } else if (strcmp(cmd, "getrf") == 0) {
         cmd_getrf();
     } else if (strcmp(cmd, "setrf") == 0) {

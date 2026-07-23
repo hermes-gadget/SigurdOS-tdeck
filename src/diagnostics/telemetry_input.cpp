@@ -26,14 +26,14 @@ static uint32_t    s_trackball_count     = 0;
 
 // ── Emit helper: optionally sample frequent events ─────
 
-void report_key_event(uint8_t keycode) {
+void report_key_event(uint8_t keycode, bool output_enabled) {
     s_last_key_code = keycode;
     s_last_key_ms = millis();
     s_key_event_count++;
 
     // Emit every 5th key event, or all control codes
     bool emit = (keycode < 0x20 || keycode > 0x7E) || (s_key_event_count % 5 == 0);
-    if (!emit) return;
+    if (!emit || !output_enabled) return;
 
     emit_tag(tag::PINS);
     emit_sep();
@@ -45,12 +45,12 @@ void report_key_event(uint8_t keycode) {
     emit_end();
 }
 
-void report_touch_event(uint16_t x, uint16_t y) {
+void report_touch_event(uint16_t x, uint16_t y, bool output_enabled) {
     s_touch_count++;
 
     // Only emit on press, sample every 10th event to reduce noise
     // (callee should pass pressed==true to reduce spam)
-    if (s_touch_count % 10 != 0) return;
+    if (s_touch_count % 10 != 0 || !output_enabled) return;
 
     emit_tag(tag::PINS);
     emit_sep();
@@ -64,14 +64,14 @@ void report_touch_event(uint16_t x, uint16_t y) {
     emit_end();
 }
 
-void report_trackball_event(uint8_t direction) {
+void report_trackball_event(uint8_t direction, bool output_enabled) {
     if (direction == 0 || direction > 5) return;  // None or invalid
 
     s_trackball_count++;
 
     // Sample every 5th event, or always on Click
     bool is_click = (direction == 5);
-    if (!is_click && s_trackball_count % 5 != 0) return;
+    if ((!is_click && s_trackball_count % 5 != 0) || !output_enabled) return;
 
     emit_tag(tag::PINS);
     emit_sep();

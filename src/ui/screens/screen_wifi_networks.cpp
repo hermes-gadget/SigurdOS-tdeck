@@ -21,12 +21,15 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../lv_timer_owner.h"
+#include "../wifi_credentials_policy.h"
 #include "../../hal/wifi_ota.h"
 #include "../../hal/prefs.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
+#include <new>
 
 namespace sigurdos::ui {
 
@@ -46,6 +49,186 @@ struct WifiScanCtx {
     lv_obj_t* list;
     LvTimerOwner timer;
 };
+
+struct WifiDialogCtx {
+    lv_obj_t* dialog = nullptr;
+    lv_obj_t* title = nullptr;
+    lv_obj_t* save_btn = nullptr;
+    LvTimerOwner poll_timer;
+    LvTimerOwner dismiss_timer;
+    WifiCredentialStage staged;
+    uint32_t generation = 0;
+    bool closing = false;
+};
+
+static WifiDialogCtx* g_wifi_dialog = nullptr;
+static uint32_t g_wifi_dialog_generation = 0;
+
+static bool wifi_dialog_current(const WifiDialogCtx* ctx)
+{
+    return ctx && ctx == g_wifi_dialog && !ctx->closing &&
+           ctx->generation == g_wifi_dialog_generation;
+}
+
+static void wifi_dialog_dismiss(lv_timer_t* timer)
+{
+    auto* ctx = static_cast<WifiDialogCtx*>(lv_timer_get_user_data(timer));
+    if (!wifi_dialog_current(ctx)) {
+        if (ctx) ctx->dismiss_timer.complete(timer);
+        else lv_timer_del(timer);
+        return;
+    }
+    ctx->dismiss_timer.complete(timer);
+    ctx->closing = true;
+    lv_obj_del_async(ctx->dialog);
+}
+
+static void wifi_connection_poll(lv_timer_t* timer)
+{
+    auto* ctx = static_cast<WifiDialogCtx*>(lv_timer_get_user_data(timer));
+    if (!wifi_dialog_current(ctx)) {
+        if (ctx) ctx->poll_timer.complete(timer);
+        else lv_timer_del(timer);
+        return;
+    }
+
+    const auto status = sigurdos::wifi_sta::getStatus();
+    if (status == sigurdos::wifi_sta::Status::Connected) {
+        auto prefs = sigurdos::prefs_get();
+        if (wifi_credentials_commit(ctx->staged, true,
+                                    prefs.wifi_ssid, sizeof(prefs.wifi_ssid),
+                                    prefs.wifi_password, sizeof(prefs.wifi_password))) {
+            sigurdos::prefs_set(prefs);
+        }
+        lv_label_set_text(ctx->title, "Connected!");
+        lv_obj_set_style_text_color(ctx->title, lv_color_hex(ACCENT_GREEN), 0);
+        ctx->poll_timer.complete(timer);
+        lv_timer_t* dismiss = lv_timer_create(wifi_dialog_dismiss, 1500, ctx);
+        if (dismiss) {
+            lv_timer_set_repeat_count(dismiss, 1);
+            ctx->dismiss_timer.attach(dismiss);
+        }
+    } else if (status == sigurdos::wifi_sta::Status::Failed) {
+        lv_label_set_text(ctx->title, "Connection failed");
+        lv_obj_set_style_text_color(ctx->title, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_clear_state(ctx->save_btn, LV_STATE_DISABLED);
+        ctx->poll_timer.complete(timer);
+    }
+}
+
+static void show_wifi_password_dialog(lv_obj_t* screen, const char* ssid)
+{
+    if (!screen || !ssid || !ssid[0]) return;
+    if (g_wifi_dialog) return;
+    auto* ctx = new(std::nothrow) WifiDialogCtx{};
+    if (!ctx || !wifi_credentials_stage(ctx->staged, ssid, "")) {
+        delete ctx;
+        return;
+    }
+
+    auto dlg_sz = dialog_size(260, 140);
+    lv_obj_t* dlg = lv_obj_create(screen);
+    if (!dlg) { delete ctx; return; }
+    ctx->dialog = dlg;
+    ctx->generation = ++g_wifi_dialog_generation;
+    if (ctx->generation == 0) ctx->generation = ++g_wifi_dialog_generation;
+    g_wifi_dialog = ctx;
+    lv_obj_set_user_data(dlg, ctx);
+    lv_obj_add_event_cb(dlg, [](lv_event_t* event) {
+        auto* owned = static_cast<WifiDialogCtx*>(lv_event_get_user_data(event));
+        if (!owned) return;
+        owned->closing = true;
+        if (sigurdos::wifi_sta::getStatus() == sigurdos::wifi_sta::Status::Connecting) {
+            sigurdos::wifi_sta::disconnect();
+        }
+        if (owned == g_wifi_dialog) g_wifi_dialog = nullptr;
+        delete owned;
+    }, LV_EVENT_DELETE, ctx);
+
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 2, 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(DIVIDER), 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    ctx->title = lv_label_create(dlg);
+    lv_label_set_text(ctx->title, "Enter Password");
+    lv_obj_set_style_text_color(ctx->title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(ctx->title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(ctx->title, LV_ALIGN_TOP_MID, 0, 4);
+
+    char ssid_label[48];
+    snprintf(ssid_label, sizeof(ssid_label), "Network: %s", ctx->staged.ssid);
+    lv_obj_t* net_lbl = lv_label_create(dlg);
+    lv_label_set_text(net_lbl, ssid_label);
+    lv_obj_set_style_text_color(net_lbl, lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(net_lbl, emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(net_lbl, LV_ALIGN_TOP_LEFT, 8, 28);
+
+    lv_obj_t* pw_ta = lv_textarea_create(dlg);
+    lv_obj_set_size(pw_ta, 220, 30);
+    lv_obj_align(pw_ta, LV_ALIGN_TOP_MID, 0, 52);
+    lv_textarea_set_password_mode(pw_ta, true);
+    lv_textarea_set_one_line(pw_ta, true);
+    lv_textarea_set_max_length(pw_ta, 63);
+    apply_pixel_input(pw_ta);
+    lv_group_add_obj(lv_group_get_default(), pw_ta);
+
+    ctx->save_btn = lv_btn_create(dlg);
+    lv_obj_set_size(ctx->save_btn, 80, 26);
+    lv_obj_align(ctx->save_btn, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
+    apply_pixel_btn(ctx->save_btn);
+    lv_obj_t* save_lbl = lv_label_create(ctx->save_btn);
+    lv_label_set_text(save_lbl, "Connect");
+    lv_obj_center(save_lbl);
+    lv_group_add_obj(lv_group_get_default(), ctx->save_btn);
+    lv_obj_add_event_cb(ctx->save_btn, [](lv_event_t* event) {
+        auto* owned = static_cast<WifiDialogCtx*>(lv_event_get_user_data(event));
+        if (!wifi_dialog_current(owned)) return;
+        lv_obj_t* ta = nullptr;
+        const uint32_t count = lv_obj_get_child_cnt(owned->dialog);
+        for (uint32_t i = 0; i < count; ++i) {
+            lv_obj_t* child = lv_obj_get_child(owned->dialog, i);
+            if (lv_obj_check_type(child, &lv_textarea_class)) { ta = child; break; }
+        }
+        if (!ta) return;
+        char ssid[sizeof(owned->staged.ssid)];
+        std::strncpy(ssid, owned->staged.ssid, sizeof(ssid));
+        ssid[sizeof(ssid) - 1] = '\0';
+        if (!wifi_credentials_stage(owned->staged, ssid, lv_textarea_get_text(ta))) return;
+        lv_obj_add_state(owned->save_btn, LV_STATE_DISABLED);
+        lv_label_set_text(owned->title, "Connecting...");
+        lv_obj_set_style_text_color(owned->title, lv_color_hex(ACCENT), 0);
+        sigurdos::wifi_sta::beginConnect(owned->staged.ssid, owned->staged.password);
+        lv_timer_t* poll = lv_timer_create(wifi_connection_poll, 300, owned);
+        if (poll) owned->poll_timer.attach(poll);
+        else {
+            sigurdos::wifi_sta::disconnect();
+            lv_label_set_text(owned->title, "Unable to start connection");
+            lv_obj_clear_state(owned->save_btn, LV_STATE_DISABLED);
+        }
+    }, LV_EVENT_CLICKED, ctx);
+
+    lv_obj_t* cancel_btn = lv_btn_create(dlg);
+    lv_obj_set_size(cancel_btn, 80, 26);
+    lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+    apply_pixel_btn_outline(cancel_btn);
+    lv_obj_t* cancel_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_center(cancel_lbl);
+    lv_group_add_obj(lv_group_get_default(), cancel_btn);
+    lv_obj_add_event_cb(cancel_btn, [](lv_event_t* event) {
+        auto* owned = static_cast<WifiDialogCtx*>(lv_event_get_user_data(event));
+        if (!wifi_dialog_current(owned)) return;
+        owned->closing = true;
+        sigurdos::wifi_sta::disconnect();
+        lv_obj_del_async(owned->dialog);
+    }, LV_EVENT_CLICKED, ctx);
+
+    lv_group_focus_obj(pw_ta);
+}
 
 static void wifi_do_scan(lv_timer_t* timer) {
     auto* ctx = (WifiScanCtx*)lv_timer_get_user_data(timer);
@@ -97,183 +280,12 @@ static void wifi_do_scan(lv_timer_t* timer) {
             lv_group_add_obj(g, btn);
             lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
             
-            char* ssid_copy = strdup(ap.ssid);
             lv_obj_add_event_cb(btn, [](lv_event_t* ev) {
-                const char* sel = (const char*)lv_event_get_user_data(ev);
-                // Show password dialog
+                int index = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(ev))) - 1;
+                if (index < 0 || index >= g_wifi_ap_count || index >= 30) return;
                 lv_obj_t* scr = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(ev));
-                auto dlg_sz = dialog_size(260, 140);
-                lv_obj_t* dlg = lv_obj_create(scr);
-                lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
-                lv_obj_center(dlg);
-                lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
-                lv_obj_set_style_radius(dlg, 0, 0);
-                lv_obj_set_style_border_width(dlg, 2, 0);
-                lv_obj_set_style_border_color(dlg, lv_color_hex(DIVIDER), 0);
-                lv_obj_set_style_pad_all(dlg, 8, 0);
-                
-                lv_obj_t* title = lv_label_create(dlg);
-                lv_label_set_text(title, "Enter Password");
-                lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
-                lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
-                lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
-                
-                char ssid_label[48];
-                snprintf(ssid_label, sizeof(ssid_label), "Network: %s", sel);
-                lv_obj_t* net_lbl = lv_label_create(dlg);
-                lv_label_set_text(net_lbl, ssid_label);
-                lv_obj_set_style_text_color(net_lbl, lv_color_hex(TEXT_SECONDARY), 0);
-                lv_obj_set_style_text_font(net_lbl, emoji_wrapped_montserrat_10, 0);
-                lv_obj_align(net_lbl, LV_ALIGN_TOP_LEFT, 8, 28);
-                
-                lv_obj_t* pw_ta = lv_textarea_create(dlg);
-                lv_obj_set_size(pw_ta, 220, 30);
-                lv_obj_align(pw_ta, LV_ALIGN_TOP_MID, 0, 52);
-                lv_textarea_set_password_mode(pw_ta, true);
-                lv_textarea_set_one_line(pw_ta, true);
-                lv_textarea_set_max_length(pw_ta, 63);
-                apply_pixel_input(pw_ta);
-                lv_obj_set_style_text_color(pw_ta, lv_color_hex(TEXT_PRIMARY), 0);
-                lv_group_add_obj(lv_group_get_default(), pw_ta);
-                
-                char* ssid_save = strdup(sel);
-                lv_obj_add_event_cb(pw_ta, [](lv_event_t* ev) {
-                    free(lv_event_get_user_data(ev));
-                }, LV_EVENT_DELETE, ssid_save);
-                
-                // Save button
-                lv_obj_t* save_btn = lv_btn_create(dlg);
-                lv_obj_set_size(save_btn, 80, 26);
-                lv_obj_align(save_btn, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
-                apply_pixel_btn(save_btn);
-                lv_obj_t* save_lbl = lv_label_create(save_btn);
-                lv_label_set_text(save_lbl, "Save");
-                lv_obj_set_style_text_color(save_lbl, lv_color_hex(BG_PRIMARY), 0);
-                lv_obj_center(save_lbl);
-                lv_group_add_obj(lv_group_get_default(), save_btn);
-                
-                lv_obj_add_event_cb(save_btn, [](lv_event_t* ev) {
-                    lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev));
-                    // Find textarea and network label
-                    lv_obj_t* ta = nullptr;
-                    lv_obj_t* net_lbl = nullptr;
-                    uint32_t cnt = lv_obj_get_child_cnt(dlg);
-                    for (uint32_t i = 0; i < cnt; i++) {
-                        lv_obj_t* c = lv_obj_get_child(dlg, i);
-                        if (lv_obj_check_type(c, &lv_textarea_class)) { ta = c; }
-                        else if (net_lbl == nullptr && lv_obj_check_type(c, &lv_label_class)) {
-                            if (i > 0) net_lbl = c;
-                        }
-                    }
-                    if (!ta || !net_lbl) {
-                        lv_obj_del_async(dlg);
-                        return;
-                    }
-                    const char* label_text = lv_label_get_text(net_lbl);
-                    // Copy SSID out of LVGL's internal buffer immediately —
-                    // the label pointer could become invalid if the dialog
-                    // is modified before WiFi.begin() consumes it.
-                    char ssid_buf[33];
-                    const char* src = label_text + 9; // skip "Network: "
-                    strncpy(ssid_buf, src, sizeof(ssid_buf) - 1);
-                    ssid_buf[sizeof(ssid_buf) - 1] = '\0';
-                    const char* pw = lv_textarea_get_text(ta);
-
-                    // Save credentials to prefs
-                    auto p = sigurdos::prefs_get();
-                    strncpy(p.wifi_ssid, ssid_buf, sizeof(p.wifi_ssid) - 1);
-                    p.wifi_ssid[sizeof(p.wifi_ssid) - 1] = '\0';
-                    strncpy(p.wifi_password, pw, sizeof(p.wifi_password) - 1);
-                    p.wifi_password[sizeof(p.wifi_password) - 1] = '\0';
-                    sigurdos::prefs_set(p);
-
-                    // Disable buttons during connection attempt
-                    lv_obj_add_state((lv_obj_t*)lv_event_get_target(ev), LV_STATE_DISABLED);
-                    // Also disable cancel button (last btn child)
-                    for (int32_t i = (int32_t)cnt - 1; i >= 0; i--) {
-                        lv_obj_t* c = lv_obj_get_child(dlg, i);
-                        if (lv_obj_has_flag(c, LV_OBJ_FLAG_CLICKABLE)) {
-                            lv_obj_add_state(c, LV_STATE_DISABLED);
-                            break;
-                        }
-                    }
-
-                    // Show connecting feedback
-                    lv_obj_t* title = lv_obj_get_child(dlg, 0);
-                    if (title) {
-                        lv_label_set_text(title, "Connecting...");
-                        lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
-                    }
-
-                    // Start async WiFi connection
-                    sigurdos::wifi_sta::beginConnect(ssid_buf, pw);
-
-                    // Poll connection status every 300ms
-                    (void)lv_timer_create([](lv_timer_t* timer) {
-                        lv_obj_t* dlg = (lv_obj_t*)lv_timer_get_user_data(timer);
-                        if (!lv_obj_is_valid(dlg)) {
-                            lv_timer_del(timer);
-                            return;
-                        }
-                        auto status = sigurdos::wifi_sta::getStatus();
-                        lv_obj_t* title = lv_obj_get_child(dlg, 0);
-                        if (status == sigurdos::wifi_sta::Status::Connected) {
-                            if (title) {
-                                lv_label_set_text(title, "Connected!");
-                                lv_obj_set_style_text_color(title,
-                                    lv_color_hex(ACCENT_GREEN), 0);
-                            }
-                            lv_timer_del(timer);
-                            // Auto-dismiss after 1.5s
-                            lv_timer_t* t = lv_timer_create([](lv_timer_t* t2) {
-                                lv_obj_t* d = (lv_obj_t*)lv_timer_get_user_data(t2);
-                                if (lv_obj_is_valid(d)) lv_obj_del_async(d);
-                                lv_timer_del(t2);
-                            }, 1500, dlg);
-                            lv_timer_set_repeat_count(t, 1);
-                        } else if (status == sigurdos::wifi_sta::Status::Failed) {
-                            if (title) {
-                                lv_label_set_text(title, "Connection failed");
-                                lv_obj_set_style_text_color(title,
-                                    lv_color_hex(ACCENT_RED), 0);
-                            }
-                            lv_timer_del(timer);
-                            // Auto-dismiss after 2.5s
-                            lv_timer_t* t = lv_timer_create([](lv_timer_t* t2) {
-                                lv_obj_t* d = (lv_obj_t*)lv_timer_get_user_data(t2);
-                                if (lv_obj_is_valid(d)) lv_obj_del_async(d);
-                                lv_timer_del(t2);
-                            }, 2500, dlg);
-                            lv_timer_set_repeat_count(t, 1);
-                        }
-                        // else still Connecting — keep polling
-                    }, 300, dlg);
-                }, LV_EVENT_CLICKED, nullptr);
-                
-                // Cancel button
-                lv_obj_t* cancel_btn = lv_btn_create(dlg);
-                lv_obj_set_size(cancel_btn, 80, 26);
-                lv_obj_align(cancel_btn, LV_ALIGN_BOTTOM_LEFT, 8, -8);
-                apply_pixel_btn_outline(cancel_btn);
-                lv_obj_t* cancel_lbl = lv_label_create(cancel_btn);
-                lv_label_set_text(cancel_lbl, "Cancel");
-                lv_obj_set_style_text_color(cancel_lbl, lv_color_hex(TEXT_PRIMARY), 0);
-                lv_obj_center(cancel_lbl);
-                lv_group_add_obj(lv_group_get_default(), cancel_btn);
-                lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ev) {
-                    // Abort any in-progress connection
-                    sigurdos::wifi_sta::disconnect();
-                    lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
-                }, LV_EVENT_CLICKED, nullptr);
-                
-                // Focus the password field
-                if (pw_ta) lv_group_focus_obj(pw_ta);
-                
-            }, LV_EVENT_CLICKED, ssid_copy);
-            
-            lv_obj_add_event_cb(btn, [](lv_event_t* de) {
-                free(lv_event_get_user_data(de));
-            }, LV_EVENT_DELETE, ssid_copy);
+                show_wifi_password_dialog(scr, g_wifi_aps[index].ssid);
+            }, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(i + 1)));
             
             if (first) {
                 lv_group_focus_obj(btn);
@@ -329,11 +341,18 @@ void wifi_networks_screen_show()
     
     // Defer scan to let the screen render first. The list owns this context,
     // so navigation cancels the pending timer before LVGL frees the list.
-    auto* scan_ctx = new WifiScanCtx{list, {}};
+    auto* scan_ctx = new(std::nothrow) WifiScanCtx{list, {}};
+    if (!scan_ctx) {
+        lv_label_set_text(scanning, "Unable to start scan");
+        show_screen(scr);
+        return;
+    }
     lv_obj_add_event_cb(list, [](lv_event_t* e) {
         delete (WifiScanCtx*)lv_event_get_user_data(e);
     }, LV_EVENT_DELETE, scan_ctx);
-    scan_ctx->timer.attach(lv_timer_create(wifi_do_scan, 400, scan_ctx));
+    lv_timer_t* scan_timer = lv_timer_create(wifi_do_scan, 400, scan_ctx);
+    scan_ctx->timer.attach(scan_timer);
+    if (!scan_timer) lv_label_set_text(scanning, "Unable to start scan");
     
     show_screen(scr);
 }

@@ -44,6 +44,14 @@ TEST(TelemetryPacketLogTest, CopyDoesNotSplitUtf8Sequence)
     EXPECT_STREQ(exact_out, "ab\xE2\x82\xAC");
 }
 
+TEST(TelemetryPacketLogTest, MessageTextIsRedactedByDefault)
+{
+    EXPECT_STREQ(sigurdos::telemetry::packet_log_text_by_policy("secret"),
+                 "<redacted>");
+    EXPECT_STREQ(sigurdos::telemetry::packet_log_text_by_policy(""), "");
+    EXPECT_STREQ(sigurdos::telemetry::packet_log_text_by_policy(nullptr), "");
+}
+
 TEST(TelemetryPacketLogTest, QueryNamesAreValidatedBeforeDispatch)
 {
     EXPECT_TRUE(sigurdos::telemetry::is_supported_query("full"));

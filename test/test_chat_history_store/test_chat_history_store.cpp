@@ -7,6 +7,7 @@
 #include "mesh/message_store.h"
 #include "ui/chat_history_store.h"
 #include "ui/chat_store_migration.h"
+#include "mocks/unique_temp_dir.h"
 
 #include <cstdio>
 #include <cstring>
@@ -20,9 +21,11 @@ namespace {
 using sigurdos::ui::LegacyChatHistoryResult;
 using sigurdos::ui::LegacyChatMessage;
 
-static constexpr const char* PATH = "/tmp/sigurdos_chat_history_test.bin";
-static constexpr const char* TEMP_PATH = "/tmp/sigurdos_chat_history_test.bin.tmp";
-static constexpr const char* MESSAGE_PATH = "/tmp/sigurdos_unified_message_test.bin";
+static const auto PATH = sigurdos::test::processTempDir().file("chat_history.bin");
+static const auto TEMP_PATH =
+    sigurdos::test::processTempDir().file("chat_history.bin.tmp");
+static const auto MESSAGE_PATH =
+    sigurdos::test::processTempDir().file("unified_messages.bin");
 
 struct Channel {
     std::string name;

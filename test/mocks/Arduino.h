@@ -111,7 +111,10 @@ public:
     virtual int peek() { return -1; }
     virtual void flush() {}
     virtual size_t write(uint8_t) { return 1; }
-    size_t write(const uint8_t* buf, size_t len) { (void)buf; return len; }
+    virtual size_t write(const uint8_t* buf, size_t len) {
+        (void)buf;
+        return len;
+    }
 };
 
 class HardwareSerial : public Stream {
@@ -133,15 +136,18 @@ public:
         _last_tx_pin = tx_pin;
     }
     int available() override { return (int)(_rx_len - _rx_pos); }
+    int availableForWrite() { return _write_capacity; }
     int read() override {
-        if (_rx_pos < _rx_len) return _rx_buf[_rx_pos++];
+        if (_rx_pos < _rx_len) {
+            return static_cast<uint8_t>(_rx_buf[_rx_pos++]);
+        }
         return -1;
     }
     size_t write(uint8_t b) override {
         _tx_buf.push_back((char)b);
         return 1;
     }
-    size_t write(const uint8_t* buf, size_t len) {
+    size_t write(const uint8_t* buf, size_t len) override {
         if (!buf) return 0;
         _tx_buf.append((const char*)buf, len);
         return len;
@@ -183,7 +189,17 @@ public:
             _rx_buf[_rx_len++] = *data++;
         }
     }
+    void mock_queue_rx_bytes(const uint8_t* data, size_t len) {
+        if (!data) return;
+        size_t offset = 0;
+        while (offset < len && _rx_len < sizeof(_rx_buf)) {
+            _rx_buf[_rx_len++] = static_cast<char>(data[offset++]);
+        }
+    }
     void mock_clear_tx() { _tx_buf.clear(); }
+    void mock_set_available_for_write(int capacity) {
+        _write_capacity = capacity < 0 ? 0 : capacity;
+    }
     const std::string& mock_tx_output() const { return _tx_buf; }
     void mock_reset() {
         mock_clear_rx();
@@ -194,6 +210,7 @@ public:
         _last_config = 0;
         _last_rx_pin = -1;
         _last_tx_pin = -1;
+        _write_capacity = 4096;
     }
     bool mock_was_begun() const { return _begun; }
     int mock_begin_count() const { return _begin_count; }
@@ -220,6 +237,7 @@ private:
     uint32_t _last_config = 0;
     int8_t _last_rx_pin = -1;
     int8_t _last_tx_pin = -1;
+    int _write_capacity = 4096;
 };
 extern HardwareSerial Serial;
 extern HardwareSerial Serial1;
@@ -227,15 +245,17 @@ extern HardwareSerial Serial1;
 // ── I2C ──────────────────────────────────────────────────
 class TwoWire {
 public:
-    void begin() {
+    bool begin() {
         _begun = true;
         _begin_count++;
+        return _begin_result;
     }
-    void begin(int sda, int scl) {
+    bool begin(int sda, int scl) {
         _begun = true;
         _begin_count++;
         _begin_sda = sda;
         _begin_scl = scl;
+        return _begin_result;
     }
     void setClock(uint32_t clock) { _clock = clock; }
     void setTimeOut(uint16_t timeout_ms) { _timeout_ms = timeout_ms; }
@@ -263,6 +283,7 @@ public:
             _address_history[_address_count++] = _tx_addr;
         }
         _end_count++;
+        if (_fail_end_at != 0 && _end_count == _fail_end_at) return 1;
         if (_nack_remaining > 0) {
             _nack_remaining--;
             return 1;  // NACK — simulate I2C no-ACK for warm-handoff testing
@@ -296,11 +317,38 @@ public:
 
     // ── Test control ──────────────────────────────────
     void mock_set_error(uint8_t err) { _end_error = err; }
+    void mock_reset() {
+        _begun = false;
+        _begin_result = true;
+        _begin_count = 0;
+        _begin_sda = -1;
+        _begin_scl = -1;
+        _clock = 0;
+        _timeout_ms = 0;
+        _tx_addr = 0;
+        std::memset(_tx_buf, 0, sizeof(_tx_buf));
+        _tx_len = 0;
+        _end_error = 0;
+        _nack_count = 0;
+        _nack_remaining = 0;
+        _end_count = 0;
+        _fail_end_at = 0;
+        std::memset(_address_history, 0, sizeof(_address_history));
+        _address_count = 0;
+        _rx_addr = 0;
+        std::memset(_rx_buf, 0, sizeof(_rx_buf));
+        _rx_pos = 0;
+        _rx_len = 0;
+        std::memset(_q_buf, 0, sizeof(_q_buf));
+        _q_len = 0;
+    }
+    void mock_set_begin_result(bool result) { _begin_result = result; }
+    void mock_fail_end_at(size_t call) { _fail_end_at = call; }
     // How many endTransmission calls to NACK before allowing success.
     // Used to test warm-handoff retry logic after Launcher handoff.
     void mock_set_nack_count(uint8_t n) { _nack_count = n; _nack_remaining = n; }
     void mock_queue_rx_byte(uint8_t val) {
-        if (_q_len < 32) _q_buf[_q_len++] = val;
+        if (_q_len < sizeof(_q_buf)) _q_buf[_q_len++] = val;
     }
     uint8_t mock_last_tx_addr() const { return _tx_addr; }
     uint8_t mock_last_tx_data(int i) const {
@@ -321,6 +369,7 @@ public:
 
 private:
     bool _begun = false;
+    bool _begin_result = true;
     int _begin_count = 0;
     int _begin_sda = -1;
     int _begin_scl = -1;
@@ -333,15 +382,16 @@ private:
     uint8_t _nack_count = 0;
     uint8_t _nack_remaining = 0;
     size_t _end_count = 0;
+    size_t _fail_end_at = 0;
     uint8_t _address_history[64] = {};
     size_t _address_count = 0;
 
     uint8_t _rx_addr = 0;
-    uint8_t _rx_buf[32] = {};
+    uint8_t _rx_buf[64] = {};
     size_t  _rx_pos = 0;
     size_t  _rx_len = 0;
 
-    uint8_t _q_buf[32] = {};
+    uint8_t _q_buf[64] = {};
     size_t  _q_len = 0;
 };
 extern TwoWire Wire;
@@ -352,11 +402,14 @@ extern TwoWire Wire;
 
 class SPIClass {
 public:
+    int begin_count = 0;
+    int end_count = 0;
     SPIClass() {}
     SPIClass(uint8_t) {}  // host number (FSPI=1, VSPI=2)
-    void begin() {}
-    void begin(int sck, int miso, int mosi) { (void)sck; (void)miso; (void)mosi; }
-    void begin(int sck, int miso, int mosi, int cs) { (void)sck; (void)miso; (void)mosi; (void)cs; }
+    void begin() { ++begin_count; }
+    void begin(int sck, int miso, int mosi) { (void)sck; (void)miso; (void)mosi; ++begin_count; }
+    void begin(int sck, int miso, int mosi, int cs) { (void)sck; (void)miso; (void)mosi; (void)cs; ++begin_count; }
+    void end() { ++end_count; }
 };
 extern SPIClass SPI;
 

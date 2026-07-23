@@ -2,7 +2,9 @@
 // Copyright (C) 2025 Ben
 
 #include "mesh/mesh_wrapper.h"
+#include "mesh/region_name.h"
 #include "mesh/regions.h"
+#include "mocks/mock_mesh_state.h"
 #include <cstring>
 
 namespace sigurdos::mesh {
@@ -91,6 +93,7 @@ bool saveState() { return true; }
 
 bool companionBleAvailable() { return false; }
 bool companionBleSetEnabled(bool enabled) { (void)enabled; return false; }
+bool companionBleOpenPairingWindow() { return false; }
 bool companionBleEnabled() { return false; }
 bool companionBleConnected() { return false; }
 uint32_t companionBleLastSyncTime() { return 0; }
@@ -138,6 +141,25 @@ static MockAckedMsg mock_lost_msgs[MOCK_MAX_ACKED];
 static int mock_lost_head = 0;
 static int mock_lost_count = 0;
 static int mock_delivery_counter = 0;
+
+void mock_reset_all() {
+    std::memset(mock_msgs, 0, sizeof(mock_msgs));
+    mock_msg_count = 0;
+    mock_drop_count = 0;
+    std::strcpy(mock_own_name, "MockNode");
+    mock_noise = -120;
+    mock_rssi = -80;
+    mock_snr = 5.0f;
+    mock_clear_packets();
+    mock_acked_head = 0;
+    mock_acked_count = 0;
+    mock_ack_counter = 0;
+    mock_lost_head = 0;
+    mock_lost_count = 0;
+    mock_delivery_counter = 0;
+    std::memset(mock_acked_msgs, 0, sizeof(mock_acked_msgs));
+    std::memset(mock_lost_msgs, 0, sizeof(mock_lost_msgs));
+}
 
 void registerAckedMessage(const char* dest_name, uint32_t timestamp) {
     if (!dest_name) return;
@@ -254,8 +276,9 @@ bool regionsSave() { return true; }
 RegionMap* getRegionMap() { return nullptr; }
 
 ::RegionEntry* addRegion(const char* name, const char* parent_name) {
-    (void)parent_name;
-    if (!name || !name[0] || mock_region_count >= MAX_REGION_ENTRIES) return nullptr;
+    if (!regionNameValid(name) ||
+        (parent_name && parent_name[0] && !regionNameValid(parent_name)) ||
+        mock_region_count >= MAX_REGION_ENTRIES) return nullptr;
     // reject duplicates
     for (int i = 0; i < mock_region_count; i++) {
         if (strcmp(mock_region_entries[i].name, name) == 0) return nullptr;
@@ -302,7 +325,7 @@ bool getPrivateRegionKey(const char* name, uint8_t key_out[16]) {
 }
 
 bool removeRegion(const char* name) {
-    if (!name || !name[0]) return false;
+    if (!regionNameValid(name)) return false;
     for (int i = 0; i < mock_region_count; i++) {
         if (strcmp(mock_region_entries[i].name, name) == 0) {
             memmove(&mock_region_entries[i], &mock_region_entries[i + 1],
@@ -320,7 +343,7 @@ bool removeRegion(const char* name) {
 }
 
 ::RegionEntry* findRegion(const char* name) {
-    if (!name || !name[0]) return nullptr;
+    if (!regionNameValid(name)) return nullptr;
     for (int i = 0; i < mock_region_count; i++) {
         if (strcmp(mock_region_entries[i].name, name) == 0)
             return &mock_region_entries[i];
@@ -384,6 +407,7 @@ const char* getActiveRegion() {
 }
 
 bool setActiveRegionName(const char* name) {
+    if (name && name[0] && !regionNameValid(name)) return false;
     if (name && name[0]) {
         strncpy(mock_active_region, name, sizeof(mock_active_region) - 1);
         mock_active_region[sizeof(mock_active_region) - 1] = '\0';

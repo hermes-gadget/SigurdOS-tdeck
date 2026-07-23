@@ -121,8 +121,15 @@ void qr_show(const char* title, const char* data)
     uint8_t qr_modules[SIGURDOS_QR_MODULE_BUFFER_BYTES];
     QRCode qr;
 
-    if (!data || !data[0] || !sigurdos_qr_payload_fits(data) ||
-        qrcode_initText(&qr, qr_modules, SIGURDOS_QR_VERSION, ECC_MEDIUM, data) != 0) {
+    int qr_version = 0;
+    if (data && data[0] && sigurdos_qr_payload_fits(data)) {
+        qr_version = sigurdos_qr_select_smallest_version(
+            [&qr, &qr_modules, data](int version) {
+                return qrcode_initText(&qr, qr_modules, version,
+                                       ECC_MEDIUM, data) == 0;
+            });
+    }
+    if (qr_version == 0) {
         // Show error if QR generation fails
         // Still show screen so user can go back
         qr_show_error(scr, "QR generation failed");
@@ -142,17 +149,20 @@ void qr_show(const char* title, const char* data)
     int canvas_size = qr_layout.canvas_size;
 
     // ── Create canvas for QR rendering ─────────────────────
-    // 180*180*2 = 64,800 bytes — far too large for ordinary internal DRAM.
+    // Allocate only the selected version's rendered canvas.
     // Each screen owns its buffer until LVGL deletes the canvas, which also
     // keeps asynchronous deletion of an older screen independent from a newer
     // QR screen. Fall back to internal RAM only if PSRAM is unavailable.
-    static constexpr size_t kCanvasBytes =
-        (size_t)SIGURDOS_QR_CANVAS_MAX_PX * SIGURDOS_QR_CANVAS_MAX_PX * 2;
+    const size_t canvas_bytes = sigurdos_qr_canvas_buffer_bytes(qr_layout);
+    if (canvas_bytes == 0) {
+        qr_show_error(scr, "QR size overflow");
+        return;
+    }
     uint8_t* cbuf = (uint8_t*)heap_caps_malloc(
-        kCanvasBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        canvas_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!cbuf) {
         cbuf = (uint8_t*)heap_caps_malloc(
-            kCanvasBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            canvas_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (!cbuf) {
         qr_show_error(scr, "QR: out of memory");

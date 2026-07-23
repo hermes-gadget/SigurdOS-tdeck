@@ -1,0 +1,254 @@
+diff --git a/cores/esp32/HWCDC.cpp b/cores/esp32/HWCDC.cpp
+--- a/cores/esp32/HWCDC.cpp
++++ b/cores/esp32/HWCDC.cpp
+@@ -22,0 +23 @@
++#include <string.h>
+@@ -33,0 +35,2 @@
++static uint8_t tx_stash_buf[64] = {0};
++static volatile size_t tx_stash_len = 0;
+@@ -37,0 +41,33 @@
++// Backport of Espressif arduino-esp32 PR #12606.  The producer task and USB
++// ISR can run on different cores, so every TX interrupt-mask update and stash
++// access must be serialized.
++static portMUX_TYPE hw_cdc_tx_mux = portMUX_INITIALIZER_UNLOCKED;
++
++static inline void hw_cdc_enable_tx_intr(void)
++{
++    portENTER_CRITICAL_SAFE(&hw_cdc_tx_mux);
++    usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
++    portEXIT_CRITICAL_SAFE(&hw_cdc_tx_mux);
++}
++
++static inline void hw_cdc_enable_tx_intr_from_isr(void)
++{
++    portENTER_CRITICAL_ISR(&hw_cdc_tx_mux);
++    usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
++    portEXIT_CRITICAL_ISR(&hw_cdc_tx_mux);
++}
++
++static inline void hw_cdc_disable_tx_intr_from_isr(void)
++{
++    portENTER_CRITICAL_ISR(&hw_cdc_tx_mux);
++    usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
++    portEXIT_CRITICAL_ISR(&hw_cdc_tx_mux);
++}
++
++static inline void hw_cdc_clear_tx_stash(void)
++{
++    portENTER_CRITICAL_SAFE(&hw_cdc_tx_mux);
++    tx_stash_len = 0;
++    portEXIT_CRITICAL_SAFE(&hw_cdc_tx_mux);
++}
++
+@@ -118,9 +154,3 @@
+-        // Interrupt tells us the host picked up the data we sent.
+-        if(!HWCDC::isPlugged()) {
+-            connected = false;
+-            usb_serial_jtag_ll_clr_intsts_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+-            // USB is unplugged, nothing to be done here
+-            return;
+-        } else {
+-            connected = true;
+-        }
++        // This interrupt proves that the host consumed the previous packet;
++        // do not reject it because of a transient SOF watchdog reading.
++        connected = true;
+@@ -128,2 +157,0 @@
+-            // We disable the interrupt here so that the interrupt won't be triggered if there is no data to send.
+-            usb_serial_jtag_ll_disable_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+@@ -131,6 +159,20 @@
+-            uint8_t *queued_buff = (uint8_t *)xRingbufferReceiveUpToFromISR(tx_ring_buf, &queued_size, 64);
+-            // If the hardware fifo is avaliable, write in it. Otherwise, do nothing.
+-            if (queued_buff != NULL) {  //Although tx_queued_bytes may be larger than 0. We may have interrupt before xRingbufferSend() was called.
+-                //Copy the queued buffer into the TX FIFO
+-                usb_serial_jtag_ll_clr_intsts_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+-                usb_serial_jtag_ll_write_txfifo(queued_buff, queued_size);
++            uint8_t *queued_buff = NULL;
++            bool from_stash = false;
++            uint32_t sent_size = 0;
++            bool wrote_anything = false;
++
++            usb_serial_jtag_ll_clr_intsts_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
++            portENTER_CRITICAL_ISR(&hw_cdc_tx_mux);
++
++            if (tx_stash_len) {
++                queued_buff = tx_stash_buf;
++                queued_size = tx_stash_len;
++                from_stash = true;
++            } else {
++                queued_buff = (uint8_t *)xRingbufferReceiveUpToFromISR(
++                    tx_ring_buf, &queued_size, 64);
++            }
++
++            if (queued_buff != NULL && queued_size > 0) {
++                sent_size = usb_serial_jtag_ll_write_txfifo(
++                    queued_buff, queued_size);
+@@ -138,5 +180,31 @@
+-                vRingbufferReturnItemFromISR(tx_ring_buf, queued_buff, &xTaskWoken);
+-                if(connected) usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+-                //send event?
+-                //ets_printf("TX:%u\n", queued_size);
+-                event.tx.len = queued_size;
++                wrote_anything = true;
++
++                if (sent_size < queued_size) {
++                    tx_stash_len = queued_size - sent_size;
++                    memmove(tx_stash_buf, queued_buff + sent_size,
++                            tx_stash_len);
++                } else {
++                    tx_stash_len = 0;
++                }
++                if (!from_stash) {
++                    vRingbufferReturnItemFromISR(
++                        tx_ring_buf, queued_buff, &xTaskWoken);
++                }
++                hw_cdc_enable_tx_intr_from_isr();
++            } else {
++                // Flush a terminating ZLP, then close the producer/ISR race by
++                // re-checking the queue after disabling the empty interrupt.
++                usb_serial_jtag_ll_txfifo_flush();
++                hw_cdc_disable_tx_intr_from_isr();
++                UBaseType_t bytes_waiting = 0;
++                vRingbufferGetInfo(tx_ring_buf, NULL, NULL, NULL, NULL,
++                                   &bytes_waiting);
++                if (bytes_waiting || tx_stash_len) {
++                    hw_cdc_enable_tx_intr_from_isr();
++                }
++            }
++
++            portEXIT_CRITICAL_ISR(&hw_cdc_tx_mux);
++
++            if (wrote_anything) {
++                event.tx.len = sent_size;
+@@ -168,0 +237,3 @@
++        portENTER_CRITICAL_ISR(&hw_cdc_tx_mux);
++        tx_stash_len = 0;
++        portEXIT_CRITICAL_ISR(&hw_cdc_tx_mux);
+@@ -189,4 +260 @@
+-    static bool running = false;
+-
+-    // USB may be unplugged
+-     if (!isPlugged()) {
++    if (!isPlugged()) {
+@@ -194,2 +261,0 @@
+-        running = false;
+-    //    SOF_TIMEOUT = 5;       // SOF timeout when unplugged
+@@ -197,2 +262,0 @@
+-    //} else {
+-    //    SOF_TIMEOUT = 50;      // SOF timeout when plugged
+@@ -202 +265,0 @@
+-        running = false;
+@@ -206,4 +269,2 @@
+-    if (running == false && !connected) { // enables it only once!
+-        usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+-    }
+-    // this will feed CDC TX FIFO to trigger IN_EMPTY
++    // Re-arm on every probe so a producer/ISR race cannot leave TX asleep.
++    hw_cdc_enable_tx_intr();
+@@ -211 +271,0 @@
+-    running = true;
+@@ -224,0 +285 @@
++        hw_cdc_clear_tx_stash();
+@@ -271,0 +333 @@
++        hw_cdc_enable_tx_intr_from_isr();
+@@ -273,0 +336 @@
++        hw_cdc_enable_tx_intr();
+@@ -276 +338,0 @@
+-    usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+@@ -383,0 +446 @@
++    hw_cdc_clear_tx_stash();
+@@ -420 +482,0 @@
+-        // just pop/push RingBuffer and apply FIFO policy
+@@ -421,0 +484 @@
++        hw_cdc_enable_tx_intr();
+@@ -423 +485,0 @@
+-        size_t space = xRingbufferGetCurFreeSize(tx_ring_buf);
+@@ -425,23 +487,21 @@
+-
+-        if(space > size){
+-            space = size;
+-        }
+-        // Non-Blocking method, Sending data to ringbuffer, and handle the data in ISR.
+-        if(space > 0 && xRingbufferSend(tx_ring_buf, (void*) (buffer), space, 0) != pdTRUE){
+-            size = 0;
+-        } else {
+-            to_send -= space;
+-            so_far += space;
+-            // Now trigger the ISR to read data from the ring buffer.
+-            usb_serial_jtag_ll_txfifo_flush();
+-            if(connected) usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+-            // tracks CDC trasmission progress to avoid hanging if CDC is unplugged while still sending data
+-            size_t last_toSend = to_send;
+-            uint32_t tries = tx_timeout_ms; // waits 1ms per sending data attempt, in case CDC is unplugged
+-            while(connected && to_send){
+-                space = xRingbufferGetCurFreeSize(tx_ring_buf);
+-                if(space > to_send){
+-                    space = to_send;
+-                }
+-                // Blocking method, Sending data to ringbuffer, and handle the data in ISR.
+-                if(xRingbufferSend(tx_ring_buf, (void*) (buffer+so_far), space, tx_timeout_ms / portTICK_PERIOD_MS) != pdTRUE){
++        size_t ring_max = xRingbufferGetMaxItemSize(tx_ring_buf);
++        if (ring_max == 0) {
++            ring_max = size;
++        }
++
++        uint32_t consecutive_timeouts = 0;
++        const uint32_t max_consecutive_timeouts = 20;
++        bool gave_up_disconnect = false;
++
++        while (to_send) {
++            size_t chunk = to_send > ring_max ? ring_max : to_send;
++            if (xRingbufferSend(tx_ring_buf, (void *)(buffer + so_far),
++                                chunk,
++                                tx_timeout_ms / portTICK_PERIOD_MS) != pdTRUE) {
++                hw_cdc_enable_tx_intr();
++                consecutive_timeouts++;
++                if (consecutive_timeouts >= max_consecutive_timeouts) {
++                    if (!isPlugged()) {
++                        connected = false;
++                        gave_up_disconnect = true;
++                    }
+@@ -449 +508,0 @@
+-                    log_w("write failed due to ring buffer full - timeout");
+@@ -452,18 +511 @@
+-                so_far += space;
+-                to_send -= space;
+-                // Now trigger the ISR to read data from the ring buffer.
+-                usb_serial_jtag_ll_txfifo_flush();
+-                if(connected) usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+-                if(last_toSend == to_send) {
+-                    // no progress in sending data... USB CDC is probably unplugged
+-                    tries--;
+-                    delay(1);
+-                } else {
+-                    last_toSend = to_send;
+-                    tries = tx_timeout_ms; // reset the timeout
+-                }
+-                if (tries == 0) {  // CDC isn't connected anymore...
+-                    size = so_far;
+-                    log_w("write failed due to waiting USB Host - timeout");
+-                    connected = false;
+-                }
++                continue;
+@@ -470,0 +513,5 @@
++
++            consecutive_timeouts = 0;
++            so_far += chunk;
++            to_send -= chunk;
++            hw_cdc_enable_tx_intr();
+@@ -472,3 +519,2 @@
+-        // CDC was diconnected while sending data ==> flush the TX buffer keeping the last data
+-        if(to_send && !usb_serial_jtag_ll_txfifo_writable()) {
+-            connected = false;
++
++        if (gave_up_disconnect && to_send) {
+@@ -503,3 +549 @@
+-            if(connected) {
+-                usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+-            }
++            hw_cdc_enable_tx_intr();
+@@ -515,3 +559 @@
+-            if(connected) {
+-                usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
+-            }
++            hw_cdc_enable_tx_intr();

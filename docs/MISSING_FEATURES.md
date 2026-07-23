@@ -258,8 +258,21 @@ BLE host-task callbacks (`onWrite`) must only enqueue into the interface RX queu
 
 ### PIN / pairing / security
 
-- Use the independently generated `NodePrefs.ble_pin` as the BLE pairing PIN. MITM bonding ⇒ one-time PIN prompt on the phone. The four-digit `device_pin` protects device-admin actions and is not reused for BLE pairing.
-- **A paired phone gets full device access**, including `CMD_EXPORT_PRIVATE_KEY` (exports the node's Ed25519 private key) and `CMD_IMPORT_PRIVATE_KEY`. This matches the official app's backup/restore and is gated by PIN pairing. Builds can independently disable these operations with `ENABLE_PRIVATE_KEY_EXPORT=0` and `ENABLE_PRIVATE_KEY_IMPORT=0`.
+- Use the independently generated `NodePrefs.ble_pin` as the BLE pairing PIN.
+  MITM bonding gives the phone an administrative companion session. The
+  four-digit `device_pin` gates local Settings/identity UI only; it is not a
+  companion authenticator and does not protect companion USB.
+- **A BLE-bonded phone gets full device access**. Companion USB has no protocol
+  authentication and trusts physical access to the cable/host. Both transports
+  can expose `CMD_EXPORT_PRIVATE_KEY` and `CMD_IMPORT_PRIVATE_KEY` when compiled
+  in. Builds can independently remove them with
+  `SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT=0` and
+  `SIGURDOS_ENABLE_PRIVATE_KEY_IMPORT=0`.
+- Factory reset inherits the selected transport boundary: BLE bonding for BLE,
+  physical/trusted-host access for USB. Reset must clear companion credentials
+  so an old bond cannot silently regain administration. See
+  [`docs/COMPANION_SUPPORT.md`](COMPANION_SUPPORT.md) for the companion boundary;
+  the security-model documentation PR expands the complete system boundary.
 
 ### Phased implementation
 
@@ -316,7 +329,7 @@ documented exceptions above, not unfinished implementation phases.
 
 ---
 
-### Launcher compatibility — M → ✅
+### Launcher compatibility — M → implemented, hardware evidence pending
 
 Implemented. SigurdOS can be installed as an app under [bmorcelli/Launcher](https://github.com/bmorcelli/Launcher) v2.7.2+.
 
@@ -327,9 +340,13 @@ Implemented. SigurdOS can be installed as an app under [bmorcelli/Launcher](http
 - Documentation (C2/C7) — install guide and migration caveats in `firmware/README.md`
 - CI artifact (C1) — `SigurdOS-tdeck-launcher.bin` in every release
 
-**Remaining work (Phase 3 — requires bench hardware):**
-- Warm-handoff peripheral-state root cause (RC3) and keyboard-init hardening (C6)
-- LauncherHub catalog listing (O1)
+**Current evidence state:**
+
+| Item | Implemented | Hardware-verified / external state |
+|---|---|---|
+| Warm-handoff keyboard hardening (C6) | Yes: bounded retry and explicit ASCII key mode (`0x04`); raw `0x03` is never sent | End-to-end T4/T9 hardware evidence remains |
+| Launcher environment detection and OTA gate | Yes, with native coverage | End-to-end Launcher matrix remains |
+| LauncherHub catalog listing (O1) | Outside this repository | Externally coordinated by issue #615 |
 
 See [`docs/LAUNCHER_ROADMAP.md`](LAUNCHER_ROADMAP.md) and [`docs/KNOWN_ISSUES.md`](KNOWN_ISSUES.md).
 

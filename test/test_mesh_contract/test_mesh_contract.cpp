@@ -24,8 +24,13 @@
 #include "mesh/mesh_wrapper.h"
 #include "mesh/login_session.h"
 #include "mesh/login_response.h"
+#include "mesh/ping_result_policy.h"
 #include "mesh/public_channel.h"
 #include "mesh/response_copy.h"
+#include "mesh/client_repeat_policy.h"
+#include "mesh/capacity_policy.h"
+#include "mesh/scope_activation_policy.h"
+#include "mesh/request_correlation.h"
 
 namespace {
 
@@ -43,6 +48,33 @@ TEST(MeshContractTest, AdvertTypesMatchMeshCoreCompanionValues) {
     EXPECT_EQ(ADV_TYPE_REPEATER, 2);
     EXPECT_EQ(ADV_TYPE_ROOM, 3);
     EXPECT_EQ(ADV_TYPE_SENSOR, 4);
+}
+
+TEST(MeshContractTest, ClientRepeatMatchesUpstreamCompanionSemantics) {
+    EXPECT_FALSE(sigurdos::mesh::clientRepeatAllowsForward(0));
+    EXPECT_TRUE(sigurdos::mesh::clientRepeatAllowsForward(1));
+    EXPECT_TRUE(sigurdos::mesh::clientRepeatAllowsForward(255));
+}
+
+TEST(MeshContractTest, SignedOutputCapacityRejectsNonPositiveValues) {
+    size_t converted = 99;
+    EXPECT_FALSE(sigurdos::mesh::positiveOutputCapacity(-1, converted));
+    EXPECT_EQ(converted, 0U);
+    EXPECT_FALSE(sigurdos::mesh::positiveOutputCapacity(0, converted));
+    EXPECT_TRUE(sigurdos::mesh::positiveOutputCapacity(16, converted));
+    EXPECT_EQ(converted, 16U);
+}
+
+TEST(MeshContractTest, ScopeActivationUsesCanonicalRegionGrammar) {
+    uint8_t key[16]{};
+    key[0] = 1;
+    EXPECT_TRUE(sigurdos::mesh::scopeActivationInputsValid("#public", nullptr));
+    EXPECT_TRUE(sigurdos::mesh::scopeActivationInputsValid("$private", key));
+    EXPECT_FALSE(sigurdos::mesh::scopeActivationInputsValid("#bad/name", nullptr));
+    EXPECT_FALSE(sigurdos::mesh::scopeActivationInputsValid("$private", nullptr));
+    uint8_t zero_key[16]{};
+    EXPECT_FALSE(sigurdos::mesh::scopeActivationInputsValid(
+        "$private", zero_key));
 }
 
 TEST(MeshContractTest, PublicChannelDefaultsStayStable) {
@@ -92,6 +124,69 @@ TEST(MeshContractTest, LoginSessionTransitionsExposeTimeoutAndDrop) {
     EXPECT_EQ(evaluate(OK, 0, 0, false, false, 0), OK);
 }
 
+TEST(MeshContractTest, LoginReservationPrefersFreeThenTerminalSlots) {
+    using namespace sigurdos::mesh::login_session;
+    struct Slot {
+        bool in_use;
+        uint8_t status;
+    };
+
+    Slot slots[] = {
+        {true, FAILED},
+        {true, OK},
+        {false, NONE},
+        {true, TIMED_OUT},
+    };
+    EXPECT_EQ(selectReservationSlot(slots, 4), 2);
+
+    slots[2] = {true, PENDING};
+    EXPECT_EQ(selectReservationSlot(slots, 4), 0);
+
+    slots[0] = {true, OK};
+    EXPECT_EQ(selectReservationSlot(slots, 4), 3);
+
+    slots[3] = {true, DROPPED};
+    EXPECT_EQ(selectReservationSlot(slots, 4), 3);
+}
+
+TEST(MeshContractTest, LoginReservationNeverEvictsPendingOrActiveSessions) {
+    using namespace sigurdos::mesh::login_session;
+    struct Slot {
+        bool in_use;
+        uint8_t status;
+    };
+    const Slot full[] = {
+        {true, PENDING},
+        {true, OK},
+        {true, PENDING},
+        {true, OK},
+    };
+    EXPECT_EQ(selectReservationSlot(full, 4), -1);
+    EXPECT_EQ(selectReservationSlot<Slot>(nullptr, 4), -1);
+}
+
+TEST(MeshContractTest, RepeatedTerminalLoginsCannotExhaustTable) {
+    using namespace sigurdos::mesh::login_session;
+    struct Slot {
+        bool in_use;
+        uint8_t status;
+    };
+    Slot slots[] = {
+        {true, FAILED},
+        {true, TIMED_OUT},
+        {true, DROPPED},
+        {true, FAILED},
+    };
+
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        const int slot = selectReservationSlot(slots, 4);
+        ASSERT_GE(slot, 0);
+        slots[slot] = {true, PENDING};
+        slots[slot].status = static_cast<uint8_t>(
+            attempt % 2 == 0 ? FAILED : TIMED_OUT);
+    }
+}
+
 TEST(MeshContractTest, LegacyLoginResponseIsAcceptedAtSixBytes) {
     const uint8_t response[6] = {1, 2, 3, 4, 'O', 'K'};
     const auto parsed = sigurdos::mesh::login_response::parse(
@@ -100,19 +195,15 @@ TEST(MeshContractTest, LegacyLoginResponseIsAcceptedAtSixBytes) {
               sigurdos::mesh::login_response::Format::LegacySuccess);
 }
 
-TEST(MeshContractTest, CurrentLoginBaseResponseDoesNotRequireAcl) {
+TEST(MeshContractTest, TruncatedCurrentLoginResponseIsRejected) {
     const uint8_t response[7] = {1, 2, 3, 4, 0, 2, 3};
     const auto parsed = sigurdos::mesh::login_response::parse(
         response, sizeof(response));
     EXPECT_EQ(parsed.format,
-              sigurdos::mesh::login_response::Format::CurrentSuccess);
-    EXPECT_EQ(parsed.keep_alive_secs, 32);
-    EXPECT_EQ(parsed.permission, 3);
-    EXPECT_EQ(parsed.acl_permissions, 0);
-    EXPECT_EQ(parsed.firmware_level, 0);
+              sigurdos::mesh::login_response::Format::Unrecognized);
 }
 
-TEST(MeshContractTest, CurrentLoginParsesOptionalAclAndFirmwareLevel) {
+TEST(MeshContractTest, CurrentLoginRequiresAndParsesFullWireShape) {
     const uint8_t response[13] = {
         1, 2, 3, 4, 0, 4, 2, 0xA5, 9, 8, 7, 6, 11,
     };
@@ -132,12 +223,27 @@ TEST(MeshContractTest, LoginFailureRequiresCurrentBaseFields) {
                   short_response, sizeof(short_response)).format,
               sigurdos::mesh::login_response::Format::Unrecognized);
 
-    const uint8_t failure[7] = {1, 2, 3, 4, 7, 0, 0};
+    const uint8_t failure[13] = {1, 2, 3, 4, 7, 0, 0, 0, 9, 8, 7, 6, 2};
     const auto parsed = sigurdos::mesh::login_response::parse(
         failure, sizeof(failure));
     EXPECT_EQ(parsed.format,
               sigurdos::mesh::login_response::Format::CurrentFailure);
     EXPECT_EQ(parsed.failure_code, 7);
+}
+
+TEST(MeshContractTest, ResponsesRequireExactTagKeyAndRequestType) {
+    uint8_t expected_key[32]{};
+    uint8_t other_key[32]{};
+    expected_key[0] = 1;
+    other_key[0] = 2;
+    EXPECT_TRUE(sigurdos::mesh::typedResponseMatches(
+        42, expected_key, 3, 42, expected_key, 3, sizeof(expected_key)));
+    EXPECT_FALSE(sigurdos::mesh::typedResponseMatches(
+        41, expected_key, 3, 42, expected_key, 3, sizeof(expected_key)));
+    EXPECT_FALSE(sigurdos::mesh::typedResponseMatches(
+        42, other_key, 3, 42, expected_key, 3, sizeof(expected_key)));
+    EXPECT_FALSE(sigurdos::mesh::typedResponseMatches(
+        42, expected_key, 1, 42, expected_key, 3, sizeof(expected_key)));
 }
 
 TEST(MeshContractTest, MessageAndContactBuffersKeepUiCapacities) {
@@ -211,6 +317,31 @@ TEST(MeshContractTest, ResponseCopyWritesOnlyWhenAllBuffersFit) {
     EXPECT_EQ(tag, 77u);
     EXPECT_EQ(std::memcmp(data, source, sizeof(source)), 0);
     EXPECT_STREQ(name, "alice");
+}
+
+TEST(MeshContractTest, PingWindowUsesWrapSafeElapsedTime) {
+    EXPECT_TRUE(sigurdos::mesh::pingWindowActive(100, 3099, 3000));
+    EXPECT_FALSE(sigurdos::mesh::pingWindowActive(100, 3100, 3000));
+    EXPECT_TRUE(sigurdos::mesh::pingWindowActive(0xFFFFFFF0u, 0x10u, 64));
+    EXPECT_FALSE(sigurdos::mesh::pingWindowActive(0, 1, 3000));
+}
+
+TEST(MeshContractTest, PingHintsDeduplicateAndUseLocalSignalMeasurement) {
+    sigurdos::mesh::PingResult hints[2]{};
+    int count = 0;
+    EXPECT_TRUE(sigurdos::mesh::recordUnauthenticatedPingHint(
+        hints, count, 2, "alice", -90));
+    EXPECT_TRUE(sigurdos::mesh::recordUnauthenticatedPingHint(
+        hints, count, 2, "alice", -72));
+    EXPECT_EQ(count, 1);
+    EXPECT_STREQ(hints[0].name, "alice");
+    EXPECT_EQ(hints[0].rssi, -72);
+
+    EXPECT_TRUE(sigurdos::mesh::recordUnauthenticatedPingHint(
+        hints, count, 2, "bob", -80));
+    EXPECT_FALSE(sigurdos::mesh::recordUnauthenticatedPingHint(
+        hints, count, 2, "mallory", -10));
+    EXPECT_EQ(count, 2);
 }
 
 } // namespace

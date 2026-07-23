@@ -9,6 +9,7 @@
 #define SIGURDOS_CHANNEL_VALIDATION_H
 
 #include <cstddef>
+#include <cstdint>
 
 namespace sigurdos {
 namespace mesh {
@@ -37,6 +38,10 @@ bool hashtag_channel_name_normalise(const char* name, char* out,
 //   - Converts to lowercase for case-insensitive matching
 // Returns the effective length, or 0 if empty after sanitisation.
 size_t channel_name_sanitise(char* name, size_t max_len);
+
+// Decode the only PSK representation accepted by MeshCore channel imports:
+// canonical padded RFC 4648 Base64 for exactly 16 bytes.
+bool channel_psk_decode_16(const char* encoded, uint8_t out[16]);
 
 }  // namespace mesh
 }  // namespace sigurdos

@@ -36,9 +36,11 @@ using sigurdos::app::QrCanvasLayout;
 using sigurdos::app::sigurdos_qr_module_buffer_bytes;
 using sigurdos::app::sigurdos_qr_module_count;
 using sigurdos::app::sigurdos_qr_canvas_layout;
+using sigurdos::app::sigurdos_qr_canvas_buffer_bytes;
 using sigurdos::app::sigurdos_qr_payload_fits;
 using sigurdos::app::sigurdos_qr_render_dark_modules;
 using sigurdos::app::sigurdos_qr_release_canvas_buffer;
+using sigurdos::app::sigurdos_qr_select_smallest_version;
 
 class QrShowLayoutTest : public ::testing::Test {};
 
@@ -68,6 +70,26 @@ TEST_F(QrShowLayoutTest, VersionTenMediumEccRejects400BytePayload) {
     EXPECT_FALSE(sigurdos_qr_payload_fits(payload.c_str()));
 }
 
+TEST_F(QrShowLayoutTest, SelectsFirstVersionThatCanEncodePayload) {
+    std::vector<int> attempted;
+    const int selected = sigurdos_qr_select_smallest_version(
+        [&attempted](int version) {
+            attempted.push_back(version);
+            return version >= 3;
+        });
+
+    EXPECT_EQ(selected, 3);
+    EXPECT_EQ(attempted, (std::vector<int>{1, 2, 3}));
+}
+
+TEST_F(QrShowLayoutTest, SelectionFailsAfterMaximumVersion) {
+    int attempts = 0;
+    EXPECT_EQ(sigurdos_qr_select_smallest_version(
+                  [&attempts](int) { ++attempts; return false; }),
+              0);
+    EXPECT_EQ(attempts, SIGURDOS_QR_VERSION);
+}
+
 TEST_F(QrShowLayoutTest, VersionZeroDoesNotProduceUsableBufferSize) {
     EXPECT_EQ(sigurdos_qr_module_count(0), 0);
     EXPECT_EQ(sigurdos_qr_module_buffer_bytes(0), 0);
@@ -89,6 +111,16 @@ TEST_F(QrShowLayoutTest, VersionTenQrFitsWithinTDeckContentHeight) {
     EXPECT_EQ(layout.scale, 2);
     EXPECT_EQ(layout.canvas_size, 130);
     EXPECT_LE(layout.canvas_size, SIGURDOS_QR_CANVAS_MAX_PX);
+    EXPECT_EQ(sigurdos_qr_canvas_buffer_bytes(layout), 33800U);
+}
+
+TEST_F(QrShowLayoutTest, CanvasAllocationTracksSelectedLayoutExactly) {
+    const QrCanvasLayout small = sigurdos_qr_canvas_layout(21, 320, 199);
+    const QrCanvasLayout large = sigurdos_qr_canvas_layout(57, 320, 199);
+
+    EXPECT_EQ(sigurdos_qr_canvas_buffer_bytes(small), 60552U);
+    EXPECT_EQ(sigurdos_qr_canvas_buffer_bytes(large), 33800U);
+    EXPECT_EQ(sigurdos_qr_canvas_buffer_bytes({0, 0, false}), 0U);
 }
 
 TEST_F(QrShowLayoutTest, LargestSupportedQrStillFitsFixedCanvasAtScaleOne) {

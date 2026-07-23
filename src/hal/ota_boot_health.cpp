@@ -71,6 +71,7 @@ void rollbackIfPending(const char* reason) {
              reason ? reason : "unknown");
     const esp_err_t err = esp_ota_mark_app_invalid_rollback_and_reboot();
     SIG_LOGE("[ota-health] Rollback request failed: %s", esp_err_to_name(err));
+    (void)err;
 #else
     (void)reason;
 #endif

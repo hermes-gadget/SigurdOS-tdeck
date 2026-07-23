@@ -87,6 +87,16 @@ TEST(LodepngAlloc, MallocFallsBackToInternalMemory) {
     lodepng_free(ptr);
 }
 
+TEST(LodepngAlloc, LargeMallocNeverFallsBackToInternalMemory) {
+    reset_heap_log();
+    g_heap.fail_spiram_malloc = true;
+
+    void* ptr = lodepng_malloc(SIGURDOS_MAP_INTERNAL_FALLBACK_MAX_BYTES + 1U);
+    EXPECT_EQ(ptr, nullptr);
+    EXPECT_EQ(g_heap.malloc_count, 1);
+    EXPECT_EQ(g_heap.malloc_caps[0], MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
 TEST(LodepngAlloc, ReallocFallsBackToInternalMemory) {
     reset_heap_log();
     void* ptr = std::malloc(8);
@@ -100,6 +110,21 @@ TEST(LodepngAlloc, ReallocFallsBackToInternalMemory) {
     EXPECT_EQ(g_heap.realloc_caps[1], MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
     lodepng_free(resized);
+}
+
+TEST(LodepngAlloc, LargeReallocNeverFallsBackToInternalMemory) {
+    reset_heap_log();
+    void* ptr = std::malloc(8);
+    ASSERT_NE(ptr, nullptr);
+    g_heap.fail_spiram_realloc = true;
+
+    void* resized = lodepng_realloc(
+        ptr, SIGURDOS_MAP_INTERNAL_FALLBACK_MAX_BYTES + 1U);
+    EXPECT_EQ(resized, nullptr);
+    EXPECT_EQ(g_heap.realloc_count, 1);
+    EXPECT_EQ(g_heap.realloc_caps[0], MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    heap_caps_free(ptr);
 }
 
 TEST(LodepngAlloc, FreeDelegatesToHeapCapsFree) {

@@ -6,6 +6,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -31,7 +32,16 @@ from hw_test.hw_serial import (
     infer_radio_availability,
     parse_stat_line,
 )
-from hw_test.hw_test_runner import PhaseSelection, _check_variant, _merge_report_metadata
+from hw_test.hw_test_runner import (
+    PhaseSelection,
+    _check_variant,
+    _merge_report_metadata,
+    _parse_radio_profile,
+    build_parser,
+    run_crash_recovery,
+    run_radio,
+    validate_args,
+)
 from hw_test.hw_soak import SoakConfig
 
 
@@ -162,6 +172,15 @@ class SerialParsingTests(unittest.TestCase):
         self.assertTrue(infer_radio_availability("[test] getrf: profile=remote_radio"))
         self.assertTrue(infer_radio_availability("not configured", "[mesh] Radio: 868 MHz"))
 
+    def test_radio_profile_parser_includes_rx_boost(self) -> None:
+        self.assertEqual(
+            _parse_radio_profile(
+                "[test] getrf: profile=remote_radio freq=869.525 SF=10 "
+                "BW=250.0 CR=5 TX=7 dBm RX_BOOST=1 channels=2"
+            ),
+            (869.525, 10, 250.0, 5, 7, True),
+        )
+
 
 class ReportTests(unittest.TestCase):
     def test_critical_failure_exit_code_and_bundle(self) -> None:
@@ -195,14 +214,14 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(payload["transport"], "pi")
             self.assertEqual(payload["metadata"]["pi_host"], "hermes-pi")
 
-    def test_expected_radio_variant_warns_for_no_radio_device(self) -> None:
+    def test_expected_radio_variant_fails_for_no_radio_device(self) -> None:
         report = HardwareReport(mode="smoke", transport="local")
         info = DeviceInfo(
             protocol=CommandProtocol.REMOTE_TEST,
             radio_available=False,
             test_controller=True,
         )
-        self.assertTrue(
+        self.assertFalse(
             _check_variant(
                 report,
                 info,
@@ -210,7 +229,214 @@ class ReportTests(unittest.TestCase):
                 PhaseSelection(smoke=True),
             )
         )
-        self.assertEqual(report.results[-1].status, TestStatus.WARN)
+        self.assertEqual(report.results[-1].status, TestStatus.FAIL)
+        self.assertTrue(report.results[-1].critical)
+
+    def test_complete_provenance_passes_variant_gate(self) -> None:
+        report = HardwareReport(mode="smoke", transport="local")
+        info = DeviceInfo(
+            protocol=CommandProtocol.REMOTE_TEST,
+            build_environment="SigurdOS_TDeck_remote_test_radio",
+            git_sha="a" * 12,
+            git_dirty=False,
+            meshcore_sha="b" * 12,
+            radio_available=True,
+            test_controller=True,
+        )
+        provenance = {
+            "git_sha": "a" * 40,
+            "git_dirty": False,
+            "meshcore_sha": "b" * 40,
+            "firmware_sha256": "c" * 64,
+            "device_firmware_sha256": "c" * 64,
+        }
+        self.assertTrue(
+            _check_variant(
+                report,
+                info,
+                "SigurdOS_TDeck_remote_test_radio",
+                PhaseSelection(smoke=True),
+                provenance,
+            )
+        )
+        self.assertFalse(any(result.status == TestStatus.FAIL for result in report.results))
+
+    def test_unknown_provenance_requires_explicit_exploratory_override(self) -> None:
+        info = DeviceInfo(
+            protocol=CommandProtocol.REMOTE_TEST,
+            radio_available=True,
+            test_controller=True,
+        )
+        strict = HardwareReport(mode="smoke", transport="local")
+        self.assertFalse(
+            _check_variant(
+                strict,
+                info,
+                "SigurdOS_TDeck_remote_test_radio",
+                PhaseSelection(smoke=True),
+            )
+        )
+        exploratory = HardwareReport(mode="smoke", transport="local")
+        self.assertTrue(
+            _check_variant(
+                exploratory,
+                info,
+                "SigurdOS_TDeck_remote_test_radio",
+                PhaseSelection(smoke=True),
+                allow_unknown_provenance=True,
+            )
+        )
+        self.assertEqual(exploratory.results[-1].status, TestStatus.WARN)
+
+    def test_radio_phase_restores_original_profile_after_early_return(self) -> None:
+        class FakeConnection:
+            protocol = CommandProtocol.REMOTE_TEST
+            device_info = DeviceInfo(
+                protocol=CommandProtocol.REMOTE_TEST,
+                radio_available=True,
+            )
+
+            def __init__(self) -> None:
+                self.commands: list[str] = []
+                self.getrf_count = 0
+
+            def send_command(self, command, **_kwargs):
+                self.commands.append(command)
+                def response(output):
+                    return SimpleNamespace(
+                        output=output,
+                        attempts=1,
+                        recovered=False,
+                        wire_command=command,
+                    )
+                if command == "getrf":
+                    self.getrf_count += 1
+                    profiles = (
+                        "freq=869.525 SF=10 BW=250.0 CR=5 TX=7 dBm RX_BOOST=1",
+                        "freq=868.100 SF=10 BW=250.0 CR=5 TX=2 dBm RX_BOOST=0",
+                        "freq=869.525 SF=10 BW=250.0 CR=5 TX=7 dBm RX_BOOST=1",
+                    )
+                    return response("[test] getrf: " + profiles[self.getrf_count - 1])
+                if command.startswith("setrf "):
+                    return response("radio params saved to NVS")
+                if command == "reboot":
+                    return response("device restarting")
+                if command.startswith("addchannel "):
+                    return response("addchannel ERROR")
+                return response("OK")
+
+            def close(self):
+                return None
+
+            def connect(self):
+                return self
+
+            def detect_firmware(self):
+                return self.device_info
+
+        connection = FakeConnection()
+        report = HardwareReport(mode="radio", transport="local")
+        with mock.patch("hw_test.hw_test_runner.time.sleep"):
+            run_radio(
+                connection,
+                report,
+                frequency_mhz=868.1,
+                spreading_factor=10,
+                bandwidth_khz=250.0,
+                coding_rate=5,
+                tx_power_dbm=2,
+            )
+        self.assertIn("setrf 869.525 10 250 5 7 1", connection.commands)
+        self.assertEqual(connection.getrf_count, 3)
+        self.assertEqual(
+            next(item for item in report.results if item.name == "radio.verify_restore").status,
+            TestStatus.PASS,
+        )
+
+    def test_crash_recovery_refuses_non_telemetry_firmware(self) -> None:
+        report = HardwareReport(mode="crash_recovery", transport="local")
+        info = DeviceInfo(
+            protocol=CommandProtocol.REMOTE_TEST,
+            build_environment="SigurdOS_TDeck_remote_test",
+            test_controller=True,
+        )
+        self.assertFalse(
+            _check_variant(
+                report,
+                info,
+                "SigurdOS_TDeck_telemetry",
+                PhaseSelection(crash_recovery=True),
+            )
+        )
+        self.assertEqual(report.results[-1].name, "crash.capability")
+        self.assertTrue(report.results[-1].critical)
+
+    def test_crash_recovery_requires_flash_summary_and_retention(self) -> None:
+        class FakeConnection:
+            protocol = CommandProtocol.REMOTE_TEST
+
+            def __init__(self) -> None:
+                self.commands: list[str] = []
+                self.close_count = 0
+                self.connect_count = 0
+
+            def send_command(self, command: str, **_: object) -> SimpleNamespace:
+                self.commands.append(command)
+                output = {
+                    "crash clear": "@ok|cmd=crash clear\n",
+                    "crash test": "[telemetry] crash test triggered\n",
+                    "crash report": "@crash|reason=4|core_dump=1|pc=1107362629\n",
+                }[command]
+                return SimpleNamespace(
+                    output=output,
+                    attempts=1,
+                    recovered=False,
+                    wire_command=command,
+                )
+
+            def close(self) -> None:
+                self.close_count += 1
+
+            def connect(self) -> None:
+                self.connect_count += 1
+
+            def detect_firmware(self) -> DeviceInfo:
+                return DeviceInfo(
+                    protocol=CommandProtocol.REMOTE_TEST,
+                    build_environment="SigurdOS_TDeck_telemetry",
+                    test_controller=True,
+                    evidence="telemetry ready",
+                )
+
+        connection = FakeConnection()
+        report = HardwareReport(mode="crash_recovery", transport="local")
+        run_crash_recovery(connection, report, reboot_pause_s=0)
+
+        self.assertEqual(
+            connection.commands,
+            ["crash clear", "crash test", "crash report", "crash report"],
+        )
+        self.assertEqual(connection.close_count, 1)
+        self.assertEqual(connection.connect_count, 1)
+        self.assertEqual(
+            [result.name for result in report.results],
+            [
+                "crash.clear_stale",
+                "crash.trigger",
+                "crash.reboot",
+                "crash.flash_summary",
+                "crash.retention",
+            ],
+        )
+        self.assertTrue(all(result.status == TestStatus.PASS for result in report.results))
+
+    def test_crash_recovery_cli_requires_explicit_confirmation(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            ["--crash-recovery", "--local", "--port", "/dev/ttyACM0"]
+        )
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            validate_args(parser, args)
 
 
 class ConstantsAndFlashTests(unittest.TestCase):
@@ -280,6 +506,35 @@ class ConstantsAndFlashTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("unrecognized arguments: --pr 123", result.stderr)
+
+    def test_runner_rejects_digest_only_firmware_provenance(self) -> None:
+        runner = PACKAGE_PARENT / "hw_test" / "hw_test_runner.py"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "--smoke",
+                "--local",
+                "--port",
+                "/dev/null",
+                "--flash",
+                "--firmware",
+                "/tmp/firmware-merged.bin",
+                "--sha256",
+                "a" * 64,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--sha256 alone cannot identify", result.stderr)
+
+    def test_remote_controller_reports_provenance_without_telemetry(self) -> None:
+        controller = (PACKAGE_PARENT.parent / "src/test/test_controller.cpp").read_text()
+        self.assertIn('strcmp(cmd, "buildinfo")', controller)
+        self.assertIn("build.git_sha", controller)
+        self.assertIn("build.meshcore_sha", controller)
+        self.assertIn("build.build_env", controller)
 
     def test_pi_host_discovery_falls_back_after_timeout(self) -> None:
         reachable = mock.Mock(returncode=0, stdout="", stderr="")

@@ -5,8 +5,10 @@ This roadmap is the current source of truth for bringing SigurdOS T-Deck to feat
 ## Current Baseline
 
 - Source audit baseline: `dev` branch (latest)
-- MeshCore submodule: `516ba4ae` (room-server-v1.15.0-159-g516ba4ae) (companion family ~v1.15.0 + patches)
-  - **Note:** volatile SHA pinning is intentionally removed here. The submodule and source tree evolve independently; the authoritative per-document pin lives in each document that depends on a specific snapshot (e.g. `COMPANION_SUPPORT.md` and `COMPANION_PARITY_ACTION_PLAN.md` have their own pinned references).
+- MeshCore dependency: the repository gitlink is the authoritative build pin.
+  Reviewed companion-protocol snapshots live in
+  `test/fixtures/companion_golden_frames.json`; the update and public-upstream
+  comparison policy is documented in `RELEASE_EVIDENCE.md`.
 - Target board: LilyGo T-Deck, ESP32-S3, SX1262, ST7789, GT911, I2C keyboard, trackball
 - Validation status: 2026-07-14 upstream-aligned release/BLE validation and CANADA-preset snapshot
   hardware smoke executed on `COM8`; `pio run -e SigurdOS_TDeck`,
@@ -32,7 +34,7 @@ This audit records what is already present in the codebase so future roadmap wor
 | Time | `CMD_GET_DEVICE_TIME` and `CMD_SET_DEVICE_TIME` are implemented through the companion host. GPS parsing includes NMEA checksum validation and currently sets the system RTC on first valid GPS date/time when GPS is active. GPS time sync is available via the Settings → GPS screen (`screen_settings_gps.cpp`); the clock policy identifies the time source. Time-source UI identifies source (`GPS`, `App`, or `Manual`) in Settings. | ✅ Implemented: time-source identification and GPS sync action exist in Settings UI. Remaining hardening: ensure GPS time sync cannot keep the receiver powered solely for the clock. |
 | GPS | GPS init, baud probing, interval-gated polling, fix data, satellite diagnostics, map/adverts, and settings toggles exist. GPS is off by default; when enabled, the current default interval still maps to every-loop polling. | ✅ "Sync time from GPS" action implemented in Settings → GPS. Remaining: fix-acquisition timeout/status UX, less aggressive polling by default, and sleep/wake testing with GPS disabled/enabled. |
 | Repeater/room workflows | Local UI supports repeater/room login, saved passwords, CLI command rows, fetch messages, status/telemetry requests, command response display, and profile-aware allowed repeat-frequency replies. Companion bridge sends login/status/telemetry and CLI-data requests. | Official MeshCore app repeater management still needs app-level hardware validation. |
-| OTA and release ops | AP upload OTA, GitHub pull OTA, WiFi credential prefs, merged firmware script, and release docs exist. | Negative OTA tests, rollback/recovery docs, checksums, and release evidence still need to become routine. |
+| OTA and release ops | AP upload OTA, GitHub pull OTA, WiFi credential prefs, merged firmware script, downgrade epoch, and release docs exist. | Device-side publisher signatures, rotation/recovery tests, and release evidence still need to become routine. Checksums are integrity metadata, not signatures. |
 
 ## Production-release Remainder
 
@@ -55,7 +57,8 @@ is gated by the following work:
 5. Finish field UX and performance polish: contact/message detail, region
    interop, map cache behavior, alerts, telemetry history, virtualized long
    lists, and demand-driven GPS/power behavior.
-6. Prepare release operations: signed or checksummed artifacts, firmware
+6. Prepare release operations: device-verified signed artifacts (checksums alone
+   do not authenticate a publisher), firmware
    manifests, rollback/recovery docs, issue templates, and a repeatable release
    checklist with attached hardware evidence.
 

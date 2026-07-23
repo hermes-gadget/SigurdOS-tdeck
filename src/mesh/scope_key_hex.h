@@ -7,8 +7,8 @@
 // (default_scope_key_hex: 32 hex chars + NUL). Extracted verbatim from the
 // companion adapter (ARCH-001, #820) so the codec is testable natively.
 //
-// Legacy semantics are preserved exactly: decode maps any non-hex character
-// to a zero nibble (it never fails), and encode emits lowercase hex.
+// Decode is strict: corrupt text and the prohibited all-zero private key are
+// rejected without modifying the caller's output buffer.
 
 #include <stdint.h>
 #include <stddef.h>
@@ -32,23 +32,36 @@ inline void scopeKeyHexEncode(const uint8_t* key16, char* out33)
     out33[SCOPE_KEY_HEX_LEN] = '\0';
 }
 
-// Decode 32 hex chars from hex32 into out16[16]. Case-insensitive; a non-hex
-// character contributes a zero nibble. hex32 must hold at least 32 bytes.
-inline void scopeKeyHexDecode(const char* hex32, uint8_t* out16)
+inline int scopeKeyHexNibble(char value)
 {
-    if (!hex32 || !out16) return;
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
+}
+
+inline bool scopeKeyNonZero(const uint8_t* key16)
+{
+    if (!key16) return false;
+    uint8_t combined = 0;
+    for (int i = 0; i < SCOPE_KEY_LEN; ++i) combined |= key16[i];
+    return combined != 0;
+}
+
+// Decode exactly 32 hex characters. Case-insensitive and all-or-nothing.
+inline bool scopeKeyHexDecode(const char* hex32, uint8_t* out16)
+{
+    if (!hex32 || !out16 || strlen(hex32) != SCOPE_KEY_HEX_LEN) return false;
+    uint8_t decoded[SCOPE_KEY_LEN]{};
     for (int i = 0; i < SCOPE_KEY_LEN; i++) {
-        char hi = hex32[i * 2];
-        char lo = hex32[i * 2 + 1];
-        uint8_t b = 0;
-        if (hi >= '0' && hi <= '9') b = (hi - '0') << 4;
-        else if (hi >= 'a' && hi <= 'f') b = (hi - 'a' + 10) << 4;
-        else if (hi >= 'A' && hi <= 'F') b = (hi - 'A' + 10) << 4;
-        if (lo >= '0' && lo <= '9') b |= (lo - '0');
-        else if (lo >= 'a' && lo <= 'f') b |= (lo - 'a' + 10);
-        else if (lo >= 'A' && lo <= 'F') b |= (lo - 'A' + 10);
-        out16[i] = b;
+        const int hi = scopeKeyHexNibble(hex32[i * 2]);
+        const int lo = scopeKeyHexNibble(hex32[i * 2 + 1]);
+        if (hi < 0 || lo < 0) return false;
+        decoded[i] = static_cast<uint8_t>((hi << 4) | lo);
     }
+    if (!scopeKeyNonZero(decoded)) return false;
+    memcpy(out16, decoded, sizeof(decoded));
+    return true;
 }
 
 inline int scopeKeyBase64Value(char c)
@@ -86,6 +99,7 @@ inline bool scopeKeyBase64Decode(const char* encoded, uint8_t* out16)
     int b = scopeKeyBase64Value(encoded[21]);
     if (a < 0 || b < 0 || (b & 0x0F) != 0 || out != 15) return false;
     decoded[out] = (uint8_t)((a << 2) | (b >> 4));
+    if (!scopeKeyNonZero(decoded)) return false;
     memcpy(out16, decoded, sizeof(decoded));
     return true;
 }

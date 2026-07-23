@@ -18,11 +18,16 @@
 
 #include "../screens.h"
 #include "../screens_common.h"
+#include "../identity_command_guard.h"
 #include "../navigation.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../terminal_line_cap.h"
+#include "../terminal_var_policy.h"
 #include "../../hal/prefs.h"
+#include "../../hal/atomic_file.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../comms/secure_wipe.h"
 #include "../../fonts/emoji_font.h"
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -30,11 +35,79 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 namespace sigurdos::ui {
 
 using namespace theme;
 using namespace responsive;
+
+static constexpr size_t TERMINAL_VAR_STORE_MAX = 4096;
+static constexpr const char* TERMINAL_VAR_PATH = "/custom_vars.txt";
+
+struct TerminalVarWriteCtx { const char* data; size_t length; };
+
+static bool terminal_var_write(sigurdos::storage::AtomicFileWriter& writer, void* data)
+{
+    auto* ctx = static_cast<TerminalVarWriteCtx*>(data);
+    return ctx && writer.write(ctx->data, ctx->length) == ctx->length;
+}
+
+static bool terminal_var_validate(sigurdos::storage::AtomicFileReader& reader, void* data)
+{
+    auto* ctx = static_cast<TerminalVarWriteCtx*>(data);
+    if (!ctx || reader.size() != ctx->length) return false;
+    char chunk[128];
+    size_t offset = 0;
+    while (offset < ctx->length) {
+        size_t count = ctx->length - offset;
+        if (count > sizeof(chunk)) count = sizeof(chunk);
+        if (reader.read(chunk, count) != count ||
+            std::memcmp(chunk, ctx->data + offset, count) != 0) return false;
+        offset += count;
+    }
+    return true;
+}
+
+enum class TerminalVarUpdate { Ok, NotFound, TooLarge, NoMemory, IoError };
+
+static TerminalVarUpdate terminal_var_update(const char* key, const char* value)
+{
+    size_t input_len = 0;
+    File file = SPIFFS.open(TERMINAL_VAR_PATH, "r");
+    if (file) {
+        input_len = file.size();
+        if (input_len > TERMINAL_VAR_STORE_MAX) { file.close(); return TerminalVarUpdate::TooLarge; }
+    }
+    auto* input = new(std::nothrow) char[input_len + 1];
+    auto* output = new(std::nothrow) char[TERMINAL_VAR_STORE_MAX + 1];
+    if (!input || !output) {
+        delete[] input; delete[] output;
+        if (file) file.close();
+        return TerminalVarUpdate::NoMemory;
+    }
+    if (file && input_len > 0 && file.readBytes(input, input_len) != input_len) {
+        file.close(); delete[] input; delete[] output;
+        return TerminalVarUpdate::IoError;
+    }
+    if (file) file.close();
+    input[input_len] = '\0';
+
+    size_t output_len = 0;
+    bool found = false;
+    const bool built = terminal_var_rewrite(input, input_len, key, value, output,
+                                             TERMINAL_VAR_STORE_MAX + 1,
+                                             &output_len, &found);
+    delete[] input;
+    if (!built) { delete[] output; return TerminalVarUpdate::TooLarge; }
+    if (!value && !found) { delete[] output; return TerminalVarUpdate::NotFound; }
+
+    TerminalVarWriteCtx ctx{output, output_len};
+    const bool saved = sigurdos::storage::atomicFileReplace(
+        TERMINAL_VAR_PATH, terminal_var_write, &ctx, terminal_var_validate, &ctx);
+    delete[] output;
+    return saved ? TerminalVarUpdate::Ok : TerminalVarUpdate::IoError;
+}
 
 // ════════════════════════════════════════════════════════
 // Terminal — colored log output helpers
@@ -57,7 +130,7 @@ static uint32_t term_classify_line(const char* text)
 }
 
 // ── Terminal line cap — prevent unbounded label accumulation ──
-static constexpr unsigned MAX_TERM_LINES = 64;
+static IdentityCommandGuard g_identity_command_guard;
 static constexpr uint32_t MAX_TERM_COMMAND_LENGTH = 255;
 static constexpr size_t MAX_TERM_VAR_KEY_LENGTH = 31;
 static constexpr size_t MAX_TERM_VAR_VALUE_LENGTH = 127;
@@ -78,12 +151,12 @@ static bool terminal_var_key_valid(const char* key, size_t len)
 
 static void term_add_line(lv_obj_t* log, const char* text)
 {
-    // Prune oldest line if at cap
-    while (lv_obj_get_child_cnt(log) >= MAX_TERM_LINES) {
-        lv_obj_t* first = lv_obj_get_child(log, 0);
-        if (first) lv_obj_del_async(first);
-        else break;
-    }
+    const bool ready = terminal_prune_oldest_for_append(
+        log,
+        [](lv_obj_t* obj) { return lv_obj_get_child_cnt(obj); },
+        [](lv_obj_t* obj) { return lv_obj_get_child(obj, 0); },
+        [](lv_obj_t* obj) { lv_obj_delete(obj); });
+    if (!ready) return;
 
     lv_obj_t* lbl = lv_label_create(log);
     lv_label_set_text(lbl, text);
@@ -105,6 +178,10 @@ void terminal_screen_show()
         return;
     }
     lv_obj_t* scr = make_screen_full("Terminal");
+    g_identity_command_guard = {};
+    lv_obj_add_event_cb(scr, [](lv_event_t*) {
+        g_identity_command_guard = {};
+    }, LV_EVENT_DELETE, nullptr);
 
     static constexpr int TERM_INPUT_H = 28;
     static constexpr int TERM_LOG_H   = CONTENT_H - TERM_INPUT_H - DIVIDER_H;  // 167
@@ -170,7 +247,11 @@ void terminal_screen_show()
 
         // Echo the command
         static char echo[280];
-        snprintf(echo, sizeof(echo), "> %s", cmd);
+        if (strncmp(cmd, "importkey ", 10) == 0) {
+            snprintf(echo, sizeof(echo), "> importkey [REDACTED]");
+        } else {
+            snprintf(echo, sizeof(echo), "> %s", cmd);
+        }
         term_add_line(log_cont, echo);
 
         static char result[256];
@@ -238,55 +319,40 @@ void terminal_screen_show()
                     char key[MAX_TERM_VAR_KEY_LENGTH + 1];
                     memcpy(key, arg, klen);
                     key[klen] = '\0';
-                    // Read existing vars, update or append
-                    String all;
-                    File f = SPIFFS.open("/custom_vars.txt", "r");
-                    if (f) {
-                        while (f.available()) {
-                            String line = f.readStringUntil('\n');
-                            line.trim();
-                            if (line.length() > 0) {
-                                if (!line.startsWith(key) || line.charAt(strlen(key)) != '=') {
-                                    all += line + "\n";
-                                }
-                            }
-                        }
-                        f.close();
+                    const TerminalVarUpdate status = terminal_var_update(key, value);
+                    if (status == TerminalVarUpdate::Ok) {
+                        snprintf(result, sizeof(result), "Set: %s = %s", key, value);
+                    } else if (status == TerminalVarUpdate::TooLarge) {
+                        snprintf(result, sizeof(result), "Variable store full (max %zu bytes)",
+                                 TERMINAL_VAR_STORE_MAX);
+                    } else if (status == TerminalVarUpdate::NoMemory) {
+                        snprintf(result, sizeof(result), "Set failed: not enough memory");
+                    } else {
+                        snprintf(result, sizeof(result), "Set failed: storage write error");
                     }
-                    all += String(key) + "=" + value + "\n";
-                    File wf = SPIFFS.open("/custom_vars.txt", "w");
-                    if (wf) { wf.print(all); wf.close(); }
-                    snprintf(result, sizeof(result), "Set: %s = %s", key, value);
                 }
             }
         } else if (strncmp(cmd, "delvar ", 7) == 0) {
             const char* key = cmd + 7;
             if (!key[0]) {
                 snprintf(result, sizeof(result), "Usage: delvar <key>");
+            } else if (!terminal_var_key_valid(key, strlen(key))) {
+                snprintf(result, sizeof(result),
+                    "Invalid key (max %zu; use letters, digits, _, -, .)",
+                    MAX_TERM_VAR_KEY_LENGTH);
             } else {
-                String all;
-                bool found = false;
-                File f = SPIFFS.open("/custom_vars.txt", "r");
-                if (f) {
-                    while (f.available()) {
-                        String line = f.readStringUntil('\n');
-                        line.trim();
-                        if (line.length() > 0) {
-                            if (line.startsWith(key) && line.charAt(strlen(key)) == '=') {
-                                found = true;
-                            } else {
-                                all += line + "\n";
-                            }
-                        }
-                    }
-                    f.close();
-                }
-                if (found) {
-                    File wf = SPIFFS.open("/custom_vars.txt", "w");
-                    if (wf) { wf.print(all); wf.close(); }
+                const TerminalVarUpdate status = terminal_var_update(key, nullptr);
+                if (status == TerminalVarUpdate::Ok) {
                     snprintf(result, sizeof(result), "Deleted: %s", key);
-                } else {
+                } else if (status == TerminalVarUpdate::NotFound) {
                     snprintf(result, sizeof(result), "Key '%s' not found", key);
+                } else if (status == TerminalVarUpdate::TooLarge) {
+                    snprintf(result, sizeof(result), "Delete refused: variable store exceeds %zu bytes",
+                             TERMINAL_VAR_STORE_MAX);
+                } else if (status == TerminalVarUpdate::NoMemory) {
+                    snprintf(result, sizeof(result), "Delete failed: not enough memory");
+                } else {
+                    snprintf(result, sizeof(result), "Delete failed: storage write error");
                 }
             }
         } else if (strcmp(cmd, "listvars") == 0) {
@@ -424,28 +490,67 @@ void terminal_screen_show()
             term_add_line(log_cont, "--- End emoji list ---");
             lv_textarea_set_text(ta, "");
             return;
-        } else if (strcmp(cmd, "exportkey") == 0) {
-            char hex[PRV_KEY_SIZE * 2 + 1] = {0};
-            if (sigurdos::mesh::exportIdentity(hex, sizeof(hex))) {
-                term_add_line(log_cont, "Private key (keep secret!):");
-                snprintf(result, sizeof(result), "%s", hex);
+        } else if (strcmp(cmd, "exportkey") == 0 ||
+                   strcmp(cmd, "exportkey CONFIRM") == 0) {
+            const bool confirmed = strcmp(cmd, "exportkey CONFIRM") == 0;
+            const IdentityGuardResult auth = authorizeIdentityCommand(
+                g_identity_command_guard, sigurdos::prefs_get().device_pin,
+                IdentityOperation::Export, confirmed, millis());
+            if (auth == IdentityGuardResult::ConfirmationRequired) {
+                snprintf(result, sizeof(result),
+                         "Physical confirmation required: type exportkey CONFIRM within 15s");
+            } else if (auth == IdentityGuardResult::ConfirmationRejected) {
+                snprintf(result, sizeof(result), "Export confirmation missing or expired");
             } else {
-                snprintf(result, sizeof(result), "Export failed (mesh not ready?)");
+                char hex[PRV_KEY_SIZE * 2 + 1] = {0};
+                sigurdos::comms::ScopedWipe wipe(hex, sizeof(hex));
+                if (sigurdos::mesh::exportIdentity(hex, sizeof(hex))) {
+                    term_add_line(log_cont, "Private key chunks (keep secret!):");
+                    for (size_t offset = 0; offset < sizeof(hex) - 1; offset += 32) {
+                        char chunk[33]{};
+                        sigurdos::comms::ScopedWipe chunk_wipe(chunk, sizeof(chunk));
+                        memcpy(chunk, hex + offset, 32);
+                        term_add_line(log_cont, chunk);
+                    }
+                    snprintf(result, sizeof(result),
+                             "Export complete; leave Terminal to clear view");
+                } else {
+                    snprintf(result, sizeof(result),
+                             "Export failed (mesh not ready?)");
+                }
             }
         } else if (strncmp(cmd, "importkey ", 10) == 0) {
             const char* hex_in = cmd + 10;
             while (*hex_in == ' ' || *hex_in == '\t') hex_in++;
-            size_t hlen = strlen(hex_in);
-            if (hlen != PRV_KEY_SIZE * 2) {
+            bool confirmed = false;
+            if (strncmp(hex_in, "CONFIRM ", 8) == 0) {
+                confirmed = true;
+                hex_in += 8;
+                while (*hex_in == ' ' || *hex_in == '\t') hex_in++;
+            }
+            const IdentityGuardResult auth = authorizeIdentityCommand(
+                g_identity_command_guard, sigurdos::prefs_get().device_pin,
+                IdentityOperation::Import, confirmed, millis());
+            if (auth == IdentityGuardResult::ConfirmationRequired) {
                 snprintf(result, sizeof(result),
-                    "Bad key length: got %zu hex, need %d",
-                    hlen, PRV_KEY_SIZE * 2);
-            } else if (sigurdos::mesh::importIdentity(hex_in)) {
-                term_add_line(log_cont, "Identity imported. Reboot for contacts to re-pair.");
-                lv_textarea_set_text(ta, "");
-                return;
+                         "Physical confirmation required: repeat as importkey CONFIRM <key> within 15s");
+            } else if (auth == IdentityGuardResult::ConfirmationRejected) {
+                snprintf(result, sizeof(result), "Import confirmation missing or expired");
             } else {
-                snprintf(result, sizeof(result), "Import failed (invalid key?)");
+                size_t hlen = strlen(hex_in);
+                if (hlen != PRV_KEY_SIZE * 2) {
+                    snprintf(result, sizeof(result),
+                        "Bad key length: got %zu hex, need %d",
+                        hlen, PRV_KEY_SIZE * 2);
+                } else if (sigurdos::mesh::importIdentity(hex_in)) {
+                    term_add_line(log_cont,
+                        "Identity imported. Reboot for contacts to re-pair.");
+                    lv_textarea_set_text(ta, "");
+                    return;
+                } else {
+                    snprintf(result, sizeof(result),
+                             "Import failed (invalid key?)");
+                }
             }
         } else {
             snprintf(result, sizeof(result), "Unknown: %s  (type 'help')", cmd);

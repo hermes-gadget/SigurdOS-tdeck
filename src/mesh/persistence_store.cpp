@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Ben
 
 #include "persistence_store.h"
+#include "region_name.h"
 
 #include "hal/atomic_file.h"
 
@@ -119,7 +120,7 @@ int loadLegacy(detail::ChannelStoreKv& kv, ChannelLoadFn load, void* ctx)
     if (count > CHANNEL_STORE_MAX) return 0;
     int loaded = 0;
     for (int i = 0; i < count; ++i) {
-        char key[16];
+        char key[24];
         char name[32] = {};
         uint8_t secret[32] = {};
         uint8_t hash[32] = {};
@@ -331,12 +332,6 @@ uint32_t regionCrcUpdate(uint32_t crc, const uint8_t* data, size_t length)
     return crc;
 }
 
-bool regionNameChar(uint8_t c)
-{
-    return c == '-' || c == '$' || c == '#' ||
-           (c >= '0' && c <= '9') || c >= 'A';
-}
-
 bool regionIdPresent(uint16_t id, const uint16_t* ids, size_t count)
 {
     if (id == 0) return true;
@@ -381,11 +376,7 @@ bool validateRegionStructure(sigurdos::storage::AtomicFileReader& reader,
         const uint8_t* name = &record[4];
         const void* terminator = std::memchr(name, '\0', 31);
         if (id == 0 || !terminator || name[0] == '\0') return false;
-        const size_t name_len =
-            (size_t)(static_cast<const uint8_t*>(terminator) - name);
-        for (size_t j = 0; j < name_len; ++j) {
-            if (!regionNameChar(name[j])) return false;
-        }
+        if (!regionNameValid(reinterpret_cast<const char*>(name))) return false;
         for (size_t j = 0; j < i; ++j) {
             if (ids[j] == id) return false;
         }
@@ -400,6 +391,20 @@ bool validateRegionStructure(sigurdos::storage::AtomicFileReader& reader,
     for (size_t i = 0; i < count; ++i) {
         if (parents[i] == ids[i] ||
             !regionIdPresent(parents[i], ids, count)) return false;
+
+        // Every parent chain must reach the wildcard root.  Parent existence
+        // and direct self-parent checks alone do not reject A -> B -> A.
+        uint16_t cursor = parents[i];
+        size_t depth = 0;
+        while (cursor != 0) {
+            if (depth++ >= count) return false;
+            size_t parent_index = 0;
+            while (parent_index < count && ids[parent_index] != cursor) {
+                ++parent_index;
+            }
+            if (parent_index == count) return false;
+            cursor = parents[parent_index];
+        }
     }
     return true;
 }

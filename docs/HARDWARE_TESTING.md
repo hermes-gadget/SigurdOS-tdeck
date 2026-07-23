@@ -653,6 +653,58 @@ radio sd nvs temp task hb-ring pktlog full
 Run `crash test` only in an explicitly destructive crash-recovery test. It is
 never part of an ordinary smoke or soak run.
 
+#### Flash core-dump recovery gate
+
+`SigurdOS_TDeck_telemetry` and `SigurdOS_TDeck_telemetry_diff` compile the
+crash-recovery source only when the pinned Arduino framework's actual
+`sdkconfig.h` enables flash storage, ELF format, CRC checking, and at least 16
+task snapshots. The project `sdkconfig` files cannot change the already-built
+Arduino framework libraries, so the source contains compile-time checks for
+the effective framework configuration and pull-request CI builds the telemetry
+environment explicitly.
+
+Run the destructive gate only with an approved, digest-bound telemetry
+artifact on a disposable fixture:
+
+```bash
+python3 scripts/hw_test/hw_test_runner.py \
+  --crash-recovery --confirm-destructive-crash \
+  --firmware /tmp/pr-artifact/firmware-merged.bin \
+  --sha256 <reviewed-64-character-digest> --flash \
+  --local --port /dev/ttyACM0 --env SigurdOS_TDeck_telemetry \
+  --outdir /tmp/tdeck-crash-recovery
+```
+
+The runner clears any stale compact record, sends `crash test`, reconnects
+after the panic, and runs `crash report` twice. Both reports must contain
+`@crash` and `core_dump=1`; the second query proves the RTC record survives a
+read. The runner intentionally leaves both the compact record and full flash
+dump intact for export. A missing or oversized/corrupt flash image therefore
+fails at `crash.flash_summary` instead of being accepted as reset-reason-only
+evidence.
+
+For full symbolication, use the `firmware.elf` from the exact reviewed telemetry
+build. With the ESP-IDF 4.4 core-dump tool, a typical read is:
+
+```bash
+espcoredump.py --chip esp32s3 -p /dev/ttyACM0 \
+  info_corefile --save-core /tmp/sigurdos-core.elf \
+  .pio/build/SigurdOS_TDeck_telemetry/firmware.elf
+```
+
+The `app_elf_sha` reported by `crash report` must match that build before its
+addresses are trusted. The stock 16 MB layout reserves the 64 KiB `coredump`
+partition; Launcher chooses a dynamic location, so never use a hard-coded raw
+flash offset on a Launcher installation. ESP-IDF's format and sizing rules are
+documented in the [ESP-IDF 4.4 core-dump guide](https://docs.espressif.com/projects/esp-idf/en/v4.4.4/esp32s3/api-guides/core_dump.html).
+
+Core dumps contain task stacks, registers, and memory and may therefore contain
+message content, credentials, or key material. Treat the raw dump and unredacted
+analysis as secrets: keep them out of public PR artifacts, restrict access,
+delete local copies after triage, and erase the fixture before reuse. `crash
+clear` clears only SigurdOS's compact RTC record; it does not erase the flash
+core-dump partition.
+
 ### Optional uppercase display handler
 
 When a non-remote build is explicitly compiled with

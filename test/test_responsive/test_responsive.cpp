@@ -77,4 +77,22 @@ TEST(ResponsiveTest, ColumnOffsetsTreatNegativeWeightsAsZero) {
     EXPECT_EQ(out[2], 100);
 }
 
+TEST(ResponsiveTest, GeometrySupportsPortraitRotation)
+{
+    const auto geometry = sigurdos::responsive::geometry_for(240, 320);
+    EXPECT_TRUE(geometry.portrait);
+    EXPECT_EQ(geometry.width, 240);
+    EXPECT_EQ(geometry.height, 320);
+    EXPECT_GT(geometry.content_h, geometry.content_w);
+}
+
+TEST(ResponsiveTest, GeometryKeepsReducedResolutionContentPositive)
+{
+    const auto geometry = sigurdos::responsive::geometry_for(160, 128);
+    EXPECT_FALSE(geometry.portrait);
+    EXPECT_EQ(geometry.top_bar_h, 12);
+    EXPECT_GT(geometry.content_w, 0);
+    EXPECT_GT(geometry.content_h, 0);
+}
+
 } // namespace

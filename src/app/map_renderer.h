@@ -39,9 +39,17 @@ static constexpr double SIGURDOS_MAP_DEFAULT_CA_LAT = 56.1304;
 static constexpr double SIGURDOS_MAP_DEFAULT_CA_LON = -106.3468;
 static constexpr int SIGURDOS_MAP_DEFAULT_CA_ZOOM = 3;
 static constexpr std::size_t SIGURDOS_MAP_PNG_IHDR_SIZE = 33;
+// Incompressible 256x256 RGBA data is slightly larger than 256 KiB once
+// framed as PNG. Leave bounded room for framing and modest ancillary data.
+static constexpr std::size_t SIGURDOS_MAP_PNG_MAX_COMPRESSED_BYTES = 320U * 1024U;
 static constexpr std::size_t SIGURDOS_MAP_PNG_MAX_DECOMPRESSED_BYTES =
     static_cast<std::size_t>(SIGURDOS_MAP_TILE_SIZE) *
     (SIGURDOS_MAP_TILE_SIZE * 4 + 1);
+static constexpr std::size_t SIGURDOS_MAP_INTERNAL_FALLBACK_MAX_BYTES = 32U * 1024U;
+
+inline bool sigurdos_map_internal_fallback_allowed(std::size_t size) {
+    return size <= SIGURDOS_MAP_INTERNAL_FALLBACK_MAX_BYTES;
+}
 
 inline std::uint32_t sigurdos_map_png_read_u32(const std::uint8_t* value) {
     return (static_cast<std::uint32_t>(value[0]) << 24) |
@@ -188,6 +196,26 @@ inline bool sigurdos_map_tile_valid(int zoom, int x, int y) {
     return n > 0 && x >= 0 && x < n && y >= 0 && y < n;
 }
 
+inline bool sigurdos_map_parse_tile_index(const char* text,
+                                           std::size_t length,
+                                           int zoom,
+                                           int* out) {
+    if (!text || !out || length == 0 || !sigurdos_map_zoom_valid(zoom)) {
+        return false;
+    }
+    std::uint64_t value = 0;
+    for (std::size_t i = 0; i < length; ++i) {
+        if (text[i] < '0' || text[i] > '9') return false;
+        const unsigned digit = static_cast<unsigned>(text[i] - '0');
+        if (value > (2147483647U - digit) / 10U) return false;
+        value = value * 10U + digit;
+    }
+    const int parsed = static_cast<int>(value);
+    if (!sigurdos_map_tile_valid(zoom, 0, parsed)) return false;
+    *out = parsed;
+    return true;
+}
+
 inline bool sigurdos_map_tile_intersects_viewport(int screen_x, int screen_y,
                                                    int viewport_w, int viewport_h) {
     return viewport_w > 0 && viewport_h > 0 &&
@@ -237,6 +265,57 @@ inline bool sigurdos_map_contact_args_valid(const void* contacts, int count) {
     return count >= 0 && (count == 0 || contacts != nullptr);
 }
 
+inline bool sigurdos_map_position_valid(bool has_fix, double lat, double lon) {
+    return has_fix && std::isfinite(lat) && std::isfinite(lon) &&
+           lat >= SIGURDOS_MAP_MIN_LAT && lat <= SIGURDOS_MAP_MAX_LAT &&
+           lon >= SIGURDOS_MAP_MIN_LON && lon <= SIGURDOS_MAP_MAX_LON;
+}
+
+inline bool sigurdos_map_bounds_valid(const double* bounds) {
+    if (!bounds) return false;
+    const double west = bounds[0];
+    const double south = bounds[1];
+    const double east = bounds[2];
+    const double north = bounds[3];
+    return std::isfinite(west) && std::isfinite(south) &&
+           std::isfinite(east) && std::isfinite(north) &&
+           west >= SIGURDOS_MAP_MIN_LON && east <= SIGURDOS_MAP_MAX_LON &&
+           south >= SIGURDOS_MAP_MIN_LAT && north <= SIGURDOS_MAP_MAX_LAT &&
+           west <= east && south <= north;
+}
+
+inline int sigurdos_map_marker_origin(int screen_coordinate,
+                                      int parent_screen_offset,
+                                      int marker_size) {
+    return screen_coordinate - parent_screen_offset - marker_size / 2;
+}
+
+template <typename AvailableFn>
+inline int sigurdos_map_select_available_zoom(int current, int direction,
+                                               int min_zoom, int max_zoom,
+                                               AvailableFn available) {
+    if (min_zoom > max_zoom) return current;
+    current = sigurdos_map_clamp_int(current, min_zoom, max_zoom);
+
+    if (direction != 0) {
+        const int step = direction > 0 ? 1 : -1;
+        for (int zoom = current + step;
+             zoom >= min_zoom && zoom <= max_zoom; zoom += step) {
+            if (available(zoom)) return zoom;
+        }
+        return current;
+    }
+
+    if (available(current)) return current;
+    for (int distance = 1; distance <= max_zoom - min_zoom; ++distance) {
+        const int lower = current - distance;
+        if (lower >= min_zoom && available(lower)) return lower;
+        const int upper = current + distance;
+        if (upper <= max_zoom && available(upper)) return upper;
+    }
+    return current;
+}
+
 template <typename T, typename FreeFn>
 inline bool sigurdos_map_release_owned_buffer(T*& buffer, FreeFn free_fn) {
     if (!buffer) return false;
@@ -248,6 +327,7 @@ inline bool sigurdos_map_release_owned_buffer(T*& buffer, FreeFn free_fn) {
 // Initialize the map renderer with LVGL parent object
 // Call after LVGL is initialized and SD card is mounted
 void sigurdos_map_init();
+bool sigurdos_map_initialized();
 
 // Discover available tile zoom levels (deferred from boot)
 void sigurdos_map_discover_tiles();
@@ -293,7 +373,7 @@ void sigurdos_map_latlon_to_pixel(double lat, double lon, int* out_px, int* out_
 
 // Contact marker overlay (pool of pre-allocated dots)
 // Call after map_init, before first render. parent = the non-null map overlay object.
-void sigurdos_map_contact_init(lv_obj_t* parent);
+void sigurdos_map_contact_init(lv_obj_t* parent, int parent_screen_y);
 // Reposition markers for contacts that have location data. contacts may be
 // null only when count is zero.
 void sigurdos_map_contact_render(const void* contacts, int count);

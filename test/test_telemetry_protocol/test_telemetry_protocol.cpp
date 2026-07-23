@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include "Arduino.h"
+#include "diagnostics/telemetry_policy.h"
 
 // Exercise the production telemetry implementation in this focused native test
 // without changing the global native build source filter.
@@ -35,6 +36,7 @@ protected:
         arduino_mock::reset();
         Serial.mock_clear_rx();
         Serial.mock_clear_tx();
+        sigurdos::diagnostics::writer().reset();
     }
 
     void expect_output(const char* expected) {
@@ -132,9 +134,58 @@ TEST_F(TelemetryProtocolTest, EmitsBuildIdentityRecordFields) {
     emit_kv_s(key::BOARD, "t-deck");
     emit_sep();
     emit_kv_s(key::MCU, "esp32s3");
+    emit_sep();
+    emit_kv_s(key::BUILD_SOURCE, "github_actions");
+    emit_sep();
+    emit_kv_s(key::RUN_ID, "1234");
+    emit_sep();
+    emit_kv_s(key::RUN_ATTEMPT, "2");
+    emit_sep();
+    emit_kv_s(key::REF, "feature|diagnostics");
+    emit_sep();
+    emit_kv_s(key::RUN_URL, "https://example.test/run=1234");
     emit_end();
 
-    expect_output("@build|fw=beta-0.1.39|git=abc123def456|dirty=1|mcore=9a888541efaf|env=SigurdOS_TDeck_telemetry|part=default_16MB.csv|board=t-deck|mcu=esp32s3\n");
+    expect_output("@build|fw=beta-0.1.39|git=abc123def456|dirty=1|mcore=9a888541efaf|env=SigurdOS_TDeck_telemetry|part=default_16MB.csv|board=t-deck|mcu=esp32s3|source=github_actions|run_id=1234|attempt=2|ref=feature%7Cdiagnostics|run_url=https://example.test/run%3D1234\n");
+}
+
+TEST_F(TelemetryProtocolTest, EveryDeclaredScreenHasATelemetryName) {
+    for (int value = 0;
+         value < static_cast<int>(sigurdos::ui::Screen::COUNT); ++value) {
+        EXPECT_STRNE(screen_name(static_cast<sigurdos::ui::Screen>(value)), "?");
+    }
+    EXPECT_STREQ(screen_name(sigurdos::ui::Screen::Bluetooth), "Bluetooth");
+}
+
+TEST_F(TelemetryProtocolTest, WidgetTraversalCountsDeepTreesAndReportsBudget) {
+    struct Node {
+        Node* children[65] = {};
+        uint32_t count = 0;
+    };
+    Node root;
+    Node child;
+    Node grandchild;
+    Node great_grandchild;
+    root.children[0] = &child;
+    root.count = 1;
+    child.children[0] = &grandchild;
+    child.count = 1;
+    grandchild.children[0] = &great_grandchild;
+    grandchild.count = 1;
+    auto child_count = [](Node* node) { return node->count; };
+    auto child_at = [](Node* node, uint32_t index) { return node->children[index]; };
+
+    const WidgetTreeCount deep = count_widget_tree(&root, child_count, child_at);
+    EXPECT_EQ(deep.count, 4);
+    EXPECT_FALSE(deep.truncated);
+
+    Node wide_root;
+    Node leaves[65];
+    wide_root.count = 65;
+    for (uint32_t i = 0; i < 65; ++i) wide_root.children[i] = &leaves[i];
+    const WidgetTreeCount wide =
+        count_widget_tree(&wide_root, child_count, child_at);
+    EXPECT_TRUE(wide.truncated);
 }
 
 TEST_F(TelemetryProtocolTest, EmitsFloatRecordsWithPrecision) {
@@ -157,6 +208,34 @@ TEST_F(TelemetryProtocolTest, PreservesNegativeSignForFractionalFloats) {
     emit_end();
 
     expect_output("@gps|lat=-0.5|lon=-12.25\n");
+}
+
+TEST_F(TelemetryProtocolTest, QueuesCompleteRecordsWhileSerialIsBackpressured) {
+    Serial.mock_set_available_for_write(0);
+    emit_record1_s(tag::ALERT, key::DESC, "deferred");
+    expect_output("");
+
+    Serial.mock_set_available_for_write(4096);
+    sigurdos::diagnostics::drain_diagnostic_output();
+    expect_output("@alert|desc=deferred\n");
+}
+
+TEST_F(TelemetryProtocolTest, DropsRecordsAtomicallyAndReportsLossLater) {
+    Serial.mock_set_available_for_write(0);
+    for (int i = 0; i < 120; ++i) {
+        emit_record1_s(tag::ALERT, key::DESC,
+                       "serial-output-is-intentionally-backpressured");
+    }
+    EXPECT_GT(sigurdos::diagnostics::writer().dropped_records(), 0u);
+    expect_output("");
+
+    Serial.mock_set_available_for_write(4096);
+    for (int i = 0; i < 12; ++i) {
+        sigurdos::diagnostics::drain_diagnostic_output(2048);
+    }
+    EXPECT_NE(Serial.mock_tx_output().find(
+                  "@alert|desc=diagnostic_output_dropped|n="),
+              std::string::npos);
 }
 
 }  // namespace

@@ -26,9 +26,11 @@
 #include "../notifications.h"
 #include "../contact_list_power.h"
 #include "../repeater_transcript.h"
+#include "../generation_owner.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/qr_show.h"
+#include "../../diagnostics/log.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
 #include <cstdio>
@@ -45,6 +47,42 @@ using namespace responsive;
 static int g_contacts_page = 0;
 static constexpr size_t REPEATER_TRANSCRIPT_CAPACITY = 16;
 static RepeaterTranscript<REPEATER_TRANSCRIPT_CAPACITY> g_repeater_transcript;
+static lv_obj_t* g_contact_detail_root = nullptr;
+static lv_timer_t* g_logout_timer = nullptr;
+static uint32_t g_contact_detail_generation = 0;
+
+struct LogoutTimerCtx {
+    lv_obj_t* root;
+    uint32_t generation;
+};
+
+static void cancel_logout_timer()
+{
+    if (!g_logout_timer) return;
+    delete static_cast<LogoutTimerCtx*>(lv_timer_get_user_data(g_logout_timer));
+    lv_timer_del(g_logout_timer);
+    g_logout_timer = nullptr;
+}
+
+static void start_logout_timer()
+{
+    cancel_logout_timer();
+    auto* ctx = new(std::nothrow) LogoutTimerCtx{
+        g_contact_detail_root, g_contact_detail_generation};
+    if (!ctx) return;
+    g_logout_timer = lv_timer_create([](lv_timer_t* timer) {
+        auto* owned = static_cast<LogoutTimerCtx*>(lv_timer_get_user_data(timer));
+        const bool still_current = timer == g_logout_timer && owned &&
+            ui_generation_matches(g_contact_detail_root, g_contact_detail_generation,
+                                  owned->root, owned->generation) &&
+            current_screen() == Screen::ContactDetail;
+        if (timer == g_logout_timer) g_logout_timer = nullptr;
+        delete owned;
+        lv_timer_del(timer);
+        if (still_current) go_back();
+    }, 600, ctx);
+    if (!g_logout_timer) delete ctx;
+}
 
 void show_contact_memory_error(lv_obj_t* scr)
 {
@@ -606,6 +644,18 @@ void show_login_password_dialog(const char* contact_name)
                     // Unchecking an existing opt-in must revoke the stored
                     // password instead of silently retaining the old secret.
                     sigurdos::removeRepeaterPassword(d->name);
+
+                if (sigurdos::mesh::sendLogin(d->name, pw)) {
+                    // Start a login-polling timer on the main screen
+                    start_login_poll_timer(d->name);
+                    // Save password to NVS if checkbox is checked
+                    if (d->save_cb &&
+                        (lv_obj_get_state(d->save_cb) & LV_STATE_CHECKED)) {
+                        sigurdos::saveRepeaterPassword(d->name, pw);
+                    }
+                } else {
+                    notifications_login_failure(
+                        d->name, LoginFailureReason::Rejected);
                 }
             }
         }
@@ -864,7 +914,7 @@ void show_admin_cmd_dialog(const char* contact_name)
     lv_obj_t* x_lbl = lv_label_create(close_btn);
     lv_label_set_text(x_lbl, LV_SYMBOL_CLOSE);
     lv_obj_center(x_lbl);
-    lv_obj_set_style_text_color(x_lbl, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(x_lbl, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
     lv_obj_add_event_cb(close_btn, [](lv_event_t* e) {
         lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
         lv_obj_t* top = lv_obj_get_parent(btn);
@@ -1092,7 +1142,7 @@ void show_fetch_msgs_dialog(const char* contact_name)
     lv_obj_t* fb = lv_label_create(fetch_btn);
     lv_label_set_text(fb, "Fetch");
     lv_obj_center(fb);
-    lv_obj_set_style_text_color(fb, lv_color_hex(0xffffff), 0);
+    lv_obj_set_style_text_color(fb, lv_color_hex(semantic_foreground(0x0088cc)), 0);
     lv_obj_set_user_data(fetch_btn, fd);
 
     lv_obj_add_event_cb(fetch_btn, [](lv_event_t* le) {
@@ -1155,11 +1205,20 @@ void show_fetch_msgs_dialog(const char* contact_name)
 void contact_detail_screen_show(const char* contact_name)
 {
     if (!contact_name || !contact_name[0]) {
-        Serial.println("[ui] contact_detail: empty name");
+        SIG_LOGW("UI: contact detail requested without a name");
         return;
     }
 
     lv_obj_t* scr = make_screen_full("Contact");
+    cancel_logout_timer();
+    g_contact_detail_root = scr;
+    g_contact_detail_generation = next_ui_generation(g_contact_detail_generation);
+    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+        lv_obj_t* deleted = (lv_obj_t*)lv_event_get_target(e);
+        if (deleted != g_contact_detail_root) return;
+        cancel_logout_timer();
+        g_contact_detail_root = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
 
     // Look up only the requested contact; the firmware can store 350 contacts.
     sigurdos::mesh::ContactInfo target_info{};
@@ -1543,7 +1602,13 @@ void contact_detail_screen_show(const char* contact_name)
             // Get public key hex for this contact
             char pubkey_hex[65] = {0};
             if (!sigurdos::mesh::getContactPubkeyHex(name, pubkey_hex, sizeof(pubkey_hex))) {
-                Serial.println("[qr] Failed to get pubkey for contact");
+                SIG_LOGW("QR: failed to get public key for contact");
+                lv_obj_t* label = lv_obj_get_child(btn, 0);
+                if (label) {
+                    lv_label_set_text(label, "QR unavailable");
+                    lv_obj_set_style_text_color(label, lv_color_hex(BG_PRIMARY), 0);
+                }
+                lv_obj_set_style_bg_color(btn, lv_color_hex(ACCENT_RED), 0);
                 return;
             }
 
@@ -1580,7 +1645,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_set_style_radius(remove_btn, 0, 0);
         lv_obj_t* rl = lv_label_create(remove_btn);
         lv_label_set_text(rl, LV_SYMBOL_CLOSE " Remove");
-        lv_obj_set_style_text_color(rl, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_text_color(rl, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
         lv_obj_center(rl);
         char* name_dup = strdup(remove_name);
         lv_obj_set_user_data(remove_btn, name_dup);
@@ -1667,7 +1732,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_set_style_radius(rp_btn, 0, 0);
         lv_obj_t* rp_lbl = lv_label_create(rp_btn);
         lv_label_set_text(rp_lbl, LV_SYMBOL_REFRESH " Reset Path");
-        lv_obj_set_style_text_color(rp_lbl, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_text_color(rp_lbl, lv_color_hex(semantic_foreground(ACCENT_ORANGE)), 0);
         lv_obj_center(rp_lbl);
         lv_obj_set_user_data(rp_btn, rp_name);
         lv_obj_add_event_cb(rp_btn, [](lv_event_t* e) {
@@ -1727,7 +1792,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_set_style_radius(dp_btn, 0, 0);
         lv_obj_t* dp_lbl = lv_label_create(dp_btn);
         lv_label_set_text(dp_lbl, LV_SYMBOL_DIRECTORY " Discover");
-        lv_obj_set_style_text_color(dp_lbl, lv_color_hex(0xffffff), 0);
+        lv_obj_set_style_text_color(dp_lbl, lv_color_hex(semantic_foreground(0x0088cc)), 0);
         lv_obj_center(dp_lbl);
         lv_obj_set_user_data(dp_btn, dp_name);
         lv_obj_add_event_cb(dp_btn, [](lv_event_t* e) {
@@ -1786,17 +1851,14 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* lo_lbl = lv_label_create(lo_btn);
             lv_label_set_text(lo_lbl, LV_SYMBOL_REFRESH " Logout");
             lv_obj_center(lo_lbl);
-            lv_obj_set_style_text_color(lo_lbl, lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_text_color(lo_lbl, lv_color_hex(semantic_foreground(ACCENT_ORANGE)), 0);
             lv_obj_set_user_data(lo_btn, lo_name);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
                 lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
                 const char* name = (const char*)lv_obj_get_user_data(target);
                 if (name) {
                     sigurdos::mesh::sendLogout(name);
-                    lv_timer_create([](lv_timer_t* t) {
-                        go_back();
-                        lv_timer_del(t);
-                    }, 600, nullptr);
+                    start_logout_timer();
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(lo_btn, [](lv_event_t* e) {
@@ -1822,7 +1884,7 @@ void contact_detail_screen_show(const char* contact_name)
             lv_obj_t* fm_lbl = lv_label_create(fm_btn);
             lv_label_set_text(fm_lbl, LV_SYMBOL_LIST " Fetch Msgs");
             lv_obj_center(fm_lbl);
-            lv_obj_set_style_text_color(fm_lbl, lv_color_hex(0xffffff), 0);
+            lv_obj_set_style_text_color(fm_lbl, lv_color_hex(semantic_foreground(0x0088cc)), 0);
             lv_obj_set_user_data(fm_btn, fm_name);
             lv_obj_add_event_cb(fm_btn, [](lv_event_t* e) {
                 lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);

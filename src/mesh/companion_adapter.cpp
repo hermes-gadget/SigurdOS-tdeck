@@ -11,10 +11,12 @@
 #include "utils/utf8_util.h"
 #include "companion_message_policy.h"
 #include "companion_ble_pin.h"
+#include "channel_validation.h"
 #include "mesh_wrapper.h"
 #include "mesh_wrapper_internal.h"
 #include "scope_key_hex.h"
 #include "message_store.h"
+#include "contact_store.h"
 #include "regions.h"
 #include "sigurd_mesh_v2.h"
 #include "advert_blob.h"
@@ -23,6 +25,7 @@
 #include "telemetry_response_policy.h"
 #include "comms/companion_bridge.h"
 #include "comms/observed_ble_interface.h"
+#include "comms/ble_bond_rotation.h"
 #include "hal/tdeck_pins.h"
 #include "hal/prefs.h"
 #include "hal/radio_profiles.h"
@@ -33,6 +36,7 @@
 #include <Arduino.h>
 #include <SPIFFS.h>
 #include <cstdlib>
+#include <cstring>
 #include <new>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
@@ -102,11 +106,13 @@ static CompanionBridge* companionBridge()
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 static sigurdos::comms::ObservedSerialBLEInterface g_ble_serial;
+static sigurdos::comms::BleBondRotationState g_ble_bond_rotation;
 #elif defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
 #include <helpers/ArduinoSerialInterface.h>
 static ArduinoSerialInterface g_usb_serial;
 #endif
 
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 static void generate_random_ble_pin() {
     sigurdos::NodePrefs p = sigurdos::prefs_get();
     if (p.ble_pin != 0) return;  // already generated
@@ -117,6 +123,7 @@ static void generate_random_ble_pin() {
     p.ble_pin = pin;
     sigurdos::prefs_set(p);
 }
+#endif
 
 static void fillStoredPrefixForName(const char* name, uint8_t* out)
 {
@@ -297,6 +304,8 @@ public:
     }
     bool setChannel(int index, const CompanionChannel& channel) override {
         if (!mesh_ptr() || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
+        if (!memchr(channel.name, '\0', sizeof(channel.name))) return false;
+        if (channel.name[0] && !sigurdos::mesh::channel_name_valid(channel.name)) return false;
         ChannelDetails cd{};
         strncpy(cd.name, channel.name, sizeof(cd.name) - 1);
         memcpy(cd.channel.secret, channel.secret, sizeof(cd.channel.secret));
@@ -549,7 +558,13 @@ public:
     bool setBlePin(uint32_t pin) override {
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         if (!sigurdos::mesh::applyCompanionBlePin(p, pin)) return false;
-        return sigurdos::prefs_set(p);
+        // Commit the replacement credential and crash-recovery marker
+        // together. Advertising stays blocked until every old bond is gone.
+        if (!sigurdos::prefs_set(p)) return false;
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+        g_ble_bond_rotation.request(millis(), true);
+#endif
+        return true;
     }
 
     bool exportPrivateKey(uint8_t* out64) const override {
@@ -604,25 +619,65 @@ public:
         if (!mesh_ptr() || !sigurdos::mesh::path::storedLengthValid(c.out_path_len)) {
             return false;
         }
-        ::ContactInfo* existing = mesh_ptr()->lookupContactByPubKey((const uint8_t*)c.pub_key, 32);
+        if (!sigurdos::mesh::contactCandidateValid(c.name, c.pub_key, c.type)) {
+            return false;
+        }
+        // bit 0 is favourite and bits 1-2 are the MeshCore ACL.  Do not
+        // persist undefined peer-controlled flag bits.
+        if ((c.flags & 0xF8U) != 0) return false;
+
+        ::ContactInfo* existing = mesh_ptr()->lookupContactByPubKey(
+            (const uint8_t*)c.pub_key, 32);
+        uint32_t high_water = 0;
+        ::ContactInfo candidate;
+        for (int i = 0; i < mesh_ptr()->getNumContacts(); ++i) {
+            if (!mesh_ptr()->getContactByIdx((uint32_t)i, candidate)) continue;
+            if (candidate.lastmod > high_water) high_water = candidate.lastmod;
+            if (std::memcmp(candidate.id.pub_key, c.pub_key, 32) != 0 &&
+                sigurdos::mesh::contactCandidateDuplicates(
+                    c.name, c.pub_key, candidate.name, candidate.id.pub_key)) {
+                return false;
+            }
+        }
+        uint32_t local_revision = 0;
+        if (!sigurdos::mesh::nextContactRevision(
+                meshRtcTimeUnique(), high_water, local_revision)) return false;
+
         ::ContactInfo ci{};
         if (existing) ci = *existing;
         memcpy(ci.id.pub_key, c.pub_key, 32);
         ci.type = c.type;
         ci.flags = c.flags;
         ci.out_path_len = c.out_path_len;
-        memcpy(ci.out_path, c.out_path, sizeof(ci.out_path));
+        memset(ci.out_path, 0, sizeof(ci.out_path));
+        if (c.out_path_len != sigurdos::mesh::path::UNKNOWN &&
+            c.out_path_len > 0) {
+            const size_t encoded_len = sigurdos::mesh::path::byteCount(
+                c.out_path_len);
+            memcpy(ci.out_path, c.out_path, encoded_len);
+        }
         strncpy(ci.name, c.name, sizeof(ci.name) - 1);
         ci.name[sizeof(ci.name) - 1] = '\0';
         ci.last_advert_timestamp = c.last_advert_timestamp;
         ci.gps_lat = c.gps_lat;
         ci.gps_lon = c.gps_lon;
-        ci.lastmod = c.lastmod;
+        // The peer's lastmod is an import cursor, not authority over this
+        // device's mutation sequence.  Every accepted update receives a new
+        // strictly increasing local revision.
+        ci.lastmod = local_revision;
         bool ok;
-        if (existing) { *existing = ci; ok = true; }
-        else ok = mesh_ptr()->addContact(ci);
-        if (ok) sigurdos::mesh::saveContacts();
-        return ok;
+        if (existing) {
+            const ::ContactInfo previous = *existing;
+            *existing = ci;
+            ok = sigurdos::mesh::saveContacts();
+            if (!ok) *existing = previous;
+            return ok;
+        }
+        ok = mesh_ptr()->addContact(ci);
+        if (!ok) return false;
+        if (sigurdos::mesh::saveContacts()) return true;
+        mesh_ptr()->removeContactByPubKey(c.pub_key);
+        return false;
     }
     bool removeContactByPubKey(const uint8_t* pub_key) override {
         if (!mesh_ptr() || !pub_key) return false;
@@ -667,8 +722,6 @@ public:
     // ── System ───────────────────────────────────────────────
     void reboot() override {
         sigurdos::mesh::saveState();
-        sigurdos::mesh::saveContacts();
-        sigurdos::mesh::saveChannels();
         delay(200);
         ESP.restart();
     }
@@ -729,7 +782,10 @@ public:
             // Check if a persisted private key exists (for $private scopes)
             const sigurdos::NodePrefs& p = sigurdos::prefs_get();
             if (p.default_scope_key_hex[0] != '\0' && active[0] == '$') {
-                sigurdos::mesh::scopeKeyHexDecode(p.default_scope_key_hex, key_out);
+                if (!sigurdos::mesh::scopeKeyHexDecode(
+                        p.default_scope_key_hex, key_out)) {
+                    memcpy(key_out, keys[0].key, 16);
+                }
             } else {
                 memcpy(key_out, keys[0].key, 16);
             }
@@ -966,22 +1022,11 @@ private:
         if (!mesh_ptr() || !pub_key) return r;
         ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
         if (!c) return r;
-        char name[32];
-        strncpy(name, c->name, sizeof(name) - 1);
-        name[sizeof(name) - 1] = '\0';
-        bool ok = telemetry ? sigurdos::mesh::requestTelemetry(name)
-                            : sigurdos::mesh::requestStatus(name);
-        if (!ok) return r;
         uint8_t want = telemetry ? (uint8_t)REQ_TYPE_GET_TELEMETRY_DATA
                                  : (uint8_t)REQ_TYPE_GET_STATUS;
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (mesh_ptr()->_pending_reqs[i].in_use &&
-                mesh_ptr()->_pending_reqs[i].req_type == want &&
-                strcmp(mesh_ptr()->_pending_reqs[i].dest_name, name) == 0) {
-                r.expected_ack = mesh_ptr()->_pending_reqs[i].tag;
-                break;
-            }
-        }
+        uint32_t tag = 0;
+        if (!mesh_ptr()->sendRequest(*c, want, &tag) || tag == 0) return r;
+        r.expected_ack = tag;
         r.ok = true;
         r.sent_flood = (c->out_path_len == 0xFF);
         r.est_timeout = 0;
@@ -1180,6 +1225,56 @@ static void bleValidationStartLog() {}
 static void bleValidationEmit(bool) {}
 #endif
 
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+static void serviceBleBondRotation()
+{
+    if (!g_ble_bond_rotation.pending()) return;
+    const uint32_t now = millis();
+    // If the initiating phone leaves before the response grace expires, purge
+    // immediately so the base transport's delayed advertising restart cannot
+    // admit a different device with an old bond.
+    if (!g_ble_bond_rotation.purgeStarted() && !g_ble_serial.isConnected()) {
+        g_ble_bond_rotation.expedite(now);
+    }
+    if (!g_ble_bond_rotation.actionDue(now)) return;
+
+    if (!g_ble_bond_rotation.purgeStarted()) {
+        if (g_ble_serial.removeAllBonds()) {
+            g_ble_bond_rotation.purgeSubmitted(now);
+        } else {
+            SIG_LOGW("[mesh] BLE bond purge could not start; retrying with advertising disabled");
+            g_ble_bond_rotation.retryLater(now);
+        }
+        return;
+    }
+
+    const int remaining = g_ble_serial.bondedDeviceCount();
+    if (remaining == 0) {
+        sigurdos::NodePrefs p = sigurdos::prefs_get();
+        p.ble_bond_reset_pending = false;
+        if (!sigurdos::prefs_set(p)) {
+            SIG_LOGW("[mesh] BLE bond purge complete but marker clear failed; retrying");
+            g_ble_bond_rotation.retryLater(now);
+            return;
+        }
+        g_ble_bond_rotation.clear();
+        SIG_LOGW("[mesh] BLE credential rotation complete; restarting");
+        delay(25);
+        ESP.restart();
+        return;
+    }
+
+    // Removal completion is asynchronous. Re-submit entries still in the
+    // security database and keep the service stopped until the count reaches 0.
+    if (remaining > 0 && g_ble_serial.removeAllBonds()) {
+        g_ble_bond_rotation.purgeSubmitted(now);
+    } else {
+        SIG_LOGW("[mesh] BLE bond purge incomplete; retrying with advertising disabled");
+        g_ble_bond_rotation.retryLater(now);
+    }
+}
+#endif
+
 // ── Adapter lifecycle (called from mesh_wrapper.cpp) ─────────────────
 
 void sigurdos::mesh::companionAdapterIdentityChanged()
@@ -1203,7 +1298,13 @@ void sigurdos::mesh::companionAdapterInit()
     g_ble_serial.configure("MeshCore-", ble_name, g_companion_host.blePin());
     if (CompanionBridge* b = companionBridge()) {
         b->begin(&g_ble_serial, &g_companion_host);
-        if (sigurdos::prefs_get().ble_enabled) {
+        const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
+        if (prefs.ble_bond_reset_pending) {
+            // Crash-safe resume: only the purge path initializes BLE, and it
+            // never starts advertising under a bond made with the old PIN.
+            g_ble_bond_rotation.request(millis(), false);
+            SIG_LOGW("[mesh] BLE bond purge pending; advertising withheld");
+        } else if (prefs.ble_enabled) {
             bool enabled = b->setEnabled(true);
 #if defined(SIGURDOS_DEBUG) || \
     (defined(SIGURDOS_COMPANION_BLE_VALIDATION) && SIGURDOS_COMPANION_BLE_VALIDATION)
@@ -1222,7 +1323,9 @@ void sigurdos::mesh::companionAdapterInit()
         bleValidationStartLog();
     }
 #elif defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
-    g_usb_serial.begin(Serial);
+    // `Serial` is deliberately macro-redirected to the discard console in
+    // this build. Bind the binary protocol to the captured real USB CDC stream.
+    g_usb_serial.begin(sigurdos::diagnostics::companionUsbDataStream());
     if (CompanionBridge* b = companionBridge()) {
         b->begin(&g_usb_serial, &g_companion_host);
         b->setEnabled(true);
@@ -1233,6 +1336,9 @@ void sigurdos::mesh::companionAdapterInit()
 void sigurdos::mesh::companionAdapterLoop()
 {
     if (g_companion_bridge_ptr) g_companion_bridge_ptr->loop();
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    serviceBleBondRotation();
+#endif
     bleValidationEmit(false);
 }
 
@@ -1259,6 +1365,16 @@ bool companionBleSetEnabled(bool enabled) {
     p.ble_enabled = enabled;
     sigurdos::prefs_set(p);
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool companionBleOpenPairingWindow() {
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    if (!g_ble_serial.isEnabled()) return false;
+    g_ble_serial.openPairingWindow();
     return true;
 #else
     return false;

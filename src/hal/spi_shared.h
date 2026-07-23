@@ -41,3 +41,4 @@ class SPIClass;  // forward decl — full definition from Arduino.h / mock
 SPIClass& sigurdos_shared_spi();
 void      sigurdos_shared_spi_begin(int sck, int miso, int mosi);
 void      sigurdos_shared_spi_begin(int sck, int miso, int mosi, int cs);
+bool      sigurdos_shared_spi_reset(int sck, int miso, int mosi, int cs);

@@ -21,8 +21,11 @@
 #include "home_screen.h"
 #include "chat_screen.h"
 #include "screens.h"
+#include "screens_common.h"
 #include "onboarding_screen.h"
+#include "../hal/prefs.h"
 #include <lvgl.h>
+#include <cstdint>
 #include <cstring>
 #if SIGURDOS_TELEMETRY
 #include "../diagnostics/telemetry.h"
@@ -66,6 +69,30 @@ static int back_swipe_commit = 0; // counter for two-swipe commit
 static char contact_detail_name[32] = {};
 static char repeater_detail_name[32] = {};
 static bool repeater_detail_skip_login = false;
+static bool forced_navigation = false;
+static Screen forced_screen = Screen::Home;
+
+enum class PendingNavigationType : uint8_t {
+    None,
+    Forward,
+    Back,
+    Refresh,
+};
+
+struct PendingNavigation {
+    PendingNavigationType type = PendingNavigationType::None;
+    Screen source = Screen::Home;
+    Screen target = Screen::Home;
+};
+
+static PendingNavigation pending_navigation;
+
+static void clear_pending_navigation()
+{
+    pending_navigation.type = PendingNavigationType::None;
+    pending_navigation.source = Screen::Home;
+    pending_navigation.target = Screen::Home;
+}
 
 static bool copy_route_name(char* destination, size_t capacity, const char* name)
 {
@@ -75,7 +102,55 @@ static bool copy_route_name(char* destination, size_t capacity, const char* name
     return true;
 }
 
-static void dispatch_screen(Screen screen) {
+bool is_pin_protected_route(Screen screen)
+{
+    switch (screen) {
+    case Screen::Settings:
+    case Screen::Terminal:
+    case Screen::RadioSetup:
+    case Screen::SettingsRadio:
+    case Screen::SettingsGPS:
+    case Screen::SettingsDisplay:
+    case Screen::SettingsSystem:
+    case Screen::NodeStats:
+    case Screen::WiFiNetworks:
+    case Screen::Bluetooth:
+    case Screen::Regions:
+    case Screen::CustomRadioSetup:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool route_ready(Screen screen)
+{
+    if (!navigation_screen_valid(screen)) return false;
+    if (screen == Screen::ContactDetail) return contact_detail_name[0] != '\0';
+    if (screen == Screen::RepeaterDetail) return repeater_detail_name[0] != '\0';
+    return true;
+}
+
+static bool route_needs_pin(Screen screen)
+{
+    return is_pin_protected_route(screen) &&
+           sigurdos::prefs_get().device_pin != 0 &&
+           !pin_grace_active();
+}
+
+static bool authorize_route(Screen screen, PendingNavigationType type)
+{
+    if (!route_needs_pin(screen)) return true;
+
+    pending_navigation.type = type;
+    pending_navigation.source = current;
+    pending_navigation.target = screen;
+    pin_entry_show(screen);
+    return false;
+}
+
+static void dispatch_screen_unchecked(Screen screen)
+{
     switch (screen) {
     case Screen::Home:       home_screen_show();       break;
     case Screen::Chat:       chat_screen_show();       break;
@@ -116,32 +191,77 @@ static void dispatch_screen(Screen screen) {
     }
 }
 
-void navigate_to(Screen screen)
+static void report_transition(Screen previous, Screen target)
 {
-    if (screen == current) return;
-
-    back_swipe_commit = 0; // reset back-swipe state on new navigation
-    highlight_back_button(false);
-
-    // Push current screen onto history before navigating away
-#if SIGURDOS_TELEMETRY
-    Screen previous = current;
-#endif
-    push_history(current);
-    current = screen;
-
-    dispatch_screen(screen);
-
 #if SIGURDOS_TELEMETRY
     sigurdos::telemetry::report_screen_transition(
         static_cast<uint8_t>(previous),
-        static_cast<uint8_t>(screen),
+        static_cast<uint8_t>(target),
         lv_tick_get());
+#else
+    (void)previous;
+    (void)target;
 #endif
 }
 
+static void navigate_forward_unchecked(Screen screen)
+{
+    if (!route_ready(screen)) return;
+    back_swipe_commit = 0;
+    highlight_back_button(false);
+
+    const Screen previous = current;
+    push_history(current);
+    current = screen;
+    dispatch_screen_unchecked(screen);
+    report_transition(previous, screen);
+}
+
+static void navigate_back_unchecked(Screen target)
+{
+    if (!route_ready(target) || history_empty() || history[history_top] != target) return;
+
+    back_swipe_commit = 0;
+    highlight_back_button(false);
+
+    const Screen previous = current;
+    pop_history();
+    current = target;
+    dispatch_screen_unchecked(target);
+    report_transition(previous, target);
+}
+
+void navigate_to(Screen screen)
+{
+    if (!route_ready(screen)) return;
+    if (screen == current) return;
+    if (forced_navigation && screen != forced_screen) return;
+    if (pending_navigation.type != PendingNavigationType::None) return;
+    if (!authorize_route(screen, PendingNavigationType::Forward)) return;
+    navigate_forward_unchecked(screen);
+}
+
+void navigate_to_forced(Screen screen)
+{
+    // Forced navigation is intentionally narrow: it is the first-boot setup
+    // root, not a general way to bypass PIN authorization or history.
+    if (screen != Screen::Onboarding || !route_ready(screen)) return;
+    clear_pending_navigation();
+    history_top = -1;
+    back_swipe_commit = 0;
+    forced_navigation = true;
+    forced_screen = screen;
+    current = screen;
+    highlight_back_button(false);
+    dispatch_screen_unchecked(screen);
+}
+
+bool navigation_is_forced() { return forced_navigation; }
+
 void navigate_to_contact_detail(const char* contact_name)
 {
+    if (forced_navigation) return;
+    if (pending_navigation.type != PendingNavigationType::None) return;
     if (!copy_route_name(contact_detail_name, sizeof(contact_detail_name), contact_name)) return;
     if (current == Screen::ContactDetail) {
         contact_detail_screen_show(contact_detail_name);
@@ -152,6 +272,8 @@ void navigate_to_contact_detail(const char* contact_name)
 
 void navigate_to_repeater_detail(const char* contact_name, bool skip_login)
 {
+    if (forced_navigation) return;
+    if (pending_navigation.type != PendingNavigationType::None) return;
     if (!copy_route_name(repeater_detail_name, sizeof(repeater_detail_name), contact_name)) return;
     repeater_detail_skip_login = skip_login;
     if (current == Screen::RepeaterDetail) {
@@ -168,31 +290,18 @@ void navigate_to_custom_radio_setup()
 
 void go_back()
 {
+    if (forced_navigation) return;
+    if (pending_navigation.type != PendingNavigationType::None) return;
     if (history_empty()) return; // nowhere to go back to
 
-    back_swipe_commit = 0; // reset back-swipe state on back navigation
-    highlight_back_button(false);
-
-    Screen target = pop_history();
-    // Navigate directly without pushing current (we're going back, not forward)
-#if SIGURDOS_TELEMETRY
-    Screen previous = current;
-#endif
-    current = target;
-
-    dispatch_screen(target);
-
-#if SIGURDOS_TELEMETRY
-    sigurdos::telemetry::report_screen_transition(
-        static_cast<uint8_t>(previous),
-        static_cast<uint8_t>(target),
-        lv_tick_get());
-#endif
+    const Screen target = history[history_top];
+    if (!authorize_route(target, PendingNavigationType::Back)) return;
+    navigate_back_unchecked(target);
 }
 
 bool can_go_back()
 {
-    return !history_empty();
+    return !forced_navigation && !history_empty();
 }
 
 Screen current_screen()
@@ -202,8 +311,78 @@ Screen current_screen()
 
 void refresh_current_screen()
 {
-    dispatch_screen(current);
+    if (!route_ready(current)) return;
+    if (pending_navigation.type != PendingNavigationType::None) return;
+    if (!authorize_route(current, PendingNavigationType::Refresh)) return;
+    dispatch_screen_unchecked(current);
 }
+
+bool refresh_current_screen_if(Screen expected)
+{
+    if (!screen_refresh_matches(expected, current)) return false;
+    refresh_current_screen();
+    return true;
+}
+
+void navigation_pin_unlocked(Screen target_screen)
+{
+    const PendingNavigation pending = pending_navigation;
+    clear_pending_navigation();
+    if (!route_ready(target_screen) ||
+        (forced_navigation && target_screen != forced_screen)) {
+        return;
+    }
+
+    // Screen-local checks remain as defence in depth.  If a renderer was
+    // invoked outside the router, there is no pending operation to resume.
+    if (pending.type == PendingNavigationType::None) {
+        if (current == target_screen) {
+            dispatch_screen_unchecked(target_screen);
+        } else {
+            navigate_forward_unchecked(target_screen);
+        }
+        return;
+    }
+
+    // A stale PIN screen must never resume a newer/different denied route.
+    if (pending.target != target_screen || pending.source != current) return;
+
+    switch (pending.type) {
+    case PendingNavigationType::Forward:
+        if (target_screen != current) navigate_forward_unchecked(target_screen);
+        break;
+    case PendingNavigationType::Back:
+        if (!history_empty() && history[history_top] == target_screen) {
+            navigate_back_unchecked(target_screen);
+        }
+        break;
+    case PendingNavigationType::Refresh:
+        if (current == target_screen) dispatch_screen_unchecked(target_screen);
+        break;
+    case PendingNavigationType::None:
+        break;
+    }
+}
+
+void navigation_pin_cancelled()
+{
+    clear_pending_navigation();
+}
+
+#ifdef SIGURDOS_NAVIGATION_TEST
+void navigation_reset_for_test(Screen initial)
+{
+    current = navigation_screen_valid(initial) ? initial : Screen::Home;
+    history_top = -1;
+    back_swipe_commit = 0;
+    contact_detail_name[0] = '\0';
+    repeater_detail_name[0] = '\0';
+    repeater_detail_skip_login = false;
+    forced_navigation = false;
+    forced_screen = Screen::Home;
+    clear_pending_navigation();
+}
+#endif
 
 // ════════════════════════════════════════════════════
 // Universal back-swipe (two-swipe commit)

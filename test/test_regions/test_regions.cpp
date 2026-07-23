@@ -34,7 +34,9 @@
 #include "mesh/regions.h"
 #include "mesh/mesh_wrapper.h"
 #include "mesh/persistence_store.h"
+#include "mesh/region_name.h"
 #include "hal/atomic_file.h"
+#include "mocks/unique_temp_dir.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -45,10 +47,10 @@
 
 namespace {
 
-static constexpr const char* REGION_LIVE =
-    "/tmp/sigurdos_region_store_test.bin";
-static constexpr const char* REGION_RAW =
-    "/tmp/sigurdos_region_store_test.raw";
+static const auto REGION_LIVE =
+    sigurdos::test::processTempDir().file("region_store.bin");
+static const auto REGION_RAW =
+    sigurdos::test::processTempDir().file("region_store.raw");
 
 static void writeU16(std::vector<uint8_t>& data, size_t offset,
                      uint16_t value) {
@@ -170,6 +172,28 @@ TEST(RegionsTest, AddRegionRejectsNullName) {
 
 TEST(RegionsTest, AddRegionRejectsEmptyName) {
     EXPECT_EQ(sigurdos::mesh::addRegion("", nullptr), nullptr);
+}
+
+TEST(RegionsTest, CanonicalNameGrammarIsStrictAscii)
+{
+    using sigurdos::mesh::regionNameValid;
+    EXPECT_TRUE(regionNameValid("#public-zone_2"));
+    EXPECT_TRUE(regionNameValid("$private_key"));
+    EXPECT_TRUE(regionNameValid("implicit"));
+    EXPECT_FALSE(regionNameValid("#"));
+    EXPECT_FALSE(regionNameValid("$"));
+    EXPECT_FALSE(regionNameValid("#has space"));
+    EXPECT_FALSE(regionNameValid("#bad/slash"));
+    EXPECT_FALSE(regionNameValid("#bad\xC3\xA9"));
+    EXPECT_FALSE(regionNameValid("#abcdefghijklmnopqrstuvwxyz12345"));
+}
+
+TEST(RegionsTest, CrudRejectsNamesOutsideCanonicalGrammar)
+{
+    EXPECT_EQ(sigurdos::mesh::addRegion("#bad name", nullptr), nullptr);
+    EXPECT_EQ(sigurdos::mesh::addRegion("#bad/slash", nullptr), nullptr);
+    EXPECT_EQ(sigurdos::mesh::addRegion("#", nullptr), nullptr);
+    EXPECT_FALSE(sigurdos::mesh::setActiveRegionName("#bad name"));
 }
 
 TEST(RegionsTest, PrivateRegionKeyCanBeAddedAndReloaded) {
@@ -356,6 +380,29 @@ TEST_F(RegionStoreTest, AcceptsOnlyCompleteValidatedLegacyFiles) {
     std::vector<uint8_t> malformed = raw;
     writeU16(malformed, 12, 99);  // missing parent
     writeFile(REGION_RAW, malformed);
+    EXPECT_FALSE(sigurdos::mesh::detail::regionStoreSaveLegacyFile(
+        REGION_LIVE, REGION_RAW));
+
+    const std::vector<uint8_t> invalid_name = legacyRegionFile("#bad/name");
+    writeFile(REGION_LIVE, invalid_name);
+    EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+              sigurdos::mesh::detail::RegionStoreFormat::Invalid);
+}
+
+TEST_F(RegionStoreTest, RejectsMultiNodeParentCycles) {
+    std::vector<uint8_t> raw(10 + 2 * 164, 0);
+    writeU16(raw, 8, 3);  // next id
+
+    writeU16(raw, 10, 1);
+    writeU16(raw, 12, 2);
+    std::memcpy(&raw[14], "#alpha", 7);
+
+    const size_t second = 10 + 164;
+    writeU16(raw, second, 2);
+    writeU16(raw, second + 2, 1);
+    std::memcpy(&raw[second + 4], "#beta", 6);
+
+    writeFile(REGION_RAW, raw);
     EXPECT_FALSE(sigurdos::mesh::detail::regionStoreSaveLegacyFile(
         REGION_LIVE, REGION_RAW));
 }

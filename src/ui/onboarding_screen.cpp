@@ -4,6 +4,7 @@
 #include "responsive.h"
 #include "chat_screen.h"
 #include "screens.h"
+#include "screens_common.h"
 #include "../fonts/emoji_font.h"
 #include "../hal/prefs.h"
 #include "../hal/radio_profiles.h"
@@ -42,7 +43,6 @@ static lv_obj_t* s_sf_label = nullptr;
 static lv_obj_t* s_pwr_label = nullptr;
 
 static void rebuild_content();
-static void show_screen(lv_obj_t* scr);
 
 static void clear_widget_ptrs()
 {
@@ -150,8 +150,8 @@ static void build_step1()
         // Skip date/time step if the clock already has a valid time
         // (set at build time, by companion app, GPS, or Launcher/flasher).
         // A Unix epoch before 2026-06-01 means the clock was never explicitly set.
-        uint32_t now = sigurdos::mesh::getCurrentTime();
-        s_step = (now > 1751232000) ? 2 : 1;  // 2026-06-01 = 1751232000
+        const uint32_t now = sigurdos::mesh::getCurrentTime();
+        s_step = onboarding_clock_valid(now) ? 2 : 1;
         lv_timer_create([](lv_timer_t* t) { lv_timer_del(t); rebuild_content(); }, 1, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
     add_to_group(next_btn);
@@ -460,16 +460,18 @@ void onboarding_screen_show()
     lv_obj_set_style_pad_all(top, 0, 0);
     lv_obj_set_style_border_width(top, 0, 0);
 
-    lv_obj_t* back = lv_btn_create(top);
-    lv_obj_set_size(back, 24, TOP_BAR_H - 4);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
-    apply_topbar_icon_btn(back);
-    lv_obj_add_event_cb(back, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* back_icon = lv_label_create(back);
-    lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
-    lv_obj_set_style_text_color(back_icon, lv_color_hex(ACCENT), 0);
-    lv_obj_set_style_text_font(back_icon, emoji_wrapped_montserrat_12, 0);
-    lv_obj_center(back_icon);
+    if (can_go_back()) {
+        lv_obj_t* back = lv_btn_create(top);
+        lv_obj_set_size(back, 24, TOP_BAR_H - 4);
+        lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
+        apply_topbar_icon_btn(back);
+        lv_obj_add_event_cb(back, [](lv_event_t*) { go_back(); }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t* back_icon = lv_label_create(back);
+        lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
+        lv_obj_set_style_text_color(back_icon, lv_color_hex(ACCENT), 0);
+        lv_obj_set_style_text_font(back_icon, emoji_wrapped_montserrat_12, 0);
+        lv_obj_center(back_icon);
+    }
 
     lv_obj_t* title_lbl = lv_label_create(top);
     lv_label_set_text(title_lbl, "Setup Wizard");
@@ -503,13 +505,6 @@ void onboarding_screen_show()
 
     rebuild_content();
     show_screen(s_scr);
-}
-
-static void show_screen(lv_obj_t* scr)
-{
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
-    if (old_scr && old_scr != scr) lv_obj_del_async(old_scr);
 }
 
 } // namespace sigurdos::ui

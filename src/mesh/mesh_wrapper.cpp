@@ -6,6 +6,7 @@
 
 #include "mesh_wrapper.h"
 #include "mesh_wrapper_internal.h"
+#include "mesh_safety_policy.h"
 #include "mesh_init_lifecycle.h"
 #include "companion_adapter.h"
 #include "channel_validation.h"
@@ -14,12 +15,20 @@
 #include "companion_message_policy.h"
 #include "cmd_response_queue.h"
 #include "durable_fanout.h"
+#include "state_checkpoint.h"
 #include "contact_store.h"
 #include "contact_uri.h"
+#include "esp32_hardware_rng.h"
+#include "contact_revision.h"
+#include "channel_uri.h"
 #include "persistence_store.h"
 #include "response_copy.h"
+#include "telemetry_lpp_parser.h"
+#include "capacity_policy.h"
+#include "region_name.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
+#include "hal/boot_watchdog.h"
 #include "hal/gps.h"
 #include "hal/prefs.h"
 #include "hal/github_ota.h"
@@ -28,6 +37,7 @@
 #include "regions.h"
 #include "utils/utf8_util.h"
 #include "../diagnostics/debug_cfg.h"
+#include "../diagnostics/telemetry.h"
 #include <helpers/sensors/LPPDataHelpers.h>
 
 // REQ_TYPE constants not defined in core BaseChatMesh.h (only in examples)
@@ -38,6 +48,7 @@
 #include <SPIFFS.h>
 #include <Preferences.h>  // for NVS prefs
 #include <mbedtls/base64.h>
+#include "channel_uri.h"
 #include <time.h>
 #include <Mesh.h>
 #include <helpers/SimpleMeshTables.h>
@@ -48,6 +59,7 @@
 #include <helpers/StaticPoolPacketManager.h>
 #include "hal/spi_shared.h"
 #include <new>
+#include <type_traits>
 
 using sigurdos::mesh::MeshMessage;
 
@@ -77,7 +89,10 @@ static OwnedSX1262Wrapper*        radio_driver = nullptr;
 static bool                      radio_inited = false;
 static ESP32RTCClock             fallback_clock;
 static AutoDiscoverRTCClock      rtc_clock(fallback_clock);
-static StdRNG                    fast_rng;
+using ProductionMeshRng = sigurdos::mesh::Esp32HardwareRng;
+static_assert(!std::is_same<ProductionMeshRng, StdRNG>::value,
+              "Production identity generation must not use StdRNG");
+static ProductionMeshRng        hardware_rng;
 static SimpleMeshTables          tables;
 static ArduinoMillis             millis_clock;
 static StaticPoolPacketManager   pkt_mgr(16);
@@ -187,7 +202,7 @@ static bool presentIncomingMessage(void* raw)
         ? ctx->sender_timestamp : rtc_clock.getCurrentTime();
     m.store_id = ctx->store_id;
     m.is_self = false;
-    if (strcmp(ctx->sender, own_name) != 0) unread_count++;
+    unread_count++;
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     const char* ptype = (ctx->channel && ctx->channel[0]) ? "CHANNEL" : "DM";
@@ -216,6 +231,7 @@ void sigurdos::mesh::mesh_v2_queue_push(const char* sender, const char* channel,
                          const uint8_t* extra,
                          uint8_t extra_len) {
     if (!sender || !text) return;
+    sigurdos::telemetry::push_packet_log("rx", sender, channel, text, rssi);
     IncomingMessageFanoutCtx ctx{sender, channel, text, rssi, snr,
         sender_timestamp, path_len, sender_prefix, txt_type, extra, extra_len, 0};
     sigurdos::mesh::deliverMessageDurableFirst(
@@ -247,7 +263,7 @@ static void queue_push(const char* sender, const char* channel, const char* text
     m.store_id = 0;
     m.is_self = false;
     // Increment unread count for incoming messages (reset when chat is opened)
-    if (strcmp(sender, own_name) != 0) unread_count++;
+    unread_count++;
     msg_head = (msg_head + 1) % MAX_QUEUED;
     msg_count++;
     // Log as packet entry (accessible via Packets screen)
@@ -279,7 +295,7 @@ namespace sigurdos { namespace mesh { bool sendChannelMessage(const char* channe
 // Identity persistence
 // ════════════════════════════════════════════════════
 
-static bool loadIdentity(::mesh::LocalIdentity& id) {
+static bool __attribute__((unused)) loadIdentity(::mesh::LocalIdentity& id) {
     uint8_t buf[128];
     size_t len = 0;
     if (!sigurdos::mesh::identityStoreLoad(buf, sizeof(buf), &len)) return false;
@@ -417,11 +433,13 @@ static int _lost_count = 0;
 static int _delivery_counter = 0;
 
 static uint32_t _last_telemetry_tag = 0;
+static uint8_t _last_telemetry_key[PUB_KEY_SIZE]{};
 static sigurdos::mesh::TelemetryResult _cached_telemetry;
 static bool _has_cached_telemetry = false;
 
 // ── Status request tracking (Phase 4.2) ───────
 static uint32_t _last_status_tag = 0;
+static uint8_t _last_status_key[PUB_KEY_SIZE]{};
 static sigurdos::mesh::NodeStatus _cached_status;
 static bool _has_cached_status = false;
 
@@ -477,7 +495,7 @@ bool hasPublicChannel()
     return false;
 }
 
-bool ensurePublicChannelPresent(bool persist)
+bool __attribute__((unused)) ensurePublicChannelPresent(bool persist)
 {
     if (!g_mesh) return false;
     if (hasPublicChannel()) return true;
@@ -726,16 +744,19 @@ const char* getLoggedInRoomServerName(int index) {
 bool requestStatus(const char* dest_name) {
     if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS);
-    if (ok) {
-        // Find the tag from the pending request table
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (g_mesh->_pending_reqs[i].in_use &&
-                strcmp(g_mesh->_pending_reqs[i].dest_name, dest_name) == 0) {
-                _last_status_tag = g_mesh->_pending_reqs[i].tag;
-                break;
-            }
-        }
+    ::ContactInfo contact{};
+    bool found = false;
+    for (int i = 0; i < g_mesh->getNumContacts(); ++i) {
+        if (g_mesh->getContactByIdx((uint32_t)i, contact) &&
+            strcmp(contact.name, dest_name) == 0) { found = true; break; }
+    }
+    if (!found) return false;
+    uint32_t tag = 0;
+    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS, &tag);
+    if (ok && tag != 0) {
+        _last_status_tag = tag;
+        memcpy(_last_status_key, contact.id.pub_key, PUB_KEY_SIZE);
+        _has_cached_status = false;
     }
     return ok;
 }
@@ -745,7 +766,10 @@ bool hasStatusResponse() {
     int n = g_mesh->getResponseCount();
     for (int i = 0; i < n; i++) {
         auto* re = g_mesh->getResponse(i);
-        if (re && re->tag == _last_status_tag) {
+        if (re && typedResponseMatches(
+                re->tag, re->contact_key, re->req_type,
+                _last_status_tag, _last_status_key,
+                REQ_TYPE_GET_STATUS, PUB_KEY_SIZE)) {
             parse_status_blob(re->data, re->len, &_cached_status);
             _has_cached_status = true;
             return true;
@@ -764,15 +788,20 @@ bool getStatusResult(NodeStatus* out) {
 bool requestTelemetry(const char* dest_name) {
     if (!radioTxAllowed()) return false;
     if (!g_mesh || !dest_name || !dest_name[0]) return false;
-    bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_TELEMETRY_DATA);
-    if (ok) {
-        for (int i = 0; i < SigurdMeshV2::MAX_PENDING_REQUESTS; i++) {
-            if (g_mesh->_pending_reqs[i].in_use &&
-                strcmp(g_mesh->_pending_reqs[i].dest_name, dest_name) == 0) {
-                _last_telemetry_tag = g_mesh->_pending_reqs[i].tag;
-                break;
-            }
-        }
+    ::ContactInfo contact{};
+    bool found = false;
+    for (int i = 0; i < g_mesh->getNumContacts(); ++i) {
+        if (g_mesh->getContactByIdx((uint32_t)i, contact) &&
+            strcmp(contact.name, dest_name) == 0) { found = true; break; }
+    }
+    if (!found) return false;
+    uint32_t tag = 0;
+    bool ok = g_mesh->sendRequest(
+        dest_name, REQ_TYPE_GET_TELEMETRY_DATA, &tag);
+    if (ok && tag != 0) {
+        _last_telemetry_tag = tag;
+        memcpy(_last_telemetry_key, contact.id.pub_key, PUB_KEY_SIZE);
+        _has_cached_telemetry = false;
     }
     return ok;
 }
@@ -782,74 +811,16 @@ bool hasTelemetryResponse() {
     int n = g_mesh->getResponseCount();
     for (int i = 0; i < n; i++) {
         auto* re = g_mesh->getResponse(i);
-        if (re && re->tag == _last_telemetry_tag) {
-            // Parse CayenneLPP from response body (skip 4-byte tag)
+        if (re && typedResponseMatches(
+                re->tag, re->contact_key, re->req_type,
+                _last_telemetry_tag, _last_telemetry_key,
+                REQ_TYPE_GET_TELEMETRY_DATA, PUB_KEY_SIZE)) {
+            // Parse CayenneLPP from the response body after its four-byte tag.
+            // Never publish a partial result from a malformed peer response.
+            if (re->len < 4) return false;
             TelemetryResult result;
-            memset(&result, 0, sizeof(result));
-            if (re->len > 4) {
-                LPPReader reader(re->data + 4, re->len - 4);
-                uint8_t ch, type;
-                int idx = 0;
-                while (reader.readHeader(ch, type) && idx < MAX_TELEMETRY_ITEMS) {
-                    TelemetryItem& item = result.items[result.n_items++];
-                    item.channel = ch;
-                    item.type = type;
-                    switch (type) {
-                        case LPP_VOLTAGE: {
-                            float v;
-                            reader.readVoltage(v);
-                            item.value_float = v;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.2fV", v);
-                            break;
-                        }
-                        case LPP_TEMPERATURE: {
-                            float t;
-                            reader.readTemperature(t);
-                            item.value_float = t;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.1fC", t);
-                            break;
-                        }
-                        case LPP_RELATIVE_HUMIDITY: {
-                            float h;
-                            reader.readRelativeHumidity(h);
-                            item.value_float = h;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.0f%%", h);
-                            break;
-                        }
-                        case LPP_BAROMETRIC_PRESSURE: {
-                            float p;
-                            reader.readPressure(p);
-                            item.value_float = p;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.1f hPa", p);
-                            break;
-                        }
-                        case LPP_GPS: {
-                            float lat, lon, alt;
-                            reader.readGPS(lat, lon, alt);
-                            item.value_float = lat;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.4f, %.4f %.0fm", lat, lon, alt);
-                            break;
-                        }
-                        case LPP_CURRENT: {
-                            float a;
-                            reader.readCurrent(a);
-                            item.value_float = a;
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "%.3fA", a);
-                            break;
-                        }
-                        default:
-                            reader.skipData(type);
-                            snprintf(item.value_str, sizeof(item.value_str),
-                                     "type=%d", type);
-                            break;
-                    }
-                }
+            if (!detail::parseTelemetryLpp(re->data + 4, re->len - 4, &result)) {
+                return false;
             }
             _cached_telemetry = result;
             _has_cached_telemetry = true;
@@ -1057,10 +1028,8 @@ bool init(bool spiffs_ok)
                   freq, bw, sf, cr, tx_power);
 #endif
 
-    fast_rng.begin(radio_module->random(0x7FFFFFFF));
-
     g_mesh = new (std::nothrow) mesh_impl_t(
-        *radio_driver, millis_clock, fast_rng, rtc_clock, pkt_mgr, tables);
+        *radio_driver, millis_clock, hardware_rng, rtc_clock, pkt_mgr, tables);
     if (!g_mesh) {
         Serial.println("[mesh] ERROR: SigurdMeshV2 allocation failed");
         cleanupMeshInit();
@@ -1070,7 +1039,7 @@ bool init(bool spiffs_ok)
 
     // Generate or load identity
     if (!loadIdentity(g_mesh->self_id)) {
-        g_mesh->self_id = ::mesh::LocalIdentity(&fast_rng);
+        g_mesh->self_id = ::mesh::LocalIdentity(&hardware_rng);
         if (spiffs_ok) {
             saveIdentity(g_mesh->self_id);
         } else {
@@ -1222,12 +1191,13 @@ private:
 
 uint32_t sendMessage(const char* dest, const char* text) {
     if (!g_mesh) return 0;
-    uint32_t ts = getCurrentTime();
+    uint32_t ts = meshRtcTimeUnique();
     if (ts == 0) ts = 1;  // 0 means failure; use 1 as fallback so ACK matching still works
     // sendTextTo now takes a fixed timestamp so the UI and mesh layer agree
     // (see slop_mesh_v2.h sendTextTo overload)
     bool ok = g_mesh->sendTextTo(dest, text, ts);
     if (ok) {
+        sigurdos::telemetry::push_packet_log("tx", own_name, dest, text, 0);
         char conversation[sigurdos::mesh::SIGURDOS_MSG_CONVERSATION_LEN];
         formatDmConversation(conversation, sizeof(conversation), dest);
         const int contact_idx = findContactIndex(dest);
@@ -1244,9 +1214,13 @@ bool sendChannelMessage(const char* channel_name, const char* text) {
     for (int i = 0; i < g_mesh->getChannelCount(); i++) {
         auto* ch = g_mesh->getChannel(i);
         if (ch && strcmp(ch->name, channel_name) == 0) {
-            sent = g_mesh->sendGroupText(i, text);
+            uint32_t ts = meshRtcTimeUnique();
+            if (ts == 0) ts = 1;
+            sent = g_mesh->sendGroupText(i, text, ts);
             if (sent) {
-                meshStoreOutgoingMessage(channel_name, text, getCurrentTime(), true, true);
+                sigurdos::telemetry::push_packet_log(
+                    "tx", own_name, channel_name, text, 0);
+                meshStoreOutgoingMessage(channel_name, text, ts, true, true);
                 pushPacketLog(own_name, 0, 0.0f, "TX_CHAN");
             }
             break;
@@ -1352,6 +1326,20 @@ bool getContactByName(const char* name, ContactInfo* out) {
     return false;
 }
 
+static bool assignLocalContactRevision(::ContactInfo& contact)
+{
+    if (!g_mesh) return false;
+    uint32_t high_water = 0;
+    for (int i = 0; i < g_mesh->getContactCount(); ++i) {
+        const auto* existing = g_mesh->getContact(i);
+        if (existing && existing->lastmod > high_water) high_water = existing->lastmod;
+    }
+    uint32_t revision = 0;
+    if (!nextContactRevision(meshRtcTimeUnique(), high_water, &revision)) return false;
+    contact.lastmod = revision;
+    return true;
+}
+
 // ── Favourite contacts ──────────────────────────
 
 bool isContactFavourite(const char* name) {
@@ -1378,7 +1366,10 @@ bool setContactFavourite(const char* name, bool favourite) {
             else           live->flags &= ~0x01;
             // Bump lastmod + persist so a companion app's incremental
             // CMD_GET_CONTACTS(since=…) picks up the favourite change (R3).
-            live->lastmod = getCurrentTime();
+            if (!assignLocalContactRevision(*live)) {
+                *live = before;
+                return false;
+            }
             if (saveContacts()) return true;
             *live = before;
             return false;
@@ -1445,7 +1436,8 @@ void syncRegionsFromChannels() {
         if (ch->name[0] != '#') continue;
 
         // Skip if this channel already has a matching region
-        if (map->findByName(ch->name)) continue;
+        if (!sigurdos::mesh::regionNameValid(ch->name) ||
+            map->findByName(ch->name)) continue;
 
         // Create region from channel name via RegionMap
         RegionEntry* r = map->putRegion(ch->name, 0);
@@ -1510,28 +1502,31 @@ bool sendAdvert(bool apply_default_scope) {
     bool use_live_location = has_fix && p.advert_loc_policy != 0;
     bool use_manual_location = !use_live_location && p.advert_loc_policy != 0 &&
         p.advert_location_valid;
-    last_advert_time = getCurrentTime();
-    last_advert_used_gps = use_live_location;
-
     if (!g_mesh) {
         last_advert_success = false;
         return false;
     }
 
+    bool queued = false;
     if (use_live_location) {
-        g_mesh->broadcastAdvert(own_name,
+        queued = g_mesh->broadcastAdvert(own_name,
             sigurdos_gps_latitude(), sigurdos_gps_longitude(),
             p.advert_type, apply_default_scope);
     } else if (use_manual_location) {
-        g_mesh->broadcastAdvert(own_name,
+        queued = g_mesh->broadcastAdvert(own_name,
             (float)p.advert_lat / 1000000.0f,
             (float)p.advert_lon / 1000000.0f,
             p.advert_type, apply_default_scope);
     } else {
-        g_mesh->broadcastAdvert(own_name, p.advert_type, apply_default_scope);
+        queued = g_mesh->broadcastAdvert(
+            own_name, p.advert_type, apply_default_scope);
     }
 
-    last_advert_success = true;
+    last_advert_success = queued;
+    if (!queued) return false;
+
+    last_advert_time = getCurrentTime();
+    last_advert_used_gps = use_live_location;
     pushPacketLog(own_name, 0, 0.0f, "TX_ADV");
     last_advert_ms = now_ms;
     return true;
@@ -1609,6 +1604,7 @@ bool sendTrace(int contact_idx, uint32_t* out_tag) {
 }
 
 bool hasTraceResult()   { return g_mesh ? g_mesh->hasTraceResult() : false; }
+uint32_t getTraceResultTag() { return g_mesh ? g_mesh->getTraceResultTag() : 0; }
 uint8_t getTracePathLen() { return g_mesh ? g_mesh->getTracePathLen() : 0; }
 void getTracePath(uint8_t* snrs, uint8_t* hashes) {
     if (g_mesh) g_mesh->getTracePath(snrs, hashes);
@@ -1692,7 +1688,13 @@ void loadChannels() {
 }
 
 bool saveState() {
-    return !g_mesh || saveIdentity(g_mesh->self_id);
+    return sigurdos::mesh::detail::saveStateCheckpoint(
+        sigurdos::mesh::regionsPersistenceDirty(),
+        []() { return sigurdos::prefs_save(sigurdos::prefs_get()); },
+        []() { return saveChannels(); },
+        []() { return !g_mesh || saveIdentity(g_mesh->self_id); },
+        []() { return saveContacts(); },
+        []() { return sigurdos::mesh::regionsSave(); });
 }
 
 // ── Contact persistence ─────────────────────────
@@ -1791,6 +1793,7 @@ void shutdown()
         []() {
             // Stop services that can start network or flash work while the
             // persistence checkpoint is being written.
+            sigurdos::hal::boot_watchdog_stop();
             sigurdos::github_ota::cancel();
             sigurdos::ota::stop();
         },
@@ -1798,16 +1801,9 @@ void shutdown()
             // Settings are normally committed on every change. Re-commit the
             // cached snapshot here so the orderly shutdown has a checked NVS
             // checkpoint alongside the mesh's SPIFFS-backed state.
-            const bool settings_saved = sigurdos::prefs_save(sigurdos::prefs_get());
-            const bool channels_saved = saveChannels();
-            const bool identity_saved = saveState();
-            const bool contacts_saved = saveContacts();
-            const bool saved = settings_saved && channels_saved &&
-                               identity_saved && contacts_saved;
+            const bool saved = saveState();
             if (!saved) {
-                Serial.printf(
-                    "[power] persistence failed: prefs=%d channels=%d identity=%d contacts=%d\n",
-                    settings_saved, channels_saved, identity_saved, contacts_saved);
+                Serial.println("[power] coordinated persistence checkpoint failed");
             }
             // The stores close/commit synchronously; retain a short settling
             // interval before changing peripheral power domains.
@@ -1937,8 +1933,17 @@ void setDutyCycle(uint8_t percent) {
         if (!g_mesh || !name) return false;
         int idx = findContactIndex(name);
         if (idx < 0) return false;
-        if (!g_mesh->resetPathTo(idx)) return false;
-        saveContacts();
+        const ::ContactInfo* cached = g_mesh->getContact(idx);
+        if (!cached) return false;
+        ::ContactInfo* live = g_mesh->lookupContactByPubKey(
+            cached->id.pub_key, PUB_KEY_SIZE);
+        if (!live) return false;
+        const ::ContactInfo before = *live;
+        if (!g_mesh->resetPathTo(idx) || !assignLocalContactRevision(*live) ||
+            !saveContacts()) {
+            *live = before;
+            return false;
+        }
         return true;
     }
 
@@ -1950,10 +1955,12 @@ void setDutyCycle(uint8_t percent) {
                 // Get writable pointer to the actual MeshCore ContactInfo
                 ::ContactInfo* live = g_mesh->lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
                 if (!live) return false;
+                const ::ContactInfo before = *live;
                 // Pack perm into flags bits 1-2, preserving bit 0 (favourite)
                 live->flags = (live->flags & 0x01) | ((perm & 0x03) << 1);
-                saveContacts();
-                return true;
+                if (assignLocalContactRevision(*live) && saveContacts()) return true;
+                *live = before;
+                return false;
             }
         }
         return false;
@@ -1986,8 +1993,7 @@ void setDutyCycle(uint8_t percent) {
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, name) == 0) {
-                g_mesh->sendLoginTo(*c, password);
-                return true;
+                return g_mesh->sendLoginTo(*c, password);
             }
         }
         return false;
@@ -2022,9 +2028,18 @@ void setDutyCycle(uint8_t percent) {
     // Force login state for a contact (test/override only)
     void forceLoginState(const char* name, uint8_t status, uint8_t permission) {
         if (!g_mesh || !name) return;
-        int idx = g_mesh->findLoginEntry(name);
+        const ::ContactInfo* contact = nullptr;
+        for (int i = 0; i < g_mesh->getContactCount(); ++i) {
+            const ::ContactInfo* candidate = g_mesh->getContact(i);
+            if (!candidate || strcmp(candidate->name, name) != 0) continue;
+            if (contact) return;  // ambiguous display name
+            contact = candidate;
+        }
+        if (!contact) return;
+
+        int idx = g_mesh->findLoginEntry(contact->id.pub_key);
         if (idx < 0) {
-            idx = g_mesh->addLoginEntry(name);
+            idx = g_mesh->addLoginEntry(*contact);
             if (idx < 0) return;
         }
         g_mesh->_login_entries[idx].status = status;
@@ -2065,12 +2080,11 @@ void setDutyCycle(uint8_t percent) {
         if (!g_mesh) return false;
         const ::sigurdos::mesh::SigurdMeshV2::GroupDataEntry* e = g_mesh->getGroupDataEntry(index);
         if (!e || !e->valid) return false;
-        if (data_type_out) *data_type_out = e->data_type;
         if (data_len_out) *data_len_out = e->data_len;
-        if (data_out && data_out_max > 0 && e->data_len > 0) {
-            int cp = (e->data_len < data_out_max) ? e->data_len : data_out_max;
-            memcpy(data_out, e->data, cp);
-        }
+        if (!receiveBufferFits(data_out, data_out_max, e->data_len)) return false;
+
+        if (data_type_out) *data_type_out = e->data_type;
+        if (e->data_len > 0) memcpy(data_out, e->data, e->data_len);
         if (channel_out && channel_sz > 0) {
             strncpy(channel_out, e->channel_name, channel_sz - 1);
             channel_out[channel_sz - 1] = '\0';
@@ -2166,7 +2180,9 @@ void clearCmdResponses() {
 
 // ── Hex-to-bytes helper ─────────────────────────
 int hexToBytes(const char* hex, uint8_t* out, int out_max) {
-    return SigurdMeshV2::hexToBytes(hex, out, (size_t)out_max);
+    size_t capacity = 0;
+    if (!positiveOutputCapacity(out_max, capacity)) return 0;
+    return SigurdMeshV2::hexToBytes(hex, out, capacity);
 }
 
 // ── Advert path (inbound) ─────────────────────
@@ -2208,35 +2224,6 @@ bool importIdentity(const char* hex_privkey) {
 }
 
 // ── URI import helpers ────────────────────────
-
-// Simple URL decoder (in-place). Handles '+' -> ' ' and '%XX' -> char.
-static uint8_t hexDigitVal(char c) {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    return 0;
-}
-
-static void urlDecode(char* str) {
-    if (!str) return;
-    char* src = str;
-    char* dst = str;
-    while (*src) {
-        if (*src == '+') {
-            *dst++ = ' ';
-            src++;
-        } else if (*src == '%'
-                && ::mesh::Utils::isHexChar(src[1])
-                && ::mesh::Utils::isHexChar(src[2])) {
-            *dst++ = (char)((hexDigitVal(src[1]) << 4)
-                          |  hexDigitVal(src[2]));
-            src += 3;
-        } else {
-            *dst++ = *src++;
-        }
-    }
-    *dst = '\0';
-}
 
 // Percent-encode a string for a URL query component value.
 // Unreserved characters (A-Z a-z 0-9 - _ . ~) pass through;
@@ -2304,9 +2291,11 @@ static bool addContactChecked(const char* name, const uint8_t* pub_key,
     memcpy(contact.id.pub_key, pub_key, PUB_KEY_SIZE);
     contact.type = type;
     contact.out_path_len = OUT_PATH_UNKNOWN;
+    if (!assignLocalContactRevision(contact)) return false;
     if (!g_mesh->addContact(contact)) return false;
-    saveContacts();
-    return true;
+    if (saveContacts()) return true;
+    g_mesh->removeContactByPubKey(pub_key);
+    return false;
 }
 
 bool importContactByUri(const char* uri) {
@@ -2333,19 +2322,10 @@ bool importContactByUri(const char* uri) {
     }
 
     // ── Raw hex blob format: meshcore://<hex> (biz card) ──
-    // Extract all hex chars and convert to binary for importContact()
     {
         char hex[512];
-        int i = 0;
-        while (*p && i < (int)(sizeof(hex) - 1)) {
-            if (::mesh::Utils::isHexChar(*p)) {
-                hex[i++] = *p;
-            }
-            p++;
-        }
-        hex[i] = '\0';
-
-        if (i >= (int)(PUB_KEY_SIZE * 2)) { // at least a public key's worth
+        size_t hex_len = 0;
+        if (parseRawContactUriHex(uri, hex, sizeof(hex), hex_len)) {
             uint8_t buf[256];
             int blen = SigurdMeshV2::hexToBytes(hex, buf, sizeof(buf));
             if (blen > 0) {
@@ -2368,59 +2348,26 @@ bool addContactManual(const char* name, const char* pubkey_hex, uint8_t type) {
 }
 
 bool addChannelByUri(const char* uri) {
-    if (!uri || !g_mesh) return false;
+    if (!g_mesh) return false;
+    ChannelUriFields fields{};
+    if (!parseChannelAddUri(uri, fields)) return false;
 
-    // Must start with "meshcore://"
-    if (strncmp(uri, "meshcore://", 11) != 0) return false;
-    const char* p = uri + 11;
+    uint8_t raw_secret[16];
+    if (SigurdMeshV2::hexToBytes(fields.secret_hex, raw_secret,
+                                 sizeof(raw_secret)) != 16) return false;
+    char b64[25];
+    encodeBase64(raw_secret, sizeof(raw_secret), b64);
 
-    // Must be channel/add?...
-    if (strncmp(p, "channel/add?", 12) != 0) return false;
-    p += 12;
-
-    char name[32] = {0};
-    char secret_hex[65] = {0};  // 32 hex chars = 16 bytes, but allow up to 64
-
-    while (*p) {
-        const char* key_start = p;
-        while (*p && *p != '=' && *p != '&') p++;
-        int key_len = (int)(p - key_start);
-        if (*p == '=') {
-            p++;
-            const char* val_start = p;
-            while (*p && *p != '&') p++;
-            int val_len = (int)(p - val_start);
-
-            if (key_len == 4 && strncmp(key_start, "name", 4) == 0) {
-                int copy = val_len < (int)(sizeof(name) - 1)
-                    ? val_len : (int)(sizeof(name) - 1);
-                memcpy(name, val_start, copy);
-                name[copy] = '\0';
-                urlDecode(name);
-            } else if (key_len == 6 && strncmp(key_start, "secret", 6) == 0) {
-                int copy = val_len < (int)(sizeof(secret_hex) - 1)
-                    ? val_len : (int)(sizeof(secret_hex) - 1);
-                memcpy(secret_hex, val_start, copy);
-                secret_hex[copy] = '\0';
-            }
-        }
-        if (*p == '&') p++;
+    const int previous_count = g_mesh->getChannelCount();
+    if (!g_mesh->addChannelBool(fields.name, b64)) return false;
+    if (saveChannels()) {
+        syncRegionsFromChannels();
+        return true;
     }
-
-    if (!name[0] || !secret_hex[0]) return false;
-
-    // Decode secret hex → bytes → base64 (what addChannel expects)
-    uint8_t raw_secret[32];  // up to 32 bytes
-    int raw_len = SigurdMeshV2::hexToBytes(secret_hex, raw_secret, sizeof(raw_secret));
-    if (raw_len <= 0) return false;
-
-    // Base64-encode the raw secret
-    // Output size: ((raw_len + 2) / 3) * 4 + 1 — max 45 for 32 bytes
-    char b64[48];
-    encodeBase64(raw_secret, raw_len, b64);
-
-    // Use the wrapper's addChannel which accepts base64 PSK
-    return g_mesh->addChannelBool(name, b64);
+    if (g_mesh->getChannelCount() > previous_count) {
+        g_mesh->removeChannel(previous_count);
+    }
+    return false;
 }
 
 // ── QR code support ─────────────────────────────

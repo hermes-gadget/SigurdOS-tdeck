@@ -39,7 +39,7 @@ public:
     int availableForWrite() { return 0; }
 
     size_t write(uint8_t) override { return 1; }
-    size_t write(const uint8_t*, size_t len) { return len; }
+    size_t write(const uint8_t*, size_t len) override { return len; }
 
     template <typename T>
     size_t print(const T&) { return 0; }

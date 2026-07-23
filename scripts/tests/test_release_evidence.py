@@ -36,7 +36,45 @@ class ReleaseEvidenceTests(unittest.TestCase):
     def test_golden_frames_match_pinned_stock_source(self):
         result = self.run_script("verify_companion_golden_frames.py", "--json")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["frames"], 19)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["frames"], 19)
+        self.assertEqual(
+            report["protocol_codes_sha256"],
+            "37ed4b4636de7d9535c91b3f3087750d6f788699de180783998f5a35105c22c1",
+        )
+        self.assertEqual(
+            report["reviewed_upstream"],
+            "a3a1aa5e3be34b42d8ac8c2cc244d30af6cdd71e",
+        )
+
+    def test_candidate_meshcore_revision_is_compared_by_git_object(self):
+        result = self.run_script(
+            "verify_companion_golden_frames.py",
+            "--candidate-ref", "HEAD", "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["candidate"], report["submodule"])
+        self.assertEqual(
+            report["protocol_codes_sha256"],
+            "37ed4b4636de7d9535c91b3f3087750d6f788699de180783998f5a35105c22c1",
+        )
+
+    def test_protocol_code_drift_blocks_golden_validation(self):
+        corpus = json.loads(
+            (ROOT / "test/fixtures/companion_golden_frames.json").read_text()
+        )
+        corpus["source"]["protocol_codes_sha256"] = "0" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "drifted-corpus.json"
+            path.write_text(json.dumps(corpus))
+            result = self.run_script(
+                "verify_companion_golden_frames.py", "--corpus", path,
+            )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "pinned companion protocol code snapshot changed", result.stderr
+        )
 
     def test_release_template_covers_machine_readable_requirements(self):
         result = self.run_script("verify_release_evidence.py")

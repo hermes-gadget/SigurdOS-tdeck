@@ -14,10 +14,12 @@
 #include <helpers/TransportKeyStore.h>
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
-#include "autoadd_policy.h"
 #include "pending_ack_policy.h"
+#include "mesh_safety_policy.h"
 #include "flood_scope_state.h"
 #include "login_session.h"
+#include "node_discovery.h"
+#include "request_correlation.h"
 #include "path_codec.h"
 #include "airtime_policy.h"
 #include "auto_add_policy.h"
@@ -161,6 +163,7 @@ public:
 
 
     bool hasTraceResult() { return _has_trace_result; }
+    uint32_t getTraceResultTag() const { return _last_trace_tag; }
     uint8_t getTracePathLen() { return _last_trace_len; }
     void getTracePath(uint8_t* snrs_out, uint8_t* hashes_out);
 
@@ -222,11 +225,13 @@ public:
 
     static constexpr int MAX_PENDING_REQUESTS = 8;
     struct PendingRequest {
-        uint32_t tag;
-        char     dest_name[32];
-        uint8_t  req_type;       // request type (0 = unknown/data)
-        char     channel_name[32]; // for REQ_TYPE_GET_ROOM_MSGS: which channel to fetch
-        uint32_t sent_at_ms;
+        uint32_t tag = 0;
+        char     dest_name[32] = {};
+        uint8_t  dest_key[PUB_KEY_SIZE]{};
+        uint8_t  req_type = 0;       // request type (0 = unknown/data)
+        char     channel_name[32] = {}; // for REQ_TYPE_GET_ROOM_MSGS: which channel to fetch
+        uint32_t sent_at_ms = 0;
+        uint32_t timeout_ms = 0;
         bool     companion_binary = false;
         bool     in_use = false;
     };
@@ -235,18 +240,23 @@ public:
     static constexpr int MAX_RESPONSES = 8;
     static constexpr int MAX_RESPONSE_DATA = 128;
     struct ResponseEntry {
-        uint32_t tag;
-        char     contact_name[32];
-        uint8_t  data[MAX_RESPONSE_DATA];
-        uint8_t  len;
-        bool     valid;
+        uint32_t tag = 0;
+        char     contact_name[32] = {};
+        uint8_t  contact_key[PUB_KEY_SIZE] = {};
+        uint8_t  req_type = 0;
+        uint8_t  data[MAX_RESPONSE_DATA] = {};
+        uint8_t  len = 0;
+        bool     valid = false;
     };
     ResponseEntry _responses[MAX_RESPONSES];
     int _n_responses = 0;
 
     // Send a typed REQ to a contact by name. Returns true if sent.
     // The response arrives via onContactResponse() and is stored in _responses[].
-    bool sendRequest(const char* name, uint8_t req_type);
+    bool sendRequest(const char* name, uint8_t req_type,
+                     uint32_t* tag_out = nullptr);
+    bool sendRequest(const ::ContactInfo& contact, uint8_t req_type,
+                     uint32_t* tag_out = nullptr);
 
 
     // Send a custom-data REQ to a contact by name.
@@ -518,27 +528,53 @@ public:
     };
 
     struct LoginEntry {
-        char     contact_name[32];
-        uint8_t  permission;        // server permission byte (0=guest, 1=admin, etc.)
-        uint8_t  acl_permissions;   // v7+ ACL byte
-        uint8_t  status;            // LoginStatus
-        uint32_t started_at_ms;     // when login was initiated (for timeout)
-        uint32_t timeout_ms;        // normalized estimated response deadline
-        bool     keep_alive_active; // negotiated keep-alive should still exist
+        char     contact_name[32] = {};
+        uint8_t  pub_key[PUB_KEY_SIZE] = {};
+        uint8_t  permission = 0;        // server permission byte (0=guest, 1=admin, etc.)
+        uint8_t  acl_permissions = 0;   // v7+ ACL byte
+        uint8_t  status = LOGIN_NONE;   // LoginStatus
+        uint32_t started_at_ms = 0;     // when login was initiated (for timeout)
+        uint32_t timeout_ms = 0;        // normalized estimated response deadline
+        bool     keep_alive_active = false; // negotiated keep-alive should still exist
         bool     in_use = false;
     };
     LoginEntry _login_entries[MAX_LOGIN_ENTRIES];
 
-    int findLoginEntry(const char* name) const {
+    int findLoginEntry(const uint8_t* pub_key) const {
+        if (!pub_key) return -1;
         for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
             if (_login_entries[i].in_use &&
-                strcmp(_login_entries[i].contact_name, name) == 0)
+                memcmp(_login_entries[i].pub_key, pub_key, PUB_KEY_SIZE) == 0) {
                 return i;
+            }
         }
         return -1;
     }
 
-    int addLoginEntry(const char* name, uint32_t estimated_timeout_ms = 0);
+    // Name lookup remains a UI convenience. Duplicate names are ambiguous and
+    // deliberately return no result instead of selecting the first identity.
+    int findLoginEntry(const char* name) const {
+        if (!name || !name[0]) return -1;
+        int match = -1;
+        for (int i = 0; i < MAX_LOGIN_ENTRIES; i++) {
+            if (!_login_entries[i].in_use ||
+                strcmp(_login_entries[i].contact_name, name) != 0) {
+                continue;
+            }
+            if (match >= 0) return -1;
+            match = i;
+        }
+        return match;
+    }
+
+    int addLoginEntry(const ::ContactInfo& contact,
+                      uint32_t estimated_timeout_ms = 0);
+    int findPendingLogin(const uint8_t* pub_key) const;
+    bool hasPendingRequest(const uint8_t* pub_key) const;
+    bool findUniqueContact(const char* name, ::ContactInfo& contact);
+    int reservePendingRequest(const ::ContactInfo& contact, uint8_t req_type,
+                              bool companion_binary,
+                              const char* channel_name = nullptr);
 
     void updateLoginSessions(uint32_t now_ms);
 
@@ -546,12 +582,10 @@ public:
     void loop();
 
 
-    void removeLoginEntry(const char* name) {
-        int idx = findLoginEntry(name);
+    void removeLoginEntry(const uint8_t* pub_key) {
+        int idx = findLoginEntry(pub_key);
         if (idx >= 0) {
-            _login_entries[idx].in_use = false;
-            _login_entries[idx].status = LOGIN_NONE;
-            _login_entries[idx].keep_alive_active = false;
+            _login_entries[idx] = LoginEntry{};
         }
     }
 
@@ -560,6 +594,9 @@ public:
             _login_entries[i] = LoginEntry{};
         }
     }
+
+    node_discovery::RateLimiter _discovery_rate_limiter;
+    uint32_t _discovery_modified_at = 0;
 
     // Stop every tracked keep-alive while the old identity and contact table
     // are still available, then clear all session/permission state.
@@ -584,7 +621,7 @@ public:
     // Send a login request to a repeater or room server contact.
     // Uses BaseChatMesh::sendLogin() which sends as PAYLOAD_TYPE_ANON_REQ.
     // The response arrives in onContactResponse() with RESP_SERVER_LOGIN_OK at data[4].
-    void sendLoginTo(const ::ContactInfo& contact, const char* password);
+    bool sendLoginTo(const ::ContactInfo& contact, const char* password);
 
 
     // Logout: stop the keep-alive connection and clear the session.
@@ -640,10 +677,6 @@ public:
     bool setChannelSlot(int idx, const ChannelDetails& details);
 
 
-    // Base64 PSK decode (self-contained, matches MeshCore's alphabet).
-    static int decode_b64(const char* in, size_t in_len, uint8_t* out, size_t out_cap);
-
-
     // bool-returning addChannel for wrapper compatibility. Inserts via
     // setChannel() at the next free slot (keeps the channel array contiguous
     // and consistent with getChannelCount()).
@@ -670,6 +703,8 @@ public:
 
 
     bool sendGroupText(int idx, const char* text);
+
+    bool sendGroupText(int idx, const char* text, uint32_t fixed_ts);
 
 
     // ── Group data datagrams (Phase 4.8) ────────────
@@ -730,10 +765,10 @@ public:
 
 
     // ── Flood advert ────────────────────────────
-    void broadcastAdvert(const char* name, uint8_t adv_type = ADV_TYPE_CHAT,
+    bool broadcastAdvert(const char* name, uint8_t adv_type = ADV_TYPE_CHAT,
                          bool apply_default_scope = false);
 
-    void broadcastAdvert(const char* name, double lat, double lon,
+    bool broadcastAdvert(const char* name, double lat, double lon,
                          uint8_t adv_type = ADV_TYPE_CHAT,
                          bool apply_default_scope = false);
 
@@ -873,17 +908,19 @@ private:
         return mode + 1;
     }
 
-    void sendAdvertImpl(::mesh::Packet* pkt, bool apply_default_scope) {
-        if (!pkt) return;
+    bool sendAdvertImpl(::mesh::Packet* pkt, bool apply_default_scope) {
+        if (!pkt || !_mgr) return false;
+        const int queued_before = _mgr->getOutboundTotal();
         uint8_t key[16];
         if (!apply_default_scope || !_flood_scope.copyDefault(key)) {
             sendFlood(pkt, 0, pathHashSize());
-            return;
+            return outboundQueueAccepted(queued_before, _mgr->getOutboundTotal());
         }
         TransportKey scope;
         memcpy(scope.key, key, sizeof(scope.key));
         uint16_t codes[2] = {scope.calcTransportCode(pkt), 0};
         sendFlood(pkt, codes, 0, pathHashSize());
+        return outboundQueueAccepted(queued_before, _mgr->getOutboundTotal());
     }
 
     FloodScopeState _flood_scope;

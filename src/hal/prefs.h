@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 
 namespace sigurdos {
 
@@ -39,7 +40,7 @@ struct NodePrefs {
     uint16_t advert_interval_h;      // 0=disabled, 24/72/168=hours between adverts (one per period)
     uint8_t  advert_type;            // ADV_TYPE_CHAT(1)/REPEATER(2)/ROOM(3)/SENSOR(4)
     bool     gps_enabled;            // GPS polling enabled
-    uint32_t gps_interval;           // background GPS read interval in seconds (0..86400)
+    uint32_t gps_interval;           // background fix publication interval (seconds, 0..86400)
     uint8_t  autoadd_config;         // bitmask: bit1=chat, bit2=repeater, bit3=room, bit4=sensor
     uint8_t  autoadd_max_hops;       // 0=no limit, max flood hops for auto-add
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
@@ -51,6 +52,7 @@ struct NodePrefs {
     bool     ble_user_set;            // true only after an explicit BLE user toggle
     uint32_t device_pin;               // 4-6 digit device PIN (0 = disabled)
     uint32_t ble_pin;                  // random per-device BLE pairing PIN (0 = not generated yet)
+    bool     ble_bond_reset_pending;   // block advertising until old BLE bonds are purged
     uint8_t  telemetry_modes;          // bitmask for companion telemetry modes
     uint8_t  manual_add_contacts;      // companion manual-add-contacts mode (0=auto, 1=prompt)
     char     default_scope_key_hex[33];  // hex-encoded 16-byte companion default flood-scope key
@@ -90,7 +92,7 @@ struct NodePrefs {
         advert_interval_h = 0;        // 0 = disabled
         advert_type = 1;              // 1 = ADV_TYPE_CHAT (default: chat companion)
         gps_enabled = false;          // GPS off by default (privacy, battery)
-        gps_interval = 5;             // battery-friendly background cadence
+        gps_interval = 5;             // background position update cadence
         autoadd_config = 0x1E;        // auto-add: chat|repeater|room|sensor (bits 1-4), no overwrite (bit 0)
         autoadd_max_hops = 0;         // 0 = no limit
         theme_id = 0;                 // default theme
@@ -102,6 +104,7 @@ struct NodePrefs {
         ble_user_set = false;          // default may migrate; no explicit user choice yet
         device_pin = 0;               // default: no PIN
         ble_pin = 0;                  // default: not generated (will generate on first BLE boot)
+        ble_bond_reset_pending = false;
         telemetry_modes = 0;          // default: no telemetry sharing
         manual_add_contacts = 0;      // default: auto-add contacts
         default_scope_key_hex[0] = '\0';  // default: no companion flood scope
@@ -129,6 +132,59 @@ inline void clearSavedNetworkCredentialFields(NodePrefs& prefs) {
     std::memset(prefs.default_scope_key_hex, 0,
                 sizeof(prefs.default_scope_key_hex));
     std::memset(prefs.active_region, 0, sizeof(prefs.active_region));
+
+inline bool validRadioBandwidth(float bw) {
+    static constexpr float allowed[] = {
+        7.8f, 10.4f, 15.6f, 20.8f, 31.25f, 41.7f, 62.5f, 125.0f, 250.0f, 500.0f,
+    };
+    if (!std::isfinite(bw)) return false;
+    for (float value : allowed) if (std::fabs(bw - value) < 0.02f) return true;
+    return false;
+}
+
+inline bool normalizeAndValidate(NodePrefs& prefs) {
+    if (prefs.gps_interval > 86400) prefs.gps_interval = 86400;
+    if (prefs.kbd_layout >= 12) prefs.kbd_layout = 0;
+    if (prefs.display_brightness < 20) prefs.display_brightness = 20;
+    if (prefs.display_brightness > 240) prefs.display_brightness = 240;
+    prefs.path_hash_mode = normalizePathHashMode(prefs.path_hash_mode);
+    if (!std::isfinite(prefs.rx_delay_base) || prefs.rx_delay_base < 0.0f ||
+        prefs.rx_delay_base > 20.0f) prefs.rx_delay_base = 10.0f;
+    if (!std::isfinite(prefs.tx_delay_factor) || prefs.tx_delay_factor < 0.0f ||
+        prefs.tx_delay_factor > 2.0f) prefs.tx_delay_factor = 1.0f;
+    if (!std::isfinite(prefs.direct_tx_delay_factor) ||
+        prefs.direct_tx_delay_factor < 0.0f || prefs.direct_tx_delay_factor > 2.0f) {
+        prefs.direct_tx_delay_factor = 1.0f;
+    }
+    if (!std::isfinite(prefs.airtime_factor) || prefs.airtime_factor < 0.0f) {
+        prefs.airtime_factor = 0.0f;
+    }
+    if (!prefs.configured) {
+        prefs.freq = prefs.bw = 0.0f;
+        prefs.sf = prefs.cr = 0;
+        prefs.tx_power_dbm = 0;
+        prefs.radio_profile[0] = '\0';
+        return true;
+    }
+    const bool valid = std::isfinite(prefs.freq) && prefs.freq >= 400.0f &&
+        prefs.freq <= 930.0f && validRadioBandwidth(prefs.bw) &&
+        prefs.sf >= 6 && prefs.sf <= 12 && prefs.cr >= 5 && prefs.cr <= 8 &&
+        prefs.tx_power_dbm >= 2 && prefs.tx_power_dbm <= 22;
+    if (!valid) {
+        prefs.configured = false;
+        prefs.freq = prefs.bw = 0.0f;
+        prefs.sf = prefs.cr = 0;
+        prefs.tx_power_dbm = 0;
+        prefs.radio_profile[0] = '\0';
+    }
+    return valid;
+}
+
+inline bool repeaterPasswordFitsSchema(const char* name, const char* password) {
+    if (!name || !password) return false;
+    const size_t name_len = std::strlen(name);
+    const size_t password_len = std::strlen(password);
+    return name_len > 0 && name_len < 32 && password_len > 0 && password_len < 64;
 }
 
 enum class BlePrefsWriteMode : uint8_t {
@@ -174,10 +230,25 @@ bool prefs_set_ble_enabled(bool enabled);
 // node identity and the device PIN that protects local administration.
 bool clearSavedNetworkCredentials();
 
+struct ChatScopePreference {
+    char conversation[38];
+    char scope_name[31];
+    uint8_t scope_key[16];
+};
+
+// Persist each named routing scope as one atomic NVS blob. The display name is
+// local metadata; scope_key is independently generated routing material.
+int  loadChatScopePreferences(ChatScopePreference* out, int max);
+bool saveChatScopePreference(const char* conversation, const char* scope_name,
+                             const uint8_t scope_key[16]);
+bool removeChatScopePreference(const char* conversation);
+
 // ── Saved repeater passwords (persist across firmware updates in NVS) ──
 bool saveRepeaterPassword(const char* name, const char* password);
 bool loadRepeaterPassword(const char* name, char* password, size_t max_len);
 void removeRepeaterPassword(const char* name);
 bool clearRepeaterPasswords();
+
+bool removeRepeaterPassword(const char* name);
 
 } // namespace sigurdos

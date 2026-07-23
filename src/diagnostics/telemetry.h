@@ -69,9 +69,18 @@ void report_key_event(uint8_t keycode);
 void report_touch_event(uint16_t x, uint16_t y);
 void report_trackball_event(uint8_t direction);
 
-// Push a mesh packet into the packet content log (ring buffer).
-void push_packet_log(const char* sender, const char* channel,
-                     const char* text, int rssi);
+// Push a canonical mesh RX/TX observation into the packet ring. RX entries use
+// the measured RSSI; TX entries use 0 because no receive signal exists.
+void push_packet_log(const char* direction, const char* sender,
+                     const char* channel, const char* text, int rssi);
+
+inline const char* packet_log_text_by_policy(const char* value) {
+#if SIGURDOS_TELEMETRY_INCLUDE_MESSAGE_TEXT
+    return value ? value : "";
+#else
+    return (value && value[0]) ? "<redacted>" : "";
+#endif
+}
 
 inline const char* packet_log_field_or_empty(const char* value) {
     return value ? value : "";
@@ -130,7 +139,7 @@ inline void report_render_flush() {}
 inline void report_key_event(uint8_t) {}
 inline void report_touch_event(uint16_t, uint16_t) {}
 inline void report_trackball_event(uint8_t) {}
-inline void push_packet_log(const char*, const char*, const char*, int) {}
+inline void push_packet_log(const char*, const char*, const char*, const char*, int) {}
 
 }  // namespace telemetry
 }  // namespace sigurdos

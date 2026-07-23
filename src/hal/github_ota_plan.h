@@ -5,6 +5,8 @@
 namespace sigurdos {
 namespace github_ota {
 
+static constexpr size_t GITHUB_OTA_TRUST_ANCHOR_COUNT = 2;
+
 constexpr const char* GITHUB_OTA_FALLBACK_URL =
     "https://github.com/hermes-gadget/SigurdOS-tdeck"
     "/releases/latest/download/firmware.bin";

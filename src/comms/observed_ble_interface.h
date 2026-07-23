@@ -13,6 +13,7 @@
 #include "ble_init_gate.h"
 #include "ble_task_mutex.h"
 #include "ble_auth_watchdog.h"
+#include "ble_auth_throttle.h"
 
 namespace sigurdos {
 namespace comms {
@@ -33,11 +34,17 @@ struct BleSerialObserverStats {
     uint32_t auth_timeout_count = 0;
     uint32_t ble_write_count = 0;
     uint32_t ble_write_drop_count = 0;
+    uint32_t rx_fault_disconnect_count = 0;
+    uint32_t init_failure_count = 0;
     uint32_t rx_frame_count = 0;
     uint32_t tx_frame_count = 0;
     uint32_t tx_drop_count = 0;
+    uint32_t bond_purge_attempt_count = 0;
+    uint32_t bond_purge_error_count = 0;
+    int bonded_device_count = -1;
     uint16_t last_conn_id = 0;
     uint16_t last_mtu = 0;
+    uint32_t connection_generation = 0;
     uint8_t last_rx_code = 0;
     uint8_t last_tx_code = 0;
 };
@@ -50,8 +57,15 @@ public:
     void disable() override;
     bool isEnabled() const override;
     bool isConnected() const override;
+    uint32_t connectionGeneration() const override;
     size_t writeFrame(const uint8_t src[], size_t len) override;
     size_t checkRecvFrame(uint8_t dest[]) override;
+    void openPairingWindow();
+
+    // Stops advertising/connections and asks Bluedroid to remove every bond.
+    // bondedDeviceCount() returns -1 when the security database is unavailable.
+    bool removeAllBonds();
+    int bondedDeviceCount();
 
     BleSerialObserverStats stats() const;
 
@@ -70,6 +84,11 @@ protected:
 private:
     void refreshConnectionState();
     bool initializeConfigured();
+    bool validateInitializedStack();
+    void rollbackInitialization();
+    bool peerIsBonded(const BlePeerAddress& peer) const;
+    void recordAuthenticationFailure(uint32_t now_ms);
+    void applyAdvertisingThrottle(uint32_t now_ms);
 
     BleSerialObserverStats _stats{};
     BleInitGate _init_gate;
@@ -78,6 +97,12 @@ private:
     uint32_t _configured_pin = 0;
     mutable BleTaskMutex _task_mutex;
     BleAuthWatchdog _auth_watchdog;
+    BleAuthThrottle _auth_throttle;
+    BlePeerAddress _connecting_peer{};
+    bool _connecting_peer_bonded = false;
+    bool _authentication_completed = false;
+    bool _advertising_suppressed = false;
+    bool _local_disable = false;
     BLEServer* _connected_server = nullptr;
 
     // NET-002 (#813): the base class receive queue is written from the

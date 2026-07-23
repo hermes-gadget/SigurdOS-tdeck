@@ -12,6 +12,8 @@
 // SigurdOS_TDeck_remote_test_radio.
 
 #include <cstdint>
+#include <cctype>
+#include <cmath>
 #include <cstdio>
 
 // Remote diagnostics run on the same cooperative loop as the UI and mesh.
@@ -90,11 +92,13 @@ enum class SigurdOSTestRfParseResult : uint8_t {
     Ok,
     MissingArgs,
     BadArgumentCount,
+    NonFiniteValue,
     FrequencyOutOfRange,
     SpreadingFactorOutOfRange,
     BandwidthOutOfRange,
     CodingRateOutOfRange,
     TxPowerOutOfRange,
+    RxBoostedGainOutOfRange,
 };
 
 inline SigurdOSTestRfParseResult
@@ -110,10 +114,24 @@ sigurdos_test_controller_parse_rf_params(const char* arg,
     int cr = 0;
     int tx_pwr = 0;
     int rx_boost = 0;  // optional 6th: 0 or 1, absent = 0
-    const int n = sscanf(arg, "%f %d %f %d %d %d", &freq, &sf, &bw, &cr, &tx_pwr, &rx_boost);
+    int consumed = 0;
+    int n = sscanf(arg, " %f %d %f %d %d %d %n", &freq, &sf, &bw, &cr,
+                   &tx_pwr, &rx_boost, &consumed);
+    if (n == 5) {
+        consumed = 0;
+        n = sscanf(arg, " %f %d %f %d %d %n", &freq, &sf, &bw, &cr,
+                   &tx_pwr, &consumed);
+    }
     if (parsed_fields) *parsed_fields = n;
-    // Accept 5 or 6 args; 6th is optional
-    if (n < 5 || n > 6) return SigurdOSTestRfParseResult::BadArgumentCount;
+    if (n != 5 && n != 6) return SigurdOSTestRfParseResult::BadArgumentCount;
+    for (const char* tail = arg + consumed; *tail; ++tail) {
+        if (!std::isspace(static_cast<unsigned char>(*tail))) {
+            return SigurdOSTestRfParseResult::BadArgumentCount;
+        }
+    }
+    if (!std::isfinite(freq) || !std::isfinite(bw)) {
+        return SigurdOSTestRfParseResult::NonFiniteValue;
+    }
 
     if (freq < 400.0f || freq > 1000.0f) {
         return SigurdOSTestRfParseResult::FrequencyOutOfRange;
@@ -129,6 +147,9 @@ sigurdos_test_controller_parse_rf_params(const char* arg,
     }
     if (tx_pwr < 2 || tx_pwr > 22) {
         return SigurdOSTestRfParseResult::TxPowerOutOfRange;
+    }
+    if (n == 6 && rx_boost != 0 && rx_boost != 1) {
+        return SigurdOSTestRfParseResult::RxBoostedGainOutOfRange;
     }
 
     out->freq = freq;

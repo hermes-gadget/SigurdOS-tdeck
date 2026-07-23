@@ -94,13 +94,13 @@ When `NodePrefs::configured == false`, the RF summary row shows `Radio: NOT CONF
 
 ## GPS / Location (`screen_settings_gps.cpp`)
 
-|| Row | Action / persistence |
+| Row | Action / persistence |
 |-----|----------------------|
-|| `GPS: Fix acquired / No fix` | Read-only status from `sigurdos_gps_has_fix()` |
-|| `GPS: ON/OFF` | Enables/disables the GPS module (`NodePrefs::gps_enabled`) |
-|| `GPS interval` | Poll-interval preset |
-|| `Sync time from GPS` | Temporarily requests foreground GPS cadence (200 ms) for up to 60 seconds. A valid dated fix updates the system RTC and MeshCore time. Does not enable background GPS. |
-|| `Share location: ON/OFF` | Include coordinates in adverts (`NodePrefs::share_location`) |
+| `GPS: Fix acquired / No fix` | Read-only status from `sigurdos_gps_has_fix()` |
+| `GPS: ON/OFF` | Enables/disables the GPS module (`NodePrefs::gps_enabled`) |
+| `GPS interval` | Published position-update interval; UART acquisition remains continuous while initialized |
+| `Sync time from GPS` | Temporarily requests foreground GPS cadence (200 ms) for up to 60 seconds. A valid dated fix updates the system RTC and MeshCore time. Does not enable background GPS. |
+| `Share location: ON/OFF` | Include coordinates in adverts (`NodePrefs::advert_loc_policy`) |
 
 ---
 
@@ -156,6 +156,12 @@ Same +/- pattern. Steps by 16, clamped to `[CHAT_MSGS_MIN_CAP, CHAT_MSGS_MAX]` =
 | `SigurdOS <version>` | Read-only — `SIGURDOS_VERSION` from `src/hal/tdeck_pins.h` |
 
 Self-OTA rows refuse to start when the firmware detects it is running under bmorcelli/Launcher (see `docs/LAUNCHER_ROADMAP.md`) — updating must then go through Launcher instead.
+
+On an unconfigured device, boot enters Onboarding as a forced navigation root:
+history is cleared, no top-bar Back button is shown, and other routes are
+rejected until setup persists a valid radio profile and restarts. Opening the
+wizard later from System or the Home SETUP tile remains ordinary, reversible
+navigation.
 
 ### Date/Time dialog
 

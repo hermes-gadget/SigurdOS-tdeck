@@ -21,7 +21,6 @@
 #include "screens.h"
 #include "screens_common.h"
 #include "screen_lifetime.h"
-#include "notifications.h"
 #include "chat_screen.h"
 #include "navigation.h"
 #include "theme.h"
@@ -179,25 +178,23 @@ static void apply_selection(int old_idx = -1)
 #endif
 }
 
-static void on_icon_click(lv_event_t* e)
+static void activate_icon(int idx)
 {
-    int idx = (int)(intptr_t)lv_event_get_user_data(e);
     if (idx >= 0 && idx < ICON_COUNT) {
-        // Reset filters to defaults
-        chat_screen_set_filter(0);
+        const HomeTileFilters filters = home_tile_filters(idx);
+        chat_screen_set_filter(filters.chat_filter);
         contacts_screen_set_filter(-1);
-
-        // Apply filter based on which icon was clicked
-        if (strcmp(icons[idx].label, "DMs") == 0) {
-            chat_screen_set_filter(2);       // DMs only
-        } else if (strcmp(icons[idx].label, "CHATS") == 0) {
-            chat_screen_set_filter(1);       // channels only
-        } else if (strcmp(icons[idx].label, "ROOMS") == 0) {
+        if (filters.rooms_only) {
             contacts_screen_set_filter(ADV_TYPE_ROOM);  // room servers only
         }
         // CONTACTS: default filter (CHAT + ROOM) — start DM from here
         navigate_to(icons[idx].target);
     }
+}
+
+static void on_icon_click(lv_event_t* e)
+{
+    activate_icon((int)(intptr_t)lv_event_get_user_data(e));
 }
 
 // ── Top bar ─────────────────────────────────────────────
@@ -332,7 +329,7 @@ static lv_obj_t* create_icon_tile(lv_obj_t* parent, const IconDef& icon, int idx
 
         lv_obj_t* cnt_lbl = lv_label_create(badge_obj);
         lv_label_set_text(cnt_lbl, "0");
-        lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_color(cnt_lbl, lv_color_hex(semantic_foreground(ACCENT_RED)), 0);
         lv_obj_set_style_text_font(cnt_lbl, emoji_wrapped_montserrat_10, 0);
         lv_obj_center(cnt_lbl);
     }
@@ -487,9 +484,7 @@ void home_screen_handle_trackball(SigurdOSTrackballEvent event)
         break;
     }
     case SigurdOSTrackballEvent::Click:
-        if (selected_icon >= 0 && selected_icon < ICON_COUNT) {
-            navigate_to(icons[selected_icon].target);
-        }
+        activate_icon(selected_icon);
         break;
     case SigurdOSTrackballEvent::None:
     default:
@@ -525,16 +520,17 @@ void home_screen_update_channels()
 void home_screen_update_badges()
 {
     if (!badge_obj) return;
-    int n = sigurdos::mesh::getUnreadMessageCount();
+    int n = chat_screen_get_unread_count();
     if (n > 0) {
         lv_obj_set_style_bg_color(badge_obj,
-            lv_color_hex(notifications_has_unread_mention() ? ACCENT_ORANGE : ACCENT_RED), 0);
+            lv_color_hex(chat_screen_has_unread_mentions() ? ACCENT_ORANGE : ACCENT_RED), 0);
         lv_obj_clear_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);
         lv_obj_t* lbl = lv_obj_get_child(badge_obj, 0);
         if (lbl) {
             char buf[8];
-            snprintf(buf, sizeof(buf), "%d", n > 99 ? 99 : n);
+            home_screen_format_unread_badge(buf, sizeof(buf), n);
             lv_label_set_text(lbl, buf);
+            lv_obj_set_width(badge_obj, n > 99 ? 24 : 18);
         }
     } else {
         lv_obj_add_flag(badge_obj, LV_OBJ_FLAG_HIDDEN);

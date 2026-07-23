@@ -25,8 +25,12 @@
  * command creates a new LVGL label that accumulates indefinitely, consuming heap.
  */
 #include <gtest/gtest.h>
+
+#include "ui/identity_command_guard.h"
+#include "ui/pin_gate_policy.h"
 #include "mesh/cmd_response_queue.h"
 #include "ui/repeater_transcript.h"
+#include "ui/terminal_line_cap.h"
 #include <cstring>
 #include <cstdio>
 #include <vector>
@@ -37,7 +41,8 @@ namespace {
 // ── Replicate term line-capping logic for pure testing ──
 // Mirrors screens.cpp term_add_line() behavior after the fix
 
-static constexpr int MAX_TERM_LINES = 64;
+static constexpr int MAX_TERM_LINES =
+    static_cast<int>(sigurdos::ui::MAX_TERMINAL_LINES);
 
 // Simulated "log container" — tracks line count
 struct LogContainer {
@@ -47,13 +52,24 @@ struct LogContainer {
     int child_count() const { return (int)lines.size(); }
 
     void add_line(const char* text) {
-        // Prune oldest line if over limit
-        if (child_count() >= MAX_TERM_LINES) {
-            lines.erase(lines.begin());
-            deleted_first = true;
-        }
+        const bool ready = sigurdos::ui::terminal_prune_oldest_for_append(
+            this,
+            [](LogContainer* log) { return log->child_count(); },
+            [](LogContainer* log) -> LogContainer* {
+                return log->lines.empty() ? nullptr : log;
+            },
+            [](LogContainer* log) {
+                log->lines.erase(log->lines.begin());
+                log->deleted_first = true;
+            });
+        if (!ready) return;
         lines.push_back(text);
     }
+};
+
+struct DeferredDeleteContainer {
+    int children = MAX_TERM_LINES;
+    int delete_requests = 0;
 };
 
 // ── Tests ────────────────────────────────────────────────
@@ -143,6 +159,23 @@ TEST(TermLineCapTest, ManyOverflowsKeepsCapacity) {
     // Oldest should be line 936
     EXPECT_STREQ(log.lines[0].c_str(), "line 936");
     EXPECT_STREQ(log.lines[MAX_TERM_LINES - 1].c_str(), "line 999");
+}
+
+TEST(TermLineCapTest, DeferredDeletionCannotLivelockOrQueueSameRowTwice) {
+    DeferredDeleteContainer log;
+
+    EXPECT_TRUE(sigurdos::ui::terminal_prune_oldest_for_append(
+        &log,
+        [](DeferredDeleteContainer* value) { return value->children; },
+        [](DeferredDeleteContainer* value) { return value; },
+        [](DeferredDeleteContainer* value) {
+            ++value->delete_requests;
+            // Deliberately leave child count unchanged, matching
+            // lv_obj_del_async() until a later LVGL tick.
+        }));
+
+    EXPECT_EQ(log.children, MAX_TERM_LINES);
+    EXPECT_EQ(log.delete_requests, 1);
 }
 
 TEST(RepeaterTranscriptTest, CliReplyHasExplicitTypeBadge) {
@@ -236,6 +269,74 @@ TEST(RepeaterTranscriptTest, ResponseQueuePreservesUtf8Boundaries) {
     ASSERT_TRUE(queue.poll(name, sizeof(name), text, sizeof(text), nullptr));
     EXPECT_EQ(strlen(text), 157u);
     EXPECT_EQ(text[156], 'x');
+}
+
+TEST(PinGatePolicyTest, FailuresEscalateAcrossScreenInstancesAndCapDelay) {
+    sigurdos::ui::PinGateState state{};
+    const uint32_t expected[] = {0, 1000, 5000, 30000, 60000, 300000, 300000};
+    for (uint32_t delay : expected) {
+        sigurdos::ui::pinGateRecordFailure(state, 100);
+        EXPECT_EQ(state.lockout_ms, delay);
+    }
+    EXPECT_EQ(state.failures, 7);
+}
+
+TEST(PinGatePolicyTest, LockoutAndGraceAreWrapSafeAndClearable) {
+    sigurdos::ui::PinGateState state{};
+    state.failures = 3;
+    state.failure_at_ms = 0xFFFFFFF0u;
+    state.lockout_ms = 5000;
+    EXPECT_TRUE(sigurdos::ui::pinGateLocked(state, 0x20u));
+    EXPECT_EQ(sigurdos::ui::pinGateRemaining(state, 0x20u), 4952U);
+
+    sigurdos::ui::pinGateRecordSuccess(state, 0xFFFFFFF0u);
+    EXPECT_TRUE(sigurdos::ui::pinGateGraceActive(state, 0x20u, 300000));
+    sigurdos::ui::pinGateClearGrace(state);
+    EXPECT_FALSE(sigurdos::ui::pinGateGraceActive(state, 0x20u, 300000));
+}
+
+TEST(IdentityCommandGuardTest, PinlessCommandsRequireMatchingFreshConfirmation) {
+    using namespace sigurdos::ui;
+    IdentityCommandGuard guard{};
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::Export,
+                                       false, 100),
+              IdentityGuardResult::ConfirmationRequired);
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::Import,
+                                       true, 101),
+              IdentityGuardResult::ConfirmationRejected);
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::Export,
+                                       true, 102),
+              IdentityGuardResult::ConfirmationRejected);
+
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::Export,
+                                       false, 200),
+              IdentityGuardResult::ConfirmationRequired);
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::Export,
+                                       true, 15200),
+              IdentityGuardResult::ConfirmationRejected);
+}
+
+TEST(IdentityCommandGuardTest, FreshConfirmationIsSingleUseAndPinUnlockBypassesIt) {
+    using namespace sigurdos::ui;
+    IdentityCommandGuard guard{};
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::Import,
+                                       false, 100),
+              IdentityGuardResult::ConfirmationRequired);
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::Import,
+                                       true, 101),
+              IdentityGuardResult::Allowed);
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::Import,
+                                       true, 102),
+              IdentityGuardResult::ConfirmationRejected);
+    EXPECT_EQ(authorizeIdentityCommand(guard, 123456, IdentityOperation::Export,
+                                       false, 500),
+              IdentityGuardResult::Allowed);
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::Import,
+                                       true, 501),
+              IdentityGuardResult::ConfirmationRejected);
+    EXPECT_EQ(authorizeIdentityCommand(guard, 0, IdentityOperation::None,
+                                       false, 502),
+              IdentityGuardResult::ConfirmationRejected);
 }
 
 } // anonymous namespace

@@ -116,7 +116,7 @@ void loop()
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
         // Show onboarding if: never saved prefs (fresh device) OR not yet configured
         if (!sigurdos::prefs_exists() || !p.configured) {
-            navigate_to(Screen::Onboarding);
+            navigate_to_forced(Screen::Onboarding);
         } else {
             home_screen_create();
         }
@@ -162,7 +162,12 @@ void loop()
                                        msgs[i].text, msgs[i].timestamp,
                                        msgs[i].is_self);
             }
-            if (n > 0) home_screen_update_badges();
+            if (n > 0) {
+                // The UI now owns stable per-conversation unread state. Drain
+                // the legacy mesh aggregate so it cannot grow indefinitely.
+                sigurdos::mesh::resetUnreadMessageCount();
+                home_screen_update_badges();
+            }
             // Refresh ACK status on the current chat screen
             chat_screen_refresh_acks();
         }
@@ -173,9 +178,9 @@ void loop()
 bool handle_trackball_event(SigurdOSTrackballEvent event)
 {
     if (!home_shown) return false;
-    // Block all trackball events while PIN entry screen is displayed
-    // Prevents back-swipe bypass of PIN authentication (#541)
-    if (is_pin_entry_active()) return true;
+    // The modal owns trackball focus/activation. This also prevents global
+    // back-swipe handling from bypassing authentication.
+    if (is_pin_entry_active()) return pin_entry_handle_trackball(event);
     if (current_screen() == Screen::Home) {
         home_screen_handle_trackball(event);
         return true;
@@ -184,6 +189,9 @@ bool handle_trackball_event(SigurdOSTrackballEvent event)
         // Chat handles its own Left (channel list toggle); fall through
         // for non-messaging states where chat returns false
         if (chat_screen_handle_trackball(event)) return true;
+        // Modal input is intentionally forwarded to LVGL, never to the global
+        // two-swipe Back handler.
+        if (chat_screen_overlay_active()) return false;
     }
     if (current_screen() == Screen::Map) {
         if (map_screen_handle_trackball(event)) return true;

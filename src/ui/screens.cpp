@@ -63,47 +63,19 @@ using namespace responsive;
 
 void show_screen(lv_obj_t* scr)
 {
-    static constexpr size_t LVGL_ASYNC_DELETE_LOW_WATERMARK = 4 * 1024U;
-
     // Use auto_del=false for ALL screen loads and manage outgoing-screen
     // deletion manually. Previously, mixing auto_del=true/false across
     // different screen types caused LVGL's internal screen-load state
     // machine (d->scr_to_load, d->prev_scr, d->del_prev) to deadlock
     // after ~4-5 round-trips between animated and instant screen loads.
     //
-    // For NONE animation (this path): the load completes synchronously
-    // so lv_obj_del_async() is safe immediately.
+    // For NONE animation the load completes synchronously. Delete the old
+    // root synchronously as well: async deletion needs two LVGL allocations
+    // and silently leaves the root alive if either allocation fails.
     lv_obj_t* old_scr = lv_screen_active();
     lv_scr_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
     if (old_scr && old_scr != scr) {
-        lv_mem_monitor_t before;
-        lv_mem_monitor(&before);
-        lv_obj_del_async(old_scr);
-
-        lv_mem_monitor_t after;
-        lv_mem_monitor(&after);
-        SIG_LOGD("[ui] async delete old=%p lvgl_free=%u largest=%u used=%u%% frag=%u%%",
-                 static_cast<void*>(old_scr),
-                 (unsigned)after.free_size,
-                 (unsigned)after.free_biggest_size,
-                 (unsigned)after.used_pct,
-                 (unsigned)after.frag_pct);
-
-        // A successful lv_obj_del_async() allocates both callback info and a
-        // one-shot timer. If free space did not fall, LVGL likely discarded
-        // the request after an allocation failure and the old root will leak.
-        if (after.free_size >= before.free_size) {
-            SIG_LOGW("[ui] async delete may not be scheduled old=%p lvgl_free=%u largest=%u",
-                     static_cast<void*>(old_scr),
-                     (unsigned)after.free_size,
-                     (unsigned)after.free_biggest_size);
-        }
-        if (after.free_biggest_size < LVGL_ASYNC_DELETE_LOW_WATERMARK) {
-            SIG_LOGW("[ui] LVGL pool low after async delete old=%p largest=%u threshold=%u",
-                     static_cast<void*>(old_scr),
-                     (unsigned)after.free_biggest_size,
-                     (unsigned)LVGL_ASYNC_DELETE_LOW_WATERMARK);
-        }
+        lv_obj_delete(old_scr);
     }
 }
 

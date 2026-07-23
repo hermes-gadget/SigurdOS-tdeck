@@ -48,6 +48,12 @@
 #define SIGURDOS_DEBUG_DIAG SIGURDOS_DEBUG_ACTIVE
 #endif
 
+// UI text may contain private messages, node names, and command history.
+// Geometry/type dumps remain available while content capture is opt-in.
+#ifndef SIGURDOS_DEBUG_UI_TEXT
+#define SIGURDOS_DEBUG_UI_TEXT 0
+#endif
+
 #ifndef SIGURDOS_SERIAL_DEBUG_COMMANDS
 #define SIGURDOS_SERIAL_DEBUG_COMMANDS 0
 #endif
@@ -108,4 +114,9 @@ uint8_t feat_to_mask();
 #endif
 #ifndef SIGURDOS_TELEMETRY_DIFF
 #define SIGURDOS_TELEMETRY_DIFF 0
+#endif
+
+// Message bodies are private. Packet telemetry records metadata by default.
+#ifndef SIGURDOS_TELEMETRY_INCLUDE_MESSAGE_TEXT
+#define SIGURDOS_TELEMETRY_INCLUDE_MESSAGE_TEXT 0
 #endif

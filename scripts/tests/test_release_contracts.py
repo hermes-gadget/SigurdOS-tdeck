@@ -81,6 +81,21 @@ class ReleaseContractTests(unittest.TestCase):
         )
         self.assertTrue(any("versioned" in item for item in MODULE.check(root)))
 
+    def test_rejects_duplicated_firmware_version_literal(self):
+        temporary, root = self.make_root()
+        self.addCleanup(temporary.cleanup)
+        (root / "README.md").write_text(
+            "Current firmware snapshot: `SIGURDOS_VERSION` is `beta-9.9.9`.\n"
+        )
+        self.assertTrue(any("version literal" in item for item in MODULE.check(root)))
+
+    def test_rejects_restored_obsolete_helper(self):
+        temporary, root = self.make_root()
+        self.addCleanup(temporary.cleanup)
+        (root / "scripts").mkdir()
+        (root / "scripts/screenshot.py").write_text("print('legacy')\n")
+        self.assertTrue(any("obsolete unsafe" in item for item in MODULE.check(root)))
+
 
 if __name__ == "__main__":
     unittest.main()

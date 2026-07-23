@@ -3,7 +3,7 @@
 **Date:** 2026-07-18
 **Repo:** `hermes-gadget/SigurdOS-tdeck`  
 **Branch audited:** `dev` at `562ba6a`
-**MeshCore submodule:** `516ba4ae` (companion family ~v1.15.0 + patches)  
+**MeshCore submodule:** `3e62b516` (companion family ~v1.15.0 + patches)
 **Primary references:** `examples/companion_radio/MyMesh.{h,cpp}`, `src/helpers/BaseChatMesh.*`, `src/comms/companion_bridge.*`, `src/mesh/sigurd_mesh_v2.*`, `docs/MISSING_FEATURES.md`, `docs/COMPANION_SUPPORT.md`, `docs/ROADMAP.md`, `audit.md`
 
 This document is the **actionable worklist** for bringing SigurdOS-TDeck to durable parity with MeshCore **companion-radio** behaviour (protocol + field workflows), while preserving the project identity as a standalone handheld with its own UI — not a dumb modem.
@@ -26,7 +26,14 @@ It does **not** re-plan declined infrastructure roles (repeater deny-flood gatin
 
 **Workflow rule (repo):** issue-first → branch → PR → green CI → Codex review for agent PRs → hardware verification when the change touches T-Deck behaviour → squash merge to `dev`.
 
-**Architectural rule:** MeshCore is consumed as a **submodule** (`lib/meshcore/`). Do not fork protocol behaviour in the submodule for SigurdOS features; implement host-side behaviour in `src/mesh/` + `src/comms/` + UI.
+**Architectural rule:** MeshCore is consumed as an exact **submodule** gitlink
+(`lib/meshcore/`). The object must be fetchable from the checked-in submodule
+URL in a fresh clone; local Git URL rewrites and unadvertised objects are not a
+dependency strategy. Do not fork protocol behaviour in the submodule for
+SigurdOS features; implement host-side behaviour in `src/mesh/` + `src/comms/`
+and UI. Every gitlink change must run the pinned golden corpus, a reviewed
+upstream-candidate comparison, the companion stateful tests, and the affected
+firmware builds described in `RELEASE_EVIDENCE.md`.
 
 ---
 

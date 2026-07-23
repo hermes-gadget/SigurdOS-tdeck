@@ -34,6 +34,16 @@ def documentation_files(root: Path):
 def check(root: Path) -> list[str]:
     violations: list[str] = []
 
+    for obsolete in (
+        "scripts/screenshot.py",
+        "scripts/capture_png.py",
+        "scripts/decode_capture.py",
+        "scripts/split_header.py",
+        "scripts/split_header_v2.py",
+    ):
+        if (root / obsolete).exists():
+            violations.append(f"{obsolete}: obsolete unsafe helper must stay removed")
+
     for path in source_files(root):
         code = without_comments(path.read_text(errors="replace"))
         relative = path.relative_to(root)
@@ -76,6 +86,12 @@ def check(root: Path) -> list[str]:
         violations.append(
             ".github/workflows/build-release.yml: release tag/version equality gate missing"
         )
+
+    readme_path = root / "README.md"
+    if readme_path.is_file():
+        readme = readme_path.read_text(errors="replace")
+        if re.search(r"Current firmware snapshot:[^\n]*`beta-[^`]+`", readme):
+            violations.append("README.md: do not duplicate the firmware version literal")
 
     return violations
 

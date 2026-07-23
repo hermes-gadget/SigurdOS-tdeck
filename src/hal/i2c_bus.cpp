@@ -44,7 +44,12 @@ RecoveryResult recover_before_begin()
   pinMode(PIN_TOUCH_SDA, INPUT_PULLUP);
   pinMode(PIN_TOUCH_SCL, INPUT_PULLUP);
   delayMicroseconds(5);
-  if (digitalRead(PIN_TOUCH_SDA) != LOW) return RecoveryResult::AlreadyFree;
+  const bool sda_high = digitalRead(PIN_TOUCH_SDA) != LOW;
+  const bool scl_high = digitalRead(PIN_TOUCH_SCL) != LOW;
+  if (sda_high && scl_high) return RecoveryResult::AlreadyFree;
+  // A slave holding SCL low prevents safe clocking. Leave both lines released
+  // and let controller initialization report whether the bus can be owned.
+  if (!scl_high) return RecoveryResult::Stuck;
 
   for (uint8_t pulse = 0; pulse < RECOVERY_CLOCKS; ++pulse) {
     // Drive only LOW. INPUT_PULLUP releases the line instead of actively
@@ -75,15 +80,18 @@ void configure_runtime()
   Wire.setTimeOut(TRANSACTION_TIMEOUT_MS);
 }
 
-void begin()
+bool begin()
 {
   if (bus_started) {
     configure_runtime();
-    return;
+    return true;
   }
 
   const RecoveryResult recovery = recover_before_begin();
-  Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL);
+  if (!Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL)) {
+    SIG_LOGW("i2c controller initialization failed; retry remains enabled");
+    return false;
+  }
   configure_runtime();
   bus_started = true;
 
@@ -96,6 +104,7 @@ void begin()
 #else
   (void)recovery;
 #endif
+  return true;
 }
 
 void reset_for_test()

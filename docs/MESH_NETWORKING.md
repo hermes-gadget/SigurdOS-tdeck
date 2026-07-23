@@ -27,7 +27,7 @@ The firmware implements a full MeshCore protocol stack on the LilyGo T-Deck (ESP
 - [Contact Discovery & Management](#contact-discovery--management)
   - [Advert Broadcasting](#advert-broadcasting)
   - [10-Second Cooldown](#10-second-cooldown)
-  - [Contact List (64-entry LRU)](#contact-list-64-entry-lru)
+  - [Contact List (350-entry, BaseChatMesh-managed)](#contact-list-350-entry-basechatmesh-managed)
   - [Anonymous Data Reception](#anonymous-data-reception)
 - [Ping Nearby (Zero-Hop Discovery)](#ping-nearby-zero-hop-discovery)
   - [Protocol](#protocol)
@@ -89,41 +89,40 @@ The firmware implements a full MeshCore protocol stack on the LilyGo T-Deck (ESP
 
 ### Init Sequence
 
-The mesh subsystem is initialised during `setup()` in `src/main.cpp`. The boot order is:
-
-```
-Serial → board.begin() → battery → SPIFFS → GPS → display → mesh → UI → debug → SD card
-```
+The mesh subsystem is initialized from `setup()` after storage, preferences,
+display, and deferred input initialization. The canonical sequence is
+[Appendix A of the hardware guide](HARDWARE.md#appendix-a--boot-sequence); it is
+not duplicated here so changes have one authoritative source.
 
 The mesh initialisation call chain:
 
 ```
 main.cpp
-  └─ sigurdos::mesh::init(spiffs_ok)          [mesh_wrapper.cpp:186]
+  └─ sigurdos::mesh::init(spiffs_ok)
        ├─ fallback_clock.begin()
        ├─ rtc_clock.begin(Wire)
        ├─ Read NodePrefs (freq, bw, sf, cr, tx_power)
-       ├─ Hard-reset SX1262 via RST pin      [line 212-216]
+       ├─ Hard-reset SX1262 via RST pin
        │    ├─ RST LOW for 100µs
        │    ├─ RST HIGH then 10ms wait (TCXO stabilization)
-       ├─ sigurdos_shared_spi_begin(SCK, MISO, MOSI) [line 221]
-       ├─ radio_module.std_init(&sigurdos_shared_spi())  [line 225]
+       ├─ sigurdos_shared_spi_begin(SCK, MISO, MOSI)
+       ├─ radio_module.std_init(&sigurdos_shared_spi())
        ├─ radio_module.setFrequency(freq)
        ├─ radio_module.setBandwidth(bw)
        ├─ radio_module.setSpreadingFactor(sf)
        ├─ radio_module.setCodingRate(cr)
        ├─ radio_module.setOutputPower(tx_power)
        ├─ fast_rng.begin(radio_module.random(...))
-       ├─ new SigurdMeshV2(...)                   [line 242]
-       │    └─ SigurdMeshV2::SigurdMeshV2(...)       [sigurd_mesh_v2.h:421-431]
+       ├─ new SigurdMeshV2(...)
+       │    └─ SigurdMeshV2::SigurdMeshV2(...)
        │         ├─ _own_name[0] = '\0'
        │         ├─ _prefs.set_defaults()
        │         └─ All contacts out_path = OUT_PATH_UNKNOWN
-       ├─ g_mesh->setMessageCallback(onMeshMessage)  [line 247]
-       ├─ g_mesh->setOwnName(own_name)       [line 248]
-       ├─ Load or generate identity           [line 251-258]
+       ├─ g_mesh->setMessageCallback(onMeshMessage)
+       ├─ g_mesh->setOwnName(own_name)
+       ├─ Load or generate identity
        │    ├─ loadIdentity(g_mesh->self_id)  → SPIFFS /mesh_id
-       │    └─ or generate LocalIdentity(&fast_rng) and save
+       │    └─ or generate LocalIdentity(&hardware_rng) and save
        ├─ g_mesh->begin()                     [line 260]
        ├─ loadChannels()                      [line 263]  (restore from NVS)
        └─ broadcastAdvert(own_name)           [line 269]  (only if prefs configured)
@@ -378,6 +377,25 @@ Each BaseChatMesh `ContactInfo` plus SigurdOS wrapper metadata stores:
 
 ---
 
+## Request/Response Correlation
+
+Status, telemetry, room-history, and companion binary requests are serialized
+per destination identity. A contact may have one pending ordinary request or
+one pending login, never both. The pending slot is reserved before MeshCore is
+asked to transmit and is released if transmission fails or the estimated reply
+deadline expires. Name-based APIs reject duplicate display names; callers that
+already resolved a public key use the `ContactInfo` overload directly.
+
+Ordinary replies are accepted only when all three transaction attributes
+match: the echoed request tag, the sender's full 32-byte public key, and the
+stored request type. Login is intentionally different: current MeshCore login
+replies put the server timestamp—not the initiating request tag—in their first
+four bytes. Login state is therefore correlated by full public key plus a
+pending-session state and accepts only the exact current 13-byte or legacy
+6-byte response shapes.
+
+---
+
 ## Ping Nearby (Zero-Hop Discovery)
 
 The Ping Nearby feature actively discovers nodes within immediate radio range (one hop) without needing prior advert exchange from those nodes.
@@ -391,9 +409,9 @@ The implementation (`sigurd_mesh_v2.h:642-678`, `onControlDataRecv` at line 324)
 2. Responder replies: "PONG:<tag>:<name>:<rssi>" (via sendZeroHop)
 ```
 
-- The tag is a unique value derived from `(millis() XOR this_pointer)` to avoid collision
+- The tag is a predictable correlation value derived from `(millis() XOR this_pointer)`; it is not a nonce or authenticator
 - Both packets have `payload[0] |= 0x80` to set the control-disco bit (required for `onControlDataRecv` dispatch)
-- PONG responses include the responding node's name and the RSSI measured at the responder's radio
+- PONG responses include an unauthenticated, self-reported node name and RSSI
 
 ### 3-Second Collection Window
 
@@ -407,8 +425,8 @@ Up to **32 results** (`PING_RESULTS_MAX`) can be collected in a single ping wind
 
 | Field | Size | Description |
 |-------|------|-------------|
-| `name` | 32 chars | Node name from PONG response |
-| `rssi` | int | Signal strength reported by responder |
+| `name` | 32 chars | Unauthenticated, self-reported node name from PONG response |
+| `rssi` | int | Unauthenticated signal value reported by responder |
 
 ### 30-Second Cooldown
 
@@ -587,8 +605,15 @@ The node's cryptographic identity (private key + public key) is persisted in SPI
 - **Format:** Raw binary — either 64 bytes (private key only) or 96 bytes (private + public)
 - **Loading:** `loadIdentity()` (`mesh_wrapper.cpp:108`) reads from SPIFFS, validates via `LocalIdentity::validatePrivateKey()`
 - **Saving:** `saveIdentity()` (`mesh_wrapper.cpp:125`) writes via `id.writeTo()`, validates written length
-- **Generation:** If no saved identity exists (or the file is corrupt), a new `LocalIdentity(&fast_rng)` is generated and saved
+- **Generation:** If no saved identity exists (or the file is corrupt), a new `LocalIdentity(&hardware_rng)` is generated from ESP32 hardware randomness and saved
 - **Fallback:** If SPIFFS is unavailable (`spiffs_ok = false`), the identity is ephemeral — regenerated on every boot
+
+> [!IMPORTANT]
+> Identities generated by firmware that seeded MeshCore's `StdRNG` from one
+> 31-bit radio value must be considered compromised. After upgrading to a
+> hardware-RNG build, export any state you need, perform a factory reset to
+> generate a new identity, and re-pair contacts. Rotation changes the node's
+> public identity, so existing peers will not automatically recognise it.
 
 ### Channel Persistence (NVS)
 

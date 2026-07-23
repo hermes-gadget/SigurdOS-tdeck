@@ -19,14 +19,14 @@ namespace input {
 // ── Input event reporters ──────────────────────────────
 
 // Report a keyboard key event (keycode is the ASCII value).
-void report_key_event(uint8_t keycode);
+void report_key_event(uint8_t keycode, bool output_enabled = true);
 
 // Report a touch event at (x, y).
-void report_touch_event(uint16_t x, uint16_t y);
+void report_touch_event(uint16_t x, uint16_t y, bool output_enabled = true);
 
 // Report a trackball event (direction as uint8_t).
 // Direction values: 0=None, 1=Up, 2=Down, 3=Left, 4=Right, 5=Click.
-void report_trackball_event(uint8_t direction);
+void report_trackball_event(uint8_t direction, bool output_enabled = true);
 
 // ── LVGL rendering counters ────────────────────────────
 
@@ -47,9 +47,9 @@ namespace sigurdos {
 namespace telemetry {
 namespace input {
 
-inline void report_key_event(uint8_t) {}
-inline void report_touch_event(uint16_t, uint16_t) {}
-inline void report_trackball_event(uint8_t) {}
+inline void report_key_event(uint8_t, bool) {}
+inline void report_touch_event(uint16_t, uint16_t, bool) {}
+inline void report_trackball_event(uint8_t, bool) {}
 inline uint32_t get_lvgl_render_count() { return 0; }
 inline void increment_render_count() {}
 

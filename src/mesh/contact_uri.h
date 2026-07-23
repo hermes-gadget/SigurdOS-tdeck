@@ -61,13 +61,15 @@ inline bool decodeUriComponent(const char* src, size_t src_len,
 inline bool parseContactAddUri(const char* uri, ContactUriFields& out)
 {
     static constexpr char PREFIX[] = "meshcore://contact/add?";
-    if (!uri || std::strncmp(uri, PREFIX, sizeof(PREFIX) - 1) != 0) return false;
+    static constexpr size_t PREFIX_LEN = sizeof(PREFIX) - 1;
+    if (!uri || std::strncmp(uri, PREFIX, PREFIX_LEN) != 0) return false;
 
     ContactUriFields parsed{};
     bool have_name = false;
     bool have_key = false;
     bool have_type = false;
-    const char* cursor = uri + sizeof(PREFIX) - 1;
+    // Index rather than pointer+sizeof — CodeQL cpp/suspicious-add-with-sizeof.
+    const char* cursor = &uri[PREFIX_LEN];
     while (*cursor) {
         const char* key = cursor;
         while (*cursor && *cursor != '=' && *cursor != '&') cursor++;
@@ -90,7 +92,9 @@ inline bool parseContactAddUri(const char* uri, ContactUriFields& out)
             parsed.pubkey_hex[value_len] = '\0';
             have_key = true;
         } else if (key_len == 4 && std::memcmp(key, "type", 4) == 0) {
-            if (have_type || value_len != 1 || value[0] < '1' || value[0] > '3') {
+            if (have_type || value_len != 1 ||
+                value[0] < (char)('0' + MESHCORE_ADV_TYPE_CHAT) ||
+                value[0] > (char)('0' + MESHCORE_ADV_TYPE_SENSOR)) {
                 return false;
             }
             parsed.type = (uint8_t)(value[0] - '0');

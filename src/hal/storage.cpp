@@ -6,11 +6,53 @@
 #include <Arduino.h>
 #include <SPIFFS.h>
 #include <esp_partition.h>
+#include <memory>
+#include <new>
 
 namespace sigurdos {
 
 static bool s_storage_available = false;
 static bool s_storage_init_called = false;
+
+enum class PartitionEraseState {
+    Erased,
+    ContainsData,
+    Unknown,
+};
+
+static constexpr size_t PARTITION_SCAN_CHUNK_BYTES = 4096;
+
+static PartitionEraseState classify_partition_erasure(
+    const esp_partition_t* part)
+{
+    if (!part || part->size == 0) return PartitionEraseState::Unknown;
+
+    // A short erased prefix is not proof that a partition is unused. Scan the
+    // complete partition in flash-sector-sized chunks and fail closed if the
+    // buffer cannot be allocated or any read fails.
+    std::unique_ptr<uint8_t[]> buf(
+        new (std::nothrow) uint8_t[PARTITION_SCAN_CHUNK_BYTES]);
+    if (!buf) return PartitionEraseState::Unknown;
+
+    size_t offset = 0;
+    while (offset < part->size) {
+        const size_t remaining = static_cast<size_t>(part->size) - offset;
+        const size_t read_size = remaining < PARTITION_SCAN_CHUNK_BYTES
+            ? remaining
+            : PARTITION_SCAN_CHUNK_BYTES;
+        if (esp_partition_read(part, offset, buf.get(), read_size) != ESP_OK) {
+            return PartitionEraseState::Unknown;
+        }
+        for (size_t i = 0; i < read_size; ++i) {
+            if (buf[i] != 0xFF) return PartitionEraseState::ContainsData;
+        }
+        offset += read_size;
+        // Keep setup cooperative while a large blank partition is inspected.
+        delay(0);
+    }
+
+    return PartitionEraseState::Erased;
+}
 
 bool storage_init()
 {
@@ -35,21 +77,10 @@ bool storage_init()
         return false;
     }
 
-    // Read the first 64 bytes to check if the partition is all 0xFF (erased).
-    uint8_t buf[64];
-    esp_err_t err = esp_partition_read(part, 0, buf, sizeof(buf));
-    bool erased = (err == ESP_OK);
-    if (erased) {
-        for (size_t i = 0; i < sizeof(buf); i++) {
-            if (buf[i] != 0xFF) {
-                erased = false;
-                break;
-            }
-        }
-    }
+    const PartitionEraseState erase_state = classify_partition_erasure(part);
 
-    if (erased) {
-        Serial.println("[storage] SPIFFS partition appears erased — formatting once");
+    if (erase_state == PartitionEraseState::Erased) {
+        Serial.println("[storage] SPIFFS partition is fully erased — formatting once");
         if (!SPIFFS.format()) {
             Serial.println("[storage] SPIFFS format failed — storage unavailable");
             s_storage_available = false;
@@ -63,6 +94,12 @@ bool storage_init()
         Serial.println("[storage] SPIFFS formatted and mounted");
         s_storage_available = true;
         return true;
+    }
+
+    if (erase_state == PartitionEraseState::Unknown) {
+        Serial.println("[storage] SPIFFS erased-state check failed — preserving partition");
+        s_storage_available = false;
+        return false;
     }
 
     // Partition has data but SPIFFS can't mount it — likely corruption.

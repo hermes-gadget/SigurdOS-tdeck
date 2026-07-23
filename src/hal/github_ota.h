@@ -15,6 +15,14 @@
 namespace sigurdos {
 namespace github_ota {
 
+static constexpr uint32_t GITHUB_OTA_DOWNLOAD_IDLE_TIMEOUT_MS = 15000U;
+
+inline bool githubOtaDownloadIdleTimedOut(uint32_t last_data_at,
+                                         uint32_t now) {
+    return static_cast<uint32_t>(now - last_data_at) >=
+           GITHUB_OTA_DOWNLOAD_IDLE_TIMEOUT_MS;
+}
+
 // ── GitHub OTA state ────────────────────────────────────────────
 
 enum class GitHubOTAState {

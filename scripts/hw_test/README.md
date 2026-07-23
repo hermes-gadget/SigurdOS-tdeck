@@ -20,19 +20,26 @@ required.
 Run a smoke test through the Pi-connected T-Deck:
 
 ```bash
-python3 scripts/hw_test/hw_test_runner.py --smoke --pi-mode
+python3 scripts/hw_test/hw_test_runner.py --smoke --pi-mode --build --flash
 ```
 
 Run against a directly connected T-Deck. The documented VM default is
 `/dev/ttyUSB0`; native USB CDC commonly appears as `/dev/ttyACM0`:
 
 ```bash
-python3 scripts/hw_test/hw_test_runner.py --smoke --local --port /dev/ttyUSB0
-python3 scripts/hw_test/hw_test_runner.py --ui --local --port /dev/ttyACM0 --iterations 5
+python3 scripts/hw_test/hw_test_runner.py --smoke --local --port /dev/ttyUSB0 --build --flash
+python3 scripts/hw_test/hw_test_runner.py --ui --local --port /dev/ttyACM0 --iterations 5 \
+  --allow-unknown-provenance
 ```
 
 The transport must be explicit. This prevents a locally connected Heltec V3 at
 `/dev/ttyUSB0` from being mistaken for the T-Deck.
+
+Passing `--allow-unknown-provenance` is only for exploratory manual checks of an
+already-attached device. Evidence runs must build and flash the image in the same
+invocation, or provide reviewed build metadata with the external image. Known
+environment, protocol, radio, Git, MeshCore, dirty-state, or digest mismatches
+always stop the selected phases.
 
 ## Modes
 
@@ -40,12 +47,22 @@ The transport must be explicit. This prevents a locally connected Heltec V3 at
 |---|---|
 | `--smoke` | Detect firmware, query controller state, navigate home/settings, and capture both screens |
 | `--ui` | Sweep the standardized screen list and sample heap after each iteration |
-| `--radio` | Configure the bench radio profile, reboot, verify it, create a temporary channel, and transmit one low-power packet |
+| `--radio` | Save the original profile, configure and verify the bench profile, transmit one low-power packet, then restore/reboot/verify the original profile |
 | `--soak` | Monitor `[stat]` telemetry and crashes over one persistent serial session |
+| `--crash-recovery` | Deliberately panic a telemetry build, reconnect, and require a valid retained flash-core-dump summary twice |
 | `--full` | Smoke + UI + radio; deliberately excludes a long soak |
-| `--all` | Smoke + UI + radio + soak |
+| `--all` | Smoke + UI + radio + soak; deliberately excludes destructive crash recovery |
 
 With no mode flag the runner defaults to `--smoke`.
+
+Crash recovery is destructive and requires a second acknowledgement flag. It
+also refuses any detected firmware other than a telemetry build:
+
+```bash
+python3 scripts/hw_test/hw_test_runner.py \
+  --crash-recovery --confirm-destructive-crash \
+  --local --port /dev/ttyACM0 --env SigurdOS_TDeck_telemetry
+```
 
 The radio phase transmits. Its default bench profile is 868.100 MHz,
 SF10/BW250/CR5 at 2 dBm. The operator is responsible for using a legal,
@@ -53,6 +70,7 @@ coordinated frequency for the test location:
 
 ```bash
 python3 scripts/hw_test/hw_test_runner.py --radio --pi-mode \
+  --build --flash --env SigurdOS_TDeck_remote_test_radio \
   --radio-frequency 868.1 --radio-sf 10 --radio-bw 250 \
   --radio-cr 5 --radio-power 2
 ```
@@ -88,7 +106,7 @@ mapping binds `firmware-merged.bin` to that digest:
 ```bash
 python3 scripts/hw_test/hw_flash.py \
   --firmware /tmp/reviewed/firmware-merged.bin \
-  --sha256 <reviewed-64-character-digest> \
+  --metadata /tmp/pr-artifact/build-metadata.json \
   --local --port /dev/ttyACM0
 ```
 
@@ -131,13 +149,15 @@ the recorded SHA-256, then give that binary and digest to the runner:
 ```bash
 python3 scripts/hw_test/hw_test_runner.py --smoke --pi-mode --flash \
   --firmware /tmp/pr-artifact/firmware-merged.bin \
-  --sha256 <reviewed-64-character-digest> \
+  --metadata /tmp/pr-artifact/build-metadata.json \
   --env SigurdOS_TDeck_remote_test_radio \
   --outdir /tmp/pr-hardware
 ```
 
-The results JSON records the exact firmware SHA-256. Maintainer approval must bind
-that digest to the reviewed commit before the trusted flasher is invoked.
+The runner compares the device-reported environment, Git SHA, MeshCore SHA, and
+dirty state with the reviewed metadata. The successful flash operation binds the
+connected device bytes to the full merged-image SHA-256, which is also recorded
+in the results JSON. Any known mismatch is a critical failure.
 
 ## Pi worker model
 

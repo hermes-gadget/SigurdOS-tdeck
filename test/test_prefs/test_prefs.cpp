@@ -24,6 +24,8 @@
 
 #include "hal/prefs.h"
 #include "hal/prefs_write_policy.h"
+#include <limits>
+#include <string>
 
 namespace {
 
@@ -70,6 +72,21 @@ TEST_F(PrefsTest, RxBoostedGainRoundTripsThroughPrefsSaveAndLoad) {
 
     ASSERT_TRUE(sigurdos::prefs_load(loaded));
     EXPECT_TRUE(loaded.rx_boosted_gain);
+}
+
+TEST_F(PrefsTest, BleBondResetPendingRoundTripsWithReplacementPin) {
+    sigurdos::NodePrefs saved;
+    saved.set_defaults();
+    saved.ble_pin = 654321;
+    saved.ble_bond_reset_pending = true;
+
+    ASSERT_TRUE(sigurdos::prefs_save(saved));
+
+    sigurdos::NodePrefs loaded;
+    loaded.set_defaults();
+    ASSERT_TRUE(sigurdos::prefs_load(loaded));
+    EXPECT_EQ(654321u, loaded.ble_pin);
+    EXPECT_TRUE(loaded.ble_bond_reset_pending);
 }
 
 TEST_F(PrefsTest, DefaultPathHashModeIsOneByte) {
@@ -190,6 +207,60 @@ TEST_F(PrefsTest, CompanionPolicyWidthsRoundTripWithoutTruncation) {
     EXPECT_EQ(3, loaded.advert_loc_policy);
 }
 
+TEST(PrefsValidationTest, InvalidConfiguredRadioFallsBackToReceiveDisabledDefaults) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    prefs.configured = true;
+    prefs.freq = std::numeric_limits<float>::quiet_NaN();
+    prefs.bw = 0.0f;
+    prefs.sf = 255;
+    prefs.cr = 0;
+    prefs.tx_power_dbm = -20;
+
+    EXPECT_FALSE(sigurdos::detail::normalizeAndValidate(prefs));
+    EXPECT_FALSE(prefs.configured);
+    EXPECT_FLOAT_EQ(prefs.freq, 0.0f);
+    EXPECT_FLOAT_EQ(prefs.bw, 0.0f);
+    EXPECT_EQ(prefs.sf, 0);
+    EXPECT_EQ(prefs.cr, 0);
+    EXPECT_EQ(prefs.tx_power_dbm, 0);
+}
+
+TEST(PrefsValidationTest, ValidBoundariesSurviveAndTimingCorruptionIsNormalized) {
+    sigurdos::NodePrefs prefs;
+    prefs.set_defaults();
+    prefs.configured = true;
+    prefs.freq = 400.0f;
+    prefs.bw = 7.8f;
+    prefs.sf = 6;
+    prefs.cr = 5;
+    prefs.tx_power_dbm = 2;
+    prefs.rx_delay_base = std::numeric_limits<float>::infinity();
+    prefs.tx_delay_factor = -1.0f;
+    prefs.direct_tx_delay_factor = std::numeric_limits<float>::quiet_NaN();
+
+    EXPECT_TRUE(sigurdos::detail::normalizeAndValidate(prefs));
+    EXPECT_FLOAT_EQ(prefs.rx_delay_base, 10.0f);
+    EXPECT_FLOAT_EQ(prefs.tx_delay_factor, 1.0f);
+    EXPECT_FLOAT_EQ(prefs.direct_tx_delay_factor, 1.0f);
+}
+
+TEST(PrefsValidationTest, RepeaterPasswordSchemaMatchesReadBuffers) {
+    const std::string max_name(31, 'n');
+    const std::string too_long_name(32, 'n');
+    const std::string max_password(63, 'p');
+    const std::string too_long_password(64, 'p');
+
+    EXPECT_TRUE(sigurdos::detail::repeaterPasswordFitsSchema(
+        max_name.c_str(), max_password.c_str()));
+    EXPECT_FALSE(sigurdos::detail::repeaterPasswordFitsSchema(
+        too_long_name.c_str(), "password"));
+    EXPECT_FALSE(sigurdos::detail::repeaterPasswordFitsSchema(
+        "repeater", too_long_password.c_str()));
+    EXPECT_FALSE(sigurdos::detail::repeaterPasswordFitsSchema("", "password"));
+    EXPECT_FALSE(sigurdos::detail::repeaterPasswordFitsSchema("repeater", ""));
+}
+
 TEST(BlePrefsMigrationTest, FreshInstallUsesDiscoverableDefault) {
     const auto state = sigurdos::detail::resolveBlePrefs(
         false, false, false, false, 0);
@@ -283,7 +354,7 @@ TEST(PrefsWritePolicyTest, EveryNvsSetFailureIsReturnedWithoutCommit) {
     sigurdos::detail::PrefsWriteFailure failure;
     ASSERT_TRUE(sigurdos::detail::prefsWriteAll(
         prefs, successful.ops(), sigurdos::detail::BlePrefsWriteMode::Write, &failure));
-    ASSERT_EQ(48, successful.write_calls);
+    ASSERT_EQ(49, successful.write_calls);
     ASSERT_EQ(3, successful.ble_write_calls);
     ASSERT_EQ(1, successful.commit_calls);
 
@@ -310,7 +381,7 @@ TEST(PrefsWritePolicyTest, CommitFailureIsReturned) {
 
     EXPECT_FALSE(sigurdos::detail::prefsWriteAll(
         prefs, failing.ops(), sigurdos::detail::BlePrefsWriteMode::Write, &failure));
-    EXPECT_EQ(48, failing.write_calls);
+    EXPECT_EQ(49, failing.write_calls);
     EXPECT_EQ(1, failing.commit_calls);
     EXPECT_STREQ("commit", failure.key);
     EXPECT_EQ(failing.error, failure.error);
@@ -325,7 +396,7 @@ TEST(PrefsWritePolicyTest, PreserveModeLeavesCrossVariantBleKeysUntouched) {
 
     EXPECT_TRUE(sigurdos::detail::prefsWriteAll(
         prefs, writer.ops(), sigurdos::detail::BlePrefsWriteMode::Preserve));
-    EXPECT_EQ(45, writer.write_calls);
+    EXPECT_EQ(46, writer.write_calls);
     EXPECT_EQ(0, writer.ble_write_calls);
     EXPECT_EQ(1, writer.commit_calls);
 }

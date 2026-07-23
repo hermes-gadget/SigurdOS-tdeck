@@ -53,6 +53,15 @@ struct TileLoadBudget {
 // Zero-initialise all entries in the cache array (pixels = nullptr)
 void tile_cache_init(CachedTile* cache, int count);
 
+template <typename FreeFn>
+void tile_cache_clear(CachedTile* cache, int count, FreeFn release) {
+    if (!cache || count <= 0) return;
+    for (int i = 0; i < count; ++i) {
+        if (cache[i].pixels) release(cache[i].pixels);
+        cache[i] = {0, 0, 0, nullptr, 0};
+    }
+}
+
 // ── Lookup ──────────────────────────────────────────────────
 
 // Look up a tile by coordinates.
@@ -71,19 +80,19 @@ CachedTile* tile_cache_lookup(CachedTile* cache, int count,
 // pixels pointer before overwriting it.
 CachedTile* tile_cache_evict_slot(CachedTile* cache, int count);
 
-// Release a selected victim before allocating its replacement. The slot owns
-// the returned allocation and remains explicitly empty when allocation fails.
-template <typename AllocateFn, typename FreeFn>
-uint16_t* tile_cache_reallocate_slot(CachedTile* slot, std::size_t bytes,
-                                     AllocateFn allocate, FreeFn release) {
+// Prepare a selected slot for new pixels. Fixed-size tile buffers are retained
+// across eviction; allocation is needed only while initially filling the cache.
+template <typename AllocateFn>
+uint16_t* tile_cache_prepare_slot(CachedTile* slot, std::size_t bytes,
+                                  AllocateFn allocate) {
     if (!slot || bytes == 0) return nullptr;
-    if (slot->pixels) release(slot->pixels);
-    slot->pixels = nullptr;
     slot->zoom = 0;
     slot->tx = 0;
     slot->ty = 0;
     slot->last_used = 0;
-    slot->pixels = static_cast<uint16_t*>(allocate(bytes));
+    if (!slot->pixels) {
+        slot->pixels = static_cast<uint16_t*>(allocate(bytes));
+    }
     return slot->pixels;
 }
 

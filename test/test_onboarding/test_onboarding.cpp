@@ -8,6 +8,7 @@
 namespace {
 
 using sigurdos::ui::onboarding_date_valid;
+using sigurdos::ui::onboarding_clock_valid;
 using sigurdos::ui::onboarding_days_in_month;
 using sigurdos::ui::onboarding_is_leap_year;
 using sigurdos::ui::onboarding_time_valid;
@@ -55,6 +56,11 @@ TEST(OnboardingValidation, TimeRejectsInvalidValues) {
     EXPECT_FALSE(onboarding_time_valid(24, 0));
     EXPECT_FALSE(onboarding_time_valid(12, -1));
     EXPECT_FALSE(onboarding_time_valid(12, 60));
+}
+
+TEST(OnboardingValidation, ClockValidityStartsAtDocumentedJune2026Epoch) {
+    EXPECT_FALSE(onboarding_clock_valid(1780271999U));
+    EXPECT_TRUE(onboarding_clock_valid(1780272000U));
 }
 
 } // anonymous namespace

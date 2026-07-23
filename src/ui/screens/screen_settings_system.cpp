@@ -20,8 +20,10 @@
 #include "../screens_common.h"
 #include "../navigation.h"
 #include "../theme.h"
+#include "../pin_gate_policy.h"
 #include "../responsive.h"
 #include "../lv_timer_owner.h"
+#include "../system_action_policy.h"
 #include "../home_screen.h"
 #include "../../hal/keyboard.h"
 #include "../../hal/prefs.h"
@@ -40,6 +42,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
+#include <new>
 
 namespace sigurdos::ui {
 
@@ -120,7 +124,43 @@ static void show_build_info_dialog(lv_obj_t* parent)
 struct SdDiagDialogCtx {
     lv_obj_t* label;
     lv_obj_t* row;
+    lv_obj_t* retry_btn;
+    std::atomic<int> refs{1};
+    std::atomic<bool> active{true};
+    bool retry_running = false;
+    bool retry_result = false;
 };
+
+static void update_sd_row_label(lv_obj_t* row);
+static void sd_diag_update(SdDiagDialogCtx* ctx);
+
+static void sd_diag_release(SdDiagDialogCtx* ctx)
+{
+    if (ctx && ctx->refs.fetch_sub(1) == 1) delete ctx;
+}
+
+static void sd_diag_retry_complete(void* data)
+{
+    auto* ctx = static_cast<SdDiagDialogCtx*>(data);
+    ctx->retry_running = false;
+    if (ctx->active.load()) {
+        sd_diag_update(ctx);
+        update_sd_row_label(ctx->row);
+        lv_obj_clear_state(ctx->retry_btn, LV_STATE_DISABLED);
+    }
+    sd_diag_release(ctx);
+}
+
+static void sd_diag_retry_worker(void* data)
+{
+    auto* ctx = static_cast<SdDiagDialogCtx*>(data);
+    ctx->retry_result = sigurdos_sdcard_retry();
+    if (lv_async_call(sd_diag_retry_complete, ctx) != LV_RESULT_OK) {
+        ctx->retry_running = false;
+        sd_diag_release(ctx);
+    }
+    vTaskDelete(nullptr);
+}
 
 static void update_sd_row_label(lv_obj_t* row)
 {
@@ -184,10 +224,17 @@ static void show_sd_diag_dialog(lv_obj_t* parent, lv_obj_t* row)
     lv_obj_set_style_text_font(text, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(text, LV_ALIGN_TOP_LEFT, 0, 28);
 
-    auto* ctx = new SdDiagDialogCtx{text, row};
+    auto* ctx = new(std::nothrow) SdDiagDialogCtx{};
+    if (!ctx) {
+        lv_obj_del_async(dlg);
+        return;
+    }
+    ctx->label = text;
+    ctx->row = row;
     sd_diag_update(ctx);
 
     lv_obj_t* retry_btn = lv_btn_create(dlg);
+    ctx->retry_btn = retry_btn;
     lv_obj_set_size(retry_btn, 72, 24);
     lv_obj_align(retry_btn, LV_ALIGN_BOTTOM_LEFT, 4, -4);
     apply_pixel_btn_outline(retry_btn);
@@ -197,9 +244,17 @@ static void show_sd_diag_dialog(lv_obj_t* parent, lv_obj_t* row)
     lv_obj_center(rl);
     lv_obj_add_event_cb(retry_btn, [](lv_event_t* e) {
         auto* ctx = (SdDiagDialogCtx*)lv_event_get_user_data(e);
-        sigurdos_sdcard_retry();
-        sd_diag_update(ctx);
-        update_sd_row_label(ctx ? ctx->row : nullptr);
+        if (!ctx || ctx->retry_running || !ctx->active.load()) return;
+        ctx->retry_running = true;
+        ctx->refs.fetch_add(1);
+        lv_obj_add_state(ctx->retry_btn, LV_STATE_DISABLED);
+        lv_label_set_text(ctx->label, "Retrying SD mount...");
+        if (xTaskCreate(sd_diag_retry_worker, "sd-retry", 4096, ctx, 1, nullptr) != pdPASS) {
+            ctx->retry_running = false;
+            lv_obj_clear_state(ctx->retry_btn, LV_STATE_DISABLED);
+            lv_label_set_text(ctx->label, "Unable to start SD retry");
+            sd_diag_release(ctx);
+        }
     }, LV_EVENT_CLICKED, (void*)ctx);
 
     lv_obj_t* close_btn = lv_btn_create(dlg);
@@ -215,7 +270,13 @@ static void show_sd_diag_dialog(lv_obj_t* parent, lv_obj_t* row)
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
-        delete (SdDiagDialogCtx*)lv_event_get_user_data(e);
+        auto* ctx = (SdDiagDialogCtx*)lv_event_get_user_data(e);
+        if (!ctx) return;
+        ctx->active.store(false);
+        ctx->label = nullptr;
+        ctx->row = nullptr;
+        ctx->retry_btn = nullptr;
+        sd_diag_release(ctx);
     }, LV_EVENT_DELETE, (void*)ctx);
 }
 
@@ -562,13 +623,14 @@ static void datetime_set_dialog(lv_obj_t* parent, bool is_date)
                 epoch, sigurdos::mesh::TimeSource::Manual)) {
             int yy, mmo, dd, hh, mmi;
             sigurdos::mesh::getCurrentLocalDateTime(&yy, &mmo, &dd, &hh, &mmi);
-            char dbuf[32], tbuf[16];
+            char dbuf[32], tbuf[16], home_time[6];
             snprintf(dbuf, sizeof(dbuf), "  Date: %04d-%02d-%02d", yy, mmo, dd);
             snprintf(tbuf, sizeof(tbuf), "  Time: %02d:%02d", hh, mmi);
+            snprintf(home_time, sizeof(home_time), "%02d:%02d", hh, mmi);
             update_row_label(g_date_row, dbuf);
             update_row_label(g_time_row, tbuf);
             update_time_source_row();
-            home_screen_update_time(tbuf);
+            home_screen_update_time(home_time);
             lv_obj_del_async(dlg);
         }
     }, LV_EVENT_CLICKED, (void*)ctx);
@@ -689,7 +751,7 @@ void settings_system_show()
         lv_obj_set_style_text_color(btn_pin, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_add_event_cb(btn_pin, [](lv_event_t* e) {
             lv_obj_t* scr_pin = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
-            auto dlg_sz = dialog_size(260, 160);
+            auto dlg_sz = dialog_size(260, 190);
             lv_obj_t* dlg = lv_obj_create(scr_pin);
             lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
             lv_obj_center(dlg);
@@ -706,20 +768,33 @@ void settings_system_show()
             lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
             lv_obj_t* msg = lv_label_create(dlg);
-            lv_label_set_text(msg, "Enter new 4-digit PIN:");
+            lv_label_set_text(msg, "Enter and confirm a 4-6 digit PIN");
             lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
             lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(msg, LV_ALIGN_TOP_LEFT, 8, 24);
 
             lv_obj_t* pin_ta = lv_textarea_create(dlg);
             lv_obj_set_size(pin_ta, 120, 30);
-            lv_obj_align(pin_ta, LV_ALIGN_TOP_MID, 0, 48);
+            lv_obj_align(pin_ta, LV_ALIGN_TOP_MID, 0, 44);
             lv_textarea_set_password_mode(pin_ta, true);
             lv_textarea_set_one_line(pin_ta, true);
-            lv_textarea_set_max_length(pin_ta, 4);
+            lv_textarea_set_max_length(pin_ta, 6);
             lv_textarea_set_accepted_chars(pin_ta, "0123456789");
             lv_obj_set_style_text_align(pin_ta, LV_TEXT_ALIGN_CENTER, 0);
             apply_pixel_input(pin_ta);
+
+            lv_obj_t* confirm_ta = lv_textarea_create(dlg);
+            lv_obj_set_size(confirm_ta, 120, 30);
+            lv_obj_align(confirm_ta, LV_ALIGN_TOP_MID, 0, 80);
+            lv_textarea_set_password_mode(confirm_ta, true);
+            lv_textarea_set_one_line(confirm_ta, true);
+            lv_textarea_set_max_length(confirm_ta, 6);
+            lv_textarea_set_accepted_chars(confirm_ta, "0123456789");
+            lv_textarea_set_placeholder_text(confirm_ta, "Confirm");
+            lv_obj_set_style_text_align(confirm_ta, LV_TEXT_ALIGN_CENTER, 0);
+            apply_pixel_input(confirm_ta);
+            lv_obj_set_user_data(pin_ta, confirm_ta);
+            lv_obj_set_user_data(confirm_ta, msg);
 
             // Save button
             lv_obj_t* save_btn = lv_btn_create(dlg);
@@ -733,11 +808,26 @@ void settings_system_show()
                 lv_obj_t* ta = (lv_obj_t*)lv_event_get_user_data(ev);
                 lv_obj_t* dlg = lv_obj_get_parent(ta);
                 const char* pin_str = lv_textarea_get_text(ta);
-                if (pin_str && strlen(pin_str) >= 4) {
-                    auto p = sigurdos::prefs_get();
-                    p.device_pin = (uint32_t)atoi(pin_str);
-                    sigurdos::prefs_set(p);
+                lv_obj_t* confirm = (lv_obj_t*)lv_obj_get_user_data(ta);
+                const char* confirm_str = confirm ? lv_textarea_get_text(confirm) : nullptr;
+                lv_obj_t* feedback = confirm ? (lv_obj_t*)lv_obj_get_user_data(confirm) : nullptr;
+                if (!pin_confirmation_valid(pin_str, confirm_str)) {
+                    if (feedback) {
+                        lv_label_set_text(feedback,
+                            pin_str && pin_str[0] == '0'
+                                ? "PIN cannot start with zero; use Clear to disable"
+                                : "PINs must be 4-6 digits and match");
+                        lv_obj_set_style_text_color(feedback, lv_color_hex(ACCENT_RED), 0);
+                    }
+                    return;
                 }
+                auto p = sigurdos::prefs_get();
+                p.device_pin = (uint32_t)atoi(pin_str);
+                if (!sigurdos::prefs_set(p)) {
+                    if (feedback) lv_label_set_text(feedback, "PIN could not be saved");
+                    return;
+                }
+                pin_clear_grace();
                 lv_obj_del_async(dlg);
             }, LV_EVENT_CLICKED, pin_ta);
 
@@ -768,6 +858,7 @@ void settings_system_show()
                     auto p = sigurdos::prefs_get();
                     p.device_pin = 0;
                     sigurdos::prefs_set(p);
+                    pin_clear_grace();
                     lv_obj_del_async(dlg);
                 }, LV_EVENT_CLICKED, nullptr);
             }
@@ -1186,6 +1277,7 @@ void settings_system_show()
         lv_label_set_text(cfl, "Shut down");
         lv_obj_center(cfl);
         lv_obj_add_event_cb(confirm_btn, [](lv_event_t*) {
+            pin_clear_grace();
             sigurdos::mesh::shutdown();
         }, LV_EVENT_CLICKED, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
@@ -1272,12 +1364,80 @@ void settings_system_show()
     lv_obj_set_style_bg_color(btn_reboot, lv_color_hex(BG_TERTIARY), 0);
     lv_obj_set_style_bg_opa(btn_reboot, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(btn_reboot, lv_color_hex(TEXT_PRIMARY), 0);
-    lv_obj_add_event_cb(btn_reboot, [](lv_event_t*) {
-        // Small delay for flash writes to complete, then restart
-        sigurdos::mesh::saveState();
-        sigurdos::mesh::saveChannels();
-        vTaskDelay(pdMS_TO_TICKS(200));
-        esp_restart();
+    lv_obj_add_event_cb(btn_reboot, [](lv_event_t* e) {
+        lv_obj_t* root = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
+        auto size = dialog_size(250, 126);
+        lv_obj_t* dlg = lv_obj_create(root);
+        lv_obj_set_size(dlg, size.w, size.h);
+        lv_obj_center(dlg);
+        apply_pixel_card_accent(dlg);
+
+        lv_obj_t* title = lv_label_create(dlg);
+        lv_label_set_text(title, "Confirm Reboot");
+        lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
+
+        lv_obj_t* message = lv_label_create(dlg);
+        const bool allowed = system_reboot_allowed(
+            sigurdos::ota::isActive(), sigurdos::github_ota::isActive());
+        lv_label_set_text(message, allowed
+            ? "Save all state and restart?"
+            : "Reboot blocked while an update is active.");
+        lv_obj_set_width(message, size.w - 20);
+        lv_obj_set_style_text_align(message, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(message,
+            lv_color_hex(allowed ? TEXT_SECONDARY : ACCENT_RED), 0);
+        lv_obj_align(message, LV_ALIGN_CENTER, 0, -4);
+
+        lv_obj_t* cancel = lv_btn_create(dlg);
+        lv_obj_set_size(cancel, 72, 24);
+        lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 12, -6);
+        apply_pixel_btn_outline(cancel);
+        lv_obj_t* cancel_label = lv_label_create(cancel);
+        lv_label_set_text(cancel_label, "Cancel");
+        lv_obj_center(cancel_label);
+        lv_obj_add_event_cb(cancel, [](lv_event_t* event) {
+            lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(event)));
+        }, LV_EVENT_CLICKED, nullptr);
+
+        if (!allowed) return;
+        lv_obj_t* confirm = lv_btn_create(dlg);
+        lv_obj_set_size(confirm, 72, 24);
+        lv_obj_align(confirm, LV_ALIGN_BOTTOM_RIGHT, -12, -6);
+        lv_obj_set_style_bg_color(confirm, lv_color_hex(ACCENT_RED), 0);
+        lv_obj_t* confirm_label = lv_label_create(confirm);
+        lv_label_set_text(confirm_label, "Reboot");
+        lv_obj_center(confirm_label);
+        lv_obj_add_event_cb(confirm, [](lv_event_t* event) {
+            lv_obj_t* button = (lv_obj_t*)lv_event_get_target(event);
+            lv_obj_t* dialog = lv_obj_get_parent(button);
+            if (!system_reboot_allowed(sigurdos::ota::isActive(),
+                                       sigurdos::github_ota::isActive())) return;
+            lv_obj_add_state(button, LV_STATE_DISABLED);
+            lv_obj_t* label = lv_obj_get_child(dialog, 1);
+            if (label) lv_label_set_text(label, "Saving state...");
+            lv_timer_t* timer = lv_timer_create([](lv_timer_t* task) {
+                lv_obj_t* dialog = (lv_obj_t*)lv_timer_get_user_data(task);
+                lv_timer_del(task);
+                if (!lv_obj_is_valid(dialog)) return;
+                if (!system_reboot_allowed(sigurdos::ota::isActive(),
+                                           sigurdos::github_ota::isActive())) {
+                    lv_label_set_text(lv_obj_get_child(dialog, 1),
+                                      "Update started; reboot cancelled.");
+                    return;
+                }
+                const bool saved = sigurdos::mesh::saveState() &&
+                                   sigurdos::mesh::saveChannels();
+                if (!saved) {
+                    lv_label_set_text(lv_obj_get_child(dialog, 1),
+                                      "Save failed; reboot cancelled.");
+                    return;
+                }
+                esp_restart();
+            }, 1, dialog);
+            if (timer) lv_timer_set_repeat_count(timer, 1);
+            else if (label) lv_label_set_text(label, "Unable to schedule reboot.");
+        }, LV_EVENT_CLICKED, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
 
     // Factory reset

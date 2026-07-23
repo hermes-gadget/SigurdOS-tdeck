@@ -10,7 +10,7 @@
 #include <helpers/RegionMap.h>  // for RegionEntry (must be before namespace)
 #include "time_state.h"
 
-// Node type identifiers from MeshCore adverts — kept local so UI code can filter.
+// Node type identifiers pinned to MeshCore's AdvertDataHelpers protocol.
 #define ADV_TYPE_NONE      0
 #define ADV_TYPE_CHAT      1
 #define ADV_TYPE_REPEATER  2
@@ -175,6 +175,7 @@ void factoryReset();
 // Companion BLE bridge
 bool companionBleAvailable();
 bool companionBleSetEnabled(bool enabled);
+bool companionBleOpenPairingWindow();
 bool companionBleEnabled();
 bool companionBleConnected();
 uint32_t companionBleLastSyncTime();
@@ -221,6 +222,7 @@ void injectMessage(const char* sender, const char* channel, const char* text);
 bool sendTrace(int contact_idx, uint32_t* out_tag);
 int  findContactIndex(const char* name);
 bool hasTraceResult();
+uint32_t getTraceResultTag();
 uint8_t getTracePathLen();
 void   getTracePath(uint8_t* snrs_out, uint8_t* hashes_out);
 void   clearTraceResult();

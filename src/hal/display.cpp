@@ -338,8 +338,14 @@ static bool show_character_picker(char base, lv_obj_t* target)
     close_character_picker(false);
 
     lv_obj_t* dlg = lv_obj_create(lv_scr_act());
-    character_picker = dlg;
-    character_picker_target = target;
+    if (!dlg) return false;
+    auto fail_picker = [&]() {
+        lv_obj_del_async(dlg);
+        character_picker = nullptr;
+        character_picker_target = nullptr;
+        focus_textarea(target);
+        return false;
+    };
 
     lv_obj_set_size(dlg, 272, 86);
     lv_obj_center(dlg);
@@ -361,24 +367,28 @@ static bool show_character_picker(char base, lv_obj_t* target)
     char title_buf[8] = {0};
     title_buf[0] = base;
     lv_obj_t* title = lv_label_create(dlg);
+    if (!title) return fail_picker();
     lv_label_set_text(title, title_buf);
     lv_obj_set_style_text_color(title, lv_color_hex(sigurdos::theme::TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 2, 0);
 
     lv_obj_t* close = lv_btn_create(dlg);
+    if (!close) return fail_picker();
     lv_obj_set_size(close, 24, 22);
     lv_obj_align(close, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_set_style_bg_color(close, lv_color_hex(sigurdos::theme::BG_INPUT), 0);
     lv_obj_set_style_radius(close, 0, 0);
     lv_obj_set_style_border_width(close, 0, 0);
     lv_obj_t* close_lbl = lv_label_create(close);
+    if (!close_lbl) return fail_picker();
     lv_label_set_text(close_lbl, LV_SYMBOL_CLOSE);
     lv_obj_set_style_text_font(close_lbl, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(close_lbl);
     lv_obj_add_event_cb(close, character_picker_close_cb, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* row = lv_obj_create(dlg);
+    if (!row) return fail_picker();
     lv_obj_set_size(row, 258, 42);
     lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
@@ -394,6 +404,7 @@ static bool show_character_picker(char base, lv_obj_t* target)
         character_picker_buttons[i].text = options[i];
 
         lv_obj_t* btn = lv_btn_create(row);
+        if (!btn) return fail_picker();
         lv_obj_set_size(btn, 28, 36);
         lv_obj_set_style_bg_color(btn, lv_color_hex(
             i == 0 ? sigurdos::theme::ACCENT : sigurdos::theme::BG_INPUT), 0);
@@ -401,6 +412,7 @@ static bool show_character_picker(char base, lv_obj_t* target)
         lv_obj_set_style_border_width(btn, 0, 0);
 
         lv_obj_t* lbl = lv_label_create(btn);
+        if (!lbl) return fail_picker();
         lv_label_set_text(lbl, options[i]);
         lv_obj_set_style_text_color(lbl, lv_color_hex(sigurdos::theme::TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(lbl, emoji_wrapped_montserrat_16, 0);
@@ -414,6 +426,8 @@ static bool show_character_picker(char base, lv_obj_t* target)
         }
     }
     if (g) lv_group_add_obj(g, close);
+    character_picker = dlg;
+    character_picker_target = target;
     return true;
 }
 
@@ -443,6 +457,7 @@ static void show_layout_indicator()
     }
 
     layout_indicator = lv_label_create(lv_layer_top());
+    if (!layout_indicator) return;
     lv_obj_add_event_cb(layout_indicator, [](lv_event_t* e) {
         if (layout_indicator == (lv_obj_t*)lv_event_get_target(e)) {
             layout_indicator = nullptr;
@@ -469,10 +484,10 @@ static bool dispatch_keyboard_layout_key(int key, lv_indev_data_t* data)
     if (key == ' ' && valid_target) {
         const uint32_t now = millis();
         if (layout_cycle_gesture.on_space(now, reinterpret_cast<uintptr_t>(target))) {
-            // Remove the first space that LVGL inserted, consume the second,
-            // then cycle and persist the active layout.
+            // Persist before changing UI state. On NVS failure both spaces are
+            // left intact and the active layout remains unchanged.
+            if (!sigurdos::keyboard_layouts::cycle()) return false;
             lv_textarea_delete_char(target);
-            sigurdos::keyboard_layouts::cycle();
 #if SIGURDOS_DEBUG_UI
             SIGURDOS_RUNTIME_FEAT(ui) {
                 Serial.printf("[kbd] layout: %s\n",

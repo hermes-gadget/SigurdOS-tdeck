@@ -21,6 +21,7 @@
 #include "navigation.h"
 #include "theme.h"
 #include "responsive.h"
+#include "pin_gate_policy.h"
 #include "../hal/battery.h"
 #include "../hal/wifi_ota.h"
 #include "../hal/prefs.h"
@@ -77,12 +78,13 @@ void update_companion_status()
 // ════════════════════════════════════════════════════════
 lv_obj_t* make_screen_full(const char* title)
 {
+    const DisplayGeometry geometry = runtime_geometry();
     lv_obj_t* scr = lv_obj_create(nullptr);
     apply_dark_bg(scr);
 
     // ── Top bar ──────────────────────────────────────────
     lv_obj_t* top = lv_obj_create(scr);
-    lv_obj_set_size(top, LV_PCT(100), TOP_BAR_H);
+    lv_obj_set_size(top, LV_PCT(100), geometry.top_bar_h);
     lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_color(top, lv_color_hex(BG_SECONDARY), 0);
     lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
@@ -90,7 +92,7 @@ lv_obj_t* make_screen_full(const char* title)
     lv_obj_set_style_border_width(top, 0, 0);
 
     lv_obj_t* back = lv_btn_create(top);
-    lv_obj_set_size(back, 24, TOP_BAR_H - 4);
+    lv_obj_set_size(back, 24, geometry.top_bar_h - 4);
     lv_obj_align(back, LV_ALIGN_LEFT_MID, 2, 0);
     apply_topbar_icon_btn(back);
     s_back_btn = back; // store for back-swipe highlight
@@ -146,14 +148,14 @@ lv_obj_t* make_screen_full(const char* title)
     // Top divider
     lv_obj_t* tdiv = lv_obj_create(scr);
     lv_obj_set_size(tdiv, LV_PCT(100), DIVIDER_H);
-    lv_obj_align(tdiv, LV_ALIGN_TOP_MID, 0, TOP_BAR_H);
+    lv_obj_align(tdiv, LV_ALIGN_TOP_MID, 0, geometry.top_bar_h);
     lv_obj_set_style_bg_color(tdiv, lv_color_hex(DIVIDER), 0);
     lv_obj_set_style_bg_opa(tdiv, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(tdiv, 0, 0);
 
     // ── Bottom bar ───────────────────────────────────────
     lv_obj_t* bot = lv_obj_create(scr);
-    lv_obj_set_size(bot, LV_PCT(100), BOT_BAR_H);
+    lv_obj_set_size(bot, LV_PCT(100), geometry.bottom_bar_h);
     lv_obj_align(bot, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(bot, lv_color_hex(BG_SECONDARY), 0);
     lv_obj_set_style_bg_opa(bot, LV_OPA_COVER, 0);
@@ -165,7 +167,7 @@ lv_obj_t* make_screen_full(const char* title)
     lv_label_set_text(dev, sigurdos::mesh::getOwnName());
     lv_obj_set_style_text_color(dev, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(dev, emoji_wrapped_montserrat_10, 0);
-    lv_obj_set_width(dev, 200);
+    lv_obj_set_width(dev, std::max(60, geometry.width - 120));
     lv_label_set_long_mode(dev, LV_LABEL_LONG_DOT);
     lv_obj_align(dev, LV_ALIGN_LEFT_MID, 4, 0);
 
@@ -199,7 +201,8 @@ lv_obj_t* make_screen_full(const char* title)
     // Bottom divider
     lv_obj_t* bdiv = lv_obj_create(scr);
     lv_obj_set_size(bdiv, LV_PCT(100), DIVIDER_H);
-    lv_obj_align(bdiv, LV_ALIGN_TOP_MID, 0, DISPLAY_H - BOT_BAR_H - DIVIDER_H);
+    lv_obj_align(bdiv, LV_ALIGN_TOP_MID, 0,
+                 geometry.height - geometry.bottom_bar_h - DIVIDER_H);
     lv_obj_set_style_bg_color(bdiv, lv_color_hex(DIVIDER), 0);
     lv_obj_set_style_bg_opa(bdiv, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(bdiv, 0, 0);
@@ -263,44 +266,59 @@ void screens_clear_companion_icon()
 // ════════════════════════════════════════════════════════
 // Device PIN protection
 // ════════════════════════════════════════════════════════
-static uint32_t g_pin_last_unlock_ms = 0;
+static PinGateState g_pin_gate;
 static constexpr uint32_t PIN_GRACE_MS = 300000; // 5 minutes in milliseconds
-static bool g_pin_entry_active = false;  // set while PIN entry screen is displayed
+static lv_obj_t* g_pin_entry_root = nullptr;
+static uint32_t g_pin_entry_generation = 0;
 
-bool is_pin_entry_active() { return g_pin_entry_active; }
-
-bool pin_grace_active() {
-    if (g_pin_last_unlock_ms == 0) return false;
-    uint32_t now = millis();
-    // Handle millis() wraparound (~49 days): if now < last_unlock,
-    // the timer wrapped; grace is still valid if within the window.
-    if (now < g_pin_last_unlock_ms) {
-        return (UINT32_MAX - g_pin_last_unlock_ms + now) < PIN_GRACE_MS;
-    }
-    return (now - g_pin_last_unlock_ms) < PIN_GRACE_MS;
+bool is_pin_entry_active() {
+    if (g_pin_entry_root && !lv_obj_is_valid(g_pin_entry_root)) g_pin_entry_root = nullptr;
+    return g_pin_entry_root != nullptr;
 }
 
+bool pin_entry_handle_trackball(SigurdOSTrackballEvent event) {
+    if (!is_pin_entry_active()) return false;
+    lv_group_t* group = lv_group_get_default();
+    if (!group) return true;
+    switch (pin_modal_action(event)) {
+    case PinModalAction::FocusPrevious:
+        lv_group_focus_prev(group);
+        break;
+    case PinModalAction::FocusNext:
+        lv_group_focus_next(group);
+        break;
+    case PinModalAction::Activate:
+        lv_group_send_data(group, LV_KEY_ENTER);
+        break;
+    default:
+        break;
+    }
+    return true;
+}
+
+bool pin_grace_active() {
+    return pinGateGraceActive(g_pin_gate, millis(), PIN_GRACE_MS);
+}
+
+void pin_clear_grace() { pinGateClearGrace(g_pin_gate); }
+
 struct PinEntryCtx {
-    int attempts;
     lv_obj_t* attempts_label;
     Screen target;
+    uint32_t generation;
 };
 
 static void pin_entry_success(Screen target) {
-    g_pin_entry_active = false;
-    g_pin_last_unlock_ms = millis();
-    if (g_pin_last_unlock_ms == 0) g_pin_last_unlock_ms = 1;
-    // Direct load — bypass navigate_to's same-screen guard
-    if (target == Screen::Settings) {
-        settings_screen_show();
-    } else if (target == Screen::Terminal) {
-        terminal_screen_show();
-    }
+    g_pin_entry_root = nullptr;
+    pinGateRecordSuccess(g_pin_gate, millis());
+    navigation_pin_unlocked(target);
 }
 
 void pin_entry_show(Screen target_screen) {
-    g_pin_entry_active = true;
+    ++g_pin_entry_generation;
+    if (g_pin_entry_generation == 0) ++g_pin_entry_generation;
     lv_obj_t* scr = lv_obj_create(nullptr);
+    g_pin_entry_root = scr;
     apply_dark_bg(scr);
 
     // Title
@@ -312,7 +330,7 @@ void pin_entry_show(Screen target_screen) {
 
     // Subtitle
     lv_obj_t* sub = lv_label_create(scr);
-    lv_label_set_text(sub, "4-digit PIN to unlock");
+    lv_label_set_text(sub, "4-6 digit PIN to unlock");
     lv_obj_set_style_text_color(sub, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(sub, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 60);
@@ -324,7 +342,7 @@ void pin_entry_show(Screen target_screen) {
     lv_obj_set_style_text_align(ta, LV_TEXT_ALIGN_CENTER, 0);
     lv_textarea_set_password_mode(ta, true);
     lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_max_length(ta, 4);
+    lv_textarea_set_max_length(ta, 6);
     lv_textarea_set_accepted_chars(ta, "0123456789");
     lv_textarea_set_placeholder_text(ta, "----");
     lv_obj_set_style_text_font(ta, emoji_wrapped_montserrat_14, 0);
@@ -332,7 +350,16 @@ void pin_entry_show(Screen target_screen) {
 
     // Attempts remaining label
     lv_obj_t* attempts_label = lv_label_create(scr);
-    lv_label_set_text(attempts_label, "3 attempts remaining");
+    const uint32_t lockout_remaining = pinGateRemaining(g_pin_gate, millis());
+    char initial_status[48];
+    if (lockout_remaining) {
+        snprintf(initial_status, sizeof(initial_status), "Locked: retry in %lus",
+                 (unsigned long)((lockout_remaining + 999) / 1000));
+    } else {
+        snprintf(initial_status, sizeof(initial_status), "%u failed attempts",
+                 (unsigned)g_pin_gate.failures);
+    }
+    lv_label_set_text(attempts_label, initial_status);
     lv_obj_set_style_text_color(attempts_label, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(attempts_label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(attempts_label, LV_ALIGN_BOTTOM_MID, 0, -20);
@@ -346,34 +373,52 @@ void pin_entry_show(Screen target_screen) {
     lv_label_set_text(cancel_lbl, "Back to Home");
     lv_obj_center(cancel_lbl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t*) {
-        g_pin_entry_active = false;
+        navigation_pin_cancelled();
         go_back();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Allocate context
-    PinEntryCtx* ctx = new PinEntryCtx{3, attempts_label, target_screen};
+    PinEntryCtx* ctx = new PinEntryCtx{attempts_label, target_screen, g_pin_entry_generation};
 
-    // Value change callback — auto-submit on 4 digits
+    // Value change callback — submit when the configured 4-6 digit length is reached.
     lv_obj_add_event_cb(ta, [](lv_event_t* e) {
         PinEntryCtx* ctx = (PinEntryCtx*)lv_event_get_user_data(e);
         lv_obj_t* ta_obj = (lv_obj_t*)lv_event_get_target(e);
 
         const char* text = lv_textarea_get_text(ta_obj);
-        if (strlen(text) == 4) {
+        char expected[7];
+        snprintf(expected, sizeof(expected), "%lu",
+                 (unsigned long)sigurdos::prefs_get().device_pin);
+        if (strlen(text) == strlen(expected)) {
+            const uint32_t now = millis();
+            const uint32_t lockout_remaining =
+                pinGateRemaining(g_pin_gate, now);
+            if (lockout_remaining != 0) {
+                lv_textarea_set_text(ta_obj, "");
+                char status[48];
+                snprintf(status, sizeof(status), "Locked: retry in %lus",
+                         (unsigned long)((lockout_remaining + 999) / 1000));
+                lv_label_set_text(ctx->attempts_label, status);
+                return;
+            }
             uint32_t entered = (uint32_t)atoi(text);
             if (entered == sigurdos::prefs_get().device_pin) {
                 pin_entry_success(ctx->target);
                 return;
             }
             // Wrong PIN
-            ctx->attempts--;
+            pinGateRecordFailure(g_pin_gate, now);
             lv_textarea_set_text(ta_obj, "");
-            if (ctx->attempts <= 0) {
-                g_pin_entry_active = false;
-                go_back();
+            const uint32_t delay_ms = pinGateRemaining(g_pin_gate, now);
+            if (delay_ms != 0) {
+                char lockout[48];
+                snprintf(lockout, sizeof(lockout), "Locked: retry in %lus",
+                         (unsigned long)((delay_ms + 999) / 1000));
+                lv_label_set_text(ctx->attempts_label, lockout);
             } else {
                 char att_buf[32];
-                snprintf(att_buf, sizeof(att_buf), "%d attempts remaining", ctx->attempts);
+                snprintf(att_buf, sizeof(att_buf), "%u failed attempts",
+                         (unsigned)g_pin_gate.failures);
                 lv_label_set_text(ctx->attempts_label, att_buf);
             }
         }
@@ -382,7 +427,10 @@ void pin_entry_show(Screen target_screen) {
     // Store ctx on screen for cleanup
     lv_obj_set_user_data(scr, ctx);
     lv_obj_add_event_cb(scr, [](lv_event_t* e) {
-        PinEntryCtx* c = (PinEntryCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
+        lv_obj_t* deleted = (lv_obj_t*)lv_event_get_target(e);
+        PinEntryCtx* c = (PinEntryCtx*)lv_obj_get_user_data(deleted);
+        if (c && g_pin_entry_root == deleted && c->generation == g_pin_entry_generation)
+            g_pin_entry_root = nullptr;
         delete c;
     }, LV_EVENT_DELETE, nullptr);
 
@@ -390,6 +438,7 @@ void pin_entry_show(Screen target_screen) {
     lv_group_t* g = lv_group_get_default();
     if (g) {
         lv_group_add_obj(g, ta);
+        lv_group_add_obj(g, cancel_btn);
         lv_group_focus_obj(ta);
     }
 

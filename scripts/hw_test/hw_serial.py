@@ -48,7 +48,7 @@ STAT_RE = re.compile(
     re.IGNORECASE,
 )
 CAPTURE_HEADER_RE = re.compile(r"\[capture\]\s+W=(\d+)\s+H=(\d+)\s+S=(\d+)")
-BUILD_ENV_RE = re.compile(r"(?:^|\|)env=([^|\r\n]+)")
+BUILD_FIELD_RE = re.compile(r"(?:^|[| ])(git|dirty|mcore|env)=([^|\r\n]+)")
 RADIO_PROFILE_RE = re.compile(r"\bprofile=(remote_radio|remote_usca_rxonly|remote_no_radio)\b")
 CAPTURE_HEX_CHARS_PER_LINE = 64
 
@@ -69,6 +69,9 @@ class ScreenshotError(HardwareSerialError):
 class DeviceInfo:
     protocol: CommandProtocol
     build_environment: str | None = None
+    git_sha: str | None = None
+    git_dirty: bool | None = None
+    meshcore_sha: str | None = None
     radio_available: bool | None = None
     test_controller: bool = False
     evidence: str = ""
@@ -519,13 +522,16 @@ class PersistentSerial:
         if remote:
             self.protocol = CommandProtocol.REMOTE_TEST
             build = self.send_command(
-                "query build",
+                "buildinfo",
                 timeout_s=4,
                 recover_on_silence=False,
             )
             evidence.append(build.output)
-            match = BUILD_ENV_RE.search(build.output)
-            environment = match.group(1).strip() if match else None
+            fields = {
+                key: value.strip()
+                for key, value in BUILD_FIELD_RE.findall(build.output)
+            }
+            dirty = fields.get("dirty")
             radio_response = self.send_command(
                 "getrf",
                 timeout_s=4,
@@ -535,7 +541,10 @@ class PersistentSerial:
             radio_available = infer_radio_availability(radio_response.output, boot_text)
             return DeviceInfo(
                 protocol=self.protocol,
-                build_environment=environment,
+                build_environment=fields.get("env"),
+                git_sha=fields.get("git"),
+                git_dirty=(dirty == "1") if dirty in {"0", "1"} else None,
+                meshcore_sha=fields.get("mcore"),
                 radio_available=radio_available,
                 test_controller=True,
                 evidence="\n".join(item for item in evidence if item)[-4000:],

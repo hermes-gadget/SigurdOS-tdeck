@@ -30,7 +30,9 @@ bool probe_target(uint8_t addr);
 RecoveryResult recover_before_begin();
 
 // Owns shared-bus startup and applies the runtime clock/timeout contract.
-void begin();
+// Returns true only when the controller owns the bus. A failed call may be
+// retried; startup state is latched only after Wire.begin() succeeds.
+bool begin();
 void configure_runtime();
 
 // Reset process-wide startup state for native test isolation.

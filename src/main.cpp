@@ -15,11 +15,16 @@
 #include "hal/launcher_env.h"
 #include "hal/buzzer.h"
 #include "hal/boot_watchdog.h"
+#include "hal/display_retry_state.h"
+#include "hal/ota_boot_health.h"
 #include "app/map_renderer.h"
+#include "app/gps_clock_handoff.h"
 #include "mesh/mesh_wrapper.h"
 #include "ui/ui.h"
+#include "ui/screens_common.h"
 #include "ui/theme.h"
 #include "diagnostics/debug_cfg.h"
+#include "diagnostics/diagnostic_io.h"
 #if SIGURDOS_DEBUG_DIAG
 #include "diagnostics/debug.h"
 #endif
@@ -51,11 +56,29 @@ static void boot_status(const char* status)
 #include "esp_log.h"
 static const char* BOOT_TAG = "boot";
 
+[[noreturn]] static void enter_orderly_sleep()
+{
+    sigurdos::ui::pin_clear_grace();
+    // The mesh shutdown coordinator stops new work, persists every available
+    // store, quiesces buses, and retries checked deep-sleep preparation. It is
+    // valid before mesh init and skips persistence when no store is usable.
+    sigurdos::mesh::shutdown();
+
+    // TDeckBoard::sleep() is retrying and successful deep sleep is
+    // non-returning. Preserve the application invariant if that contract is
+    // ever violated by a platform implementation.
+    while (true) {
+        Serial.println("[power] shutdown coordinator returned unexpectedly");
+        delay(1000);
+    }
+}
+
 void setup()
 {
     esp_log_write(ESP_LOG_ERROR, BOOT_TAG, "SETUP ENTRY - BEFORE Serial.begin");
     Serial.begin(115200);
     const esp_reset_reason_t reset_reason = esp_reset_reason();
+    sigurdos::ota_boot_health::begin();
     sigurdos::hal::boot_watchdog_begin(reset_reason);
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
     esp_log_write(ESP_LOG_ERROR, BOOT_TAG, "HELLO FROM REMOTE_TEST BUILD -v2");
@@ -78,22 +101,27 @@ void setup()
             deep_sleep_reset, timer_wakeup, early_battery_mv)) {
         Serial.printf("[boot] battery still critical (%u mV); returning to deep sleep\n",
                       early_battery_mv);
-        board.sleep(0);
-        return;
+        enter_orderly_sleep();
     }
     sigurdos::hal::buzzer_init();
 
     // Track display init failures across reboots to detect boot loops.
     // RTC_NOINIT_ATTR persists through software resets (ESP.restart()).
-    static RTC_NOINIT_ATTR uint8_t display_failures = 0;
-    static constexpr uint8_t MAX_DISPLAY_FAILURES = 3;
+    static RTC_NOINIT_ATTR sigurdos::hal::DisplayRetryState
+        display_retry_state;
+    sigurdos::hal::display_retry_begin(
+        display_retry_state, reset_reason == ESP_RST_SW);
 
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Display);
     if (!sigurdos_display_init()) {
-        display_failures++;
+        const uint8_t display_failures =
+            sigurdos::hal::display_retry_note_failure(display_retry_state);
         Serial.printf("[boot] FATAL: Display init failed (%u/%u attempts)\n",
-                      display_failures, MAX_DISPLAY_FAILURES);
-        if (display_failures >= MAX_DISPLAY_FAILURES) {
+                      display_failures,
+                      sigurdos::hal::MAX_DISPLAY_FAILURES);
+        sigurdos::ota_boot_health::rollbackIfPending(
+            "display initialization failed");
+        if (sigurdos::hal::display_retry_should_halt(display_retry_state)) {
             Serial.println("[boot] HALTED: Too many display failures.");
             Serial.println("[boot] USB reflashing remains available; reset to retry.");
             // Mesh, BLE, OTA, and interactive command services have not started.
@@ -105,7 +133,7 @@ void setup()
         delay(5000);
         ESP.restart();
     }
-    display_failures = 0;  // success - reset counter
+    sigurdos::hal::display_retry_clear(display_retry_state);
     boot_log("display core init OK");
 
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Ui);
@@ -228,6 +256,7 @@ void setup()
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Telemetry);
     sigurdos::telemetry::init();
 #endif
+    sigurdos::ota_boot_health::markCoreReady();
     sigurdos::hal::boot_watchdog_enter_runtime();
 }
 
@@ -239,13 +268,11 @@ void loop()
 #endif
     // Low-battery auto-shutdown (matches MeshCore pattern)
     static uint32_t last_batt_check = 0;
-    static uint32_t last_gps_poll = 0;
     if (millis() - last_batt_check > 30000) {  // every 30s
         last_batt_check = millis();
         if (board.isBatteryCritical()) {
             Serial.println("CRITICAL: Battery low — entering deep sleep");
-            board.sleep(0);  // sleep indefinitely until charged
-            return;
+            enter_orderly_sleep();
         }
     }
 
@@ -266,23 +293,20 @@ void loop()
     {   // Persisted background cadence plus explicit map/time-sync demand.
         const sigurdos::NodePrefs& gp = sigurdos::prefs_get();
         sigurdos_gps_service(gp.gps_enabled, gp.gps_interval);
-        if (gp.gps_enabled) {
-            uint32_t now = millis();
-            uint32_t interval_ms = (uint32_t)gp.gps_interval * 1000;
-            if (interval_ms > 0 && (now - last_gps_poll >= interval_ms)) {
-                last_gps_poll = now;
-                sigurdos_gps_loop();
-            }
-            SigurdOSGpsUtcTime gps_time{};
-            if (sigurdos_gps_get_pending_time(&gps_time)) {
-                const uint32_t epoch = sigurdos::mesh::makeEpoch(
-                    gps_time.year, gps_time.month, gps_time.day,
-                    gps_time.hour, gps_time.minute) + gps_time.second;
-                if (sigurdos::mesh::setSystemTime(
-                        epoch, sigurdos::mesh::TimeSource::GPS)) {
-                    sigurdos_gps_mark_time_synced();
-                }
-            }
+        const bool gps_time_requested = gp.gps_enabled ||
+            sigurdos_gps_time_sync_status() == SigurdOSGpsSyncStatus::Waiting;
+        if (gps_time_requested) {
+            sigurdos::app::serviceGpsClock(
+                true,
+                [](SigurdOSGpsUtcTime* out) { return sigurdos_gps_get_pending_time(out); },
+                [](int year, int month, int day, int hour, int minute) {
+                    return sigurdos::mesh::makeEpoch(year, month, day, hour, minute);
+                },
+                [](uint32_t epoch) {
+                    return sigurdos::mesh::setSystemTime(
+                        epoch, sigurdos::mesh::TimeSource::GPS);
+                },
+                [] { sigurdos_gps_mark_time_synced(); });
         }
     }
     sigurdos::mesh::loop();
@@ -299,5 +323,7 @@ void loop()
 #if SIGURDOS_DEBUG_DIAG
     sigurdos::debug::loop();
 #endif
+    sigurdos::ota_boot_health::loop();
+    sigurdos::diagnostics::drain_diagnostic_output();
     sigurdos::hal::boot_watchdog_runtime_progress();
 }

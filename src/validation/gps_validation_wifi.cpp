@@ -26,6 +26,9 @@
 #ifndef SIGURDOS_GPS_VALIDATION_WIFI_PATH
 #define SIGURDOS_GPS_VALIDATION_WIFI_PATH "/gps"
 #endif
+#ifndef SIGURDOS_GPS_VALIDATION_WIFI_TOKEN
+#define SIGURDOS_GPS_VALIDATION_WIFI_TOKEN ""
+#endif
 
 namespace {
 
@@ -33,25 +36,18 @@ using sigurdos::gps_validation::ConnectPollResult;
 using sigurdos::gps_validation::UploadQueue;
 using sigurdos::gps_validation::pollConnect;
 using sigurdos::gps_validation::reconnectDue;
+using sigurdos::gps_validation::advanceWifiState;
+using sigurdos::gps_validation::advanceWriteOffset;
+using sigurdos::gps_validation::boundedWriteSize;
+using sigurdos::gps_validation::parseHttpStatusLine;
+using sigurdos::gps_validation::responseExpired;
+using sigurdos::gps_validation::WifiState;
+using sigurdos::gps_validation::UploadPhase;
 
 constexpr uint32_t HTTP_CONNECT_BUDGET_MS = 25;
 constexpr uint32_t HTTP_RESPONSE_TIMEOUT_MS = 2000;
 constexpr size_t HTTP_WRITE_BUDGET_BYTES = 64;
 constexpr size_t HTTP_READ_BUDGET_BYTES = 32;
-
-enum class WifiState : uint8_t {
-    Disabled,
-    Connecting,
-    Disconnected,
-    Connected,
-};
-
-enum class UploadPhase : uint8_t {
-    Idle,
-    Header,
-    Body,
-    Response,
-};
 
 bool wifi_config_valid = false;
 WifiState wifi_state = WifiState::Disabled;
@@ -61,7 +57,7 @@ uint32_t last_wifi_attempt_ms = 0;
 UploadQueue upload_queue;
 WiFiClient upload_client;
 UploadPhase upload_phase = UploadPhase::Idle;
-char http_header[256] = {};
+char http_header[512] = {};
 size_t http_header_len = 0;
 size_t http_header_offset = 0;
 size_t http_body_offset = 0;
@@ -74,7 +70,8 @@ uint32_t uploads_failed = 0;
 bool wifi_has_config()
 {
     return strlen(SIGURDOS_GPS_VALIDATION_WIFI_SSID) > 0
-        && strlen(SIGURDOS_GPS_VALIDATION_WIFI_HOST) > 0;
+        && strlen(SIGURDOS_GPS_VALIDATION_WIFI_HOST) > 0
+        && strlen(SIGURDOS_GPS_VALIDATION_WIFI_TOKEN) >= 22;
 }
 
 void print_upload_outcome(const char* outcome, int http_status)
@@ -129,7 +126,11 @@ void service_wifi_state()
     const uint32_t now = millis();
     const bool connected = WiFi.status() == WL_CONNECTED;
 
-    if (wifi_state == WifiState::Connected && !connected) {
+    const WifiState next = advanceWifiState(
+        wifi_state, connected,
+        static_cast<uint32_t>(now - wifi_connect_started_ms),
+        reconnectDue(now, last_wifi_attempt_ms));
+    if (wifi_state == WifiState::Connected && next == WifiState::Disconnected) {
         // Keep the current queue head for a retry after reconnecting.
         reset_upload_transport(false);
         wifi_state = WifiState::Disconnected;
@@ -139,14 +140,11 @@ void service_wifi_state()
     }
 
     if (wifi_state == WifiState::Connecting) {
-        const ConnectPollResult result = pollConnect(
-            connected,
-            static_cast<uint32_t>(now - wifi_connect_started_ms));
-        if (result == ConnectPollResult::Connected) {
+        if (next == WifiState::Connected) {
             wifi_state = WifiState::Connected;
             Serial.printf("[gps-validation] wifi=1 state=connected ip=%s\n",
                           WiFi.localIP().toString().c_str());
-        } else if (result == ConnectPollResult::TimedOut) {
+        } else if (next == WifiState::Disconnected) {
             WiFi.disconnect(false, false);
             wifi_state = WifiState::Disconnected;
             last_wifi_attempt_ms = now;
@@ -155,8 +153,7 @@ void service_wifi_state()
         return;
     }
 
-    if (wifi_state == WifiState::Disconnected
-        && reconnectDue(now, last_wifi_attempt_ms)) {
+    if (wifi_state == WifiState::Disconnected && next == WifiState::Connecting) {
         start_wifi_connect();
     }
 }
@@ -187,11 +184,13 @@ void begin_upload()
         "POST %s HTTP/1.1\r\n"
         "Host: %s:%u\r\n"
         "Content-Type: text/plain\r\n"
+        "X-SigurdOS-Token: %s\r\n"
         "Connection: close\r\n"
         "Content-Length: %u\r\n\r\n",
         SIGURDOS_GPS_VALIDATION_WIFI_PATH,
         SIGURDOS_GPS_VALIDATION_WIFI_HOST,
         (unsigned)SIGURDOS_GPS_VALIDATION_WIFI_PORT,
+        SIGURDOS_GPS_VALIDATION_WIFI_TOKEN,
         (unsigned)body_len);
     if (header_len <= 0 || static_cast<size_t>(header_len) >= sizeof(http_header)) {
         finish_upload("request-too-large", 0, false);
@@ -206,17 +205,13 @@ void begin_upload()
 
 bool write_upload_chunk(const char* data, size_t len, size_t& offset)
 {
-    const size_t remaining = len - offset;
-    const size_t chunk = remaining < HTTP_WRITE_BUDGET_BYTES
-        ? remaining
-        : HTTP_WRITE_BUDGET_BYTES;
+    const size_t chunk = boundedWriteSize(len, offset, HTTP_WRITE_BUDGET_BYTES);
+    if (chunk == 0) return offset == len;
     sigurdos_gps_loop();
     const size_t written = upload_client.write(
         reinterpret_cast<const uint8_t*>(data + offset), chunk);
     sigurdos_gps_loop();
-    if (written == 0) return false;
-    offset += written;
-    return true;
+    return advanceWriteOffset(len, written, &offset);
 }
 
 void service_upload()
@@ -268,8 +263,8 @@ void service_upload()
         const char c = static_cast<char>(value);
         if (c == '\n') {
             http_status_line[http_status_len] = '\0';
-            int http_status = 0;
-            if (sscanf(http_status_line, "HTTP/%*u.%*u %d", &http_status) != 1) {
+            const int http_status = parseHttpStatusLine(http_status_line);
+            if (http_status == 0) {
                 finish_upload("bad-response", 0, false);
             } else if (http_status >= 200 && http_status < 300) {
                 finish_upload("ok", http_status, true);
@@ -287,9 +282,8 @@ void service_upload()
     }
 
     const uint32_t now = millis();
-    if ((!upload_client.connected() && upload_client.available() == 0)
-        || static_cast<uint32_t>(now - http_response_started_ms)
-            > HTTP_RESPONSE_TIMEOUT_MS) {
+    if (responseExpired(upload_client.connected(), upload_client.available(),
+                        now, http_response_started_ms)) {
         finish_upload("response-timeout", 0, false);
     }
 }
