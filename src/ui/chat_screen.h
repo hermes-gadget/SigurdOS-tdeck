@@ -72,6 +72,10 @@ void chat_screen_show();
 // Open a direct message conversation with a contact (creates if needed)
 void chat_screen_open_dm(const char* contact_name);
 
+// Open an existing channel or DM by its durable conversation name. If a
+// historical channel no longer exists, show the chat list instead.
+void chat_screen_open_conversation(const char* conversation);
+
 // Set which conversations to show: 0=all, 1=channels only, 2=DMs only
 void chat_screen_set_filter(int mode);
 

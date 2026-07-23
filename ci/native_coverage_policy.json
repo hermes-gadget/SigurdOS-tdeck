@@ -41,6 +41,7 @@
         "src/ui/screens/screen_advertise.cpp", "src/ui/screens/screen_bluetooth.cpp",
         "src/ui/screens/screen_channels.cpp", "src/ui/screens/screen_contacts.cpp",
         "src/ui/screens/screen_finder.cpp", "src/ui/screens/screen_map.cpp",
+        "src/ui/screens/screen_message_search.cpp",
         "src/ui/screens/screen_node_stats.cpp", "src/ui/screens/screen_node_status.cpp",
         "src/ui/screens/screen_packets.cpp", "src/ui/screens/screen_radio_setup.cpp",
         "src/ui/screens/screen_regions.cpp", "src/ui/screens/screen_repeaters.cpp",

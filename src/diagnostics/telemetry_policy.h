@@ -38,6 +38,7 @@ inline const char* screen_name(sigurdos::ui::Screen screen) {
         case Screen::Regions: return "Regions";
         case Screen::RepeaterDetail: return "RepeaterDetail";
         case Screen::CustomRadioSetup: return "CustomRadioSetup";
+        case Screen::MessageSearch: return "MessageSearch";
         case Screen::COUNT: break;
     }
     return "?";

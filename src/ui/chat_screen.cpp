@@ -100,9 +100,10 @@ static lv_obj_t* search_input        = nullptr;
 static lv_obj_t* ch_list            = nullptr;
 static lv_obj_t* ch_back_btn        = nullptr;
 static lv_obj_t* ch_add_btn         = nullptr;
+static lv_obj_t* ch_search_btn      = nullptr;
 static lv_obj_t* g_chat_list_root       = nullptr;
 static uint32_t  g_chat_list_generation = 0;
-static int       ch_focus           = 0;   // 0=list, 1=back, 2=add
+static int       ch_focus           = 0;   // 0=list, 1=back, 2=add, 3=search
 static int       ch_list_selected   = 0;
 
 // Root identity and generation keep a delayed delete from an older messaging
@@ -533,6 +534,7 @@ static void clear_ch_focus_buttons()
 {
     if (ch_back_btn) lv_obj_set_style_border_width(ch_back_btn, 1, 0);
     if (ch_add_btn) lv_obj_set_style_border_width(ch_add_btn, 0, 0);
+    if (ch_search_btn) lv_obj_set_style_border_width(ch_search_btn, 2, 0);
 }
 
 // ── Forward declarations ──────────────────────────────
@@ -871,7 +873,7 @@ static lv_obj_t* make_chat_list_screen()
             return;
         }
         g_chat_list_root = nullptr;
-        ch_list = ch_back_btn = ch_add_btn = nullptr;
+        ch_list = ch_back_btn = ch_add_btn = ch_search_btn = nullptr;
     }, LV_EVENT_DELETE, reinterpret_cast<void*>(static_cast<uintptr_t>(generation)));
 
     // Top bar
@@ -995,7 +997,7 @@ static void show_channel_list()
     scope_indicator = byte_counter = nullptr;
     chat_older_btn = chat_newer_btn = chat_no_results = nullptr;
     for (lv_obj_t*& bubble : chat_bubble_pool) bubble = nullptr;
-    ch_list = ch_back_btn = ch_add_btn = nullptr;
+    ch_list = ch_back_btn = ch_add_btn = ch_search_btn = nullptr;
     ch_focus = 0;
 
     refresh_channels();
@@ -1032,9 +1034,12 @@ static void show_channel_list()
     Serial.println("]");
 #endif
 
+    const int bottom_row_y = LIST_CONT_Y + LIST_CONT_H - 32;
+    const int add_w = (CONTENT_W > 200 ? 180 : CONTENT_W - 20) - 34;
+
     ch_add_btn = lv_btn_create(s);
-    lv_obj_set_size(ch_add_btn, CONTENT_W > 200 ? 180 : CONTENT_W - 20, 28);
-    lv_obj_align(ch_add_btn, LV_ALIGN_TOP_MID, 0, LIST_CONT_Y + LIST_CONT_H - 32);
+    lv_obj_set_size(ch_add_btn, add_w, 28);
+    lv_obj_align(ch_add_btn, LV_ALIGN_TOP_MID, -18, bottom_row_y);
     lv_obj_set_style_bg_color(ch_add_btn, lv_color_hex(ACCENT), 0);
     lv_obj_set_style_border_width(ch_add_btn, 0, 0);
     lv_obj_set_style_radius(ch_add_btn, 0, 0);
@@ -1046,6 +1051,20 @@ static void show_channel_list()
     lv_obj_add_event_cb(ch_add_btn, [](lv_event_t* e) {
         lv_obj_t* scr = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(e));
         show_add_channel_options(scr);
+    }, LV_EVENT_CLICKED, nullptr);
+
+    // Search button — opens the global message search screen.
+    ch_search_btn = lv_btn_create(s);
+    lv_obj_set_size(ch_search_btn, 28, 28);
+    lv_obj_align(ch_search_btn, LV_ALIGN_TOP_MID, add_w / 2 + 4, bottom_row_y);
+    apply_pixel_btn_outline(ch_search_btn);
+    lv_obj_t* sl = lv_label_create(ch_search_btn);
+    lv_label_set_text(sl, LV_SYMBOL_EYE_OPEN);
+    lv_obj_set_style_text_font(sl, emoji_wrapped_montserrat_12, 0);
+    lv_obj_set_style_text_color(sl, lv_color_hex(ACCENT), 0);
+    lv_obj_center(sl);
+    lv_obj_add_event_cb(ch_search_btn, [](lv_event_t*) {
+        navigate_to(Screen::MessageSearch);
     }, LV_EVENT_CLICKED, nullptr);
 
     show_screen(s);
@@ -2686,6 +2705,36 @@ void chat_screen_open_dm(const char* contact_name)
     open_channel_messaging(idx);
 }
 
+void chat_screen_open_conversation(const char* conversation)
+{
+    if (!conversation || !conversation[0]) {
+        navigate_to(Screen::Chat);
+        return;
+    }
+    if (chat_screen_is_dm_name(conversation)) {
+        const char* contact_name = conversation + 3;
+        while (*contact_name == ' ') contact_name++;
+        if (*contact_name) {
+            chat_screen_open_dm(contact_name);
+            return;
+        }
+        navigate_to(Screen::Chat);
+        return;
+    }
+
+    chat_filter_mode = 0;
+    refresh_channels();
+    const int idx = find_channel_idx(conversation);
+    if (idx < 0) {
+        navigate_to(Screen::Chat);
+        return;
+    }
+
+    g_skip_channel_list = true;
+    navigate_to(Screen::Chat);
+    open_channel_messaging(idx);
+}
+
 void chat_screen_add_msg(const char* channel, const char* sender, const char* text, bool is_self)
 {
     chat_screen_add_msg_at(channel, sender, text, 0, is_self);
@@ -2881,7 +2930,7 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
                     lv_obj_set_style_border_color(ch_back_btn, lv_color_hex(ACCENT), 0);
                 }
             } else {
-                // ch_focus == 2, return to list
+                // Add/search focus returns to the conversation list.
                 clear_ch_focus_buttons();
                 ch_focus = 0;
                 if (ch_list_selected >= 0) {
@@ -2891,12 +2940,20 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
             }
             return true;
         case SigurdOSTrackballEvent::Right:
-            if (ch_focus == 2) {
-                if (ch_add_btn) lv_obj_set_style_border_width(ch_add_btn, 0, 0);
+            if (ch_focus == 3) {
+                clear_ch_focus_buttons();
                 ch_focus = 0;
                 if (ch_list_selected >= 0) {
                     lv_obj_t* row = lv_obj_get_child(ch_list, ch_list_selected);
                     if (row) apply_ch_row_selection(row, true);
+                }
+            } else if (ch_focus == 2) {
+                if (ch_add_btn) lv_obj_set_style_border_width(ch_add_btn, 0, 0);
+                ch_focus = 3;
+                if (ch_search_btn) {
+                    lv_obj_set_style_border_width(ch_search_btn, 3, 0);
+                    lv_obj_set_style_border_color(
+                        ch_search_btn, lv_color_hex(ACCENT), 0);
                 }
             } else if (ch_focus == 0) {
                 clear_ch_row_selection();
@@ -2920,6 +2977,8 @@ bool chat_screen_handle_trackball(SigurdOSTrackballEvent event)
                 go_back();
             } else if (ch_focus == 2 && ch_add_btn) {
                 lv_obj_send_event(ch_add_btn, LV_EVENT_CLICKED, nullptr);
+            } else if (ch_focus == 3 && ch_search_btn) {
+                lv_obj_send_event(ch_search_btn, LV_EVENT_CLICKED, nullptr);
             } else if (ch_list_selected >= 0 && ch_list_selected < row_count) {
                 const int idx = canonical_conversation_index(ch_list_selected);
                 if (idx >= 0) {

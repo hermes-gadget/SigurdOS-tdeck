@@ -52,6 +52,7 @@ enum class Screen {
     Regions,
     RepeaterDetail,
     CustomRadioSetup,
+    MessageSearch,
     COUNT
 };
 

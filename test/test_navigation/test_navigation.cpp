@@ -61,6 +61,7 @@ void wifi_networks_screen_show() { record_dispatch(Screen::WiFiNetworks); }
 void bluetooth_screen_show() { record_dispatch(Screen::Bluetooth); }
 void regions_screen_show() { record_dispatch(Screen::Regions); }
 void custom_rf_screen_show() { record_dispatch(Screen::CustomRadioSetup); }
+void message_search_screen_show() { record_dispatch(Screen::MessageSearch); }
 void contact_detail_screen_show(const char*) { record_dispatch(Screen::ContactDetail); }
 void repeater_detail_screen_show(const char*, bool) { record_dispatch(Screen::RepeaterDetail); }
 
@@ -96,6 +97,18 @@ TEST_F(ProductionNavigationTest, SameScreenNavigationIsANoop)
     sigurdos::ui::navigate_to(Screen::Home);
     EXPECT_EQ(g_dispatch_count, 0);
     EXPECT_FALSE(sigurdos::ui::can_go_back());
+}
+
+TEST_F(ProductionNavigationTest, MessageSearchDispatchesAndReturnsToChat)
+{
+    sigurdos::ui::navigate_to(Screen::Chat);
+    sigurdos::ui::navigate_to(Screen::MessageSearch);
+    EXPECT_EQ(g_last_dispatched, Screen::MessageSearch);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::MessageSearch);
+
+    sigurdos::ui::go_back();
+    EXPECT_EQ(g_last_dispatched, Screen::Chat);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Chat);
 }
 
 TEST_F(ProductionNavigationTest, DeepNavigationReturnsThroughProductionHistory)
