@@ -17,6 +17,7 @@
 //   press enter|backspace|esc     Press special key
 //   inject <from> <text>          Simulate incoming DM
 //   inject <from> channel=<ch> <text>  Simulate incoming channel msg
+//   simulateack <to> <timestamp> Simulate an ACK (no-radio profile only)
 //   screen                        Show current screen name
 //   status                        Show device info (heap, psram, batt)
 //   stresschat [cycles]           Stress Chat/Home lifecycle (default 50)
@@ -386,6 +387,9 @@ static void print_help() {
     Serial.println(F("║  debug <feat> <1|0>  Toggle feature: display/mesh/ui/map/diag║"));
     Serial.println(F("║  debug all <1|0>     Enable/disable all debug features      ║"));
     Serial.println(F("║  sendmessage <name> <text>       Send DM to contact         ║"));
+#if !defined(SIGURDOS_REMOTE_TEST_RADIO) || !SIGURDOS_REMOTE_TEST_RADIO
+    Serial.println(F("║  simulateack <name> <timestamp>  Simulate ACK (no radio)    ║"));
+#endif
     Serial.println(F("║  opendm <name>                  Open DM conversation        ║"));
     Serial.println(F("║  emoji       Show emoji test grid     ║"));
     Serial.println(F("║  emoji-ac <p> Emoji autocomplete test ║"));
@@ -1521,17 +1525,48 @@ static void cmd_sendmessage(const char* arg) {
         Serial.printf("[test] sendmessage FAILED: DM to %s was not sent\n", name);
         return;
     }
-    Serial.printf("[test] sendmessage OK: DM to %s sent %d chars\n",
-                  name, (int)strlen(text));
+    Serial.printf("[test] sendmessage QUEUED: DM to %s sent %d chars "
+                  "timestamp=%lu; awaiting peer ACK\n",
+                  name, (int)strlen(text), (unsigned long)send_ts);
 
     char dm_channel[64];
     snprintf(dm_channel, sizeof(dm_channel), "DM: %.59s", name);
     const char* own = sigurdos::mesh::getOwnName();
     sigurdos::ui::chat_screen_add_msg_at(
         dm_channel, own ? own : "self", text, send_ts, true);
-    sigurdos::mesh::registerAckedMessage(name, send_ts);
-    Serial.printf("[test] ACK simulated at timestamp %lu\n", (unsigned long)send_ts);
 }
+
+#if !defined(SIGURDOS_REMOTE_TEST_RADIO) || !SIGURDOS_REMOTE_TEST_RADIO
+// ACK injection is intentionally unavailable in radio profiles: delivery in
+// those builds must only be reported after MeshCore receives a real peer ACK.
+static void cmd_simulateack(const char* arg) {
+    if (!arg || !arg[0]) {
+        Serial.println("[test] simulateack: usage: simulateack <contact_name> <timestamp>");
+        return;
+    }
+
+    const char* split = strrchr(arg, ' ');
+    if (!split || split == arg || !split[1]) {
+        Serial.println("[test] simulateack: usage: simulateack <contact_name> <timestamp>");
+        return;
+    }
+    char* end = nullptr;
+    const unsigned long long parsed = strtoull(split + 1, &end, 10);
+    if (!end || *end != '\0' || parsed == 0 || parsed > UINT32_MAX) {
+        Serial.println("[test] simulateack: timestamp must be a non-zero uint32");
+        return;
+    }
+
+    char name[64];
+    size_t name_len = static_cast<size_t>(split - arg);
+    if (name_len >= sizeof(name)) name_len = sizeof(name) - 1;
+    memcpy(name, arg, name_len);
+    name[name_len] = '\0';
+    sigurdos::mesh::registerAckedMessage(name, static_cast<uint32_t>(parsed));
+    Serial.printf("[test] SIMULATED ACK: DM to %s timestamp=%lu (no-radio profile)\n",
+                  name, static_cast<unsigned long>(parsed));
+}
+#endif
 
 // ── Open DM ──────────────────────────────────────
 static void cmd_opendm(const char* arg) {
@@ -1561,7 +1596,6 @@ static void cmd_addchannel(const char* arg) {
         bool ok = sigurdos::mesh::addChannel(name, psk);
         if (ok) {
             Serial.printf("[test] addchannel OK: #%s with PSK\n", name);
-            sigurdos::mesh::saveChannels();
         }
         else Serial.printf("[test] addchannel FAILED: #%s\n", name);
     } else {
@@ -1808,6 +1842,11 @@ static void cmd_getrf() {
                   (unsigned long)sigurdos::mesh::getNumRecvFlood(),
                   (unsigned long)sigurdos::mesh::getNumRecvDirect(),
                   sigurdos::mesh::getPacketLogCount());
+    Serial.printf("[test] getrf: ack_events=%d delivery_events=%d pending_dropped=%lu pending_expired=%lu\n",
+                  sigurdos::mesh::getAckCounter(),
+                  sigurdos::mesh::getDeliveryCounter(),
+                  (unsigned long)sigurdos::mesh::getPendingAckDropCount(),
+                  (unsigned long)sigurdos::mesh::getPendingAckExpiredCount());
 #if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
     Serial.println(F("[test] getrf: remote-test RX-only mode enabled; TX commands are blocked"));
 #endif
@@ -1872,7 +1911,9 @@ static void cmd_reboot() {
 static void cmd_factoryreset() {
     Serial.println(F("[test] factory reset: erasing all data and rebooting..."));
     Serial.flush();
-    sigurdos::mesh::factoryReset();
+    if (!sigurdos::mesh::factoryReset()) {
+        Serial.println(F("[test] factory reset: FAILED; BLE remains disabled"));
+    }
 }
 
 // ── Cmd: advert ───────────────────────────────────────────
@@ -2092,6 +2133,10 @@ static bool dispatch(const char* line) {
     } else if (strcmp(cmd, "sendmessage") == 0 || strcmp(cmd, "senddm") == 0) {
         if (!arg) { Serial.println("[test] sendmessage: missing args — use: sendmessage <contact_name> <text>"); return true; }
         cmd_sendmessage(arg);
+#if !defined(SIGURDOS_REMOTE_TEST_RADIO) || !SIGURDOS_REMOTE_TEST_RADIO
+    } else if (strcmp(cmd, "simulateack") == 0) {
+        cmd_simulateack(arg);
+#endif
     } else if (strcmp(cmd, "opendm") == 0) {
         if (!arg) { Serial.println("[test] opendm: missing contact name"); return true; }
         cmd_opendm(arg);

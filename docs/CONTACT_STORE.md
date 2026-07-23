@@ -20,7 +20,12 @@ Extracted from `mesh_wrapper.cpp` in PR #598, the `contact_store` module was lat
 
 ## I. Overview
 
-The contact store persists the mesh contact list across reboots. It is used by `mesh_wrapper.cpp` during shutdown (`saveContacts()`) and startup (`loadContacts()`).
+The contact store persists the mesh contact list across reboots. It is used by
+`mesh_wrapper.cpp` during shutdown (`saveContacts()`) and startup
+(`loadContacts()`). User-visible add, update, remove, favourite, permission,
+and path-reset mutations commit this store before reporting success. A failed
+commit restores the prior runtime contact snapshot; mesh-driven advert/path
+updates remain dirty and are retried by the deferred checkpoint.
 
 ### Design Principle: Callback-Decoupled Save/Load
 
@@ -133,7 +138,9 @@ A full 350-contact store occupies 52,859 bytes.
 Manual contacts added from the Contacts screen are validated as a display name
 plus a 32-byte public key, inserted through `mesh_wrapper`, and immediately
 checkpointed through this same store. Duplicate names and public keys are
-rejected before persistence.
+rejected before persistence. The UI and companion protocol receive failure if
+the atomic replacement does not commit, and the transient runtime insertion is
+removed again.
 
 ---
 

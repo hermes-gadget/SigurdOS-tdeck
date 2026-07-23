@@ -23,6 +23,7 @@
 #include "../pin_gate_policy.h"
 #include "../responsive.h"
 #include "../lv_timer_owner.h"
+#include "../notifications.h"
 #include "../system_action_policy.h"
 #include "../home_screen.h"
 #include "../../hal/keyboard.h"
@@ -968,7 +969,8 @@ void settings_system_show()
 
         if (!sigurdos::ota::start("SigurdOS-OTA")) {
             lv_obj_t* err = lv_label_create(dlg);
-            lv_label_set_text(err, "OTA failed to start");
+            const char* ota_error = sigurdos::ota::getLastError();
+            lv_label_set_text(err, ota_error[0] ? ota_error : "OTA failed to start");
             lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
             lv_obj_set_style_text_font(err, emoji_wrapped_montserrat_10, 0);
             lv_obj_align(err, LV_ALIGN_TOP_MID, 0, 4);
@@ -1497,7 +1499,10 @@ void settings_system_show()
         lv_label_set_text(cfl, "Reset");
         lv_obj_center(cfl);
         lv_obj_add_event_cb(confirm_btn, [](lv_event_t*) {
-            sigurdos::mesh::factoryReset();
+            if (!sigurdos::mesh::factoryReset()) {
+                notifications_post(NotificationEvent::UiError,
+                                   "Factory reset failed; BLE remains disabled");
+            }
         }, LV_EVENT_CLICKED, nullptr);
     }, LV_EVENT_CLICKED, nullptr);
     row++;

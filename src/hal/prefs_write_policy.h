@@ -27,6 +27,34 @@ struct PrefsWriteFailure {
     int32_t error = 0;
 };
 
+// Persisted before factory-reset deletion begins. This small transaction is
+// intentionally independent of the active build's BLE transport so a reset
+// performed by USB-only firmware still revokes bonds on the next BLE boot.
+inline bool prefsWriteFactoryResetInterlock(const PrefsNvsWriter& writer,
+                                            PrefsWriteFailure* failure = nullptr)
+{
+    auto fail = [failure](const char* key, int32_t error) {
+        if (failure) {
+            failure->key = key;
+            failure->error = error;
+        }
+        return false;
+    };
+    if (!writer.context || !writer.setU8 || !writer.commit) {
+        return fail("writer", -1);
+    }
+    auto wrote = [&fail](const char* key, int32_t error) {
+        return error == 0 ? true : fail(key, error);
+    };
+    if (!wrote("ble_en", writer.setU8(writer.context, "ble_en", 0))) return false;
+    if (!wrote("ble_user", writer.setU8(writer.context, "ble_user", 1))) return false;
+    if (!wrote("ble_ver", writer.setU8(
+            writer.context, "ble_ver", BLE_PREFS_SCHEMA_VERSION))) return false;
+    if (!wrote("ble_bond_rst", writer.setU8(
+            writer.context, "ble_bond_rst", 1))) return false;
+    return wrote("commit", writer.commit(writer.context));
+}
+
 inline bool prefsWriteAll(const NodePrefs& prefs, const PrefsNvsWriter& writer,
     BlePrefsWriteMode ble_mode,
     PrefsWriteFailure* failure = nullptr) {

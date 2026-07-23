@@ -11,10 +11,12 @@
 #include "companion_adapter.h"
 #include "channel_validation.h"
 #include "public_channel.h"
+#include "advert_blob.h"
 #include "message_store.h"
 #include "companion_message_policy.h"
 #include "cmd_response_queue.h"
 #include "durable_fanout.h"
+#include "durable_mutation.h"
 #include "state_checkpoint.h"
 #include "contact_store.h"
 #include "contact_uri.h"
@@ -26,12 +28,14 @@
 #include "response_copy.h"
 #include "telemetry_lpp_parser.h"
 #include "capacity_policy.h"
+#include "radio_config_policy.h"
 #include "region_name.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/boot_watchdog.h"
 #include "hal/gps.h"
 #include "hal/prefs.h"
+#include "hal/radio_profiles.h"
 #include "hal/github_ota.h"
 #include "hal/wifi_ota.h"
 #include "sigurd_mesh_v2.h"
@@ -88,6 +92,10 @@ static Module*                   lora_mod = nullptr;
 static CustomSX1262*             radio_module = nullptr;
 static OwnedSX1262Wrapper*        radio_driver = nullptr;
 static bool                      radio_inited = false;
+static sigurdos::mesh::RadioConfig active_radio_config{};
+static bool                      active_radio_config_valid = false;
+static bool                      radio_config_tx_enabled = false;
+static int16_t                   last_radio_config_error = RADIOLIB_ERR_NONE;
 static ESP32RTCClock             fallback_clock;
 static AutoDiscoverRTCClock      rtc_clock(fallback_clock);
 using ProductionMeshRng = sigurdos::mesh::Esp32HardwareRng;
@@ -122,7 +130,127 @@ static void cleanupMeshInit()
     sigurdos::mesh::detail::cleanupMeshInitResources(
         g_mesh, radio_driver, radio_module, lora_mod, cleanupRadioModule);
     radio_inited = false;
+    active_radio_config_valid = false;
+    radio_config_tx_enabled = false;
     init_state = sigurdos::mesh::detail::MeshInitState::Stopped;
+}
+
+static sigurdos::mesh::RadioConfig makeRadioConfig(
+    float frequency_mhz, float bandwidth_khz, int spreading_factor,
+    int coding_rate, int tx_power_dbm, bool rx_boosted_gain)
+{
+    sigurdos::mesh::RadioConfig config{};
+    config.frequency_mhz = frequency_mhz;
+    config.bandwidth_khz = bandwidth_khz;
+    config.spreading_factor = spreading_factor;
+    config.coding_rate = coding_rate;
+    config.tx_power_dbm = tx_power_dbm;
+    config.rx_boosted_gain = rx_boosted_gain;
+    return config;
+}
+
+static sigurdos::mesh::RadioConfig radioConfigFromPrefs(
+    const sigurdos::NodePrefs& prefs)
+{
+    return makeRadioConfig(prefs.freq, prefs.bw, prefs.sf, prefs.cr,
+                           prefs.tx_power_dbm, prefs.rx_boosted_gain);
+}
+
+static bool radioPrefsSupported(const sigurdos::NodePrefs& prefs)
+{
+    return prefs.configured &&
+           sigurdos::mesh::sx1262RadioConfigSupported(
+               radioConfigFromPrefs(prefs)) &&
+           sigurdos::radio_profile_configuration_valid(prefs);
+}
+
+static void disableRadioPrefs(sigurdos::NodePrefs& prefs)
+{
+    prefs.configured = false;
+    prefs.freq = 0.0f;
+    prefs.bw = 0.0f;
+    prefs.sf = 0;
+    prefs.cr = 0;
+    prefs.tx_power_dbm = 0;
+    prefs.radio_profile[0] = '\0';
+}
+
+static sigurdos::mesh::RadioApplyResult applyRadioHardware(
+    const sigurdos::mesh::RadioConfig& config)
+{
+    using sigurdos::mesh::RadioConfigField;
+    if (!radio_module || !radio_inited) {
+        sigurdos::mesh::RadioApplyResult result;
+        result.ok = false;
+        result.driver_error = -1;
+        return result;
+    }
+
+    sigurdos::mesh::RadioApplyResult result =
+        sigurdos::mesh::applyRadioConfigFields(
+            config,
+            [](RadioConfigField field,
+               const sigurdos::mesh::RadioConfig& requested) -> int16_t {
+                switch (field) {
+                    case RadioConfigField::Frequency:
+                        return radio_module->setFrequency(
+                            requested.frequency_mhz);
+                    case RadioConfigField::Bandwidth:
+                        return radio_module->setBandwidth(
+                            requested.bandwidth_khz);
+                    case RadioConfigField::SpreadingFactor:
+                        return radio_module->setSpreadingFactor(
+                            requested.spreading_factor);
+                    case RadioConfigField::CodingRate:
+                        return radio_module->setCodingRate(
+                            requested.coding_rate);
+                    case RadioConfigField::TxPower:
+                        return radio_module->setOutputPower(
+                            requested.tx_power_dbm);
+                    case RadioConfigField::RxBoostedGain:
+                        return radio_module->setRxBoostedGainMode(
+                            requested.rx_boosted_gain);
+                }
+                return -1;
+            });
+    last_radio_config_error = result.driver_error;
+    if (!result.ok) {
+        Serial.printf("[mesh] ERROR: radio %s failed (%d)\n",
+                      sigurdos::mesh::radioConfigFieldName(
+                          result.failed_field),
+                      result.driver_error);
+    }
+    return result;
+}
+
+static bool applyRadioConfigAtomically(
+    const sigurdos::mesh::RadioConfig& requested)
+{
+    if (!radio_module || !radio_inited || !active_radio_config_valid ||
+        !sigurdos::mesh::sx1262RadioConfigSupported(requested)) {
+        return false;
+    }
+
+    const sigurdos::mesh::RadioTransactionResult result =
+        sigurdos::mesh::applyRadioConfigTransaction(
+            requested, active_radio_config, applyRadioHardware);
+    if (result.applied) {
+        active_radio_config = requested;
+        active_radio_config_valid = true;
+        last_radio_config_error = RADIOLIB_ERR_NONE;
+        return true;
+    }
+
+    last_radio_config_error = result.apply_result.driver_error;
+    active_radio_config_valid = result.rollback_succeeded;
+    if (!result.rollback_succeeded) {
+        last_radio_config_error = result.rollback_result.driver_error;
+        Serial.printf("[mesh] FATAL: radio rollback failed at %s (%d)\n",
+                      sigurdos::mesh::radioConfigFieldName(
+                          result.rollback_result.failed_field),
+                      result.rollback_result.driver_error);
+    }
+    return false;
 }
 
 // formatDmConversation moved to mesh_wrapper_internal.h (shared with the
@@ -133,7 +261,7 @@ static bool sigurdos_mesh_radio_tx_allowed()
 #if defined(SIGURDOS_REMOTE_TEST_RX_ONLY)
     return false;
 #else
-    return true;
+    return active_radio_config_valid && radio_config_tx_enabled;
 #endif
 }
 
@@ -310,6 +438,9 @@ static bool __attribute__((unused)) loadIdentity(::mesh::LocalIdentity& id) {
 static bool saveIdentity(::mesh::LocalIdentity& id) {
     uint8_t buf[128];
     size_t len = id.writeTo(buf, sizeof(buf));
+    if (len != PRV_KEY_SIZE && len != (PRV_KEY_SIZE + PUB_KEY_SIZE)) {
+        return false;
+    }
     return sigurdos::mesh::identityStoreSave(buf, len);
 }
 
@@ -436,39 +567,6 @@ static uint8_t _last_status_key[PUB_KEY_SIZE]{};
 static sigurdos::mesh::NodeStatus _cached_status;
 static bool _has_cached_status = false;
 
-// Parse a 56-byte RepeaterStats blob into NodeStatus struct
-static void parse_status_blob(const uint8_t* data, uint8_t len, sigurdos::mesh::NodeStatus* out) {
-    if (!data || !out) return;
-    memset(out, 0, sizeof(*out));
-    uint8_t avail = len < NODE_STATUS_RESPONSE_SIZE ? len : NODE_STATUS_RESPONSE_SIZE;
-    // data[0..3] = tag, skip that; status blob starts at data[4]
-    const uint8_t* blob = data + 4;
-    uint8_t blen = avail > 4 ? avail - 4 : 0;
-    if (blen < 2) return;  // need at least batt_milli_volts
-    unsigned ofs = 0;
-    auto r16 = [&](int16_t* dst) { if (ofs + 2 <= blen) { memcpy(dst, blob + ofs, 2); ofs += 2; } };
-    auto ru16 = [&](uint16_t* dst) { if (ofs + 2 <= blen) { memcpy(dst, blob + ofs, 2); ofs += 2; } };
-    auto ru32 = [&](uint32_t* dst) { if (ofs + 4 <= blen) { memcpy(dst, blob + ofs, 4); ofs += 4; } };
-    ru16(&out->batt_milli_volts);
-    ru16(&out->curr_tx_queue_len);
-    r16(&out->noise_floor);
-    r16(&out->last_rssi);
-    ru32(&out->n_packets_recv);
-    ru32(&out->n_packets_sent);
-    ru32(&out->total_air_time_secs);
-    ru32(&out->total_up_time_secs);
-    ru32(&out->n_sent_flood);
-    ru32(&out->n_sent_direct);
-    ru32(&out->n_recv_flood);
-    ru32(&out->n_recv_direct);
-    ru16(&out->err_events);
-    r16(&out->last_snr);
-    ru16(&out->n_direct_dups);
-    ru16(&out->n_flood_dups);
-    ru32(&out->total_rx_air_time_secs);
-    ru32(&out->n_recv_errors);
-}
-
 // ════════════════════════════════════════════════════
 // Public API
 // ════════════════════════════════════════════════════
@@ -493,14 +591,18 @@ bool __attribute__((unused)) ensurePublicChannelPresent(bool persist)
     if (!g_mesh) return false;
     if (hasPublicChannel()) return true;
 
-    bool ok = g_mesh->addChannelBool(PUBLIC_CHANNEL_NAME, PUBLIC_CHANNEL_PSK_BASE64);
+    bool ok = persist
+        ? sigurdos::mesh::addChannel(
+              PUBLIC_CHANNEL_NAME, PUBLIC_CHANNEL_PSK_BASE64)
+        : g_mesh->addChannelBool(
+              PUBLIC_CHANNEL_NAME, PUBLIC_CHANNEL_PSK_BASE64);
     if (ok) {
 #if SIGURDOS_DEBUG_MESH
         Serial.println("[mesh] Added missing Public channel");
 #endif
-        if (persist) saveChannels();
     } else {
-        Serial.println("[mesh] WARNING: Public channel missing and channel list is full");
+        Serial.println(
+            "[mesh] WARNING: could not durably add missing Public channel");
     }
     return ok;
 }
@@ -508,6 +610,50 @@ bool __attribute__((unused)) ensurePublicChannelPresent(bool persist)
 bool radioTxAllowed()
 {
     return sigurdos_mesh_radio_tx_allowed();
+}
+
+struct ChannelSnapshot {
+    ChannelDetails slots[MAX_GROUP_CHANNELS];
+};
+
+bool captureChannels(ChannelSnapshot& snapshot)
+{
+    if (!g_mesh) return false;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+        if (!g_mesh->BaseChatMesh::getChannel(i, snapshot.slots[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool restoreChannels(const ChannelSnapshot& snapshot)
+{
+    if (!g_mesh) return false;
+    bool restored = true;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+        restored = g_mesh->BaseChatMesh::setChannel(
+                       i, snapshot.slots[i]) && restored;
+    }
+    return restored;
+}
+
+template <typename Mutate>
+bool mutateChannelsDurably(Mutate mutate)
+{
+    ChannelSnapshot before{};
+    if (!captureChannels(before)) return false;
+    const bool committed = sigurdos::mesh::detail::applyAndCommit(
+        mutate,
+        []() { return saveChannels(); },
+        [&before]() {
+            if (!restoreChannels(before)) {
+                Serial.println(
+                    "[mesh] FATAL: could not restore channels after commit failure");
+            }
+        });
+    if (committed) syncRegionsFromChannels();
+    return committed;
 }
 
 } // namespace
@@ -744,6 +890,8 @@ bool requestStatus(const char* dest_name) {
             strcmp(contact.name, dest_name) == 0) { found = true; break; }
     }
     if (!found) return false;
+    _last_status_tag = 0;
+    _has_cached_status = false;
     uint32_t tag = 0;
     bool ok = g_mesh->sendRequest(dest_name, REQ_TYPE_GET_STATUS, &tag);
     if (ok && tag != 0) {
@@ -763,12 +911,25 @@ bool hasStatusResponse() {
                 re->tag, re->contact_key, re->req_type,
                 _last_status_tag, _last_status_key,
                 REQ_TYPE_GET_STATUS, PUB_KEY_SIZE)) {
-            parse_status_blob(re->data, re->len, &_cached_status);
+            if (!detail::parseNodeStatusResponse(
+                    re->data, re->len, &_cached_status)) {
+                return false;
+            }
             _has_cached_status = true;
             return true;
         }
     }
     return false;
+}
+
+bool statusRequestPending() {
+    return g_mesh && _last_status_tag != 0 &&
+           g_mesh->requestPending(_last_status_tag);
+}
+
+bool statusRequestTimedOut() {
+    return g_mesh && _last_status_tag != 0 &&
+           g_mesh->requestTimedOut(_last_status_tag);
 }
 
 bool getStatusResult(NodeStatus* out) {
@@ -788,6 +949,8 @@ bool requestTelemetry(const char* dest_name) {
             strcmp(contact.name, dest_name) == 0) { found = true; break; }
     }
     if (!found) return false;
+    _last_telemetry_tag = 0;
+    _has_cached_telemetry = false;
     uint32_t tag = 0;
     bool ok = g_mesh->sendRequest(
         dest_name, REQ_TYPE_GET_TELEMETRY_DATA, &tag);
@@ -823,6 +986,16 @@ bool hasTelemetryResponse() {
     return false;
 }
 
+bool telemetryRequestPending() {
+    return g_mesh && _last_telemetry_tag != 0 &&
+           g_mesh->requestPending(_last_telemetry_tag);
+}
+
+bool telemetryRequestTimedOut() {
+    return g_mesh && _last_telemetry_tag != 0 &&
+           g_mesh->requestTimedOut(_last_telemetry_tag);
+}
+
 bool getTelemetryResult(TelemetryResult* out) {
     if (!out || !_has_cached_telemetry) return false;
     memcpy(out, &_cached_telemetry, sizeof(*out));
@@ -833,6 +1006,14 @@ bool getTelemetryResult(TelemetryResult* out) {
 uint32_t discoverPath(const char* dest_name) {
     if (!g_mesh || !dest_name || !dest_name[0]) return 0;
     return g_mesh->sendPathDiscovery(dest_name);
+}
+
+bool pathDiscoveryPending(const char* dest_name) {
+    return g_mesh && dest_name && g_mesh->discoveryPending(dest_name);
+}
+
+bool pathDiscoveryTimedOut(const char* dest_name) {
+    return g_mesh && dest_name && g_mesh->discoveryTimedOut(dest_name);
 }
 
 bool hasPathTo(const char* dest_name) {
@@ -913,7 +1094,16 @@ bool init(bool spiffs_ok)
     }
 
     // ── Radio configuration: use compile-time defaults if not configured ──
-    const sigurdos::NodePrefs& p = sigurdos::prefs_get();
+    sigurdos::NodePrefs p = sigurdos::prefs_get();
+    if (p.configured && !radioPrefsSupported(p)) {
+        Serial.println(
+            "[mesh] ERROR: stored radio configuration violates hardware/profile policy; radio disabled");
+        disableRadioPrefs(p);
+        if (!sigurdos::prefs_set(p)) {
+            Serial.println(
+                "[mesh] ERROR: could not persist disabled radio fallback");
+        }
+    }
     float   freq     = p.configured ? p.freq  : LORA_FREQ;
     float   bw       = p.configured ? p.bw    : LORA_BW;
     int     sf       = p.configured ? p.sf    : LORA_SF;
@@ -940,6 +1130,15 @@ bool init(bool spiffs_ok)
 #endif
     }
 
+    const sigurdos::mesh::RadioConfig default_radio = makeRadioConfig(
+        LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, LORA_TX_PWR, false);
+    if (!sigurdos::mesh::sx1262RadioConfigSupported(default_radio)) {
+        Serial.println(
+            "[mesh] FATAL: compile-time radio defaults are unsupported by SX1262");
+        cleanupMeshInit();
+        return false;
+    }
+
     // If still not configured (non-debug builds), keep SX1262 off.
     // In debug/remote_test builds we init the radio anyway — debug for diagnostic
     // access, remote_test because the FORCE_RADIO_PARAMS block below writes
@@ -953,7 +1152,7 @@ bool init(bool spiffs_ok)
     // until the user/app saves real prefs; do not TX-hold the entire mesh stack.
 #if !SIGURDOS_DEBUG
     {
-        const auto& cp = sigurdos::prefs_get();
+        const auto& cp = p;
         const bool companion_usb =
 #if defined(SIGURDOS_COMPANION_USB) && SIGURDOS_COMPANION_USB
             true;
@@ -1006,19 +1205,41 @@ bool init(bool spiffs_ok)
     }
     radio_inited = true;
 
-    radio_module->setFrequency(freq);
-    radio_module->setBandwidth(bw);
-    radio_module->setSpreadingFactor(sf);
-    radio_module->setCodingRate(cr);   // denominator (5–8); RadioLib rejects the SX126X enum constants
-    radio_module->setOutputPower(tx_power);
-    
-    // Apply RX boosted gain mode if configured
-    if (p.rx_boosted_gain) {
-        radio_driver->setRxBoostedGainMode(true);
+    // std_init() leaves the hardware at compile-time defaults. Treat that as
+    // the first known-good rollback point before applying persisted settings.
+    active_radio_config = default_radio;
+    active_radio_config_valid = true;
+    const sigurdos::mesh::RadioConfig requested_radio = makeRadioConfig(
+        freq, bw, sf, cr, tx_power, p.rx_boosted_gain);
+    if (!applyRadioConfigAtomically(requested_radio)) {
+        if (!active_radio_config_valid) {
+            cleanupMeshInit();
+            return false;
+        }
+        Serial.printf(
+            "[mesh] ERROR: radio configuration failed (%d); restored defaults and disabled TX\n",
+            last_radio_config_error);
+        radio_config_tx_enabled = false;
+        if (p.configured) {
+            disableRadioPrefs(p);
+            if (!sigurdos::prefs_set(p)) {
+                Serial.println(
+                    "[mesh] ERROR: could not persist radio fallback state");
+            }
+        }
+    } else {
+        radio_config_tx_enabled = p.configured;
+#if SIGURDOS_DEBUG || defined(SIGURDOS_DEBUG_FORCE_RADIO_PARAMS)
+        radio_config_tx_enabled = true;
+#endif
     }
 #if SIGURDOS_DEBUG_MESH
     Serial.printf("[mesh] Radio: %.3f MHz / %.1f kHz / SF%d / CR4/%d / %d dBm\n",
-                  freq, bw, sf, cr, tx_power);
+                  active_radio_config.frequency_mhz,
+                  active_radio_config.bandwidth_khz,
+                  active_radio_config.spreading_factor,
+                  active_radio_config.coding_rate,
+                  active_radio_config.tx_power_dbm);
 #endif
 
     g_mesh = new (std::nothrow) mesh_impl_t(
@@ -1032,12 +1253,18 @@ bool init(bool spiffs_ok)
 
     // Generate or load identity
     if (!loadIdentity(g_mesh->self_id)) {
-        g_mesh->self_id = ::mesh::LocalIdentity(&hardware_rng);
+        ::mesh::LocalIdentity candidate(&hardware_rng);
         if (spiffs_ok) {
-            saveIdentity(g_mesh->self_id);
+            if (!saveIdentity(candidate)) {
+                Serial.println(
+                    "[mesh] ERROR: could not persist generated identity");
+                cleanupMeshInit();
+                return false;
+            }
         } else {
             Serial.println("[mesh] WARNING: SPIFFS unavailable — identity is ephemeral");
         }
+        g_mesh->self_id = candidate;
     }
 
     g_mesh->begin();
@@ -1058,8 +1285,10 @@ bool init(bool spiffs_ok)
     // Automation builds: auto-join the #testingsigurdos test channel for RF testing on
     // 869.525/SF10/BW250/CR5. addChannelBool() is a no-op if already present.
 #ifdef SIGURDOS_DEBUG_FORCE_RADIO_PARAMS
-    g_mesh->addChannelBool("testingsigurdos", "Si/tjXzmnwmPBA43Fw4b3Q==");
-    saveChannels();
+    if (!addChannel("testingsigurdos", "Si/tjXzmnwmPBA43Fw4b3Q==")) {
+        Serial.println(
+            "[mesh] WARNING: could not durably add automation channel");
+    }
     // is fully operational without requiring Settings → Radio Setup.
     {
         sigurdos::NodePrefs dp = sigurdos::prefs_get();
@@ -1333,6 +1562,23 @@ static bool assignLocalContactRevision(::ContactInfo& contact)
     return true;
 }
 
+bool meshResetContactPathByPubKeyDurable(const uint8_t* pub_key)
+{
+    if (!g_mesh || !pub_key) return false;
+    ::ContactInfo* live = g_mesh->lookupContactByPubKey(
+        pub_key, PUB_KEY_SIZE);
+    if (!live) return false;
+
+    const ::ContactInfo before = *live;
+    return sigurdos::mesh::detail::applyAndCommit(
+        [&]() {
+            g_mesh->BaseChatMesh::resetPathTo(*live);
+            return assignLocalContactRevision(*live);
+        },
+        []() { return saveContacts(); },
+        [&]() { *live = before; });
+}
+
 // ── Favourite contacts ──────────────────────────
 
 bool isContactFavourite(const char* name) {
@@ -1388,25 +1634,41 @@ int exportChannels(char names[][37], int max) {
 bool addChannel(const char* name, const char* psk) {
     // Validate channel name
     if (!psk || !channel_name_valid(name)) return false;
-    // BaseChatMesh::addChannel returns ChannelDetails* — use the bool wrapper.
-    bool ok = g_mesh ? g_mesh->addChannelBool(name, psk) : false;
-    if (ok) syncRegionsFromChannels();
-    return ok;
+    if (!g_mesh) return false;
+    return mutateChannelsDurably(
+        [name, psk]() { return g_mesh->addChannelBool(name, psk); });
 }
 
 bool addHashtagChannel(const char* name) {
     char normalized[32];
     if (!hashtag_channel_name_normalise(name, normalized,
                                         sizeof(normalized))) return false;
-    bool ok = g_mesh ? g_mesh->addHashtagChannel(normalized) : false;
-    if (ok) syncRegionsFromChannels();
-    return ok;
+    if (!g_mesh) return false;
+    return mutateChannelsDurably(
+        [&normalized]() { return g_mesh->addHashtagChannel(normalized); });
+}
+
+bool meshSetChannelSlotDurable(int index, const char* name,
+                               const uint8_t* secret, size_t secret_len)
+{
+    if (!g_mesh || index < 0 || index >= MAX_GROUP_CHANNELS || !name ||
+        !secret || secret_len != CIPHER_KEY_SIZE) {
+        return false;
+    }
+    if (name[0] && !channel_name_valid(name)) return false;
+
+    ChannelDetails replacement{};
+    strncpy(replacement.name, name, sizeof(replacement.name) - 1);
+    memcpy(replacement.channel.secret, secret,
+           sizeof(replacement.channel.secret));
+    return mutateChannelsDurably(
+        [index, &replacement]() {
+            return g_mesh->setChannelSlot(index, replacement);
+        });
 }
 
 bool joinPublicChannel() {
-    bool ok = addChannel(PUBLIC_CHANNEL_NAME, PUBLIC_CHANNEL_PSK_BASE64);
-    if (ok) saveChannels();
-    return ok;
+    return addChannel(PUBLIC_CHANNEL_NAME, PUBLIC_CHANNEL_PSK_BASE64);
 }
 
 // ── Region sync from channels ────────────────────
@@ -1691,26 +1953,62 @@ bool saveState() {
 }
 
 // ── Contact persistence ─────────────────────────
+static void copyStoredContact(sigurdos::mesh::StoredContact& out,
+                              const ::ContactInfo& contact)
+{
+    memcpy(out.pub_key, contact.id.pub_key,
+           sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
+    memcpy(out.name, contact.name,
+           sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
+    out.type = contact.type;
+    out.flags = contact.flags;
+    out.out_path_len = contact.out_path_len;
+    static_assert(sizeof(out.out_path) == sizeof(contact.out_path),
+                  "Stored contact path must match MeshCore");
+    memcpy(out.out_path, contact.out_path, sizeof(out.out_path));
+    out.last_advert_timestamp = contact.last_advert_timestamp;
+    out.lastmod = contact.lastmod;
+    out.gps_lat = contact.gps_lat;
+    out.gps_lon = contact.gps_lon;
+    out.sync_since = contact.sync_since;
+}
+
 static bool readStoredContact(int index, sigurdos::mesh::StoredContact* out, void*)
 {
     if (!g_mesh || !out) return false;
     ::ContactInfo c;
     if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
-
-    memcpy(out->pub_key, c.id.pub_key, sigurdos::mesh::SIGURDOS_CONTACT_PUBKEY_LEN);
-    memcpy(out->name, c.name, sigurdos::mesh::SIGURDOS_CONTACT_NAME_LEN);
-    out->type = c.type;
-    out->flags = c.flags;
-    out->out_path_len = c.out_path_len;
-    static_assert(sizeof(out->out_path) == sizeof(c.out_path),
-                  "Stored contact path must match MeshCore");
-    memcpy(out->out_path, c.out_path, sizeof(out->out_path));
-    out->last_advert_timestamp = c.last_advert_timestamp;
-    out->lastmod = c.lastmod;
-    out->gps_lat = c.gps_lat;
-    out->gps_lon = c.gps_lon;
-    out->sync_since = c.sync_since;
+    copyStoredContact(*out, c);
     return true;
+}
+
+struct ContactRemovalReadContext {
+    uint8_t pub_key[PUB_KEY_SIZE];
+};
+
+static bool readStoredContactWithoutKey(
+    int index, sigurdos::mesh::StoredContact* out, void* raw_context)
+{
+    if (!g_mesh || !out || !raw_context) return false;
+    const auto* context = static_cast<ContactRemovalReadContext*>(raw_context);
+    int output_index = 0;
+    ::ContactInfo candidate;
+    for (int source_index = 0;
+         source_index < g_mesh->getNumContacts(); ++source_index) {
+        if (!g_mesh->getContactByIdx(
+                static_cast<uint32_t>(source_index), candidate)) {
+            return false;
+        }
+        if (memcmp(candidate.id.pub_key, context->pub_key,
+                   PUB_KEY_SIZE) == 0) {
+            continue;
+        }
+        if (output_index++ == index) {
+            copyStoredContact(*out, candidate);
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool writeStoredContact(const sigurdos::mesh::StoredContact& stored, void*)
@@ -1751,6 +2049,35 @@ bool saveContacts() {
         g_contacts_dirty = false;  // explicit saves cover pending checkpoint
     }
     return saved;
+}
+
+bool meshRemoveContactByPubKeyDurable(const uint8_t* pub_key)
+{
+    if (!g_mesh || !pub_key) return false;
+    ::ContactInfo* live = g_mesh->lookupContactByPubKey(
+        pub_key, PUB_KEY_SIZE);
+    if (!live) return false;
+
+    ContactRemovalReadContext context{};
+    memcpy(context.pub_key, pub_key, sizeof(context.pub_key));
+    const int remaining = g_mesh->getNumContacts() - 1;
+    if (!sigurdos::mesh::contactStoreSave(
+            remaining, readStoredContactWithoutKey, &context)) {
+        return false;
+    }
+    g_contacts_dirty = false;
+
+    if (!g_mesh->BaseChatMesh::removeContact(*live)) {
+        // The durable candidate committed first. Restore the unchanged live
+        // table on disk if the in-memory activation unexpectedly fails.
+        if (!saveContacts()) {
+            Serial.println(
+                "[mesh] FATAL: contact removal activation and recovery failed");
+        }
+        return false;
+    }
+    deleteBlobByKey(SPIFFS, context.pub_key, sizeof(context.pub_key));
+    return true;
 }
 
 void markContactsDirty() {
@@ -1867,36 +2194,69 @@ bool getPacketLogEntry(int index, PacketLogEntry* out) {
 
 // ── Live radio config (no NVS write) ──────────
 bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool rx_gain) {
-    if (!radio_module || !radio_inited) return false;
-    radio_module->setFrequency(freq);
-    radio_module->setBandwidth(bw);
-    radio_module->setSpreadingFactor(sf);
-    radio_module->setCodingRate(cr);
-    radio_module->setOutputPower(tx_power);
-    if (radio_driver) {
-        radio_driver->setRxBoostedGainMode(rx_gain);
+    const sigurdos::mesh::RadioConfig requested = makeRadioConfig(
+        freq, bw, sf, cr, tx_power, rx_gain);
+    if (!sigurdos::mesh::sx1262RadioConfigSupported(requested)) {
+        Serial.println(
+            "[mesh] ERROR: rejected unsupported SX1262 radio configuration");
+        return false;
     }
-    return true;
+    return applyRadioConfigAtomically(requested);
+}
+
+bool applyAndPersistRadioPrefs(const sigurdos::NodePrefs& proposed) {
+    if (!radioPrefsSupported(proposed) || !active_radio_config_valid) {
+        Serial.println(
+            "[mesh] ERROR: rejected radio configuration outside hardware/profile policy");
+        return false;
+    }
+
+    const sigurdos::mesh::RadioConfig previous = active_radio_config;
+    const bool previous_tx_enabled = radio_config_tx_enabled;
+    const sigurdos::mesh::RadioConfig requested =
+        radioConfigFromPrefs(proposed);
+    const sigurdos::mesh::RadioCommitResult result =
+        sigurdos::mesh::applyAndCommitRadioConfig(
+            requested, previous,
+            [](const sigurdos::mesh::RadioConfig& config) {
+                return applyRadioConfigAtomically(config);
+            },
+            [&proposed]() { return sigurdos::prefs_set(proposed); });
+    if (result.committed) {
+        radio_config_tx_enabled = true;
+        return true;
+    }
+
+    if (!result.applied) return false;
+
+    Serial.println(
+        "[mesh] ERROR: radio preferences commit failed; restoring previous hardware configuration");
+    if (!result.restore_succeeded) {
+        radio_config_tx_enabled = false;
+        Serial.println(
+            "[mesh] FATAL: radio restore after NVS failure failed; TX disabled");
+    } else {
+        radio_config_tx_enabled = previous_tx_enabled;
+    }
+    return false;
 }
 
 bool revertRadioParams() {
-    if (!radio_module || !radio_inited) return false;
     const sigurdos::NodePrefs& p = sigurdos::prefs_get();
-    float freq = p.configured ? p.freq : LORA_FREQ;
-    float bw   = p.configured ? p.bw   : LORA_BW;
-    int   sf   = p.configured ? p.sf   : LORA_SF;
-    int   cr   = p.configured ? p.cr   : LORA_CR;
-    int   pwr  = p.configured ? p.tx_power_dbm : LORA_TX_PWR;
-    radio_module->setFrequency(freq);
-    radio_module->setBandwidth(bw);
-    radio_module->setSpreadingFactor(sf);
-    radio_module->setCodingRate(cr);
-    radio_module->setOutputPower(pwr);
-    if (radio_driver) {
-        radio_driver->setRxBoostedGainMode(p.rx_boosted_gain);
+    sigurdos::mesh::RadioConfig target = p.configured
+        ? radioConfigFromPrefs(p)
+        : makeRadioConfig(
+              LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, LORA_TX_PWR, false);
+    if ((p.configured && !radioPrefsSupported(p)) ||
+        !sigurdos::mesh::sx1262RadioConfigSupported(target)) {
+        Serial.println(
+            "[mesh] ERROR: cannot revert to unsupported persisted radio configuration");
+        return false;
     }
-    return true;
+    return applyRadioConfigAtomically(target);
 }
+
+int16_t getLastRadioConfigError() { return last_radio_config_error; }
 
 // ── Duty cycle ────────────────────────────────
 unsigned long getRemainingTxBudget() {
@@ -1916,7 +2276,9 @@ void setDutyCycle(uint8_t percent) {
         for (int i = 0; i < g_mesh->getContactCount(); i++) {
             auto* c = g_mesh->getContact(i);
             if (c && strcmp(c->name, name) == 0) {
-                return g_mesh->removeContact(i);
+                uint8_t pub_key[PUB_KEY_SIZE]{};
+                memcpy(pub_key, c->id.pub_key, sizeof(pub_key));
+                return meshRemoveContactByPubKeyDurable(pub_key);
             }
         }
         return false;
@@ -1928,16 +2290,9 @@ void setDutyCycle(uint8_t percent) {
         if (idx < 0) return false;
         const ::ContactInfo* cached = g_mesh->getContact(idx);
         if (!cached) return false;
-        ::ContactInfo* live = g_mesh->lookupContactByPubKey(
-            cached->id.pub_key, PUB_KEY_SIZE);
-        if (!live) return false;
-        const ::ContactInfo before = *live;
-        if (!g_mesh->resetPathTo(idx) || !assignLocalContactRevision(*live) ||
-            !saveContacts()) {
-            *live = before;
-            return false;
-        }
-        return true;
+        uint8_t pub_key[PUB_KEY_SIZE]{};
+        memcpy(pub_key, cached->id.pub_key, sizeof(pub_key));
+        return meshResetContactPathByPubKeyDurable(pub_key);
     }
 
     bool setContactPerm(const char* name, uint8_t perm) {
@@ -1975,9 +2330,8 @@ void setDutyCycle(uint8_t percent) {
         if (!g_mesh) return false;
         const ChannelDetails* ch = g_mesh->getChannel(idx);
         if (ch && isPublicChannelName(ch->name)) return false;
-        bool ok = g_mesh->removeChannel(idx);
-        if (ok) saveChannels();
-        return ok;
+        return mutateChannelsDurably(
+            [idx]() { return g_mesh->removeChannel(idx); });
     }
 
     // ── Repeater/room login (Phase 4.5) ──────────────
@@ -2274,6 +2628,9 @@ static int encodeBase64(const uint8_t* in, int inLen, char* out) {
 static bool addContactChecked(const char* name, const uint8_t* pub_key,
                               uint8_t type) {
     if (!g_mesh || !contactCandidateValid(name, pub_key, type)) return false;
+    // Explicit user mutations must not invoke MeshCore's optional
+    // overwrite-oldest policy; rollback would otherwise lose that victim.
+    if (g_mesh->getNumContacts() >= MAX_CONTACTS) return false;
     for (int i = 0; i < g_mesh->getContactCount(); ++i) {
         auto* existing = g_mesh->getContact(i);
         if (existing && contactCandidateDuplicates(
@@ -2287,7 +2644,9 @@ static bool addContactChecked(const char* name, const uint8_t* pub_key,
     if (!assignLocalContactRevision(contact)) return false;
     if (!g_mesh->addContact(contact)) return false;
     if (saveContacts()) return true;
-    g_mesh->removeContactByPubKey(pub_key);
+    ::ContactInfo* added = g_mesh->lookupContactByPubKey(
+        pub_key, PUB_KEY_SIZE);
+    if (added) g_mesh->BaseChatMesh::removeContact(*added);
     return false;
 }
 
@@ -2351,16 +2710,7 @@ bool addChannelByUri(const char* uri) {
     char b64[25];
     encodeBase64(raw_secret, sizeof(raw_secret), b64);
 
-    const int previous_count = g_mesh->getChannelCount();
-    if (!g_mesh->addChannelBool(fields.name, b64)) return false;
-    if (saveChannels()) {
-        syncRegionsFromChannels();
-        return true;
-    }
-    if (g_mesh->getChannelCount() > previous_count) {
-        g_mesh->removeChannel(previous_count);
-    }
-    return false;
+    return addChannel(fields.name, b64);
 }
 
 // ── QR code support ─────────────────────────────

@@ -57,6 +57,18 @@ TEST(PrefsDefaultsTest, IdentityAndPrivacyDefaultsAreDeterministic) {
     EXPECT_FALSE(prefs.ble_bond_reset_pending);
 }
 
+TEST(PrefsDefaultsTest, FactoryResetRevokesOldBleOwnerByDefault) {
+    sigurdos::NodePrefs prefs;
+    std::memset(&prefs, 0xA5, sizeof(prefs));
+    prefs.set_factory_reset_defaults();
+
+    EXPECT_FALSE(prefs.ble_enabled);
+    EXPECT_TRUE(prefs.ble_user_set);
+    EXPECT_TRUE(prefs.ble_bond_reset_pending);
+    EXPECT_EQ(prefs.ble_pin, 0u);
+    EXPECT_FALSE(prefs.configured);
+}
+
 TEST(PrefsDefaultsTest, MeshBehaviorDefaultsMatchSafeCompanionSettings) {
     const sigurdos::NodePrefs prefs = defaults_from_dirty_memory();
 

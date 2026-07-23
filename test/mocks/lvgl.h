@@ -198,13 +198,50 @@ typedef struct {
 // ── Global init ──────────────────────────────────────────
 inline void lv_init() {}
 
+#ifdef __cplusplus
+namespace lvgl_mock {
+inline lv_obj_t* active_screen = nullptr;
+inline lv_obj_t* last_loaded_screen = nullptr;
+inline lv_obj_t* last_deleted_screen = nullptr;
+inline int screen_load_count = 0;
+inline int screen_delete_count = 0;
+inline int last_load_animation = -1;
+inline int last_load_duration = -1;
+inline int last_load_delay = -1;
+inline bool last_load_auto_delete = true;
+
+inline void reset_screen_tracking()
+{
+    active_screen = nullptr;
+    last_loaded_screen = nullptr;
+    last_deleted_screen = nullptr;
+    screen_load_count = 0;
+    screen_delete_count = 0;
+    last_load_animation = -1;
+    last_load_duration = -1;
+    last_load_delay = -1;
+    last_load_auto_delete = true;
+}
+} // namespace lvgl_mock
+#endif
+
 // ── Screen ───────────────────────────────────────────────
 inline lv_obj_t* lv_scr_act() {
     static lv_obj_t s;
-    return &s;
+    return lvgl_mock::active_screen ? lvgl_mock::active_screen : &s;
 }
+inline lv_obj_t* lv_screen_active() { return lvgl_mock::active_screen; }
 inline void lv_scr_load(lv_obj_t*) {}
-inline void lv_scr_load_anim(lv_obj_t*, int, int, int, bool) {}
+inline void lv_scr_load_anim(lv_obj_t* screen, int animation, int duration,
+                             int delay, bool auto_delete) {
+    lvgl_mock::active_screen = screen;
+    lvgl_mock::last_loaded_screen = screen;
+    lvgl_mock::screen_load_count++;
+    lvgl_mock::last_load_animation = animation;
+    lvgl_mock::last_load_duration = duration;
+    lvgl_mock::last_load_delay = delay;
+    lvgl_mock::last_load_auto_delete = auto_delete;
+}
 inline lv_display_t* lv_display_get_default() { static lv_display_t d; return &d; }
 inline int32_t lv_display_get_horizontal_resolution(const lv_display_t*) { return 320; }
 inline int32_t lv_display_get_vertical_resolution(const lv_display_t*) { return 240; }
@@ -218,7 +255,10 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
 
 inline void lv_obj_del(lv_obj_t*) {}
 inline void lv_obj_del_async(lv_obj_t*) {}
-inline void lv_obj_delete(lv_obj_t*) {}
+inline void lv_obj_delete(lv_obj_t* obj) {
+    lvgl_mock::last_deleted_screen = obj;
+    lvgl_mock::screen_delete_count++;
+}
 
 // ── Object properties ────────────────────────────────────
 inline void lv_obj_set_size(lv_obj_t*, lv_coord_t, lv_coord_t) {}

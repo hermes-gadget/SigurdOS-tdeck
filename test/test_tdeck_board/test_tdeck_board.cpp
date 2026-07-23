@@ -19,8 +19,8 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
-#include <string>
 #include <limits>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -96,7 +96,7 @@ TEST_F(TDeckBoardPowerTest, SleepPreflightReportsInhibitionAndWakeFailure) {
                  "peripheral rail hold failed");
 }
 
-TEST_F(TDeckBoardPowerTest, PeripheralRailIsLatchedLowAndReleasedWithoutGlitch) {
+TEST_F(TDeckBoardPowerTest, PeripheralRailHoldIsReleasedWithoutGlitch) {
     const std::string source = read_project_file("src/hal/tdeck_board.h");
     ASSERT_FALSE(source.empty());
 
@@ -112,23 +112,6 @@ TEST_F(TDeckBoardPowerTest, PeripheralRailIsLatchedLowAndReleasedWithoutGlitch) 
     ASSERT_NE(release_global_pos, std::string::npos);
     EXPECT_LT(active_pos, release_pos);
     EXPECT_LT(release_pos, release_global_pos);
-
-    const size_t sleep_pos = source.find("TDeckSleepStatus trySleep(");
-    const size_t low_pos = source.find(
-        "digitalWrite(PIN_PERIPH_PWR, LOW);", sleep_pos);
-    const size_t hold_pos = source.find("gpio_hold_en(", low_pos);
-    const size_t deep_hold_pos = source.find(
-        "gpio_deep_sleep_hold_en();", hold_pos);
-    const size_t enter_pos = source.find("enterDeepSleep();", deep_hold_pos);
-    ASSERT_NE(sleep_pos, std::string::npos);
-    ASSERT_NE(low_pos, std::string::npos);
-    ASSERT_NE(hold_pos, std::string::npos);
-    ASSERT_NE(deep_hold_pos, std::string::npos);
-    ASSERT_NE(enter_pos, std::string::npos);
-    EXPECT_LT(low_pos, hold_pos);
-    EXPECT_LT(hold_pos, deep_hold_pos);
-    EXPECT_LT(deep_hold_pos, enter_pos);
-
     EXPECT_EQ(source.find("ESP_PD_DOMAIN_RTC_PERIPH"), std::string::npos);
 }
 

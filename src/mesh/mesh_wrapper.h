@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <helpers/RegionMap.h>  // for RegionEntry (must be before namespace)
+#include "status_response.h"
 #include "time_state.h"
 
 // Node type identifiers pinned to MeshCore's AdvertDataHelpers protocol.
@@ -25,6 +26,7 @@
 #define PERM_ACL_ADMIN      3
 
 namespace sigurdos {
+struct NodePrefs;
 namespace mesh {
 
 // Forward declarations from mesh_wrapper.cpp
@@ -170,7 +172,7 @@ bool saveState();
 bool saveChannels();
 void loadChannels();
 void shutdown();
-void factoryReset();
+bool factoryReset();
 
 // Companion BLE bridge
 bool companionBleAvailable();
@@ -248,7 +250,11 @@ float getSignalHistorySNR(int idx);
 
 // ── Live radio config (no NVS write) ──────────
 bool applyRadioParams(float freq, float bw, int sf, int cr, int tx_power, bool rx_gain);
+// Apply the radio transaction first, then commit the complete preference
+// snapshot. An NVS failure restores the previous hardware configuration.
+bool applyAndPersistRadioPrefs(const ::sigurdos::NodePrefs& prefs);
 bool revertRadioParams();
+int16_t getLastRadioConfigError();
 
 // ── REQ/RESPONSE framework (Phase 4.1) ────────
 bool sendRequest(const char* dest_name, uint8_t req_type);
@@ -306,31 +312,10 @@ int getLoggedInRoomServerCount();
 const char* getLoggedInRoomServerName(int index);
 
 // ── Status request (Phase 4.2) ────────────────
-#define NODE_STATUS_RESPONSE_SIZE  56  // size of RepeaterStats binary blob
-
-struct NodeStatus {
-    uint16_t batt_milli_volts;       // battery voltage in mV
-    uint16_t curr_tx_queue_len;      // current TX queue length
-    int16_t  noise_floor;            // noise floor (dBm)
-    int16_t  last_rssi;              // last received RSSI (dBm)
-    uint32_t n_packets_recv;         // total packets received
-    uint32_t n_packets_sent;         // total packets sent
-    uint32_t total_air_time_secs;    // total TX air time (seconds)
-    uint32_t total_up_time_secs;     // node uptime (seconds)
-    uint32_t n_sent_flood;           // flood messages sent
-    uint32_t n_sent_direct;          // direct messages sent
-    uint32_t n_recv_flood;           // flood messages received
-    uint32_t n_recv_direct;          // direct messages received
-    uint16_t err_events;             // error event count
-    int16_t  last_snr;               // last SNR (value/4 = dB)
-    uint16_t n_direct_dups;          // duplicate direct packets
-    uint16_t n_flood_dups;           // duplicate flood packets
-    uint32_t total_rx_air_time_secs; // total RX air time (seconds)
-    uint32_t n_recv_errors;          // receive errors
-};
-
 bool requestStatus(const char* dest_name);
 bool hasStatusResponse();
+bool statusRequestPending();
+bool statusRequestTimedOut();
 bool getStatusResult(NodeStatus* out);
 
 // ── Telemetry queries (Phase 4.3) ─────────────
@@ -350,12 +335,16 @@ struct TelemetryResult {
 
 bool requestTelemetry(const char* dest_name);
 bool hasTelemetryResponse();
+bool telemetryRequestPending();
+bool telemetryRequestTimedOut();
 bool getTelemetryResult(TelemetryResult* out);
 
 // ── Path discovery (Phase 4.4) ────────────────
 // Sends a flood request to discover the route to a contact.
 // Returns a discovery tag (>0) on success, or 0 on failure.
 uint32_t discoverPath(const char* dest_name);
+bool pathDiscoveryPending(const char* dest_name);
+bool pathDiscoveryTimedOut(const char* dest_name);
 // Check if a path has been learned for a contact (path_len > 0 || path_len == 0xFF unknown)
 bool hasPathTo(const char* dest_name);
 uint8_t getContactPathLen(const char* dest_name);

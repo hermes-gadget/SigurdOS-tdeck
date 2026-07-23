@@ -18,8 +18,10 @@ struct SigurdOSTestCommandLine {
   char arguments[232];
 };
 
-inline bool sigurdos_test_controller_command_known(const char* command) {
+inline bool sigurdos_test_controller_command_known_for_profile(const char* command,
+                                                               bool radio_enabled) {
   if (!command) return false;
+  if (std::strcmp(command, "simulateack") == 0) return !radio_enabled;
   static const char* const commands[] = {
       "help", "?", "nav", "navigate", "back", "tb", "trackball", "type",
       "picker", "press", "inject", "msg", "sendchannel", "sendmessage", "senddm",
@@ -35,6 +37,15 @@ inline bool sigurdos_test_controller_command_known(const char* command) {
     if (std::strcmp(command, known) == 0) return true;
   }
   return false;
+}
+
+inline bool sigurdos_test_controller_command_known(const char* command) {
+#if defined(SIGURDOS_REMOTE_TEST_RADIO) && SIGURDOS_REMOTE_TEST_RADIO
+  constexpr bool radio_enabled = true;
+#else
+  constexpr bool radio_enabled = false;
+#endif
+  return sigurdos_test_controller_command_known_for_profile(command, radio_enabled);
 }
 
 inline SigurdOSTestCommandParseResult sigurdos_test_controller_parse_command(

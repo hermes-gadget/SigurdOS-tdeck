@@ -19,10 +19,13 @@ namespace mesh {
 /// before any other region functions. The store must outlive the map.
 void regionsInit(TransportKeyStore& store);
 
-/// Load regions from SPIFFS (/regions2). Returns true on success.
+/// Load regions and private keys from SPIFFS (/regions2). Legacy RegionMap
+/// files and the old active-key NVS overlay are migrated on first load.
+/// Returns true on success.
 bool regionsLoad();
 
-/// Save regions to SPIFFS (/regions2). Returns true on success.
+/// Atomically save RegionMap metadata and all private keys to one versioned
+/// SPIFFS snapshot (/regions2). Returns true on success.
 bool regionsSave();
 
 /// True when the in-memory map contains a change that did not commit. A
@@ -116,9 +119,9 @@ const char* getActiveRegion();
 /// propagate to mesh; call mesh_wrapper::setActiveRegion for that).
 bool setActiveRegionName(const char* name);
 
-/// Commit the active name and its matching private-key preference together.
-/// A null key_hex clears the persisted private key. The in-memory name cache
-/// changes only after prefs_set() succeeds.
+/// Commit the active name after validating the matching private key. key_hex
+/// is accepted for companion compatibility but key material is persisted only
+/// in /regions2. The in-memory name cache changes only after all commits pass.
 bool setActiveRegionNameWithKey(const char* name, const char* key_hex);
 
 // ── Channel sync ────────────────────────────────────────

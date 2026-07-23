@@ -28,6 +28,7 @@ TEST(TestControllerCommandTest, EveryDispatchedCommandAndAliasIsRecognized) {
         "help", "?", "nav home", "navigate settings", "back", "tb up", "trackball c",
         "type hello world", "picker a", "press enter", "inject bob hi", "msg bob hi",
         "sendchannel Public hi", "sendmessage bob hi", "senddm bob hi", "opendm bob",
+        "simulateack bob 1234",
         "addchannel Public", "addchan Public", "removechannel 1", "rmchannel 1",
         "removechan 1", "rmchan 1", "addrepeater node", "addroomserver room",
         "login node pass", "setlogin node", "setloginguest node", "screen", "status",
@@ -42,6 +43,13 @@ TEST(TestControllerCommandTest, EveryDispatchedCommandAndAliasIsRecognized) {
         EXPECT_EQ(sigurdos_test_controller_parse_command(line, &parsed),
                   SigurdOSTestCommandParseResult::Ok) << line;
     }
+}
+
+TEST(TestControllerCommandTest, AckSimulationIsRestrictedToNoRadioProfiles) {
+    EXPECT_TRUE(sigurdos_test_controller_command_known_for_profile("simulateack", false));
+    EXPECT_FALSE(sigurdos_test_controller_command_known_for_profile("simulateack", true));
+    EXPECT_TRUE(sigurdos_test_controller_command_known_for_profile("sendmessage", false));
+    EXPECT_TRUE(sigurdos_test_controller_command_known_for_profile("sendmessage", true));
 }
 
 TEST(TestControllerCommandTest, SplitsArgumentsAndRejectsMalformedInput) {
