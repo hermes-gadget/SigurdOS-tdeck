@@ -44,6 +44,7 @@ void settings_radio_show();
 void settings_gps_show();
 void settings_display_show();
 void settings_system_show();
+void file_browser_screen_show();
 void telemetry_screen_show();
 void node_stats_screen_show();
 void node_status_screen_show();

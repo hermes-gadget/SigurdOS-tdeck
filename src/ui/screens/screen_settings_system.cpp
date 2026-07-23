@@ -667,8 +667,12 @@ void settings_system_show()
     lv_obj_set_style_bg_opa(r1, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(r1, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_add_event_cb(r1, [](lv_event_t* e) {
-        lv_obj_t* row = (lv_obj_t*)lv_event_get_target(e);
-        show_sd_diag_dialog(lv_obj_get_screen(row), row);
+        if (sigurdos_sdcard_mounted()) {
+            navigate_to(Screen::FileBrowser);
+            return;
+        }
+        lv_obj_t* selected_row = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        show_sd_diag_dialog(lv_obj_get_screen(selected_row), selected_row);
     }, LV_EVENT_CLICKED, nullptr);
     row++;
 

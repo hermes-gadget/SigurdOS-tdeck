@@ -27,6 +27,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <algorithm>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -403,6 +405,137 @@ size_t sigurdos_sdcard_read(const char* path, uint8_t* buf, size_t max_len)
     const size_t read = std::fread(buf, 1, max_len, file);
     std::fclose(file);
     return read;
+}
+
+bool sigurdos_sdcard_list(const char* path, SigurdosSdDirEntry* entries,
+                          size_t max_entries, size_t* count, bool* truncated)
+{
+    if (count) *count = 0;
+    if (truncated) *truncated = false;
+    if (!mounted || !sigurdos_sdcard_path_valid(path) || !entries ||
+        max_entries == 0 || !count) {
+        return false;
+    }
+
+    char directory_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    if (!sdcard_vfs_path(path, directory_path, sizeof(directory_path))) return false;
+    DIR* directory = ::opendir(directory_path);
+    if (!directory) return false;
+
+    bool overflow = false;
+    struct dirent* item = nullptr;
+    while ((item = ::readdir(directory)) != nullptr) {
+        if (std::strcmp(item->d_name, ".") == 0 ||
+            std::strcmp(item->d_name, "..") == 0) {
+            continue;
+        }
+        if (*count >= max_entries) {
+            overflow = true;
+            continue;
+        }
+        const size_t name_length = std::strlen(item->d_name);
+        if (name_length > SIGURDOS_SD_MAX_NAME_LEN) {
+            overflow = true;
+            continue;
+        }
+
+        char item_path[sizeof(directory_path) + SIGURDOS_SD_MAX_NAME_LEN + 2];
+        const int written = std::snprintf(
+            item_path, sizeof(item_path), "%s%s%s",
+            directory_path,
+            directory_path[std::strlen(directory_path) - 1] == '/' ? "" : "/",
+            item->d_name);
+        if (written <= 0 || static_cast<size_t>(written) >= sizeof(item_path)) {
+            overflow = true;
+            continue;
+        }
+
+        struct stat info {};
+        if (::stat(item_path, &info) != 0) continue;
+
+        SigurdosSdDirEntry& entry = entries[*count];
+        std::memcpy(entry.name, item->d_name, name_length + 1);
+        entry.is_directory = S_ISDIR(info.st_mode);
+        entry.size_bytes = entry.is_directory || info.st_size < 0
+            ? 0
+            : static_cast<uint64_t>(info.st_size);
+        entry.modified_time = info.st_mtime;
+        (*count)++;
+    }
+    ::closedir(directory);
+
+    std::sort(entries, entries + *count,
+              [](const SigurdosSdDirEntry& left, const SigurdosSdDirEntry& right) {
+        if (left.is_directory != right.is_directory) return left.is_directory;
+        return std::strcmp(left.name, right.name) < 0;
+    });
+    if (truncated) *truncated = overflow;
+    return true;
+}
+
+bool sigurdos_sdcard_copy_file(const char* source_path, const char* destination_path)
+{
+    if (!mounted || !sigurdos_sdcard_path_valid(source_path) ||
+        !sigurdos_sdcard_path_valid(destination_path) ||
+        std::strcmp(source_path, destination_path) == 0) {
+        return false;
+    }
+
+    char source[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    char destination[sizeof(source)];
+    if (!sdcard_vfs_path(source_path, source, sizeof(source)) ||
+        !sdcard_vfs_path(destination_path, destination, sizeof(destination))) {
+        return false;
+    }
+
+    struct stat source_info {};
+    if (::stat(source, &source_info) != 0 || !S_ISREG(source_info.st_mode)) {
+        return false;
+    }
+    struct stat destination_info {};
+    if (::stat(destination, &destination_info) == 0 || errno != ENOENT) {
+        return false;
+    }
+
+    FILE* input = std::fopen(source, "rb");
+    if (!input) return false;
+    FILE* output = std::fopen(destination, "wb");
+    if (!output) {
+        std::fclose(input);
+        return false;
+    }
+
+    bool success = true;
+    uint8_t buffer[1024];
+    size_t bytes_read = 0;
+    while ((bytes_read = std::fread(buffer, 1, sizeof(buffer), input)) > 0) {
+        if (std::fwrite(buffer, 1, bytes_read, output) != bytes_read) {
+            success = false;
+            break;
+        }
+        delay(0);  // Keep the ESP task watchdog serviced during large copies.
+    }
+    if (std::ferror(input)) success = false;
+    if (success && (std::fflush(output) != 0 || ::fsync(::fileno(output)) != 0)) {
+        success = false;
+    }
+    if (std::fclose(input) != 0) success = false;
+    if (std::fclose(output) != 0) success = false;
+    if (!success) std::remove(destination);
+    return success;
+}
+
+bool sigurdos_sdcard_delete_file(const char* path)
+{
+    if (!mounted || !sigurdos_sdcard_path_valid(path) ||
+        std::strcmp(path, "/") == 0) {
+        return false;
+    }
+    char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return false;
+    struct stat info {};
+    return ::stat(live_path, &info) == 0 && S_ISREG(info.st_mode) &&
+        std::remove(live_path) == 0;
 }
 
 bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)

@@ -21,11 +21,20 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <ctime>
 
 // VFS mountpoint — use this prefix for POSIX file I/O on the SD card
 #define SIGURDOS_SD_MOUNTPOINT "/sdcard"
 
 static constexpr size_t SIGURDOS_SD_MAX_PATH_LEN = 255;
+static constexpr size_t SIGURDOS_SD_MAX_NAME_LEN = 127;
+
+struct SigurdosSdDirEntry {
+    char name[SIGURDOS_SD_MAX_NAME_LEN + 1];
+    uint64_t size_bytes;
+    std::time_t modified_time;
+    bool is_directory;
+};
 
 inline bool sigurdos_sdcard_may_reset_bus(bool reset_locked)
 {
@@ -93,6 +102,12 @@ const char* sigurdos_sdcard_format_size(uint64_t bytes, char* buf, size_t buf_sz
 // File operations (optional — for map tiles, logs)
 bool sigurdos_sdcard_exists(const char* path);
 size_t sigurdos_sdcard_read(const char* path, uint8_t* buf, size_t max_len);
+// List one directory. Entries are sorted with directories first, then by name.
+// `truncated` is set when more entries exist than fit in the caller's buffer.
+bool sigurdos_sdcard_list(const char* path, SigurdosSdDirEntry* entries,
+                          size_t max_entries, size_t* count, bool* truncated);
+bool sigurdos_sdcard_copy_file(const char* source_path, const char* destination_path);
+bool sigurdos_sdcard_delete_file(const char* path);
 // Persistence-safe replacement: syncs a same-directory temp, marks it ready,
 // then atomically promotes it. Reads recover any interrupted promotion.
 bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len);

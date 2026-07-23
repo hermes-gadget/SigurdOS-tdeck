@@ -120,6 +120,7 @@ bool is_pin_protected_route(Screen screen)
     case Screen::Bluetooth:
     case Screen::Regions:
     case Screen::CustomRadioSetup:
+    case Screen::FileBrowser:
         return true;
     default:
         return false;
@@ -192,6 +193,7 @@ static void dispatch_screen_unchecked(Screen screen)
     case Screen::CustomRadioSetup: custom_rf_screen_show(); break;
     case Screen::MessageSearch:  message_search_screen_show(); break;
     case Screen::MeshDashboard:    mesh_dashboard_screen_show(); break;
+    case Screen::FileBrowser:      file_browser_screen_show(); break;
     default: break;
     }
 }

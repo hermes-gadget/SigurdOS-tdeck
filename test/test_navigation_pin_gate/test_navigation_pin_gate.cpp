@@ -70,6 +70,7 @@ void bluetooth_screen_show() { record_dispatch(Screen::Bluetooth); }
 void regions_screen_show() { record_dispatch(Screen::Regions); }
 void custom_rf_screen_show() { record_dispatch(Screen::CustomRadioSetup); }
 void mesh_dashboard_screen_show() { record_dispatch(Screen::MeshDashboard); }
+void file_browser_screen_show() { record_dispatch(Screen::FileBrowser); }
 
 void contact_detail_screen_show(const char*)
 {
@@ -87,7 +88,7 @@ void repeater_detail_screen_show(const char*, bool)
 
 namespace {
 
-constexpr std::array<Screen, 12> PROTECTED_ROUTES = {
+constexpr std::array<Screen, 13> PROTECTED_ROUTES = {
     Screen::Settings,
     Screen::Terminal,
     Screen::RadioSetup,
@@ -100,6 +101,7 @@ constexpr std::array<Screen, 12> PROTECTED_ROUTES = {
     Screen::Bluetooth,
     Screen::Regions,
     Screen::CustomRadioSetup,
+    Screen::FileBrowser,
 };
 
 bool expected_protected(Screen screen)

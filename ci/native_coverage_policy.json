@@ -40,6 +40,7 @@
         "src/ui/notifications.cpp", "src/ui/onboarding_screen.cpp", "src/ui/screens.cpp",
         "src/ui/screens/screen_advertise.cpp", "src/ui/screens/screen_bluetooth.cpp",
         "src/ui/screens/screen_channels.cpp", "src/ui/screens/screen_contacts.cpp",
+        "src/ui/screens/screen_file_browser.cpp",
         "src/ui/screens/screen_finder.cpp", "src/ui/screens/screen_map.cpp",
         "src/ui/screens/screen_message_search.cpp",
         "src/ui/screens/screen_node_stats.cpp", "src/ui/screens/screen_node_status.cpp",

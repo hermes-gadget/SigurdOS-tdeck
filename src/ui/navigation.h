@@ -54,6 +54,7 @@ enum class Screen {
     CustomRadioSetup,
     MessageSearch,
     MeshDashboard,
+    FileBrowser,
     COUNT
 };
 

@@ -90,6 +90,7 @@ TEST(UIContractTest, DetailAndSettingsScreenApisStayStable) {
     (void)static_cast<void_fn>(sigurdos::ui::settings_gps_show);
     (void)static_cast<void_fn>(sigurdos::ui::settings_display_show);
     (void)static_cast<void_fn>(sigurdos::ui::settings_system_show);
+    (void)static_cast<void_fn>(sigurdos::ui::file_browser_screen_show);
     SUCCEED();
 }
 
