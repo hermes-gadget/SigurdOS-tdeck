@@ -24,6 +24,7 @@
 #include "../contact_paging.h"
 #include "../chat_screen.h"
 #include "../repeater_command_policy.h"
+#include "../notifications.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
@@ -467,7 +468,12 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 const char* name = (const char*)lv_obj_get_user_data(btn);
                 if (name) {
                     bool cur = sigurdos::mesh::isContactFavourite(name);
-                    sigurdos::mesh::setContactFavourite(name, !cur);
+                    if (!sigurdos::mesh::setContactFavourite(name, !cur)) {
+                        notifications_post(
+                            NotificationEvent::UiError,
+                            "Favourite change was not saved");
+                        return;
+                    }
 
                     repeater_detail_screen_show(name, true);
 

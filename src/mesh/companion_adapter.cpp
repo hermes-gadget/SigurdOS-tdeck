@@ -306,13 +306,8 @@ public:
         if (!mesh_ptr() || index < 0 || index >= MAX_GROUP_CHANNELS) return false;
         if (!memchr(channel.name, '\0', sizeof(channel.name))) return false;
         if (channel.name[0] && !sigurdos::mesh::channel_name_valid(channel.name)) return false;
-        ChannelDetails cd{};
-        strncpy(cd.name, channel.name, sizeof(cd.name) - 1);
-        memcpy(cd.channel.secret, channel.secret, sizeof(cd.channel.secret));
-        if (!mesh_ptr()->setChannelSlot(index, cd)) return false;
-        sigurdos::mesh::saveChannels();
-        sigurdos::mesh::syncRegionsFromChannels();
-        return true;
+        return sigurdos::mesh::meshSetChannelSlotDurable(
+            index, channel.name, channel.secret, sizeof(channel.secret));
     }
 
     CompanionSendResult sendTextByPubKeyPrefix(const uint8_t* prefix, size_t prefix_len,
@@ -673,25 +668,22 @@ public:
             if (!ok) *existing = previous;
             return ok;
         }
+        // Explicit companion adds fail at capacity rather than invoking the
+        // advert-only overwrite policy, which would make rollback destructive.
+        if (mesh_ptr()->getNumContacts() >= MAX_CONTACTS) return false;
         ok = mesh_ptr()->addContact(ci);
         if (!ok) return false;
         if (sigurdos::mesh::saveContacts()) return true;
-        mesh_ptr()->removeContactByPubKey(c.pub_key);
+        ::ContactInfo* added = mesh_ptr()->lookupContactByPubKey(
+            c.pub_key, 32);
+        if (added) mesh_ptr()->BaseChatMesh::removeContact(*added);
         return false;
     }
     bool removeContactByPubKey(const uint8_t* pub_key) override {
-        if (!mesh_ptr() || !pub_key) return false;
-        bool ok = mesh_ptr()->removeContactByPubKey(pub_key);
-        if (ok) sigurdos::mesh::saveContacts();
-        return ok;
+        return sigurdos::mesh::meshRemoveContactByPubKeyDurable(pub_key);
     }
     bool resetPathByPubKey(const uint8_t* pub_key) override {
-        if (!mesh_ptr() || !pub_key) return false;
-        ::ContactInfo* c = mesh_ptr()->lookupContactByPubKey(pub_key, 32);
-        if (!c) return false;
-        mesh_ptr()->BaseChatMesh::resetPathTo(*c);
-        sigurdos::mesh::saveContacts();
-        return true;
+        return sigurdos::mesh::meshResetContactPathByPubKeyDurable(pub_key);
     }
     bool shareContactByPubKey(const uint8_t* pub_key) override {
         if (!mesh_ptr() || !pub_key) return false;
@@ -708,9 +700,11 @@ public:
     }
     bool importContact(const uint8_t* data, size_t len) override {
         if (!mesh_ptr() || !data) return false;
-        bool ok = mesh_ptr()->importContact(data, (uint8_t)len);
-        if (ok) sigurdos::mesh::saveContacts();
-        return ok;
+        // Import validates and queues an advert for loopback. The eventual
+        // onDiscoveredContact mutation marks contacts dirty and owns the
+        // deferred, retryable commit; saving here would only persist the old
+        // table before the queued advert is processed.
+        return mesh_ptr()->importContact(data, (uint8_t)len);
     }
     bool hasConnectionTo(const uint8_t* pub_key) const override {
         return mesh_ptr() && pub_key && mesh_ptr()->companionHasConnection(pub_key);

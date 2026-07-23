@@ -21,6 +21,7 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../generation_owner.h"
+#include "../notifications.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../mesh/channel_validation.h"
 #include "../../mesh/public_channel.h"
@@ -141,7 +142,8 @@ static lv_obj_t* channel_create_dialog(lv_obj_t* parent)
             channels_rebuild_from(dlg);
             lv_obj_del_async(dlg);
         } else {
-            if (fb) lv_label_set_text(fb, "Invalid or full");
+            if (fb) lv_label_set_text(
+                fb, "Invalid, full, or save failed");
         }
     }, LV_EVENT_CLICKED, (void*)feedback);
 
@@ -270,7 +272,12 @@ void channels_screen_show()
                         lv_obj_center(cfl_lb);
                         lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ce) {
                             int idx2 = (int)(intptr_t)lv_event_get_user_data(ce);
-                            sigurdos::mesh::removeChannel(idx2);
+                            if (!sigurdos::mesh::removeChannel(idx2)) {
+                                notifications_post(
+                                    NotificationEvent::UiError,
+                                    "Channel removal was not saved");
+                                return;
+                            }
                             channels_rebuild_from((lv_obj_t*)lv_event_get_target(ce));
                             lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
                         }, LV_EVENT_CLICKED, (void*)(intptr_t)idx);

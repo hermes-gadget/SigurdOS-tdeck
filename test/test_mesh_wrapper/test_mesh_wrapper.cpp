@@ -190,6 +190,83 @@ TEST_F(MeshWrapperTest, FailedDurableCommitRollsBackRuntimeMutation) {
     EXPECT_EQ(visible_value, 10);
 }
 
+TEST_F(MeshWrapperTest, ApplyFirstMeshMutationsRestoreSnapshotsOnWriteFailure) {
+    enum class MutationPath {
+        ChannelAdd,
+        ChannelRemove,
+        ChannelSlotSet,
+        ContactAdd,
+        ContactUpdate,
+        ContactPathReset,
+    };
+    struct RuntimeState {
+        int channel_count;
+        int channel_value;
+        int contact_count;
+        int contact_value;
+        bool contact_has_path;
+    };
+    struct Case {
+        MutationPath path;
+        const char* name;
+    };
+    static constexpr Case cases[] = {
+        {MutationPath::ChannelAdd, "channel add"},
+        {MutationPath::ChannelRemove, "channel remove"},
+        {MutationPath::ChannelSlotSet, "companion channel set"},
+        {MutationPath::ContactAdd, "contact add"},
+        {MutationPath::ContactUpdate, "contact update"},
+        {MutationPath::ContactPathReset, "contact path reset"},
+    };
+
+    for (const Case& test_case : cases) {
+        SCOPED_TRACE(test_case.name);
+        RuntimeState state{2, 17, 3, 29, true};
+        const RuntimeState before = state;
+        bool commit_attempted = false;
+        bool rollback_called = false;
+
+        const bool ok = sigurdos::mesh::detail::applyAndCommit(
+            [&]() {
+                switch (test_case.path) {
+                    case MutationPath::ChannelAdd: ++state.channel_count; break;
+                    case MutationPath::ChannelRemove: --state.channel_count; break;
+                    case MutationPath::ChannelSlotSet: state.channel_value = 41; break;
+                    case MutationPath::ContactAdd: ++state.contact_count; break;
+                    case MutationPath::ContactUpdate: state.contact_value = 43; break;
+                    case MutationPath::ContactPathReset:
+                        state.contact_has_path = false;
+                        break;
+                }
+                return true;
+            },
+            [&]() { commit_attempted = true; return false; },
+            [&]() { state = before; rollback_called = true; });
+
+        EXPECT_FALSE(ok);
+        EXPECT_TRUE(commit_attempted);
+        EXPECT_TRUE(rollback_called);
+        EXPECT_EQ(before.channel_count, state.channel_count);
+        EXPECT_EQ(before.channel_value, state.channel_value);
+        EXPECT_EQ(before.contact_count, state.contact_count);
+        EXPECT_EQ(before.contact_value, state.contact_value);
+        EXPECT_EQ(before.contact_has_path, state.contact_has_path);
+    }
+}
+
+TEST_F(MeshWrapperTest, FailedContactRemovalCommitDoesNotActivateRuntimeRemoval) {
+    int contact_count = 3;
+    bool removal_activated = false;
+
+    const bool ok = sigurdos::mesh::detail::commitBeforeActivate(
+        []() { return false; },
+        [&]() { --contact_count; removal_activated = true; });
+
+    EXPECT_FALSE(ok);
+    EXPECT_FALSE(removal_activated);
+    EXPECT_EQ(3, contact_count);
+}
+
 TEST_F(MeshWrapperTest, SuccessfulDurableCommitKeepsRuntimeMutation) {
     int visible_value = 10;
     bool rolled_back = false;

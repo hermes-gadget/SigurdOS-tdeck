@@ -634,6 +634,12 @@ Each channel stores three NVS keys:
 
 Channel count is stored as `ch_cnt` (uint8_t). On boot, `loadChannels()` is called during `init()` after `g_mesh->begin()` to restore all previously joined channels.
 
+Every user-visible add, remove, or companion slot replacement snapshots all
+channel slots, applies the runtime mutation, and reports success only after the
+transactional NVS bank commits. A failed commit restores the complete snapshot
+before returning failure, so callers cannot acknowledge a volatile channel
+state. Region synchronization runs only after the channel commit succeeds.
+
 ### Persistence Store Module (`persistence_store.h/cpp`)
 
 The `sigurdos::mesh::persistence_store` module provides the low-level NVS and
@@ -663,6 +669,11 @@ one-time upgrade migration.
 `saveState()` is the coordinated persistence checkpoint. It commits preferences,
 channels, identity, contacts, and any dirty region map state, and reports failure
 if any store does not commit.
+
+Generated and imported identities follow commit-before-activate ordering. A
+new identity is validated and atomically stored before the running identity,
+contacts, or login sessions change; boot fails clearly if a newly generated
+identity cannot be persisted while storage is available.
 
 ---
 
