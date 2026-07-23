@@ -1,0 +1,63 @@
+{
+  "minimum_line_percent": 90,
+  "minimum_branch_percent": 70,
+  "exclusions": [
+    {
+      "reason": "Requires the ESP32/Arduino hardware runtime or a device transport that is not available in native_test.",
+      "sources": [
+        "src/app/lodepng_alloc.cpp", "src/app/map_renderer.cpp", "src/app/qr_show.cpp",
+        "src/comms/observed_ble_interface.cpp",
+        "src/diagnostics/build_info.cpp", "src/diagnostics/debug.cpp", "src/diagnostics/telemetry.cpp",
+        "src/diagnostics/telemetry_collectors.cpp", "src/diagnostics/telemetry_crash.cpp",
+        "src/diagnostics/telemetry_hb_ring.cpp", "src/diagnostics/telemetry_input.cpp",
+        "src/diagnostics/telemetry_protocol.cpp",
+        "src/hal/boot_watchdog.cpp", "src/hal/display.cpp", "src/hal/github_ota.cpp",
+        "src/hal/ota_boot_health.cpp", "src/hal/prefs.cpp", "src/hal/sdcard.cpp",
+        "src/hal/wifi_ota.cpp", "src/main.cpp"
+      ]
+    },
+    {
+      "reason": "Generated bitmap font payload; integrity is checked by dedicated native tests instead of line coverage.",
+      "sources": [
+        "src/fonts/emoji_font.c", "src/fonts/keyboard_layout_font.c", "src/fonts/latin_ext_font.c"
+      ]
+    },
+    {
+      "reason": "Requires the real MeshCore radio/object graph; native integration expansion is tracked by issue #1203.",
+      "sources": [
+        "src/mesh/companion_adapter.cpp", "src/mesh/mesh_wrapper.cpp",
+        "src/mesh/regions.cpp", "src/mesh/sigurd_mesh_v2.cpp"
+      ]
+    },
+    {
+      "reason": "Remote-test firmware controller, compiled and exercised only in remote-test environments.",
+      "sources": ["src/test/test_controller.cpp"]
+    },
+    {
+      "reason": "Requires a complete LVGL display, object, event, and input runtime beyond the bounded native LVGL fake.",
+      "sources": [
+        "src/ui/chat_screen.cpp", "src/ui/home_screen.cpp", "src/ui/navigation.cpp",
+        "src/ui/notifications.cpp", "src/ui/onboarding_screen.cpp", "src/ui/screens.cpp",
+        "src/ui/screens/screen_advertise.cpp", "src/ui/screens/screen_bluetooth.cpp",
+        "src/ui/screens/screen_channels.cpp", "src/ui/screens/screen_contacts.cpp",
+        "src/ui/screens/screen_finder.cpp", "src/ui/screens/screen_map.cpp",
+        "src/ui/screens/screen_node_stats.cpp", "src/ui/screens/screen_node_status.cpp",
+        "src/ui/screens/screen_packets.cpp", "src/ui/screens/screen_radio_setup.cpp",
+        "src/ui/screens/screen_regions.cpp", "src/ui/screens/screen_repeaters.cpp",
+        "src/ui/screens/screen_settings.cpp", "src/ui/screens/screen_settings_display.cpp",
+        "src/ui/screens/screen_settings_gps.cpp", "src/ui/screens/screen_settings_radio.cpp",
+        "src/ui/screens/screen_settings_system.cpp", "src/ui/screens/screen_signal.cpp",
+        "src/ui/screens/screen_telemetry.cpp", "src/ui/screens/screen_terminal.cpp",
+        "src/ui/screens/screen_trace.cpp", "src/ui/screens/screen_wifi_networks.cpp",
+        "src/ui/screens_common.cpp", "src/ui/ui.cpp"
+      ]
+    },
+    {
+      "reason": "Dedicated ESP32 validation firmware entry point, compiled in its matching PlatformIO validation environment.",
+      "sources": [
+        "src/validation/esp32_component_compile.cpp", "src/validation/gps_validation.cpp",
+        "src/validation/gps_validation_wifi.cpp"
+      ]
+    }
+  ]
+}

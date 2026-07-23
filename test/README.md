@@ -16,6 +16,9 @@ pio test -e native_test -f test_gps
 # Run the full host-side native suite.
 pio test -e native_test
 
+# Exercise the pinned production MeshCore dispatcher with host radio fakes.
+pio test -e native_mesh_integration
+
 # Build the firmware image for the LilyGo T-Deck target.
 pio run -e SigurdOS_TDeck
 ```
@@ -79,6 +82,7 @@ test/
 |-- test_map/                       Map projection, LRU/negative cache, and load budgets
 |-- test_map_renderer/              Map renderer constants, zoom validation, and tile math
 |-- test_mesh_contract/             Mesh advert types, contact flags, and buffer capacity stability
+|-- test_mesh_integration/          Production MeshCore parser/dispatcher/radio integration
 |-- test_mesh_messaging/            Message queues, contacts, responses, LPP parsing
 |-- test_mesh_wrapper/              Public mesh API contracts and return ranges
 |-- test_mesh_wrapper_internal/     Wrapper seam helpers: scope-key hex codec, DM conversation key
@@ -89,6 +93,7 @@ test/
 |-- test_onboarding/                Onboarding date/time validation and leap year rules
 |-- test_ota_auth/                  OTA authentication, URL, and certificate policy
 |-- test_ota_boot_health/           OTA boot-health confirmation and rollback deadlines
+|-- test_ota_write/                 Exact-write, partial-I/O, overflow, and abort policy
 |-- test_path_autoadd/              Received-path contact auto-add policy
 |-- test_path_codec/                Path byte encoding and decoding boundaries
 |-- test_pins/                      GPIO ranges, conflicts, and board pin sanity
@@ -103,6 +108,7 @@ test/
 |-- test_screen_lifetime/           Screen delete guard: tracked pointer nulling, timer teardown
 |-- test_storage/                   SPIFFS mount, erased-partition recovery, and failure policy
 |-- test_tdeck_board/               Board power thresholds and shutdown logic
+|-- test_tdeck_sleep/               Production-linked T-Deck sleep ordering and failures
 |-- test_telemetry_collectors/      Telemetry task watermark and buffer null-safety
 |-- test_telemetry_crash/           Crash backtrace capacity and bounded count
 |-- test_telemetry_drift/           Telemetry timing drift and rollover handling
@@ -118,6 +124,7 @@ test/
 |-- test_transport_key_store/       Private-region transport key persistence and bounds
 |-- test_ui_contract/               UI screen show APIs and screen function stability
 |-- test_ui_lifecycle/              LVGL timer ownership and display timeout normalization
+|-- test_ui_screen_load/            Repeated Chat/Home loads and synchronous root deletion
 |-- test_ui_timing/                 Splash screen timing and millisecond rollover
 |-- test_wifi_icon_lifetime/        Production WiFi status ownership and pointer reuse
 |-- test_wifi_scan/                 Wi-Fi scan AP count, sorting, and input validation
@@ -127,6 +134,12 @@ test/
 The catalog is checked in CI against the target names produced by
 `pio test -e native_test --list-tests`. The success message reports the current
 derived count; do not add a hand-maintained total here.
+
+The sanitizer environment runs the same discovered suite with ASan, UBSan, and
+leak detection. Production coverage is gated at 90% line and 70% branch
+coverage. Every production translation unit must either appear in the native
+source filter or have a reviewed reason in `ci/native_coverage_policy.json`;
+`scripts/check_native_coverage_inventory.py` enforces that inventory in CI.
 
 ## Mocks
 

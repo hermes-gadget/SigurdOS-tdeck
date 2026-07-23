@@ -400,32 +400,34 @@ namespace mesh {
                                              uint8_t req_type,
                                              bool companion_binary,
                                              const char* channel_name) {
+        expirePendingOperations(_ms->getMillis());
         if (findPendingLogin(contact.id.pub_key) >= 0 ||
             hasPendingRequest(contact.id.pub_key)) {
             return -1;
         }
-        for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
-            if (_pending_reqs[i].in_use) continue;
-            PendingRequest& request = _pending_reqs[i];
-            request = PendingRequest{};
-            memcpy(request.dest_key, contact.id.pub_key, PUB_KEY_SIZE);
-            strncpy(request.dest_name, contact.name,
-                    sizeof(request.dest_name) - 1);
-            if (channel_name) {
-                strncpy(request.channel_name, channel_name,
-                        sizeof(request.channel_name) - 1);
-            }
-            request.req_type = req_type;
-            request.companion_binary = companion_binary;
-            request.in_use = true;
-            return i;
+        const int slot = selectReusablePendingSlot(
+            _pending_reqs, MAX_PENDING_REQUESTS);
+        if (slot < 0) return -1;
+        PendingRequest& request = _pending_reqs[slot];
+        request = PendingRequest{};
+        memcpy(request.dest_key, contact.id.pub_key, PUB_KEY_SIZE);
+        strncpy(request.dest_name, contact.name,
+                sizeof(request.dest_name) - 1);
+        if (channel_name) {
+            strncpy(request.channel_name, channel_name,
+                    sizeof(request.channel_name) - 1);
         }
-        return -1;
+        request.req_type = req_type;
+        request.companion_binary = companion_binary;
+        request.in_use = true;
+        return slot;
     }
 
     bool SigurdMeshV2::sendRequest(const ::ContactInfo& contact,
-                                   uint8_t req_type, uint32_t* tag_out) {
+                                   uint8_t req_type, uint32_t* tag_out,
+                                   uint32_t* timeout_out) {
         if (tag_out) *tag_out = 0;
+        if (timeout_out) *timeout_out = 0;
         const int pending = reservePendingRequest(
             contact, req_type, /*companion_binary=*/false);
         if (pending < 0) return false;
@@ -442,15 +444,18 @@ namespace mesh {
         _pending_reqs[pending].timeout_ms =
             login_session::normalizeTimeout(est_timeout);
         if (tag_out) *tag_out = tag;
+        if (timeout_out) *timeout_out = _pending_reqs[pending].timeout_ms;
         return true;
     }
 
     bool SigurdMeshV2::sendRequest(const char* name, uint8_t req_type,
-                                   uint32_t* tag_out) {
+                                   uint32_t* tag_out,
+                                   uint32_t* timeout_out) {
         if (tag_out) *tag_out = 0;
+        if (timeout_out) *timeout_out = 0;
         ::ContactInfo contact{};
         return findUniqueContact(name, contact) &&
-            sendRequest(contact, req_type, tag_out);
+            sendRequest(contact, req_type, tag_out, timeout_out);
     }
 
     bool SigurdMeshV2::sendRequestWithData(const char* name, const uint8_t* data, uint8_t data_len) {
@@ -495,6 +500,7 @@ namespace mesh {
         _pending_reqs[pending].sent_at_ms = _ms->getMillis();
         _pending_reqs[pending].timeout_ms =
             login_session::normalizeTimeout(est_timeout);
+        est_timeout = _pending_reqs[pending].timeout_ms;
         return result;
     }
 
@@ -536,6 +542,7 @@ namespace mesh {
         _pending_reqs[pending].sent_at_ms = _ms->getMillis();
         _pending_reqs[pending].timeout_ms =
             login_session::normalizeTimeout(est_timeout);
+        est_timeout = _pending_reqs[pending].timeout_ms;
         return result;
     }
 
@@ -556,6 +563,36 @@ namespace mesh {
                 return;
             }
         }
+    }
+
+    bool SigurdMeshV2::requestPending(uint32_t tag) {
+        if (tag == 0) return false;
+        expirePendingOperations(_ms->getMillis());
+        for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
+            if (_pending_reqs[i].in_use && _pending_reqs[i].tag == tag) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool SigurdMeshV2::requestTimedOut(uint32_t tag) {
+        if (tag == 0) return false;
+        expirePendingOperations(_ms->getMillis());
+        // An active request with a reused tag always takes precedence over a
+        // retained terminal event for the earlier operation.
+        for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
+            if (_pending_reqs[i].in_use && _pending_reqs[i].tag == tag) {
+                return false;
+            }
+        }
+        for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
+            if (!_pending_reqs[i].in_use && _pending_reqs[i].timed_out &&
+                _pending_reqs[i].tag == tag) {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool SigurdMeshV2::sendRoomMsgFetchRequest(const char* name, const char* channel_name) {
@@ -845,6 +882,9 @@ namespace mesh {
 
     void SigurdMeshV2::onContactResponse(const ::ContactInfo& contact, const uint8_t* data, uint8_t len) {
         if (!data || len < 4) return;
+        // Reject correlation after the advertised window even when a late
+        // radio callback arrives before the next application loop.
+        expirePendingOperations(_ms->getMillis());
         BaseChatMesh::markConnectionActive(contact);
         uint32_t tag;
         memcpy(&tag, data, 4);
@@ -984,6 +1024,8 @@ namespace mesh {
                                          uint8_t* out_path, uint8_t out_path_len,
                                          uint8_t extra_type, uint8_t* extra,
                                          uint8_t extra_len) {
+        const uint32_t now = _ms->getMillis();
+        expirePendingOperations(now);
         if (extra_type == PAYLOAD_TYPE_RESPONSE && extra && extra_len > 4) {
             uint32_t tag = 0;
             memcpy(&tag, extra, sizeof(tag));
@@ -992,6 +1034,9 @@ namespace mesh {
                 if (!pending.in_use || pending.tag != tag) continue;
 
                 pending.completed = true;
+                pending.timed_out = false;
+                pending.started_at_ms = now;
+                pending.timeout_ms = DISCOVERY_COMPLETION_RETENTION_MS;
                 if (::mesh::Packet::isValidPathLen(in_path_len) &&
                     ::mesh::Packet::isValidPathLen(out_path_len)) {
                     sigurdos::mesh::mesh_v2_companion_path_discovery_push(
@@ -1009,61 +1054,144 @@ namespace mesh {
 
     uint32_t SigurdMeshV2::sendPathDiscovery(const char* name,
                                               uint32_t* est_timeout_out) {
-        if (!name || !name[0]) return 0;
         if (est_timeout_out) *est_timeout_out = 0;
+        if (!name || !name[0]) return 0;
 
-        int pending_slot = -1;
+        ::ContactInfo contact{};
+        if (!findUniqueContact(name, contact)) return 0;
+        ::ContactInfo* recipient =
+            lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
+        if (!recipient) return 0;
+
+        const uint32_t now = _ms->getMillis();
+        expirePendingOperations(now);
+        // A retry supersedes the retained timeout notification for this
+        // destination, while timeouts for other callers stay observable.
         for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
-            if (!_discovery_pending[i].in_use || _discovery_pending[i].completed) {
-                pending_slot = i;
-                break;
+            if (!_discovery_pending[i].in_use &&
+                _discovery_pending[i].timed_out &&
+                strcmp(_discovery_pending[i].dest_name, name) == 0) {
+                _discovery_pending[i] = DiscoveryPending{};
             }
         }
+        const int pending_slot = selectReusablePendingSlot(
+            _discovery_pending, MAX_DISCOVERY_PENDING);
         if (pending_slot < 0) return 0;
 
-        int n = getNumContacts();
-        ::ContactInfo tmp;
-        for (int i = 0; i < n; i++) {
-            if (getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
-                // Get a writable pointer to the contact
-                ::ContactInfo* c = lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
-                if (!c) return 0;
-                uint32_t tag = 0, est_timeout = 0;
-                // Force flood by temporarily clearing path
-                uint8_t saved_len = c->out_path_len;
-                uint8_t saved_path[32] = {0};
-                if (saved_len <= 32 && saved_len != OUT_PATH_UNKNOWN)
-                    memcpy(saved_path, c->out_path, saved_len);
-                c->out_path_len = OUT_PATH_UNKNOWN;
-                // Path discovery is a flooded telemetry request for BASE data.
-                // The random suffix keeps otherwise identical packet hashes unique.
-                uint8_t random_bytes[4] = {};
-                getRNG()->random(random_bytes, sizeof(random_bytes));
-                uint8_t req_data[PATH_DISCOVERY_REQUEST_LEN] = {};
-                buildPathDiscoveryRequest(req_data, random_bytes);
-                int r = BaseChatMesh::sendRequest(*c, req_data, sizeof(req_data), tag, est_timeout);
-                // Restore original path ONLY if it wasn't legitimately updated during send
-                if (c->out_path_len == OUT_PATH_UNKNOWN) {
-                    c->out_path_len = saved_len;
-                    if (saved_len != OUT_PATH_UNKNOWN && saved_len <= 32)
-                        memcpy(c->out_path, saved_path, saved_len);
-                }
-                if (r != MSG_SEND_FAILED) {
-                    DiscoveryPending& pending = _discovery_pending[pending_slot];
-                    pending.tag = tag;
-                    strncpy(pending.dest_name, name, sizeof(pending.dest_name) - 1);
-                    pending.dest_name[sizeof(pending.dest_name) - 1] = '\0';
-                    pending.in_use = true;
-                    pending.completed = false;
-                    pending.started_at_ms = _ms->getMillis();
-                    if (est_timeout_out) *est_timeout_out = est_timeout;
-                    return tag;
-                }
-                return 0;
+        DiscoveryPending& pending = _discovery_pending[pending_slot];
+        pending = DiscoveryPending{};
+        strncpy(pending.dest_name, name, sizeof(pending.dest_name) - 1);
+        pending.in_use = true;
+        pending.started_at_ms = now;
+        pending.timeout_ms = login_session::normalizeTimeout(0);
+
+        // Force flood by temporarily clearing the learned path.
+        const uint8_t saved_len = recipient->out_path_len;
+        uint8_t saved_path[32] = {};
+        if (saved_len <= sizeof(saved_path) &&
+            saved_len != OUT_PATH_UNKNOWN) {
+            memcpy(saved_path, recipient->out_path, saved_len);
+        }
+        recipient->out_path_len = OUT_PATH_UNKNOWN;
+
+        uint8_t random_bytes[4] = {};
+        getRNG()->random(random_bytes, sizeof(random_bytes));
+        uint8_t request[PATH_DISCOVERY_REQUEST_LEN] = {};
+        buildPathDiscoveryRequest(request, random_bytes);
+
+        uint32_t tag = 0;
+        uint32_t estimated_timeout = 0;
+        const int result = BaseChatMesh::sendRequest(
+            *recipient, request, sizeof(request), tag, estimated_timeout);
+
+        if (recipient->out_path_len == OUT_PATH_UNKNOWN) {
+            recipient->out_path_len = saved_len;
+            if (saved_len != OUT_PATH_UNKNOWN &&
+                saved_len <= sizeof(saved_path)) {
+                memcpy(recipient->out_path, saved_path, saved_len);
             }
         }
-        return 0;
+
+        if (result == MSG_SEND_FAILED || tag == 0) {
+            pending = DiscoveryPending{};
+            return 0;
+        }
+        pending.tag = tag;
+        pending.started_at_ms = _ms->getMillis();
+        pending.timeout_ms =
+            login_session::normalizeTimeout(estimated_timeout);
+        if (est_timeout_out) *est_timeout_out = pending.timeout_ms;
+        return tag;
     }
+
+    bool SigurdMeshV2::isDiscoveryComplete(const char* name) {
+        if (!name || !name[0]) return false;
+        expirePendingOperations(_ms->getMillis());
+        for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
+            DiscoveryPending& pending = _discovery_pending[i];
+            if (pending.in_use && pending.completed &&
+                strcmp(pending.dest_name, name) == 0) {
+                pending = DiscoveryPending{};
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool SigurdMeshV2::discoveryPending(const char* name) {
+        if (!name || !name[0]) return false;
+        expirePendingOperations(_ms->getMillis());
+        for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
+            if (_discovery_pending[i].in_use &&
+                !_discovery_pending[i].completed &&
+                strcmp(_discovery_pending[i].dest_name, name) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool SigurdMeshV2::discoveryTimedOut(const char* name) {
+        if (!name || !name[0]) return false;
+        expirePendingOperations(_ms->getMillis());
+        for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
+            const DiscoveryPending& pending = _discovery_pending[i];
+            if (!pending.in_use && pending.timed_out &&
+                strcmp(pending.dest_name, name) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void SigurdMeshV2::expirePendingOperations(uint32_t now_ms) {
+        for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
+            PendingRequest& request = _pending_reqs[i];
+            if (!request.in_use || !pendingOperationElapsed(
+                    request.sent_at_ms, request.timeout_ms, now_ms)) {
+                continue;
+            }
+            request.in_use = false;
+            request.timed_out = true;
+            request.companion_binary = false;
+        }
+
+        for (int i = 0; i < MAX_DISCOVERY_PENDING; ++i) {
+            DiscoveryPending& pending = _discovery_pending[i];
+            if (!pending.in_use || !pendingOperationElapsed(
+                    pending.started_at_ms, pending.timeout_ms, now_ms)) {
+                continue;
+            }
+            if (pending.completed) {
+                pending = DiscoveryPending{};
+            } else {
+                pending.in_use = false;
+                pending.completed = false;
+                pending.timed_out = true;
+            }
+        }
+    }
+
 
 #if defined(ESP32_PLATFORM)
     int SigurdMeshV2::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
@@ -1216,16 +1344,12 @@ namespace mesh {
         // a login whose advertised response window has already elapsed.
         const uint32_t now = _ms->getMillis();
         updateLoginSessions(now);
-        for (int i = 0; i < MAX_PENDING_REQUESTS; ++i) {
-            PendingRequest& request = _pending_reqs[i];
-            if (request.in_use && login_session::elapsed(
-                    request.sent_at_ms, request.timeout_ms, now)) {
-                request = PendingRequest{};
-            }
-        }
+        expirePendingOperations(now);
         BaseChatMesh::loop();
         BaseChatMesh::checkConnections();
-        updateLoginSessions(_ms->getMillis());
+        const uint32_t after_dispatch = _ms->getMillis();
+        updateLoginSessions(after_dispatch);
+        expirePendingOperations(after_dispatch);
     }
 
     bool SigurdMeshV2::sendLoginTo(const ::ContactInfo& contact, const char* password) {

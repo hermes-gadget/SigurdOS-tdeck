@@ -55,7 +55,7 @@ struct NodePrefs {
     bool     ble_bond_reset_pending;   // block advertising until old BLE bonds are purged
     uint8_t  telemetry_modes;          // bitmask for companion telemetry modes
     uint8_t  manual_add_contacts;      // companion manual-add-contacts mode (0=auto, 1=prompt)
-    char     default_scope_key_hex[33];  // hex-encoded 16-byte companion default flood-scope key
+    char     default_scope_key_hex[33];  // legacy private-scope overlay; migrated into /regions2 v2
     char     wifi_ssid[33];            // WiFi STA SSID for GitHub OTA (empty = not set)
     char     wifi_password[64];        // WiFi STA password
     char     active_region[31];        // active flood scope region name (empty = wildcard/unscoped)
@@ -107,7 +107,7 @@ struct NodePrefs {
         ble_bond_reset_pending = false;
         telemetry_modes = 0;          // default: no telemetry sharing
         manual_add_contacts = 0;      // default: auto-add contacts
-        default_scope_key_hex[0] = '\0';  // default: no companion flood scope
+        default_scope_key_hex[0] = '\0';  // default: no legacy scope-key overlay
         wifi_ssid[0] = '\0';          // default: no WiFi
         wifi_password[0] = '\0';
         active_region[0] = '\0';       // default: wildcard (unscoped flood)
@@ -115,6 +115,16 @@ struct NodePrefs {
         ota_branch[sizeof(ota_branch) - 1] = '\0';
         ota_allow_prerelease = false;
         radio_profile[0] = '\0';        // empty = not set / custom
+    }
+
+    // Factory reset is intentionally stricter than first-boot defaults: no
+    // bonded phone may reconnect until the new owner explicitly enables BLE
+    // and opens a local pairing window.
+    void set_factory_reset_defaults() {
+        set_defaults();
+        ble_enabled = false;
+        ble_user_set = true;
+        ble_bond_reset_pending = true;
     }
 };
 
@@ -167,10 +177,10 @@ inline bool normalizeAndValidate(NodePrefs& prefs) {
         prefs.radio_profile[0] = '\0';
         return true;
     }
-    const bool valid = std::isfinite(prefs.freq) && prefs.freq >= 400.0f &&
-        prefs.freq <= 930.0f && validRadioBandwidth(prefs.bw) &&
-        prefs.sf >= 6 && prefs.sf <= 12 && prefs.cr >= 5 && prefs.cr <= 8 &&
-        prefs.tx_power_dbm >= 2 && prefs.tx_power_dbm <= 22;
+    const bool valid = std::isfinite(prefs.freq) && prefs.freq >= 150.0f &&
+        prefs.freq <= 960.0f && validRadioBandwidth(prefs.bw) &&
+        prefs.sf >= 5 && prefs.sf <= 12 && prefs.cr >= 5 && prefs.cr <= 8 &&
+        prefs.tx_power_dbm >= -9 && prefs.tx_power_dbm <= 22;
     if (!valid) {
         prefs.configured = false;
         prefs.freq = prefs.bw = 0.0f;
@@ -218,6 +228,12 @@ inline BlePrefsState resolveBlePrefs(bool value_present, bool stored_value,
 bool prefs_load(NodePrefs& p);
 bool prefs_save(const NodePrefs& p);
 bool prefs_exists();
+
+// Crash-safe factory-reset preference phases. The interlock is committed
+// before destructive work. The final replacement erases only the SigurdOS
+// prefs namespace and writes safe reset defaults in the same NVS commit.
+bool prefs_arm_factory_reset();
+bool prefs_commit_factory_reset();
 
 // Expose loaded prefs globally (read-only after boot)
 const NodePrefs& prefs_get();

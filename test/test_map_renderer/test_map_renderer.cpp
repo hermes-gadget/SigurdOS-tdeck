@@ -19,12 +19,26 @@
 #include <cmath>
 #include <array>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 #include <gtest/gtest.h>
 
 #include "app/map_renderer.h"
 
 namespace {
+
+std::string read_project_file(const char* path) {
+    const char* prefixes[] = {"", "../", "../../", "../../../", "../../../../"};
+    for (const char* prefix : prefixes) {
+        std::ifstream input(std::string(prefix) + path);
+        if (input.good()) {
+            return std::string(std::istreambuf_iterator<char>(input), {});
+        }
+    }
+    return {};
+}
 
 using PngIhdrFixture = std::array<std::uint8_t, SIGURDOS_MAP_PNG_IHDR_SIZE>;
 
@@ -322,6 +336,60 @@ TEST_F(MapRendererMathTest, MetadataBoundsMustBeFiniteOrderedAndGeographic) {
 TEST_F(MapRendererMathTest, MarkerOriginAccountsForContentOffset) {
     EXPECT_EQ(sigurdos_map_marker_origin(160, 0, 8), 156);
     EXPECT_EQ(sigurdos_map_marker_origin(120, 22, 8), 94);
+}
+
+TEST_F(MapRendererMathTest, DiscoveryBudgetCapsOperationsPerTick) {
+    SigurdosMapDiscoveryBudget budget(3);
+
+    EXPECT_TRUE(budget.consume());
+    EXPECT_TRUE(budget.consume());
+    EXPECT_TRUE(budget.consume());
+    EXPECT_FALSE(budget.consume());
+    EXPECT_EQ(budget.used(), 3);
+    EXPECT_EQ(budget.remaining(), 0);
+}
+
+TEST_F(MapRendererMathTest, DiscoveryDeadlineHandlesClockWrap) {
+    EXPECT_FALSE(sigurdos_map_discovery_deadline_reached(100, 104, 5));
+    EXPECT_TRUE(sigurdos_map_discovery_deadline_reached(100, 105, 5));
+    EXPECT_FALSE(sigurdos_map_discovery_deadline_reached(
+        UINT32_MAX - 2U, 1U, 5U));
+    EXPECT_TRUE(sigurdos_map_discovery_deadline_reached(
+        UINT32_MAX - 2U, 2U, 5U));
+}
+
+TEST_F(MapRendererMathTest, TileIndexEntriesRequireBoundedRealSample) {
+    const SigurdosMapTileIndexEntry valid = {8, 100, 110, 80, 90,
+                                              103, 84, 42};
+    EXPECT_TRUE(sigurdos_map_tile_index_entry_valid(valid));
+
+    SigurdosMapTileIndexEntry invalid = valid;
+    invalid.sample_x = 111;
+    EXPECT_FALSE(sigurdos_map_tile_index_entry_valid(invalid));
+    invalid = valid;
+    invalid.max_y = 256;
+    EXPECT_FALSE(sigurdos_map_tile_index_entry_valid(invalid));
+    invalid = valid;
+    invalid.tile_count = 0;
+    EXPECT_FALSE(sigurdos_map_tile_index_entry_valid(invalid));
+}
+
+TEST_F(MapRendererMathTest, MapScreenShowsBeforeStartingCancellableDiscovery) {
+    const std::string source =
+        read_project_file("src/ui/screens/screen_map.cpp");
+    ASSERT_FALSE(source.empty());
+
+    const size_t discover = source.find("sigurdos_map_discover_tiles();");
+    const size_t show = source.rfind("show_screen(scr);", discover);
+    const size_t lifetime = source.find(
+        "g_map_lifetime.trackTimer(&g_map_discovery_timer);");
+    const size_t cancel = source.find("sigurdos_map_cancel_discovery();");
+    ASSERT_NE(show, std::string::npos);
+    ASSERT_NE(discover, std::string::npos);
+    ASSERT_NE(lifetime, std::string::npos);
+    ASSERT_NE(cancel, std::string::npos);
+    EXPECT_LT(show, discover);
+    EXPECT_LT(lifetime, cancel);
 }
 
 TEST_F(MapRendererMathTest, OwnedDiscoveryBufferIsFreedExactlyOnce) {

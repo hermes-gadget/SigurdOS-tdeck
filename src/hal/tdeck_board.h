@@ -23,6 +23,7 @@
 #include <cmath>
 #include <Arduino.h>
 #include <Wire.h>
+#include "tdeck_sleep_orchestrator.h"
 #ifdef ESP32_PLATFORM
 #include <driver/gpio.h>
 #include <driver/rtc_io.h>
@@ -50,44 +51,6 @@ inline bool tdeck_should_resleep_early(bool deep_sleep_reset,
                                       uint16_t battery_mv) {
     return deep_sleep_reset && timer_wakeup &&
            tdeck_battery_mv_is_critical(battery_mv);
-}
-
-inline uint32_t tdeck_sleep_wake_seconds(uint32_t requested_seconds) {
-    return requested_seconds > 0 ? requested_seconds : 900U;
-}
-
-inline bool tdeck_wake_configuration_succeeded(int error) {
-    return error == 0;
-}
-
-enum class TDeckSleepStatus : uint8_t {
-    Ready,
-    Inhibited,
-    WakeConfigurationFailed,
-    PeripheralRailHoldFailed,
-};
-
-inline TDeckSleepStatus tdeck_sleep_preflight(bool inhibited,
-                                               int timer_error) {
-    if (inhibited) return TDeckSleepStatus::Inhibited;
-    if (!tdeck_wake_configuration_succeeded(timer_error)) {
-        return TDeckSleepStatus::WakeConfigurationFailed;
-    }
-    return TDeckSleepStatus::Ready;
-}
-
-inline const char* tdeck_sleep_status_name(TDeckSleepStatus status) {
-    switch (status) {
-    case TDeckSleepStatus::Ready:
-        return "ready";
-    case TDeckSleepStatus::Inhibited:
-        return "inhibited";
-    case TDeckSleepStatus::WakeConfigurationFailed:
-        return "wake configuration failed";
-    case TDeckSleepStatus::PeripheralRailHoldFailed:
-        return "peripheral rail hold failed";
-    }
-    return "unknown";
 }
 
 inline float tdeck_average_mcu_temperature(const float* samples,
@@ -164,6 +127,69 @@ class TDeckBoard : public ESP32Board {
         // the peripheral rail and buses have already been shut down.
         while (true) delay(1000);
     }
+
+    struct SleepOperations {
+        int enableTimerWake(uint64_t wake_us) {
+            const esp_err_t error = esp_sleep_enable_timer_wakeup(wake_us);
+            if (!tdeck_wake_configuration_succeeded(error)) {
+                Serial.printf("[power] timer wake setup failed: %d\n", error);
+            }
+            return error;
+        }
+
+        void quiescePeripheralRail() {
+            TDeckBoard::quiescePeripheralRail();
+        }
+
+        void configureOptionalRadioWake() {
+            // GPIO45 (DIO1) is not RTC-capable on ESP32-S3 (RTC GPIOs are
+            // 0-21), so production skips this block on the T-Deck.
+            if (!rtc_gpio_is_valid_gpio((gpio_num_t)PIN_LORA_DIO1)) return;
+
+            const esp_err_t direction_error = rtc_gpio_set_direction(
+                (gpio_num_t)PIN_LORA_DIO1, RTC_GPIO_MODE_INPUT_ONLY);
+            const esp_err_t pull_error =
+                rtc_gpio_pulldown_en((gpio_num_t)PIN_LORA_DIO1);
+            const esp_err_t ext1_error = esp_sleep_enable_ext1_wakeup(
+                SIGURDOS_LORA_DIO1_WAKE_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
+            if (!tdeck_wake_configuration_succeeded(direction_error) ||
+                !tdeck_wake_configuration_succeeded(pull_error) ||
+                !tdeck_wake_configuration_succeeded(ext1_error)) {
+                Serial.printf(
+                    "[power] optional radio wake setup failed: dir=%d pull=%d ext1=%d\n",
+                    direction_error, pull_error, ext1_error);
+            }
+        }
+
+        void removePeripheralPower() {
+            pinMode(PIN_PERIPH_PWR, OUTPUT);
+            digitalWrite(PIN_PERIPH_PWR, LOW);
+        }
+
+        void settlePeripheralRail() { delay(10); }
+
+        int holdPeripheralRail() {
+#ifdef ESP32_PLATFORM
+            const esp_err_t error = gpio_hold_en(
+                static_cast<gpio_num_t>(PIN_PERIPH_PWR));
+            if (!tdeck_wake_configuration_succeeded(error)) {
+                Serial.printf("[power] peripheral rail hold failed: %d\n",
+                              error);
+            }
+            return error;
+#else
+            return 0;
+#endif
+        }
+
+        void enableDeepSleepHold() {
+#ifdef ESP32_PLATFORM
+            gpio_deep_sleep_hold_en();
+#endif
+        }
+
+        void enterDeepSleep() { TDeckBoard::enterDeepSleep(); }
+    };
 
 public:
     TDeckBoard() : _startup_reason(BD_STARTUP_NORMAL), _inhibit_sleep(false) {}
@@ -258,64 +284,9 @@ public:
     // Returns only when sleep preparation fails. A successful transition is
     // explicitly non-returning via enterDeepSleep().
     TDeckSleepStatus trySleep(uint32_t secs) {
-        if (_inhibit_sleep) {
-            Serial.println("[power] deep sleep inhibited");
-            return TDeckSleepStatus::Inhibited;
-        }
-
-        // Validate the mandatory recovery wake source before touching powered
-        // peripherals. If configuration fails, leave the device fully powered
-        // so the caller can log/retry instead of entering an unwakeable state.
-        const uint32_t wake_secs = tdeck_sleep_wake_seconds(secs);
-        const esp_err_t timer_error =
-            esp_sleep_enable_timer_wakeup(wake_secs * 1000000ULL);
-        const TDeckSleepStatus preflight =
-            tdeck_sleep_preflight(_inhibit_sleep, timer_error);
-        if (preflight != TDeckSleepStatus::Ready) {
-            Serial.printf("[power] timer wake setup failed: %d\n", timer_error);
-            return preflight;
-        }
-
-        quiescePeripheralRail();
-
-        // GPIO45 (DIO1) is not RTC-capable on ESP32-S3 (RTC GPIOs are
-        // 0-21). Guard all RTC-GPIO/ext1 calls so they don't silently
-        // fail with ESP_ERR_INVALID_ARG. Wake-on-packet from deep sleep
-        // is not supported on the T-Deck because DIO1 is on a non-RTC pin.
-        if (rtc_gpio_is_valid_gpio((gpio_num_t)PIN_LORA_DIO1)) {
-            const esp_err_t direction_error = rtc_gpio_set_direction(
-                (gpio_num_t)PIN_LORA_DIO1, RTC_GPIO_MODE_INPUT_ONLY);
-            const esp_err_t pull_error =
-                rtc_gpio_pulldown_en((gpio_num_t)PIN_LORA_DIO1);
-            const esp_err_t ext1_error = esp_sleep_enable_ext1_wakeup(
-                SIGURDOS_LORA_DIO1_WAKE_MASK, ESP_EXT1_WAKEUP_ANY_HIGH);
-            if (!tdeck_wake_configuration_succeeded(direction_error) ||
-                !tdeck_wake_configuration_succeeded(pull_error) ||
-                !tdeck_wake_configuration_succeeded(ext1_error)) {
-                Serial.printf(
-                    "[power] optional radio wake setup failed: dir=%d pull=%d ext1=%d\n",
-                    direction_error, pull_error, ext1_error);
-            }
-        }
-
-        // Only now remove peripheral power. All connected outputs are already
-        // low or high impedance, preventing GPIO back-power into the dead rail.
-        pinMode(PIN_PERIPH_PWR, OUTPUT);
-        digitalWrite(PIN_PERIPH_PWR, LOW);
-        delay(10);
-#ifdef ESP32_PLATFORM
-        const esp_err_t hold_error = gpio_hold_en(
-            static_cast<gpio_num_t>(PIN_PERIPH_PWR));
-        if (!tdeck_wake_configuration_succeeded(hold_error)) {
-            Serial.printf("[power] peripheral rail hold failed: %d\n",
-                          hold_error);
-            return TDeckSleepStatus::PeripheralRailHoldFailed;
-        }
-        // The per-pad hold latches GPIO 10's active LOW configuration; this
-        // global gate makes that hold effective while digital GPIO powers down.
-        gpio_deep_sleep_hold_en();
-#endif
-        enterDeepSleep();
+        if (_inhibit_sleep) Serial.println("[power] deep sleep inhibited");
+        SleepOperations operations;
+        return tdeck_orchestrate_sleep(operations, _inhibit_sleep, secs);
     }
 
     void sleep(uint32_t secs) override {

@@ -51,6 +51,8 @@ static const auto REGION_LIVE =
     sigurdos::test::processTempDir().file("region_store.bin");
 static const auto REGION_RAW =
     sigurdos::test::processTempDir().file("region_store.raw");
+static const auto REGION_EXTRACTED =
+    sigurdos::test::processTempDir().file("region_store.extracted");
 
 static void writeU16(std::vector<uint8_t>& data, size_t offset,
                      uint16_t value) {
@@ -71,6 +73,59 @@ static std::vector<uint8_t> legacyRegionFile(const char* name,
     std::memcpy(&data[14], name, length);
     data[14 + length] = '\0';
     return data;
+}
+
+static std::vector<uint8_t> legacyRegionFile(
+    const std::vector<std::pair<uint16_t, std::string>>& regions) {
+    std::vector<uint8_t> data(10 + regions.size() * 164, 0);
+    uint16_t max_id = 0;
+    for (const auto& region : regions) {
+        if (region.first > max_id) max_id = region.first;
+    }
+    writeU16(data, 8, static_cast<uint16_t>(max_id + 1));
+    for (size_t i = 0; i < regions.size(); ++i) {
+        const size_t offset = 10 + i * 164;
+        writeU16(data, offset, regions[i].first);
+        writeU16(data, offset + 2, 0);
+        if (regions[i].second.empty() || regions[i].second.size() >= 31u) {
+            return {};
+        }
+        std::memcpy(&data[offset + 4], regions[i].second.c_str(),
+                    regions[i].second.size() + 1);
+    }
+    return data;
+}
+
+struct TestRegionKey {
+    uint16_t id;
+    uint8_t key[16];
+};
+
+static TestRegionKey testKey(uint16_t id, uint8_t value) {
+    TestRegionKey result{id, {}};
+    std::memset(result.key, value, sizeof(result.key));
+    return result;
+}
+
+static bool readTestRegionKey(int index, uint16_t* id_out,
+                              uint8_t key_out[16], void* raw) {
+    auto* keys = static_cast<std::vector<TestRegionKey>*>(raw);
+    if (!keys || index < 0 || static_cast<size_t>(index) >= keys->size() ||
+        !id_out || !key_out) {
+        return false;
+    }
+    *id_out = (*keys)[index].id;
+    std::memcpy(key_out, (*keys)[index].key, 16);
+    return true;
+}
+
+static bool loadTestRegionKey(uint16_t id, const uint8_t key[16], void* raw) {
+    auto* keys = static_cast<std::vector<TestRegionKey>*>(raw);
+    if (!keys || !key) return false;
+    TestRegionKey loaded{id, {}};
+    std::memcpy(loaded.key, key, sizeof(loaded.key));
+    keys->push_back(loaded);
+    return true;
 }
 
 static void writeFile(const char* path, const std::vector<uint8_t>& data) {
@@ -103,6 +158,7 @@ protected:
     static void clean() {
         std::remove(REGION_LIVE);
         std::remove(REGION_RAW);
+        std::remove(REGION_EXTRACTED);
         const std::string temp = std::string(REGION_LIVE) + ".tmp";
         std::remove(temp.c_str());
     }
@@ -454,6 +510,166 @@ TEST_F(RegionStoreTest, InterruptedReplacementKeepsAValidatedCopy) {
             sigurdos::storage::AtomicFileNativeFault::None);
         EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
                   sigurdos::mesh::detail::RegionStoreFormat::Current);
+    }
+}
+
+TEST_F(RegionStoreTest, TransactionalStoreRoundTripsAndDeletesPrivateKeys) {
+    const auto original_map = legacyRegionFile({
+        {1, "$alpha"}, {2, "$beta"}, {3, "#public"}});
+    writeFile(REGION_RAW, original_map);
+    std::vector<TestRegionKey> keys{
+        testKey(1, 0x11), testKey(2, 0x22)};
+
+    ASSERT_TRUE(sigurdos::mesh::detail::regionStoreSaveTransactionalFile(
+        REGION_LIVE, REGION_RAW, static_cast<int>(keys.size()),
+        readTestRegionKey, &keys));
+    EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+              sigurdos::mesh::detail::RegionStoreFormat::Transactional);
+    ASSERT_TRUE(sigurdos::mesh::detail::regionStoreExtractTransactionalMap(
+        REGION_LIVE, REGION_EXTRACTED));
+    EXPECT_EQ(readFile(REGION_EXTRACTED), original_map);
+
+    std::vector<TestRegionKey> loaded;
+    ASSERT_EQ(sigurdos::mesh::detail::regionStoreLoadTransactionalKeys(
+                  REGION_LIVE, loadTestRegionKey, &loaded), 2);
+    ASSERT_EQ(loaded.size(), 2u);
+    EXPECT_EQ(loaded[0].id, 1);
+    EXPECT_EQ(loaded[0].key[0], 0x11);
+    EXPECT_EQ(loaded[1].id, 2);
+    EXPECT_EQ(loaded[1].key[0], 0x22);
+
+    // Removing a private scope commits metadata and the remaining keys as one
+    // replacement; reboot cannot resurrect the deleted key.
+    const auto after_delete = legacyRegionFile({
+        {2, "$beta"}, {3, "#public"}});
+    writeFile(REGION_RAW, after_delete);
+    keys.erase(keys.begin());
+    ASSERT_TRUE(sigurdos::mesh::detail::regionStoreSaveTransactionalFile(
+        REGION_LIVE, REGION_RAW, static_cast<int>(keys.size()),
+        readTestRegionKey, &keys));
+    loaded.clear();
+    ASSERT_EQ(sigurdos::mesh::detail::regionStoreLoadTransactionalKeys(
+                  REGION_LIVE, loadTestRegionKey, &loaded), 1);
+    ASSERT_EQ(loaded.size(), 1u);
+    EXPECT_EQ(loaded[0].id, 2);
+    EXPECT_EQ(loaded[0].key[0], 0x22);
+}
+
+TEST_F(RegionStoreTest, LegacyScopeOverlayMigratesIntoTransactionalStore) {
+    auto legacy = legacyRegionFile({{1, "$legacy"}});
+    writeU16(legacy, 3, 1);  // legacy default scope id
+    writeFile(REGION_LIVE, legacy);
+    writeFile(REGION_RAW, legacy);
+    ASSERT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+              sigurdos::mesh::detail::RegionStoreFormat::Legacy);
+
+    // regionsLoad decodes the old NodePrefs overlay and supplies it to the
+    // first v2 save exactly like this callback-backed key snapshot.
+    std::vector<TestRegionKey> migrated{testKey(1, 0x6B)};
+    ASSERT_TRUE(sigurdos::mesh::detail::regionStoreSaveTransactionalFile(
+        REGION_LIVE, REGION_RAW, 1, readTestRegionKey, &migrated));
+    ASSERT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+              sigurdos::mesh::detail::RegionStoreFormat::Transactional);
+
+    std::vector<TestRegionKey> loaded;
+    ASSERT_EQ(sigurdos::mesh::detail::regionStoreLoadTransactionalKeys(
+                  REGION_LIVE, loadTestRegionKey, &loaded), 1);
+    ASSERT_EQ(loaded.size(), 1u);
+    EXPECT_EQ(loaded[0].id, 1);
+    EXPECT_EQ(loaded[0].key[0], 0x6B);
+}
+
+TEST_F(RegionStoreTest, RejectsTruncatedOrCorruptTransactionalFiles) {
+    const auto raw = legacyRegionFile({{1, "$private"}});
+    writeFile(REGION_RAW, raw);
+    std::vector<TestRegionKey> keys{testKey(1, 0x5A)};
+    ASSERT_TRUE(sigurdos::mesh::detail::regionStoreSaveTransactionalFile(
+        REGION_LIVE, REGION_RAW, 1, readTestRegionKey, &keys));
+    const auto encoded = readFile(REGION_LIVE);
+
+    for (size_t length = 0; length < encoded.size(); ++length) {
+        writeFile(REGION_LIVE,
+                  std::vector<uint8_t>(encoded.begin(),
+                                       encoded.begin() + length));
+        EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+                  sigurdos::mesh::detail::RegionStoreFormat::Invalid)
+            << "accepted truncated transactional length " << length;
+    }
+
+    auto corrupt = encoded;
+    corrupt[corrupt.size() - 5] ^= 0x80;
+    writeFile(REGION_LIVE, corrupt);
+    EXPECT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+              sigurdos::mesh::detail::RegionStoreFormat::Invalid);
+}
+
+TEST_F(RegionStoreTest, TransactionalStoreRejectsPrivateKeyOverflow) {
+    std::vector<std::pair<uint16_t, std::string>> regions;
+    std::vector<TestRegionKey> keys;
+    for (uint16_t id = 1; id <= 16; ++id) {
+        char name[16];
+        std::snprintf(name, sizeof(name), "$private%02u", id);
+        regions.emplace_back(id, name);
+        keys.push_back(testKey(id, static_cast<uint8_t>(id)));
+    }
+    writeFile(REGION_RAW, legacyRegionFile(regions));
+    ASSERT_TRUE(sigurdos::mesh::detail::regionStoreSaveTransactionalFile(
+        REGION_LIVE, REGION_RAW, static_cast<int>(keys.size()),
+        readTestRegionKey, &keys));
+
+    regions.emplace_back(17, "$overflow");
+    keys.push_back(testKey(17, 0x7F));
+    writeFile(REGION_RAW, legacyRegionFile(regions));
+    EXPECT_FALSE(sigurdos::mesh::detail::regionStoreSaveTransactionalFile(
+        REGION_LIVE, REGION_RAW, static_cast<int>(keys.size()),
+        readTestRegionKey, &keys));
+
+    std::vector<TestRegionKey> loaded;
+    EXPECT_EQ(sigurdos::mesh::detail::regionStoreLoadTransactionalKeys(
+                  REGION_LIVE, loadTestRegionKey, &loaded), 16);
+    EXPECT_EQ(loaded.size(), 16u);
+}
+
+TEST_F(RegionStoreTest, InterruptedTransactionalCommitNeverMixesMapAndKey) {
+    const auto old_map = legacyRegionFile({{1, "$old"}});
+    const auto new_map = legacyRegionFile({{1, "$new"}});
+    std::vector<TestRegionKey> old_key{testKey(1, 0x31)};
+    std::vector<TestRegionKey> new_key{testKey(1, 0x42)};
+    const sigurdos::storage::AtomicFileNativeFault faults[] = {
+        sigurdos::storage::AtomicFileNativeFault::TempOpen,
+        sigurdos::storage::AtomicFileNativeFault::Write,
+        sigurdos::storage::AtomicFileNativeFault::Close,
+        sigurdos::storage::AtomicFileNativeFault::Validate,
+        sigurdos::storage::AtomicFileNativeFault::Rename,
+    };
+
+    for (const auto fault : faults) {
+        clean();
+        writeFile(REGION_RAW, old_map);
+        ASSERT_TRUE(sigurdos::mesh::detail::regionStoreSaveTransactionalFile(
+            REGION_LIVE, REGION_RAW, 1, readTestRegionKey, &old_key));
+        writeFile(REGION_RAW, new_map);
+        sigurdos::storage::atomicFileSetNativeFault(fault);
+        EXPECT_FALSE(sigurdos::mesh::detail::regionStoreSaveTransactionalFile(
+            REGION_LIVE, REGION_RAW, 1, readTestRegionKey, &new_key));
+
+        sigurdos::storage::atomicFileSetNativeFault(
+            sigurdos::storage::AtomicFileNativeFault::None);
+        ASSERT_EQ(sigurdos::mesh::detail::regionStorePrepareLoad(REGION_LIVE),
+                  sigurdos::mesh::detail::RegionStoreFormat::Transactional);
+        ASSERT_TRUE(sigurdos::mesh::detail::regionStoreExtractTransactionalMap(
+            REGION_LIVE, REGION_EXTRACTED));
+        const auto recovered_map = readFile(REGION_EXTRACTED);
+        std::vector<TestRegionKey> recovered_keys;
+        ASSERT_EQ(sigurdos::mesh::detail::regionStoreLoadTransactionalKeys(
+                      REGION_LIVE, loadTestRegionKey, &recovered_keys), 1);
+        ASSERT_EQ(recovered_keys.size(), 1u);
+        if (recovered_map == old_map) {
+            EXPECT_EQ(recovered_keys[0].key[0], 0x31);
+        } else {
+            EXPECT_EQ(recovered_map, new_map);
+            EXPECT_EQ(recovered_keys[0].key[0], 0x42);
+        }
     }
 }
 

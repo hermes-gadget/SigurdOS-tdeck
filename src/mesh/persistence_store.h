@@ -43,12 +43,34 @@ enum class RegionStoreFormat {
     Invalid,
     Legacy,
     Current,
+    Transactional,
 };
+
+using RegionKeyReadFn = bool (*)(int index, uint16_t* region_id_out,
+                                 uint8_t key_out[16], void* ctx);
+using RegionKeyLoadFn = bool (*)(uint16_t region_id,
+                                 const uint8_t key[16], void* ctx);
 
 // Atomically wrap a validated MeshCore RegionMap file in SigurdOS's
 // versioned, checksummed envelope. The envelope deliberately retains the
 // upstream field layout so RegionMap can still consume it after validation.
 bool regionStoreSaveLegacyFile(const char* path, const char* legacy_path);
+
+// Atomically commit one versioned source of truth containing the complete
+// upstream RegionMap payload and every private-region transport key. The raw
+// map is supplied separately because MeshCore owns its serialization format.
+bool regionStoreSaveTransactionalFile(const char* path,
+                                      const char* legacy_path,
+                                      int key_count, RegionKeyReadFn read_key,
+                                      void* ctx);
+
+// Extract the MeshCore RegionMap payload from a validated transactional file
+// and enumerate its private keys. Callers load the extracted payload through
+// RegionMap, then rebuild TransportKeyStore from the returned key records.
+bool regionStoreExtractTransactionalMap(const char* path,
+                                        const char* legacy_path);
+int regionStoreLoadTransactionalKeys(const char* path,
+                                     RegionKeyLoadFn load_key, void* ctx);
 
 // Recover an interrupted replacement and classify the live file. Legacy
 // files are accepted only when every fixed-size record is complete.

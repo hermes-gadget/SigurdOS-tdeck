@@ -24,7 +24,6 @@
 #ifdef __cplusplus
 #include <cstdint>
 #include <cstddef>
-#include <cstdio>
 #else
 #include <stdint.h>
 #include <stddef.h>
@@ -44,22 +43,8 @@ inline lv_color_t lv_color_hex(uint32_t hex) { return hex; }
 inline lv_color_t lv_color_make(uint8_t r, uint8_t g, uint8_t b) { return (r << 16) | (g << 8) | b; }
 
 // ── Object type (complete, not opaque — needed for static locals in stubs) ──
-struct _lv_event_t;
-typedef void (*lv_event_cb_t)(_lv_event_t* e);
-
-struct lv_mock_event_slot_t {
-    lv_event_cb_t callback;
-    int code;
-    void* user_data;
-};
-
 struct _lv_obj_t {
-    bool valid;
-    uint32_t flags;
-    lv_color_t text_color;
-    char text[64];
-    lv_mock_event_slot_t events[8];
-    uint8_t event_count;
+    int dummy;
 };
 typedef _lv_obj_t lv_obj_t;
 
@@ -86,6 +71,8 @@ typedef struct _lv_event_t {
     void* user_data;
     void* param;
 } lv_event_t;
+
+typedef void (*lv_event_cb_t)(lv_event_t* e);
 
 // ── Display ──────────────────────────────────────────────
 #define LV_DISPLAY_RENDER_MODE_PARTIAL 0
@@ -122,7 +109,6 @@ typedef struct _lv_event_t {
 #define LV_OBJ_FLAG_SCROLL_CHAIN     (LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_SCROLL_CHAIN_VER)
 #define LV_OBJ_FLAG_SCROLL_ON_FOCUS  (1 << 13)
 #define LV_OBJ_FLAG_SCROLL_WITH_ARROW (1 << 14)
-#define LV_OBJ_FLAG_HIDDEN           (1 << 15)
 
 // ── Object states ───────────────────────────────────────
 #define LV_STATE_DEFAULT  (0)
@@ -212,61 +198,67 @@ typedef struct {
 // ── Global init ──────────────────────────────────────────
 inline void lv_init() {}
 
+#ifdef __cplusplus
+namespace lvgl_mock {
+inline lv_obj_t* active_screen = nullptr;
+inline lv_obj_t* last_loaded_screen = nullptr;
+inline lv_obj_t* last_deleted_screen = nullptr;
+inline int screen_load_count = 0;
+inline int screen_delete_count = 0;
+inline int last_load_animation = -1;
+inline int last_load_duration = -1;
+inline int last_load_delay = -1;
+inline bool last_load_auto_delete = true;
+
+inline void reset_screen_tracking()
+{
+    active_screen = nullptr;
+    last_loaded_screen = nullptr;
+    last_deleted_screen = nullptr;
+    screen_load_count = 0;
+    screen_delete_count = 0;
+    last_load_animation = -1;
+    last_load_duration = -1;
+    last_load_delay = -1;
+    last_load_auto_delete = true;
+}
+} // namespace lvgl_mock
+#endif
+
 // ── Screen ───────────────────────────────────────────────
 inline lv_obj_t* lv_scr_act() {
     static lv_obj_t s;
-    return &s;
+    return lvgl_mock::active_screen ? lvgl_mock::active_screen : &s;
 }
+inline lv_obj_t* lv_screen_active() { return lvgl_mock::active_screen; }
 inline void lv_scr_load(lv_obj_t*) {}
-inline void lv_scr_load_anim(lv_obj_t*, int, int, int, bool) {}
+inline void lv_scr_load_anim(lv_obj_t* screen, int animation, int duration,
+                             int delay, bool auto_delete) {
+    lvgl_mock::active_screen = screen;
+    lvgl_mock::last_loaded_screen = screen;
+    lvgl_mock::screen_load_count++;
+    lvgl_mock::last_load_animation = animation;
+    lvgl_mock::last_load_duration = duration;
+    lvgl_mock::last_load_delay = delay;
+    lvgl_mock::last_load_auto_delete = auto_delete;
+}
 inline lv_display_t* lv_display_get_default() { static lv_display_t d; return &d; }
 inline int32_t lv_display_get_horizontal_resolution(const lv_display_t*) { return 320; }
 inline int32_t lv_display_get_vertical_resolution(const lv_display_t*) { return 240; }
 
 // ── Object creation ──────────────────────────────────────
-namespace lvgl_mock {
-inline lv_obj_t object_pool[256]{};
-inline int next_object = 0;
-inline int label_set_text_calls = 0;
-
-inline void reset() {
-    next_object = 0;
-    label_set_text_calls = 0;
-    for (auto& object : object_pool) object = {};
-}
-
-inline lv_mock_event_slot_t event_slot(const lv_obj_t* object, int index) {
-    if (!object || index < 0 || index >= object->event_count) return {};
-    return object->events[index];
-}
-
-inline void dispatch(const lv_mock_event_slot_t& slot, lv_obj_t* target) {
-    if (!slot.callback) return;
-    lv_event_t event{target, target, slot.user_data, nullptr};
-    slot.callback(&event);
-}
-}  // namespace lvgl_mock
-
 inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
-    (void)parent;
-    lv_obj_t* object = &lvgl_mock::object_pool[(lvgl_mock::next_object++) % 256];
-    *object = {};
-    object->valid = true;
-    return object;
+    static lv_obj_t pool[256];
+    static int next = 0;
+    return &pool[(next++) % 256];
 }
 
-inline void lv_obj_delete(lv_obj_t* object) {
-    if (!object || !object->valid) return;
-    for (uint8_t i = 0; i < object->event_count; ++i) {
-        if (object->events[i].code == LV_EVENT_DELETE) {
-            lvgl_mock::dispatch(object->events[i], object);
-        }
-    }
-    object->valid = false;
+inline void lv_obj_del(lv_obj_t*) {}
+inline void lv_obj_del_async(lv_obj_t*) {}
+inline void lv_obj_delete(lv_obj_t* obj) {
+    lvgl_mock::last_deleted_screen = obj;
+    lvgl_mock::screen_delete_count++;
 }
-inline void lv_obj_del(lv_obj_t* object) { lv_obj_delete(object); }
-inline void lv_obj_del_async(lv_obj_t* object) { lv_obj_delete(object); }
-inline bool lv_obj_is_valid(const lv_obj_t* object) { return object && object->valid; }
 
 // ── Object properties ────────────────────────────────────
 inline void lv_obj_set_size(lv_obj_t*, lv_coord_t, lv_coord_t) {}
@@ -275,18 +267,8 @@ inline void lv_obj_set_height(lv_obj_t*, lv_coord_t) {}
 inline void lv_obj_set_pos(lv_obj_t*, lv_coord_t, lv_coord_t) {}
 inline void lv_obj_align(lv_obj_t*, int, lv_coord_t, lv_coord_t) {}
 inline void lv_obj_center(lv_obj_t*) {}
-inline void lv_obj_add_flag(lv_obj_t* object, uint32_t flag) {
-    if (object) object->flags |= flag;
-}
-inline void lv_obj_clear_flag(lv_obj_t* object, uint32_t flag) {
-    if (object) object->flags &= ~flag;
-}
-inline void lv_obj_remove_flag(lv_obj_t* object, uint32_t flag) {
-    if (object) object->flags &= ~flag;
-}
-inline bool lv_obj_has_flag(const lv_obj_t* object, uint32_t flag) {
-    return object && (object->flags & flag) != 0;
-}
+inline void lv_obj_add_flag(lv_obj_t*, uint32_t) {}
+inline void lv_obj_remove_flag(lv_obj_t*, uint32_t) {}
 inline void lv_obj_scroll_to_view(lv_obj_t*, int) {}
 inline void lv_obj_invalidate(lv_obj_t*) {}
 inline void lv_obj_set_scrollbar_mode(lv_obj_t*, int) {}
@@ -298,9 +280,7 @@ inline int lv_obj_get_child_cnt(lv_obj_t*) { return 0; }
 // ── Style ────────────────────────────────────────────────
 inline void lv_obj_set_style_bg_color(lv_obj_t*, lv_color_t, int) {}
 inline void lv_obj_set_style_bg_opa(lv_obj_t*, lv_opa_t, int) {}
-inline void lv_obj_set_style_text_color(lv_obj_t* object, lv_color_t color, int) {
-    if (object) object->text_color = color;
-}
+inline void lv_obj_set_style_text_color(lv_obj_t*, lv_color_t, int) {}
 inline void lv_obj_set_style_text_font(lv_obj_t*, const void*, int) {}
 inline void lv_obj_set_style_radius(lv_obj_t*, lv_coord_t, int) {}
 inline void lv_obj_set_style_border_width(lv_obj_t*, lv_coord_t, int) {}
@@ -315,21 +295,13 @@ inline void lv_obj_set_flex_align(lv_obj_t*, int, int, int) {}
 inline void lv_obj_set_scroll_dir(lv_obj_t*, int) {}
 
 // ── Event ────────────────────────────────────────────────
-inline void lv_obj_add_event_cb(lv_obj_t* object, lv_event_cb_t callback,
-                                int code, void* user_data) {
-    if (!object || object->event_count >= 8) return;
-    object->events[object->event_count++] = {callback, code, user_data};
-}
+inline void lv_obj_add_event_cb(lv_obj_t*, lv_event_cb_t, int, void*) {}
 inline void* lv_event_get_user_data(lv_event_t* e) { return e ? e->user_data : nullptr; }
 inline lv_obj_t* lv_event_get_target(lv_event_t* e) { return e ? e->target : nullptr; }
 
 // ── Label ────────────────────────────────────────────────
 inline lv_obj_t* lv_label_create(lv_obj_t* parent) { return lv_obj_create(parent); }
-inline void lv_label_set_text(lv_obj_t* object, const char* text) {
-    if (!object || !object->valid) return;
-    ++lvgl_mock::label_set_text_calls;
-    std::snprintf(object->text, sizeof(object->text), "%s", text ? text : "");
-}
+inline void lv_label_set_text(lv_obj_t*, const char*) {}
 inline void lv_label_set_text_static(lv_obj_t*, const char*) {}
 inline void lv_label_set_long_mode(lv_obj_t*, int) {}
 inline void lv_label_set_align(lv_obj_t*, int) {}

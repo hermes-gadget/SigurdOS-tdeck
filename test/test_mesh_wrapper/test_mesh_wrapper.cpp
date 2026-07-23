@@ -32,6 +32,7 @@
 // Include our mesh wrapper header (uses mocks for MeshCore)
 #include "mesh/mesh_wrapper.h"
 #include "mesh/durable_mutation.h"
+#include "mesh/radio_config_policy.h"
 #include "mocks/mock_mesh_state.h"
 #include "mesh/state_checkpoint.h"
 
@@ -140,6 +141,157 @@ TEST_F(MeshWrapperTest, ApplyRadioParamsAcceptsRxGainFlag) {
     SUCCEED();
 }
 
+TEST(RadioConfigPolicy, AcceptsExactSx1262HardwareBoundaries) {
+    using sigurdos::mesh::RadioConfig;
+    using sigurdos::mesh::sx1262RadioConfigSupported;
+
+    EXPECT_TRUE(sx1262RadioConfigSupported(
+        RadioConfig(150.0f, 7.8f, 5, 5, -9, false)));
+    EXPECT_TRUE(sx1262RadioConfigSupported(
+        RadioConfig(960.0f, 500.0f, 12, 8, 22, true)));
+}
+
+TEST(RadioConfigPolicy, RejectsUnsupportedFrequencyAndDiscreteBandwidth) {
+    using sigurdos::mesh::RadioConfig;
+    using sigurdos::mesh::sx1262RadioConfigSupported;
+
+    EXPECT_FALSE(sx1262RadioConfigSupported(
+        RadioConfig(149.999f, 62.5f, 8, 5, 22, false)));
+    EXPECT_FALSE(sx1262RadioConfigSupported(
+        RadioConfig(960.001f, 62.5f, 8, 5, 22, false)));
+    EXPECT_FALSE(sx1262RadioConfigSupported(
+        RadioConfig(869.618f, 100.0f, 8, 5, 22, false)));
+    EXPECT_FALSE(sigurdos::mesh::sx1262BandwidthSupportedHz(62501));
+}
+
+TEST(RadioConfigPolicy, EveryDriverSetterFailureIsPropagatedImmediately) {
+    using sigurdos::mesh::RadioConfig;
+    using sigurdos::mesh::RadioConfigField;
+    const RadioConfig config(869.618f, 62.5f, 8, 5, 22, true);
+
+    for (int failing_index = 0; failing_index < 6; ++failing_index) {
+        int calls = 0;
+        const int16_t injected_error = static_cast<int16_t>(-700 - failing_index);
+        const sigurdos::mesh::RadioApplyResult result =
+            sigurdos::mesh::applyRadioConfigFields(
+                config,
+                [&](RadioConfigField, const RadioConfig&) -> int16_t {
+                    const int current = calls++;
+                    return current == failing_index ? injected_error : 0;
+                });
+
+        EXPECT_FALSE(result.ok);
+        EXPECT_EQ(injected_error, result.driver_error);
+        EXPECT_EQ(failing_index + 1, calls);
+        EXPECT_EQ(failing_index,
+                  static_cast<int>(result.failed_field));
+    }
+}
+
+TEST(RadioConfigPolicy, PartialFailureRestoresTheFullPreviousConfig) {
+    using sigurdos::mesh::RadioApplyResult;
+    using sigurdos::mesh::RadioConfig;
+    using sigurdos::mesh::RadioConfigField;
+    const RadioConfig previous(869.618f, 62.5f, 8, 5, 22, false);
+    const RadioConfig requested(915.0f, 250.0f, 10, 6, 17, true);
+    RadioConfig applied[2];
+    int apply_count = 0;
+
+    const sigurdos::mesh::RadioTransactionResult result =
+        sigurdos::mesh::applyRadioConfigTransaction(
+            requested, previous,
+            [&](const RadioConfig& config) {
+                applied[apply_count] = config;
+                ++apply_count;
+                if (apply_count == 1) {
+                    return RadioApplyResult(
+                        false, RadioConfigField::CodingRate, -706);
+                }
+                return RadioApplyResult(true);
+            });
+
+    ASSERT_EQ(2, apply_count);
+    EXPECT_FALSE(result.applied);
+    EXPECT_TRUE(result.rollback_attempted);
+    EXPECT_TRUE(result.rollback_succeeded);
+    EXPECT_FLOAT_EQ(requested.frequency_mhz, applied[0].frequency_mhz);
+    EXPECT_FLOAT_EQ(previous.frequency_mhz, applied[1].frequency_mhz);
+    EXPECT_FLOAT_EQ(previous.bandwidth_khz, applied[1].bandwidth_khz);
+    EXPECT_EQ(previous.spreading_factor, applied[1].spreading_factor);
+    EXPECT_EQ(previous.coding_rate, applied[1].coding_rate);
+    EXPECT_EQ(previous.tx_power_dbm, applied[1].tx_power_dbm);
+    EXPECT_EQ(previous.rx_boosted_gain, applied[1].rx_boosted_gain);
+}
+
+TEST(RadioConfigPolicy, RollbackFailureRemainsVisibleToCaller) {
+    using sigurdos::mesh::RadioApplyResult;
+    using sigurdos::mesh::RadioConfig;
+    using sigurdos::mesh::RadioConfigField;
+    int calls = 0;
+    const auto result = sigurdos::mesh::applyRadioConfigTransaction(
+        RadioConfig(915.0f, 125.0f, 9, 5, 20, false),
+        RadioConfig(869.618f, 62.5f, 8, 5, 22, false),
+        [&](const RadioConfig&) {
+            ++calls;
+            return RadioApplyResult(
+                false, RadioConfigField::Frequency,
+                static_cast<int16_t>(calls == 1 ? -707 : -706));
+        });
+
+    EXPECT_EQ(2, calls);
+    EXPECT_FALSE(result.applied);
+    EXPECT_TRUE(result.rollback_attempted);
+    EXPECT_FALSE(result.rollback_succeeded);
+    EXPECT_EQ(-706, result.rollback_result.driver_error);
+}
+
+TEST(RadioConfigPolicy, FailedHardwareApplyIsNeverPersisted) {
+    using sigurdos::mesh::RadioConfig;
+    bool commit_called = false;
+
+    const auto result = sigurdos::mesh::applyAndCommitRadioConfig(
+        RadioConfig(915.0f, 125.0f, 9, 5, 20, false),
+        RadioConfig(869.618f, 62.5f, 8, 5, 22, false),
+        [](const RadioConfig&) { return false; },
+        [&]() { commit_called = true; return true; });
+
+    EXPECT_FALSE(result.applied);
+    EXPECT_FALSE(result.commit_attempted);
+    EXPECT_FALSE(result.committed);
+    EXPECT_FALSE(result.restore_attempted);
+    EXPECT_FALSE(commit_called);
+}
+
+TEST(RadioConfigPolicy, FailedDurableCommitRestoresPreviousHardwareConfig) {
+    using sigurdos::mesh::RadioConfig;
+    const RadioConfig requested(915.0f, 250.0f, 10, 6, 17, true);
+    const RadioConfig previous(869.618f, 62.5f, 8, 5, 22, false);
+    RadioConfig applied[2];
+    int apply_count = 0;
+
+    const auto result = sigurdos::mesh::applyAndCommitRadioConfig(
+        requested, previous,
+        [&](const RadioConfig& config) {
+            applied[apply_count++] = config;
+            return true;
+        },
+        []() { return false; });
+
+    ASSERT_EQ(2, apply_count);
+    EXPECT_TRUE(result.applied);
+    EXPECT_TRUE(result.commit_attempted);
+    EXPECT_FALSE(result.committed);
+    EXPECT_TRUE(result.restore_attempted);
+    EXPECT_TRUE(result.restore_succeeded);
+    EXPECT_FLOAT_EQ(requested.frequency_mhz, applied[0].frequency_mhz);
+    EXPECT_FLOAT_EQ(previous.frequency_mhz, applied[1].frequency_mhz);
+    EXPECT_FLOAT_EQ(previous.bandwidth_khz, applied[1].bandwidth_khz);
+    EXPECT_EQ(previous.spreading_factor, applied[1].spreading_factor);
+    EXPECT_EQ(previous.coding_rate, applied[1].coding_rate);
+    EXPECT_EQ(previous.tx_power_dbm, applied[1].tx_power_dbm);
+    EXPECT_EQ(previous.rx_boosted_gain, applied[1].rx_boosted_gain);
+}
+
 TEST_F(MeshWrapperTest, PersistenceApisReportCommitStatus) {
     using save_fn = bool (*)();
     using favourite_fn = bool (*)(const char*, bool);
@@ -188,6 +340,83 @@ TEST_F(MeshWrapperTest, FailedDurableCommitRollsBackRuntimeMutation) {
     EXPECT_FALSE(ok);
     EXPECT_TRUE(rolled_back);
     EXPECT_EQ(visible_value, 10);
+}
+
+TEST_F(MeshWrapperTest, ApplyFirstMeshMutationsRestoreSnapshotsOnWriteFailure) {
+    enum class MutationPath {
+        ChannelAdd,
+        ChannelRemove,
+        ChannelSlotSet,
+        ContactAdd,
+        ContactUpdate,
+        ContactPathReset,
+    };
+    struct RuntimeState {
+        int channel_count;
+        int channel_value;
+        int contact_count;
+        int contact_value;
+        bool contact_has_path;
+    };
+    struct Case {
+        MutationPath path;
+        const char* name;
+    };
+    static constexpr Case cases[] = {
+        {MutationPath::ChannelAdd, "channel add"},
+        {MutationPath::ChannelRemove, "channel remove"},
+        {MutationPath::ChannelSlotSet, "companion channel set"},
+        {MutationPath::ContactAdd, "contact add"},
+        {MutationPath::ContactUpdate, "contact update"},
+        {MutationPath::ContactPathReset, "contact path reset"},
+    };
+
+    for (const Case& test_case : cases) {
+        SCOPED_TRACE(test_case.name);
+        RuntimeState state{2, 17, 3, 29, true};
+        const RuntimeState before = state;
+        bool commit_attempted = false;
+        bool rollback_called = false;
+
+        const bool ok = sigurdos::mesh::detail::applyAndCommit(
+            [&]() {
+                switch (test_case.path) {
+                    case MutationPath::ChannelAdd: ++state.channel_count; break;
+                    case MutationPath::ChannelRemove: --state.channel_count; break;
+                    case MutationPath::ChannelSlotSet: state.channel_value = 41; break;
+                    case MutationPath::ContactAdd: ++state.contact_count; break;
+                    case MutationPath::ContactUpdate: state.contact_value = 43; break;
+                    case MutationPath::ContactPathReset:
+                        state.contact_has_path = false;
+                        break;
+                }
+                return true;
+            },
+            [&]() { commit_attempted = true; return false; },
+            [&]() { state = before; rollback_called = true; });
+
+        EXPECT_FALSE(ok);
+        EXPECT_TRUE(commit_attempted);
+        EXPECT_TRUE(rollback_called);
+        EXPECT_EQ(before.channel_count, state.channel_count);
+        EXPECT_EQ(before.channel_value, state.channel_value);
+        EXPECT_EQ(before.contact_count, state.contact_count);
+        EXPECT_EQ(before.contact_value, state.contact_value);
+        EXPECT_EQ(before.contact_has_path, state.contact_has_path);
+    }
+}
+
+TEST_F(MeshWrapperTest, FailedContactRemovalCommitDoesNotActivateRuntimeRemoval) {
+    int contact_count = 3;
+    bool removal_activated = false;
+
+    const bool ok = sigurdos::mesh::detail::commitBeforeActivate(
+        []() { return false; },
+        [&]() { --contact_count; removal_activated = true; });
+
+    EXPECT_FALSE(ok);
+    EXPECT_FALSE(removal_activated);
+    EXPECT_EQ(3, contact_count);
 }
 
 TEST_F(MeshWrapperTest, SuccessfulDurableCommitKeepsRuntimeMutation) {
@@ -300,7 +529,7 @@ TEST_F(MeshWrapperTest, ResetPathToSignature) {
 }
 
 TEST_F(MeshWrapperTest, FactoryResetSignature) {
-    using fn = void (*)();
+    using fn = bool (*)();
     (void)static_cast<fn>(sigurdos::mesh::factoryReset);
     SUCCEED();
 }

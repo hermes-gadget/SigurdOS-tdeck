@@ -33,6 +33,20 @@ bool prefs_exists() {
     return true;
 }
 
+bool prefs_arm_factory_reset() {
+    if (!g_prefs_set_result) return false;
+    g_prefs.ble_enabled = false;
+    g_prefs.ble_user_set = true;
+    g_prefs.ble_bond_reset_pending = true;
+    return true;
+}
+
+bool prefs_commit_factory_reset() {
+    if (!g_prefs_set_result) return false;
+    g_prefs.set_factory_reset_defaults();
+    return true;
+}
+
 const NodePrefs& prefs_get() {
     return g_prefs;
 }

@@ -13,8 +13,9 @@ The Map screen renders **offline map tiles** from the SD card onto an LVGL canva
 | `src/app/tile_cache.h` | Positive/negative cache structs, LRU API, and load-budget policy |
 | `src/app/tile_cache.cpp` | LRU cache plus wrap-safe missing-tile expiry/eviction |
 | `src/app/lodepng_alloc.cpp` | lodepng memory allocator with PSRAM-fallback (for PNG decode) |
-| `scripts/download_maps.py` | Python tile downloader — fetches PNG tiles from OSM/CyclOSM/Carto servers |
+| `scripts/download_maps.py` | Python tile downloader — fetches PNG tiles and writes the validated discovery index |
 | `test/test_map/test_map.cpp` | Tile math, LRU/negative cache, budget, expiry, and path tests |
+| `test/test_map_renderer/test_map_renderer.cpp` | Discovery budget, deadline, index validation, and renderer-policy tests |
 
 ---
 
@@ -48,12 +49,13 @@ The Map screen is invoked from the **MAP tile** on the home screen:
 
 **What it does:**
 1. Creates a full screen via `make_screen_full("Map")`
-2. Calls `sigurdos_map_init()` — allocates the 153KB draw buffer, discovers tiles
+2. Calls `sigurdos_map_init()` — allocates the 153KB draw buffer
 3. Calls `sigurdos_map_reparent(scr)` — creates/attaches the LVGL canvas
 4. Calls `sigurdos_map_render()` — draws the initial tile grid
 5. Wires a transparent, clickable overlay for **drag-to-pan** (throttled to 200ms between renders)
 6. Adds **zoom buttons** (`+` and `-`, 32×32px, bottom-right, pixel-themed)
-7. Schedules up to three screen-owned 250ms warmup renders while tiles remain
+7. Starts a screen-owned, cancellable discovery timer after the screen is shown
+8. Schedules up to three screen-owned 250ms warmup renders while tiles remain
    budget-deferred; navigation cancels the timer safely
 
 ---
@@ -70,7 +72,7 @@ void sigurdos_map_deinit();
 
 1. **`sigurdos_map_init()`** — allocates the pixel draw buffer and resets caches:
    - Draw buffer: `TFT_WIDTH × TFT_HEIGHT × 2` = **320 × 240 × 2 = 153,600 bytes** (RGB565)
-   - Allocates from **PSRAM** first (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`), with a DRAM fallback
+   - Requires **PSRAM** (`MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) for the full canvas
    - Tile discovery remains deferred until the first Map screen visit
    - Sets `initialized = true`
 
@@ -92,16 +94,18 @@ The canvas pixel buffer is the **primary working surface** for all map rendering
 |--------|-------|
 | Size | 153,600 bytes (320 × 240 × 2) |
 | Format | RGB565 (16-bit per pixel) |
-| Allocation priority | DRAM → PSRAM fallback |
+| Allocation priority | PSRAM required |
 | Purpose | LVGL canvas pixel buffer, written directly by `draw_tile_from_cache()` |
 | Lifetime | Allocated in `sigurdos_map_init()`, freed in `sigurdos_map_deinit()` |
 
-The `map_alloc()` / `map_free()` helpers attempt PSRAM first (for large allocations) with a DRAM fallback:
+The `map_alloc()` / `map_free()` helpers attempt PSRAM first. Only allocations
+up to 32KB may fall back to scarce internal DRAM:
 
 ```cpp
 void* map_alloc(size_t size) {
     void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!p) p = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!p && sigurdos_map_internal_fallback_allowed(size))
+        p = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     return p;
 }
 ```
@@ -196,17 +200,21 @@ TileCoverage {
 
 **Discovery flow:**
 
-1. `discover_tiles()` — scans `/sdcard/tiles/` directory for numeric zoom-level subdirectories (0–18)
-2. `scan_zoom_coverage(z)` — for each zoom level:
-   - Opens `/sdcard/tiles/{z}/`
-   - Iterates numeric X subdirectories
-   - `scan_y_range(z, x)` — reads `.png` files in each X directory, finds min/max Y
-   - Determines a sample tile (closest to the center of the bounding box)
-3. Sets `min_available_zoom` / `max_available_zoom` based on what's found
-4. `load_metadata()` — after discovery, optionally reads `/sdcard/tiles/metadata.json`:
+1. `sigurdos_map_discover_tiles()` creates a discovery job without touching the SD card.
+2. A 20ms screen-owned LVGL timer calls `sigurdos_map_discovery_step()` with
+   both an eight-operation and a 5ms budget. Leaving the screen cancels the job
+   and closes its open directory handles.
+3. The preferred path loads `/sdcard/tiles/index.json`, validates every zoom
+   record and confirms each record's sample tile exists. `download_maps.py`
+   writes this index atomically after a download.
+4. If the index is missing or invalid, the bounded fallback scans zooms 0–18.
+   It reads every Y directory only once, processes at most 32,768 directory
+   entries, and retains progress between timer ticks.
+5. Sets `min_available_zoom` / `max_available_zoom` based on what's found.
+6. After discovery, optionally reads `/sdcard/tiles/metadata.json`:
    - Parses the `"bounds"` array `[min_lat, min_lon, max_lat, max_lon]`
    - Overrides the initial center to the midpoint of the bounds
-5. `clamp_view_to_coverage()` — prevents panning/zooming outside available tiles:
+7. `clamp_view_to_coverage()` — prevents panning/zooming outside available tiles:
    - Selects the nearest discovered zoom level; zoom controls skip sparse gaps
    - Clamps center lat/lon so at least half a tile margin remains visible
 

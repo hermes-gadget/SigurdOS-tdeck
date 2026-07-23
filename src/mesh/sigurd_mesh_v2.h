@@ -15,6 +15,7 @@
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
 #include "pending_ack_policy.h"
+#include "pending_operation_policy.h"
 #include "mesh_safety_policy.h"
 #include "flood_scope_state.h"
 #include "login_session.h"
@@ -234,6 +235,7 @@ public:
         uint32_t timeout_ms = 0;
         bool     companion_binary = false;
         bool     in_use = false;
+        bool     timed_out = false;
     };
     PendingRequest _pending_reqs[MAX_PENDING_REQUESTS];
 
@@ -254,9 +256,11 @@ public:
     // Send a typed REQ to a contact by name. Returns true if sent.
     // The response arrives via onContactResponse() and is stored in _responses[].
     bool sendRequest(const char* name, uint8_t req_type,
-                     uint32_t* tag_out = nullptr);
+                     uint32_t* tag_out = nullptr,
+                     uint32_t* timeout_out = nullptr);
     bool sendRequest(const ::ContactInfo& contact, uint8_t req_type,
-                     uint32_t* tag_out = nullptr);
+                     uint32_t* tag_out = nullptr,
+                     uint32_t* timeout_out = nullptr);
 
 
     // Send a custom-data REQ to a contact by name.
@@ -274,6 +278,8 @@ public:
 
     void cancelCompanionBinaryRequests();
     void cancelCompanionBinaryRequest(uint32_t tag);
+    bool requestPending(uint32_t tag);
+    bool requestTimedOut(uint32_t tag);
 
 
     // Polling API for received responses
@@ -410,11 +416,13 @@ public:
     // ── Path discovery (Phase 4.4) ──────────────
     static constexpr int MAX_DISCOVERY_PENDING = 4;
     struct DiscoveryPending {
-        char     dest_name[32];
-        uint32_t tag;
+        char     dest_name[32] = {};
+        uint32_t tag = 0;
         bool     in_use = false;
         bool     completed = false;
-        uint32_t started_at_ms;
+        bool     timed_out = false;
+        uint32_t started_at_ms = 0;
+        uint32_t timeout_ms = 0;
     };
     DiscoveryPending _discovery_pending[MAX_DISCOVERY_PENDING];
 
@@ -423,16 +431,13 @@ public:
     uint32_t sendPathDiscovery(const char* name, uint32_t* est_timeout_out = nullptr);
 
 
-    // Check if a pending discovery has completed
-    bool isDiscoveryComplete(const char* name) {
-        for (int i = 0; i < MAX_DISCOVERY_PENDING; i++) {
-            if (_discovery_pending[i].in_use &&
-                strcmp(_discovery_pending[i].dest_name, name) == 0) {
-                return _discovery_pending[i].completed;
-            }
-        }
-        return false;
-    }
+    // Completion is consumed and frees the slot. Timeouts remain observable
+    // until their terminal slot is needed by a later discovery.
+    bool isDiscoveryComplete(const char* name);
+    bool discoveryPending(const char* name);
+    bool discoveryTimedOut(const char* name);
+
+    void expirePendingOperations(uint32_t now_ms);
 
     // Get path length for a contact (OUT_PATH_UNKNOWN = 0xFF if unknown)
     uint8_t getPathLen(const char* name) {

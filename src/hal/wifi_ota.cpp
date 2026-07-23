@@ -8,7 +8,9 @@
 #include "launcher_env.h"
 #include "ota_allocation_policy.h"
 #include "ota_security_epoch.h"
+#include "ota_write_policy.h"
 #include "prefs.h"
+#include "wifi_coordinator.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
@@ -23,7 +25,9 @@ static WebServer* server = nullptr;
 static bool active = false;
 static char server_ip[16] = "";
 static char ap_password[64] = "";
+static char last_error[96] = "";
 static uint32_t session_started_at = 0;
+static bool using_access_point = false;
 static String csrf_token;  // regenerated per OTA session
 static OtaUploadSessionState upload_state;
 
@@ -50,12 +54,18 @@ static const hal::OtaAllocationOps OTA_SERVER_ALLOCATOR{
 bool start(const char* ssid, const char* password) {
     if (active) return true;
 
+    last_error[0] = '\0';
+
     if (!otaAccessPointInputsValid(ssid, password)) {
+        strncpy(last_error, "Invalid OTA WiFi name or password", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
         SIG_LOGW("[ota] REFUSED: invalid AP SSID or password length");
         return false;
     }
 
     if (sigurdos_is_under_launcher()) {
+        strncpy(last_error, "Update through Launcher instead", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
         SIG_LOGW("[ota] REFUSED: OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
         return false;
     }
@@ -65,15 +75,27 @@ bool start(const char* ssid, const char* password) {
     // unauthenticated firmware-flash endpoint (#687). Refuse to start so the
     // exposure can never be opened by default.
     if (prefs_get().device_pin == 0) {
+        strncpy(last_error, "Set a device PIN before local OTA", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
         SIG_LOGW("[ota] REFUSED: no device PIN set — set a PIN before using WiFi OTA");
         return false;
     }
+
+    const bool reuse_sta = wifi_sta::isConnected();
+    if (!wifi::acquire(wifi::Owner::ApOta,
+                       reuse_sta ? wifi::RadioMode::Sta : wifi::RadioMode::Ap)) {
+        snprintf(last_error, sizeof(last_error), "WiFi busy: %s",
+                 wifi::ownerName(wifi::currentOwner()));
+        SIG_LOGW("[ota] REFUSED: %s", last_error);
+        return false;
+    }
+    using_access_point = !reuse_sta;
 
     // Reset PIN brute-force counter on each OTA session start (SEC-001)
     pin_fail_count = 0;
 
     IPAddress ip;
-    if (wifi_sta::isConnected()) {
+    if (reuse_sta) {
         // Already connected to a WiFi network — keep STA, bind on local IP
         ip = WiFi.localIP();
         snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
@@ -93,6 +115,8 @@ bool start(const char* ssid, const char* password) {
             ap_password[12] = '\0';
         }
         if (!WiFi.softAP(ssid, ap_password)) {
+            strncpy(last_error, "WiFi AP startup failed", sizeof(last_error) - 1);
+            last_error[sizeof(last_error) - 1] = '\0';
             SIG_LOGE("[ota] WiFi AP startup failed");
             stop();
             return false;
@@ -108,6 +132,8 @@ bool start(const char* ssid, const char* password) {
     if (!hal::allocate_ota_object(OTA_SERVER_ALLOCATOR,
                                   hal::OtaAllocationKind::WebServer,
                                   &server_object)) {
+        strncpy(last_error, "Out of memory for OTA server", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
         SIG_LOGE("[ota] WebServer allocation failed; OTA aborted");
         stop();
         return false;
@@ -268,14 +294,18 @@ bool start(const char* ssid, const char* password) {
                     upload_state.epoch_checked = true;
                 }
                 const size_t written = Update.write(upload.buf, upload.currentSize);
-                if (written != upload.currentSize) {
+                size_t next_received = upload_state.received;
+                const hal::OtaWriteResult write_result = hal::otaRecordExactWrite(
+                    upload_state.received, upload.currentSize, written,
+                    upload.totalSize, &next_received);
+                if (!hal::otaWriteAccepted(write_result)) {
                     upload_state.failed = true;
                     upload_state.started = false;
                     SIG_LOGW("[ota] Update.write failed: %s", Update.errorString());
                     Update.printError(Serial);
                     Update.abort();
                 } else {
-                    upload_state.received += written;
+                    upload_state.received = next_received;
                 }
             } else if (upload.status == UPLOAD_FILE_END) {
                 if (!otaUploadCanFinish(upload_state, upload.totalSize)) {
@@ -334,9 +364,10 @@ void stop() {
         delete server;
         server = nullptr;
     }
-    WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_OFF);
+    if (using_access_point) WiFi.softAPdisconnect(true);
+    wifi::release(wifi::Owner::ApOta);
     active = false;
+    using_access_point = false;
     server_ip[0] = '\0';
     ap_password[0] = '\0';
     session_started_at = 0;
@@ -345,6 +376,10 @@ void stop() {
 
 bool isActive() {
     return active;
+}
+
+const char* getLastError() {
+    return last_error;
 }
 
 const char* getIP() {
@@ -363,13 +398,15 @@ namespace wifi_scan {
 int scan(APInfo* out, int max_aps) {
     if (!out || max_aps <= 0) return 0;
 
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
+    if (!wifi::acquire(wifi::Owner::Scan, wifi::RadioMode::Sta)) {
+        return SIGURDOS_WIFI_SCAN_BUSY;
+    }
     delay(100);  // let radio settle
 
     int n = WiFi.scanNetworks(false, false);  // async=false, show_hidden=false
     if (n <= 0) {
-        WiFi.mode(WIFI_OFF);
+        WiFi.scanDelete();
+        wifi::release(wifi::Owner::Scan);
         return 0;
     }
 
@@ -385,12 +422,7 @@ int scan(APInfo* out, int max_aps) {
     sortByRssi(out, n);
 
     WiFi.scanDelete();
-    // Keep WiFi in STA mode so beginConnect() doesn't have to
-    // re-initialize the MAC/BB/RF from cold (WIFI_OFF→STA has
-    // a known ESP32-S3 power-up erratum that can cause silent
-    // WiFi.begin() failure without sufficient settling time).
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
+    wifi::release(wifi::Owner::Scan);
     return n;
 }
 
@@ -404,13 +436,16 @@ static int      s_rssi        = 0;
 static Status   s_status      = Status::Idle;
 static unsigned long s_conn_start = 0;
 
-void beginConnect(const char* ssid, const char* password) {
+bool beginConnect(const char* ssid, const char* password) {
     if (!ssid || !ssid[0]) {
         s_status = Status::Failed;
-        return;
+        return false;
     }
-    // WiFi should already be in STA mode from the scan, but ensure it.
-    WiFi.mode(WIFI_STA);
+    if (!wifi::acquire(wifi::Owner::Sta, wifi::RadioMode::Sta)) {
+        SIG_LOGW("[wifi-sta] connect refused: WiFi busy with %s",
+                 wifi::ownerName(wifi::currentOwner()));
+        return false;
+    }
     delay(100);  // let MAC/BB/RF settle after potential mode switch (ESP32-S3 erratum)
     WiFi.begin(ssid, password);
     s_status = Status::Connecting;
@@ -418,6 +453,7 @@ void beginConnect(const char* ssid, const char* password) {
     s_connected = false;
     s_rssi = 0;
     SIG_LOGD("[wifi-sta] connecting to %s...", ssid);
+    return true;
 }
 
 Status getStatus() {
@@ -425,10 +461,11 @@ Status getStatus() {
 }
 
 void disconnect() {
+    if (wifi::currentOwner() != wifi::Owner::Sta) return;
     if (s_connected || s_status == Status::Connecting) {
         WiFi.disconnect();
     }
-    WiFi.mode(WIFI_OFF);
+    wifi::release(wifi::Owner::Sta);
     s_connected = false;
     s_rssi = 0;
     s_status = Status::Idle;
@@ -458,6 +495,9 @@ int getRSSI() {
 }
 
 void loop() {
+    const wifi::Owner owner = wifi::currentOwner();
+    if (owner != wifi::Owner::None && owner != wifi::Owner::Sta) return;
+
     // Always sync internal state with hardware (handles external
     // reconnections, e.g. github_ota reusing an existing STA link).
     bool hw = (WiFi.status() == WL_CONNECTED);
@@ -472,7 +512,7 @@ void loop() {
             SIG_LOGD("[wifi-sta] connected! (%d dBm)", s_rssi);
         } else if (next == Status::Failed) {
             WiFi.disconnect();
-            WiFi.mode(WIFI_OFF);
+            wifi::release(wifi::Owner::Sta);
             s_status = next;
             s_connected = false;
             s_rssi = 0;

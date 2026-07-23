@@ -84,8 +84,11 @@ protected:
         sigurdos::mesh::messageStoreSetNativePath(path);
         sigurdos::storage::atomicFileSetNativeFault(
             sigurdos::storage::AtomicFileNativeFault::None);
+        sigurdos::mesh::messageStoreSetNativeHeaderWriteLimit(-1);
+        sigurdos::mesh::messageStoreSetNativeRecordWriteLimit(-1);
         std::remove(path);
         std::remove((std::string(path) + ".tmp").c_str());
+        std::remove((std::string(path) + ".corrupt").c_str());
         ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
         ASSERT_TRUE(sigurdos::mesh::messageStoreClear());
     }
@@ -93,8 +96,11 @@ protected:
     void TearDown() override {
         sigurdos::storage::atomicFileSetNativeFault(
             sigurdos::storage::AtomicFileNativeFault::None);
+        sigurdos::mesh::messageStoreSetNativeHeaderWriteLimit(-1);
+        sigurdos::mesh::messageStoreSetNativeRecordWriteLimit(-1);
         std::remove(path);
         std::remove((std::string(path) + ".tmp").c_str());
+        std::remove((std::string(path) + ".corrupt").c_str());
     }
 };
 
@@ -526,6 +532,8 @@ TEST_F(MessageStoreTest, UnknownVersionIsPreservedInsteadOfErased) {
     writeFile(path, future);
 
     EXPECT_FALSE(sigurdos::mesh::messageStoreBegin());
+    EXPECT_EQ(sigurdos::mesh::messageStoreLastRecoveryResult(),
+              sigurdos::mesh::MessageStoreRecoveryResult::UnsupportedVersion);
     EXPECT_EQ(readFile(path), future);
 }
 
@@ -544,6 +552,138 @@ TEST_F(MessageStoreTest, BeginRecoversRecordWrittenBeforeHeaderCount) {
     sigurdos::mesh::StoredMessage out{};
     ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
     EXPECT_STREQ(out.text, "complete");
+}
+
+TEST_F(MessageStoreTest, EveryInterruptedHeaderWriteRecoversBeforeNextAppend) {
+    for (int written = 0;
+         written < (int)sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE;
+         ++written) {
+        ASSERT_TRUE(sigurdos::mesh::messageStoreClear()) << written;
+        sigurdos::mesh::messageStoreSetNativeHeaderWriteLimit(written);
+        EXPECT_FALSE(sigurdos::mesh::messageStoreAppend(
+            makeMsg("DM: Alice", "Alice", "durable", 1, false, false)))
+            << written;
+        sigurdos::mesh::messageStoreSetNativeHeaderWriteLimit(-1);
+
+        uint32_t second_id = 0;
+        ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+            makeMsg("DM: Bob", "Bob", "next", 2, false, false), &second_id))
+            << written;
+        EXPECT_EQ(second_id, 2U) << written;
+
+        sigurdos::mesh::StoredMessage out[2]{};
+        ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(out, 2), 2) << written;
+        EXPECT_EQ(out[0].store_id, 1U) << written;
+        EXPECT_EQ(out[1].store_id, 2U) << written;
+    }
+}
+
+TEST_F(MessageStoreTest, EveryInterruptedHeaderWriteRecoversAfterReboot) {
+    for (int written = 0;
+         written < (int)sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE;
+         ++written) {
+        ASSERT_TRUE(sigurdos::mesh::messageStoreClear()) << written;
+        sigurdos::mesh::messageStoreSetNativeHeaderWriteLimit(written);
+        EXPECT_FALSE(sigurdos::mesh::messageStoreAppend(
+            makeMsg("DM: Alice", "Alice", "durable", 1, false, false)))
+            << written;
+        sigurdos::mesh::messageStoreSetNativeHeaderWriteLimit(-1);
+
+        ASSERT_TRUE(sigurdos::mesh::messageStoreBegin()) << written;
+        const auto recovery = sigurdos::mesh::messageStoreLastRecoveryResult();
+        EXPECT_TRUE(recovery == sigurdos::mesh::MessageStoreRecoveryResult::Clean ||
+                    recovery == sigurdos::mesh::MessageStoreRecoveryResult::Repaired)
+            << written;
+        sigurdos::mesh::StoredMessage out{};
+        ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1) << written;
+        EXPECT_EQ(out.store_id, 1U) << written;
+    }
+}
+
+TEST_F(MessageStoreTest, InterruptedRecordAppendDropsOnlyTornRecord) {
+    const int limits[] = {
+        0,
+        1,
+        (int)sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE / 2,
+        (int)sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE - 1,
+    };
+    for (int written : limits) {
+        ASSERT_TRUE(sigurdos::mesh::messageStoreClear()) << written;
+        sigurdos::mesh::messageStoreSetNativeRecordWriteLimit(written);
+        EXPECT_FALSE(sigurdos::mesh::messageStoreAppend(
+            makeMsg("DM: Alice", "Alice", "torn", 1, false, false)))
+            << written;
+        sigurdos::mesh::messageStoreSetNativeRecordWriteLimit(-1);
+
+        uint32_t id = 0;
+        ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+            makeMsg("DM: Bob", "Bob", "complete", 2, false, false), &id))
+            << written;
+        EXPECT_EQ(id, 1U) << written;
+        sigurdos::mesh::StoredMessage out{};
+        ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1) << written;
+        EXPECT_STREQ(out.text, "complete") << written;
+    }
+}
+
+TEST_F(MessageStoreTest, EveryTruncatedHeaderIsQuarantinedAndReset) {
+    const std::string corrupt_path = std::string(path) + ".corrupt";
+    for (size_t kept = 0;
+         kept < sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE; ++kept) {
+        ASSERT_TRUE(sigurdos::mesh::messageStoreClear()) << kept;
+        auto truncated = readFile(path);
+        ASSERT_EQ(truncated.size(),
+                  sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE);
+        truncated.resize(kept);
+        writeFile(path, truncated);
+
+        ASSERT_TRUE(sigurdos::mesh::messageStoreBegin()) << kept;
+        EXPECT_EQ(sigurdos::mesh::messageStoreLastRecoveryResult(),
+                  sigurdos::mesh::MessageStoreRecoveryResult::Quarantined)
+            << kept;
+        EXPECT_TRUE(std::ifstream(corrupt_path, std::ios::binary).good()) << kept;
+        EXPECT_EQ(readFile(corrupt_path.c_str()), truncated) << kept;
+        EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 0) << kept;
+    }
+}
+
+TEST_F(MessageStoreTest, InvalidHeaderSalvagesDurableRecords) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "durable", 1, false, false)));
+    auto raw = readFile(path);
+    const uint32_t invalid_next_id = 0;
+    std::memcpy(raw.data() + 9, &invalid_next_id, sizeof(invalid_next_id));
+    writeFile(path, raw);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    EXPECT_EQ(sigurdos::mesh::messageStoreLastRecoveryResult(),
+              sigurdos::mesh::MessageStoreRecoveryResult::Salvaged);
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_EQ(out.store_id, 1U);
+    EXPECT_STREQ(out.text, "durable");
+}
+
+TEST_F(MessageStoreTest, DuplicateTailSalvagesUnambiguousPrefix) {
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Alice", "Alice", "first", 1, false, false)));
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg("DM: Bob", "Bob", "duplicate-id", 2, false, false)));
+    auto raw = readFile(path);
+    const size_t first = sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE;
+    const size_t second = first +
+        sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE;
+    std::memcpy(raw.data() + second, raw.data() + first,
+                sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
+    writeFile(path, raw);
+
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    EXPECT_EQ(sigurdos::mesh::messageStoreLastRecoveryResult(),
+              sigurdos::mesh::MessageStoreRecoveryResult::Salvaged);
+    sigurdos::mesh::StoredMessage out{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&out, 1), 1);
+    EXPECT_EQ(out.store_id, 1U);
+    EXPECT_STREQ(out.text, "first");
 }
 
 TEST_F(MessageStoreTest, BeginDropsOnlyTornTailAndCorrectsCount) {
