@@ -9,6 +9,7 @@
 #include "github_ota_plan.h"
 #include "launcher_env.h"
 #include "ota_allocation_policy.h"
+#include "ota_runtime_policy.h"
 #include "ota_security_epoch.h"
 #include "ota_write_policy.h"
 #include "prefs.h"
@@ -21,6 +22,7 @@
 #include <SPIFFS.h>
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
+#include <atomic>
 #include <cstring>
 #include <cstdlib>
 #include <new>
@@ -89,8 +91,11 @@ static constexpr size_t API_RESPONSE_MAX    = 32768;    // 32 KB for release lis
 
 // ── State ───────────────────────────────────────────────────────
 
-static bool                   s_active = false;
+static std::atomic<bool>      s_active{false};
 static GitHubOTAStatus        s_status;
+static GitHubOTAStatus        s_status_snapshot;
+static portMUX_TYPE           s_status_mux = portMUX_INITIALIZER_UNLOCKED;
+static std::atomic<bool>      s_reboot_pending{false};
 static WiFiClientSecure*      s_client = nullptr;
 static HTTPClient*            s_http   = nullptr;
 static int                    s_http_code = 0;
@@ -100,7 +105,7 @@ static bool                   s_epoch_checked = false;
 static unsigned long          s_last_progress = 0;
 static unsigned long          s_last_data = 0;
 static unsigned long          s_connect_start = 0;
-static bool                   s_cancelled = false;
+static std::atomic<bool>      s_cancelled{false};
 
 static uint32_t currentSecurityEpoch() {
     uint32_t epoch = SIGURDOS_SECURITY_EPOCH;
@@ -153,8 +158,11 @@ static const hal::OtaAllocationOps OTA_CONNECTION_ALLOCATOR{
 
 // ── Helpers ─────────────────────────────────────────────────────
 
+static void serviceWorker();
+
 static void setStatus(GitHubOTAState state, int pct = 0,
                       const char* msg = "", const char* err = "") {
+    portENTER_CRITICAL(&s_status_mux);
     s_status.state = state;
     s_status.progress_pct = pct;
     if (msg) {
@@ -165,6 +173,7 @@ static void setStatus(GitHubOTAState state, int pct = 0,
         strncpy(s_status.error_msg, err, sizeof(s_status.error_msg) - 1);
         s_status.error_msg[sizeof(s_status.error_msg) - 1] = '\0';
     }
+    portEXIT_CRITICAL(&s_status_mux);
 }
 
 static void cleanupConnection() {
@@ -195,7 +204,7 @@ static void fail(const char* msg) {
     setStatus(GitHubOTAState::Failed, 0, "Failed", msg);
     cleanupTransfer(true);
     wifi::release(wifi::Owner::GitHubOta);
-    s_active = false;
+    s_active.store(false, std::memory_order_release);
 }
 
 static ApiBodyStatus readApiResponse(WiFiClient* stream, int content_length,
@@ -251,7 +260,7 @@ static ApiBodyStatus readApiResponse(WiFiClient* stream, int content_length,
 // ── Public API ──────────────────────────────────────────────────
 
 bool startGitHubUpdate() {
-    if (s_active) return true;
+    if (s_active.load(std::memory_order_acquire)) return true;
 
     if (sigurdos_is_under_launcher()) {
         Serial.println("[gh-ota] REFUSED: GitHub OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
@@ -277,8 +286,9 @@ bool startGitHubUpdate() {
         return false;
     }
 
-    s_active = true;
-    s_cancelled = false;
+    s_active.store(true, std::memory_order_release);
+    s_cancelled.store(false, std::memory_order_release);
+    s_reboot_pending.store(false, std::memory_order_release);
     s_downloaded = 0;
     s_epoch_checked = false;
     s_http_code = 0;
@@ -301,12 +311,27 @@ bool startGitHubUpdate() {
     }
 
     Serial.printf("[gh-ota] Connecting to WiFi: %s\n", p.wifi_ssid);
+
+    if (xTaskCreatePinnedToCore(
+            [](void*) {
+                while (s_active.load(std::memory_order_acquire) &&
+                       !s_reboot_pending.load(std::memory_order_acquire)) {
+                    serviceWorker();
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                }
+                vTaskDelete(nullptr);
+            },
+            "github-ota", hal::OTA_WORKER_STACK_BYTES, nullptr, 1,
+            nullptr, hal::OTA_WORKER_CORE) != pdPASS) {
+        fail("Unable to start OTA worker");
+        return false;
+    }
     return true;
 }
 
-void loop() {
-    if (!s_active) return;
-    if (s_cancelled) {
+static void serviceWorker() {
+    if (!s_active.load(std::memory_order_acquire)) return;
+    if (s_cancelled.load(std::memory_order_acquire)) {
         fail("Cancelled");
         return;
     }
@@ -504,7 +529,8 @@ void loop() {
             s_content_length = s_http->getSize();
             Serial.printf("[gh-ota] Content-Length: %d\n", s_content_length);
 
-            if (s_content_length <= 0 || s_content_length > 6*1024*1024) {
+            if (s_content_length <= 0 ||
+                static_cast<size_t>(s_content_length) > hal::OTA_MAX_IMAGE_BYTES) {
                 fail("Invalid Content-Length");
                 return;
             }
@@ -557,11 +583,8 @@ void loop() {
                     setStatus(GitHubOTAState::Success, 100,
                               "Update complete — rebooting...");
                     cleanupTransfer(false);
-                    s_active = false;
                     wifi::release(wifi::Owner::GitHubOta);
-                    SPIFFS.end();
-                    delay(500);
-                    ESP.restart();
+                    s_reboot_pending.store(true, std::memory_order_release);
                 } else {
                     Serial.printf("[gh-ota] Update.end failed: %s\n",
                                   Update.errorString());
@@ -583,11 +606,21 @@ void loop() {
             return;
         }
 
-        while (stream->available() && s_downloaded < s_content_length && !s_cancelled) {
+        const uint32_t slice_started_at = millis();
+        size_t slice_bytes = 0;
+        while (stream->available() && s_downloaded < s_content_length &&
+               !s_cancelled.load(std::memory_order_acquire) &&
+               !hal::otaTransferSliceExhausted(
+                   slice_bytes, slice_started_at, millis())) {
             size_t avail = (size_t)stream->available();
             if (!s_epoch_checked && avail < hal::SIGURDOS_OTA_EPOCH_MIN_BYTES) return;
-            size_t to_read = avail;
-            if (to_read > DOWNLOAD_CHUNK) to_read = DOWNLOAD_CHUNK;
+            const size_t image_remaining =
+                static_cast<size_t>(s_content_length - s_downloaded);
+            const size_t slice_remaining =
+                hal::OTA_TRANSFER_SLICE_BYTES - slice_bytes;
+            const size_t to_read = hal::otaTransferReadLimit(
+                avail, image_remaining, slice_remaining, DOWNLOAD_CHUNK);
+            if (to_read == 0) break;
 
             static uint8_t* buf = (uint8_t*)heap_caps_malloc(
                 DOWNLOAD_CHUNK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -627,6 +660,7 @@ void loop() {
             }
 
             s_downloaded = static_cast<int>(next_downloaded);
+            slice_bytes += read;
 
             unsigned long now = millis();
             s_last_data = now;
@@ -645,19 +679,32 @@ void loop() {
     }
 }
 
+void loop() {
+    // Transport, multipart parsing, and flash writes are worker-owned. Keeping
+    // reboot finalization on loopTask prevents filesystem teardown racing mesh
+    // persistence after the worker has finished writing the OTA partition.
+    if (s_reboot_pending.exchange(false, std::memory_order_acq_rel)) {
+        SPIFFS.end();
+        delay(500);
+        ESP.restart();
+    }
+}
+
 bool isActive() {
-    return s_active;
+    return s_active.load(std::memory_order_acquire);
 }
 
 const GitHubOTAStatus& getStatus() {
-    return s_status;
+    portENTER_CRITICAL(&s_status_mux);
+    s_status_snapshot = s_status;
+    portEXIT_CRITICAL(&s_status_mux);
+    return s_status_snapshot;
 }
 
 void cancel() {
-    if (!s_active) return;
-    s_cancelled = true;
+    if (!s_active.load(std::memory_order_acquire)) return;
+    s_cancelled.store(true, std::memory_order_release);
     Serial.println("[gh-ota] Cancel requested");
-    fail("Cancelled");
 }
 
 const char* getDownloadLabel() {

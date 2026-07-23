@@ -21,10 +21,26 @@ constexpr uint32_t SETUP_WATCHDOG_TIMEOUT_SEC =
 constexpr uint32_t RUNTIME_WATCHDOG_TIMEOUT_SEC =
     SIGURDOS_RUNTIME_WATCHDOG_TIMEOUT_SEC;
 
+enum class RuntimeWatchdogOwner : uint8_t {
+    LoopTask,
+};
+
+// loopTask is the sole runtime-watchdog owner. OTA workers are deliberately
+// not subscribed: synchronous TLS and the framework multipart parser may wait
+// on a slow peer, while loopTask must continue feeding only after a complete
+// application loop (LVGL, mesh, input, battery, and telemetry).
+constexpr RuntimeWatchdogOwner RUNTIME_WATCHDOG_OWNER =
+    RuntimeWatchdogOwner::LoopTask;
+constexpr bool OTA_WORKER_OWNS_TRANSPORT_AND_FLASH = true;
+constexpr bool OTA_WORKER_SUBSCRIBES_RUNTIME_WATCHDOG = false;
+
 static_assert(SETUP_WATCHDOG_TIMEOUT_SEC > RUNTIME_WATCHDOG_TIMEOUT_SEC,
               "setup watchdog must allow more time than runtime");
 static_assert(RUNTIME_WATCHDOG_TIMEOUT_SEC > 0,
               "runtime watchdog timeout must be non-zero");
+static_assert(OTA_WORKER_OWNS_TRANSPORT_AND_FLASH &&
+                  !OTA_WORKER_SUBSCRIBES_RUNTIME_WATCHDOG,
+              "OTA transport must not block the loopTask watchdog owner");
 
 constexpr uint32_t BOOT_WATCHDOG_MAGIC = 0x42574431u;  // "BWD1"
 constexpr uint8_t BOOT_WATCHDOG_VERSION = 1;

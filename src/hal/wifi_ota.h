@@ -82,10 +82,10 @@ inline bool otaUploadCanFinish(const OtaUploadSessionState& state,
 // no device PIN is configured, since the PIN is the upload endpoint's only auth.
 bool start(const char* ssid, const char* password = "");
 
-// Call in main loop to handle web server requests.
+// Main-loop hook. Multipart parsing and flash writes run on a managed worker.
 void loop();
 
-// Stop WiFi and web server, free resources.
+// Request the managed worker to stop and release WiFi/server resources.
 void stop();
 
 // Returns true if OTA is active.

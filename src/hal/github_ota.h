@@ -64,7 +64,8 @@ bool isActive();
 // Returns the current status (call from UI to show progress).
 const GitHubOTAStatus& getStatus();
 
-// Synchronously cancel an in-progress OTA and abort any open flash session.
+// Request cancellation. The managed worker aborts its flash session and
+// releases transport resources.
 void cancel();
 
 // ── Settings helpers (usable from UI without starting an update) ──

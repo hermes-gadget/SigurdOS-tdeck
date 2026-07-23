@@ -7,6 +7,7 @@
 #include "../diagnostics/log.h"
 #include "launcher_env.h"
 #include "ota_allocation_policy.h"
+#include "ota_runtime_policy.h"
 #include "ota_security_epoch.h"
 #include "ota_write_policy.h"
 #include "prefs.h"
@@ -16,13 +17,15 @@
 #include <Update.h>
 #include <esp_random.h>
 #include <esp_ota_ops.h>
+#include <atomic>
 #include <new>
 
 namespace sigurdos {
 namespace ota {
 
 static WebServer* server = nullptr;
-static bool active = false;
+static std::atomic<bool> active{false};
+static std::atomic<bool> stop_requested{false};
 static char server_ip[16] = "";
 static char ap_password[64] = "";
 static char last_error[96] = "";
@@ -51,8 +54,37 @@ static const hal::OtaAllocationOps OTA_SERVER_ALLOCATOR{
     nullptr, createOtaServer, nullptr
 };
 
+static void cleanupServer() {
+    if (server) {
+        server->stop();
+        delete server;
+        server = nullptr;
+    }
+    if (Update.isRunning()) Update.abort();
+    if (using_access_point) WiFi.softAPdisconnect(true);
+    wifi::release(wifi::Owner::ApOta);
+    using_access_point = false;
+    session_started_at = 0;
+    upload_state = {};
+}
+
+static void otaServerWorker(void*) {
+    while (!stop_requested.load(std::memory_order_acquire)) {
+        if (otaSessionExpired(session_started_at, millis())) {
+            SIG_LOGW("[ota] session expired");
+            break;
+        }
+        server->handleClient();
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
+    cleanupServer();
+    active.store(false, std::memory_order_release);
+    vTaskDelete(nullptr);
+}
+
 bool start(const char* ssid, const char* password) {
-    if (active) return true;
+    if (active.load(std::memory_order_acquire)) return true;
 
     last_error[0] = '\0';
 
@@ -118,7 +150,7 @@ bool start(const char* ssid, const char* password) {
             strncpy(last_error, "WiFi AP startup failed", sizeof(last_error) - 1);
             last_error[sizeof(last_error) - 1] = '\0';
             SIG_LOGE("[ota] WiFi AP startup failed");
-            stop();
+            cleanupServer();
             return false;
         }
 
@@ -135,7 +167,7 @@ bool start(const char* ssid, const char* password) {
         strncpy(last_error, "Out of memory for OTA server", sizeof(last_error) - 1);
         last_error[sizeof(last_error) - 1] = '\0';
         SIG_LOGE("[ota] WebServer allocation failed; OTA aborted");
-        stop();
+        cleanupServer();
         return false;
     }
     server = static_cast<WebServer*>(server_object);
@@ -225,6 +257,13 @@ bool start(const char* ssid, const char* password) {
         // Upload handler (receives chunks)
         []() {
             HTTPUpload& upload = server->upload();
+            if (stop_requested.load(std::memory_order_acquire)) {
+                upload_state.failed = true;
+                upload_state.started = false;
+                Update.abort();
+                server->client().stop();
+                return;
+            }
             if (upload.status == UPLOAD_FILE_START) {
                 upload_state = {};
                 // Validate device PIN before accepting upload
@@ -342,40 +381,35 @@ bool start(const char* ssid, const char* password) {
     });
 
     server->begin();
-    active = true;
+    stop_requested.store(false, std::memory_order_release);
+    active.store(true, std::memory_order_release);
     session_started_at = millis();
+    if (xTaskCreatePinnedToCore(
+            otaServerWorker, "wifi-ota", hal::OTA_WORKER_STACK_BYTES,
+            nullptr, 1, nullptr, hal::OTA_WORKER_CORE) != pdPASS) {
+        strncpy(last_error, "Unable to start OTA worker", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        active.store(false, std::memory_order_release);
+        cleanupServer();
+        return false;
+    }
     return true;
 }
 
 void loop() {
-    if (active && otaSessionExpired(session_started_at, millis())) {
-        SIG_LOGW("[ota] session expired");
-        stop();
-        return;
-    }
-    if (active && server) {
-        server->handleClient();
-    }
+    // WebServer multipart parsing and Update writes are worker-owned so a slow
+    // or body-less client cannot hold Arduino's loopTask.
 }
 
 void stop() {
-    if (server) {
-        server->stop();
-        delete server;
-        server = nullptr;
-    }
-    if (using_access_point) WiFi.softAPdisconnect(true);
-    wifi::release(wifi::Owner::ApOta);
-    active = false;
-    using_access_point = false;
-    server_ip[0] = '\0';
-    ap_password[0] = '\0';
-    session_started_at = 0;
-    upload_state = {};
+    if (!active.load(std::memory_order_acquire)) return;
+    stop_requested.store(true, std::memory_order_release);
+    // The worker remains the only task that accesses WebServer or Update. Its
+    // next upload callback closes a slow client from the owning task.
 }
 
 bool isActive() {
-    return active;
+    return active.load(std::memory_order_acquire);
 }
 
 const char* getLastError() {
@@ -383,11 +417,11 @@ const char* getLastError() {
 }
 
 const char* getIP() {
-    return server_ip;
+    return active.load(std::memory_order_acquire) ? server_ip : "";
 }
 
 const char* getAPPassword() {
-    return ap_password;
+    return active.load(std::memory_order_acquire) ? ap_password : "";
 }
 
 }  // namespace ota
