@@ -47,11 +47,18 @@ void ObservedSerialBLEInterface::applyAdvertisingThrottle(uint32_t now_ms)
         SerialBLEInterface::isConnected()) {
         return;
     }
-    BLEAdvertising* advertising = BLEDevice::getAdvertising();
-    if (!advertising) return;
+    // Cache the advertising object. BLEDevice::getAdvertising() logs at DEBUG
+    // on every call; this method is polled from checkRecvFrame() every loop.
+    static BLEAdvertising* advertising = nullptr;
+    if (!advertising) {
+        advertising = BLEDevice::getAdvertising();
+        if (!advertising) return;
+    }
     if (_auth_throttle.blocked(now_ms)) {
-        advertising->stop();
-        _advertising_suppressed = true;
+        if (!_advertising_suppressed) {
+            advertising->stop();
+            _advertising_suppressed = true;
+        }
     } else if (_advertising_suppressed) {
         advertising->start();
         _advertising_suppressed = false;
