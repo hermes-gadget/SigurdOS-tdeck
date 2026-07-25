@@ -62,7 +62,10 @@ def main() -> int:
     if args.summary:
         with args.summary.open("a") as stream:
             stream.write(output)
-    return 1 if errors or reductions else 0
+    # Under-budget fingerprints are informational only. Failing on reductions
+    # breaks multi-env matrices (GPS/telemetry builds do not compile UI sources
+    # that legitimately still warn in SigurdOS_TDeck).
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
