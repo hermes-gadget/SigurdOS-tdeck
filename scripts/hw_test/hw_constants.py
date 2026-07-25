@@ -10,7 +10,7 @@ SERIAL_BAUD = 115_200
 FLASH_BAUD = 921_600
 ESP_CHIP = "esp32s3"
 
-PI_HOSTS: tuple[str, ...] = ("hermes-pi.local", "hermes-pi")
+PI_HOSTS: tuple[str, ...] = ("hermes-portable", "hermes-pi.local", "hermes-pi", "hermes-portable.local")
 PI_TDECK_PORT = "/dev/ttyACM0"
 PI_ESPTOOL = "~/hermes-venv/bin/esptool"
 

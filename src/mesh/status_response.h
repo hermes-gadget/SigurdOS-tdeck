@@ -11,8 +11,8 @@
 
 namespace sigurdos::mesh {
 
-inline constexpr size_t NODE_STATUS_TAG_SIZE = sizeof(uint32_t);
-inline constexpr size_t NODE_STATUS_WIRE_SIZE =
+static constexpr size_t NODE_STATUS_TAG_SIZE = sizeof(uint32_t);
+static constexpr size_t NODE_STATUS_WIRE_SIZE =
     NODE_STATUS_TAG_SIZE + NODE_STATUS_RESPONSE_SIZE;
 
 struct NodeStatus {

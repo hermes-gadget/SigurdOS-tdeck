@@ -1194,7 +1194,10 @@ bool init(bool spiffs_ok)
             false;
 #endif
         if (!cp.configured && !companion_usb && !force_radio) {
+            // Intentional first-boot / factory-reset policy: keep SX1262 off until
+            // onboarding or Settings → Radio saves prefs. UI continues (onboarding).
             Serial.println("[mesh] Radio not configured — holding SX1262 in reset");
+            Serial.println("[mesh] Complete onboarding or Settings → Radio to enable LoRa");
             pinMode(P_LORA_RESET, OUTPUT);
             digitalWrite(P_LORA_RESET, LOW);
             init_state = sigurdos::mesh::detail::MeshInitState::ClockOnly;

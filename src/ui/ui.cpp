@@ -116,6 +116,7 @@ void loop()
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
         // Show onboarding if: never saved prefs (fresh device) OR not yet configured
         if (!sigurdos::prefs_exists() || !p.configured) {
+            Serial.println("[boot] first-boot/unconfigured — showing onboarding");
             navigate_to_forced(Screen::Onboarding);
         } else {
             home_screen_create();

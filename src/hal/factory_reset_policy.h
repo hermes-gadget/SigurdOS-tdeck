@@ -8,9 +8,9 @@
 
 namespace sigurdos::hal::factory_reset {
 
-inline constexpr char PREFS_NAMESPACE[] = "sigurdos";
-inline constexpr char PASSWORDS_NAMESPACE[] = "sigurdos_pw";
-inline constexpr char CHAT_SCOPES_NAMESPACE[] = "chat_scopes";
+static constexpr char PREFS_NAMESPACE[] = "sigurdos";
+static constexpr char PASSWORDS_NAMESPACE[] = "sigurdos_pw";
+static constexpr char CHAT_SCOPES_NAMESPACE[] = "chat_scopes";
 
 enum class NvsAction : uint8_t {
     Clear,
@@ -25,7 +25,7 @@ struct NvsTarget {
 // The primary prefs namespace is deliberately last. The earlier namespaces
 // may be cleared independently, while the final action atomically replaces
 // prefs with a BLE-off, bond-purge-pending reset record.
-inline constexpr NvsTarget NVS_TARGETS[] = {
+static constexpr NvsTarget NVS_TARGETS[] = {
     {PASSWORDS_NAMESPACE, NvsAction::Clear},
     {CHAT_SCOPES_NAMESPACE, NvsAction::Clear},
     {PREFS_NAMESPACE, NvsAction::ReplaceWithSafePrefs},
@@ -46,7 +46,7 @@ inline bool applyNvsTargets(ApplyNvsTargetFn apply, void* context,
     return true;
 }
 
-inline constexpr size_t nvsTargetCount()
+static constexpr size_t nvsTargetCount()
 {
     return sizeof(NVS_TARGETS) / sizeof(NVS_TARGETS[0]);
 }

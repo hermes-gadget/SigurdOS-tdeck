@@ -328,6 +328,7 @@ static const ScreenEntry screen_table[] = {
     {"telemetry",       sigurdos::ui::Screen::Telemetry},
     {"repeaters",       sigurdos::ui::Screen::Repeaters},
     {"system",          sigurdos::ui::Screen::SettingsSystem},
+    {"s-system",        sigurdos::ui::Screen::SettingsSystem},
     {"wifinetworks",    sigurdos::ui::Screen::WiFiNetworks},
     {"nodestats",       sigurdos::ui::Screen::NodeStats},
     {"regions",         sigurdos::ui::Screen::Regions},
@@ -335,6 +336,8 @@ static const ScreenEntry screen_table[] = {
     {"s-radio",         sigurdos::ui::Screen::SettingsRadio},
     {"s-gps",           sigurdos::ui::Screen::SettingsGPS},
     {"bluetooth",       sigurdos::ui::Screen::Bluetooth},
+    // Hyphenated aliases used by hw_test UI_SCREEN_TARGETS
+    {"node-status",     sigurdos::ui::Screen::NodeStatus},
 };
 
 static const char* screen_name(sigurdos::ui::Screen s) {

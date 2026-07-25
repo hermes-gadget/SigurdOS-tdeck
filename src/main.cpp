@@ -38,14 +38,12 @@
 
 static sigurdos::TDeckBoard board;
 
-#if SIGURDOS_DEBUG_UI
+// Always emit compact boot milestones so release/empty-NVS boots are
+// diagnosable over serial. Verbose subsystem detail stays behind DEBUG_UI.
 static void boot_log(const char* msg)
 {
     Serial.printf("[boot] +%lums %s\n", (unsigned long)millis(), msg);
 }
-#else
-static void boot_log(const char*) {}
-#endif
 
 static void boot_status(const char* status)
 {

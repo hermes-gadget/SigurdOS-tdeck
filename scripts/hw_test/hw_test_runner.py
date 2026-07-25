@@ -1228,11 +1228,27 @@ def _run_pi_worker(args: argparse.Namespace, metadata: dict[str, Any]) -> int:
     if created.returncode != 0:
         raise RuntimeError(f"cannot create Pi worker directory: {created.stderr.strip()}")
     package_dir = Path(__file__).resolve().parent
+    scripts_dir = package_dir.parent
     copied = _run(["scp", "-r", str(package_dir), f"{host}:{remote_root}/"], timeout=120, echo=True)
     if copied.returncode != 0:
         raise RuntimeError(f"cannot deploy Pi worker: {copied.stderr.strip()}")
+    # hw_flash imports audit_launcher_artifact from scripts/; ship it beside the package.
+    artifact_helper = scripts_dir / "audit_launcher_artifact.py"
+    if artifact_helper.is_file():
+        helper = _run(
+            ["scp", str(artifact_helper), f"{host}:{remote_root}/audit_launcher_artifact.py"],
+            timeout=60,
+            echo=True,
+        )
+        if helper.returncode != 0:
+            raise RuntimeError(f"cannot deploy audit helper: {helper.stderr.strip()}")
     worker = _worker_arguments(args, remote_output, metadata)
-    command = f"cd {shlex.quote(remote_root)} && {shlex.join(worker)}"
+    # Ensure scripts/ root is on PYTHONPATH so audit_launcher_artifact imports resolve.
+    command = (
+        f"cd {shlex.quote(remote_root)} && "
+        f"PYTHONPATH={shlex.quote(remote_root)}:${{PYTHONPATH:-}} "
+        f"{shlex.join(worker)}"
+    )
     print(f"Running hardware tests on {host}:{args.port or PI_TDECK_PORT}", flush=True)
     result = subprocess.run(["ssh", host, command], check=False)
     args.outdir.mkdir(parents=True, exist_ok=True)

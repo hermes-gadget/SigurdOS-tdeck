@@ -69,6 +69,7 @@ void wifi_networks_screen_show() { record_dispatch(Screen::WiFiNetworks); }
 void bluetooth_screen_show() { record_dispatch(Screen::Bluetooth); }
 void regions_screen_show() { record_dispatch(Screen::Regions); }
 void custom_rf_screen_show() { record_dispatch(Screen::CustomRadioSetup); }
+void message_search_screen_show() { record_dispatch(Screen::MessageSearch); }
 void mesh_dashboard_screen_show() { record_dispatch(Screen::MeshDashboard); }
 void file_browser_screen_show() { record_dispatch(Screen::FileBrowser); }
 

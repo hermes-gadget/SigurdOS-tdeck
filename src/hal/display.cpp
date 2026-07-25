@@ -591,10 +591,18 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
     if (sigurdos::debug::get_level() >= 2 && sigurdos::debug::feat_get_display())
 #endif
     {
-        // Non-blocking flush logging: skip if USB CDC TX buffer is near full,
-        // otherwise Serial.printf() can block indefinitely (the buffer is only
-        // ~256 bytes on ESP32-S3 and continuous full-frame flushes fill it fast).
-        if (Serial.availableForWrite() >= 96) {
+        // FULL render mode flushes the entire FB on any dirty rect (~10 Hz idle).
+        // Log every frame would drown serial/capture; rate-limit full frames and
+        // keep partial flushes verbose when they occur.
+        const bool full_frame =
+            area->x1 == 0 && area->y1 == 0 &&
+            area->x2 >= (lv_coord_t)(TFT_WIDTH - 1) &&
+            area->y2 >= (lv_coord_t)(TFT_HEIGHT - 1);
+        static uint32_t last_full_log_ms = 0;
+        const uint32_t now = millis();
+        const bool allow = !full_frame || (now - last_full_log_ms) >= 1000;
+        if (allow && Serial.availableForWrite() >= 96) {
+            if (full_frame) last_full_log_ms = now;
             Serial.printf("[flush] #%lu  area=(%ld,%ld,%ld,%ld) w=%ld h=%ld pixels=%ld\n",
                           (unsigned long)dbg_flush_count,
                           (long)area->x1, (long)area->y1, (long)area->x2, (long)area->y2,
