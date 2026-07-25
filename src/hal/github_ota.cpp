@@ -22,6 +22,7 @@
 #include <SPIFFS.h>
 #include <esp_heap_caps.h>
 #include <esp_ota_ops.h>
+#include <esp_image_format.h>
 #include <atomic>
 #include <cstring>
 #include <cstdlib>
@@ -106,6 +107,21 @@ static unsigned long          s_last_progress = 0;
 static unsigned long          s_last_data = 0;
 static unsigned long          s_connect_start = 0;
 static std::atomic<bool>      s_cancelled{false};
+
+
+static bool verifyPendingOtaImage() {
+    const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
+    if (!part) return false;
+    esp_image_metadata_t meta{};
+    const esp_partition_pos_t pos = {.offset = part->address, .size = part->size};
+    const esp_err_t err = esp_image_verify(ESP_IMAGE_VERIFY, &pos, &meta);
+    if (err != ESP_OK) {
+        Serial.printf("[gh-ota] pending image verify failed: %s\n",
+                      esp_err_to_name(err));
+        return false;
+    }
+    return true;
+}
 
 static uint32_t currentSecurityEpoch() {
     uint32_t epoch = SIGURDOS_SECURITY_EPOCH;
@@ -578,6 +594,14 @@ static void serviceWorker() {
         if (!s_http || !s_http->connected()) {
             if (s_downloaded >= s_content_length && s_content_length > 0) {
                 if (Update.end(true)) {
+                    if (!verifyPendingOtaImage()) {
+                        const esp_partition_t* running = esp_ota_get_running_partition();
+                        if (running) {
+                            (void)esp_ota_set_boot_partition(running);
+                        }
+                        fail("Image failed authenticity verify");
+                        return;
+                    }
                     Serial.printf("[gh-ota] Update OK — %d bytes written\n",
                                   s_downloaded);
                     setStatus(GitHubOTAState::Success, 100,

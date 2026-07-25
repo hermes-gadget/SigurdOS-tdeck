@@ -17,8 +17,16 @@ namespace ota {
 // reachable when a device PIN is configured; an upload is accepted only when a
 // non-zero device PIN is set and the submitted PIN matches it. A zero/unset PIN
 // or an empty submission is treated as unauthenticated (#687).
+// Local OTA requires a strong device PIN (at least 6 decimal digits).
+// Weaker 4-digit PINs remain usable for UI gate / settings but cannot open
+// the firmware-upload attack surface.
+inline bool otaDevicePinEligible(uint32_t device_pin) {
+    return device_pin >= 100000u;
+}
+
 inline bool otaPinAccepts(uint32_t device_pin, const char* entered) {
     if (device_pin == 0 || entered == nullptr || entered[0] == '\0') return false;
+    if (!otaDevicePinEligible(device_pin)) return false;
     uint32_t value = 0;
     for (const char* p = entered; *p; ++p) {
         if (*p < '0' || *p > '9') return false;

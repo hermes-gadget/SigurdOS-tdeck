@@ -2325,6 +2325,27 @@ static bool dispatch(const char* line) {
         cmd_widgets();
     } else if (strcmp(cmd, "telemetry") == 0) {
         sigurdos::telemetry::cmd_telemetry(arg);
+    } else if (strcmp(cmd, "deep-sleep") == 0 || strcmp(cmd, "deepsleep") == 0) {
+        // Orderly persistence-safe sleep with short timer wake (issue #968).
+        // Default 15s so HW tests can observe wake without waiting 15 minutes.
+        uint32_t secs = 15;
+        if (arg && arg[0]) {
+            char* end = nullptr;
+            unsigned long parsed = strtoul(arg, &end, 10);
+            if (end != arg && parsed >= 5UL && parsed <= 120UL) {
+                secs = static_cast<uint32_t>(parsed);
+            } else {
+                Serial.println("[test] deep-sleep: use seconds 5..120");
+                return true;
+            }
+        }
+        Serial.printf("[test] orderly deep-sleep for %lu s (timer wake)\n",
+                      (unsigned long)secs);
+        Serial.flush();
+        delay(50);
+        sigurdos::mesh::shutdown(secs);
+        // Should not return; if it does the power path failed.
+        Serial.println("[test] FAIL deep-sleep returned to application");
     } else if (strcmp(cmd, "query") == 0) {
         sigurdos::telemetry::cmd_query(arg);
     } else if (strcmp(cmd, "crash") == 0) {

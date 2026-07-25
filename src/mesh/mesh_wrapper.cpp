@@ -2145,7 +2145,7 @@ void reloadContactsAfterIdentityChange() {
     saveContacts();
 }
 
-void shutdown()
+void shutdown(uint32_t wake_secs)
 {
     sigurdos::mesh::detail::coordinateShutdown(
         init_state,
@@ -2169,10 +2169,12 @@ void shutdown()
             delay(150);
             return saved;
         },
-        []() {
+        [wake_secs]() {
             // TDeckBoard owns wake configuration, bus quiescing, safe signal
             // states, rail removal, and the final deep-sleep transition.
-            board.sleep(0);
+            Serial.printf("[power] orderly deep-sleep wake_secs=%lu\n",
+                          (unsigned long)wake_secs);
+            board.sleep(wake_secs);
         });
 }
 

@@ -26,6 +26,7 @@
 #include "hal/ota_security_epoch.h"
 
 using sigurdos::ota::otaPinAccepts;
+using sigurdos::ota::otaDevicePinEligible;
 using sigurdos::ota::otaAccessPointInputsValid;
 using sigurdos::ota::otaSessionExpired;
 using sigurdos::ota::otaUpdateBeginSize;
@@ -46,32 +47,42 @@ TEST(OtaAuth, RejectsWhenNoPinConfigured) {
 
 // ── A configured PIN requires an exact match ────────────────────────────────
 TEST(OtaAuth, AcceptsOnlyMatchingPin) {
-    EXPECT_TRUE(otaPinAccepts(1234, "1234"));
-    EXPECT_FALSE(otaPinAccepts(1234, "1235"));
-    EXPECT_FALSE(otaPinAccepts(1234, "123"));
-    EXPECT_FALSE(otaPinAccepts(1234, "12340"));
+    EXPECT_TRUE(otaPinAccepts(123456, "123456"));
+    EXPECT_FALSE(otaPinAccepts(123456, "123457"));
+    EXPECT_FALSE(otaPinAccepts(123456, "12345"));
+    EXPECT_FALSE(otaPinAccepts(123456, "1234560"));
 }
 
 // ── Empty / missing submission against a configured PIN is rejected ─────────
 TEST(OtaAuth, RejectsEmptyOrNullSubmission) {
-    EXPECT_FALSE(otaPinAccepts(1234, ""));
-    EXPECT_FALSE(otaPinAccepts(1234, nullptr));
+    EXPECT_FALSE(otaPinAccepts(123456, ""));
+    EXPECT_FALSE(otaPinAccepts(123456, nullptr));
 }
 
 // ── Leading zeros and large PIN values within uint32 range ──────────────────
 TEST(OtaAuth, HandlesLargeAndPaddedValues) {
-    // Leading-zero submission still parses to the numeric PIN.
-    EXPECT_TRUE(otaPinAccepts(42, "0042"));
+    // Leading-zero submission still parses to the numeric PIN when eligible.
+    EXPECT_TRUE(otaPinAccepts(100042, "0100042"));
     // PIN near the top of the uint32 range matches exactly.
     EXPECT_TRUE(otaPinAccepts(4000000000u, "4000000000"));
     EXPECT_FALSE(otaPinAccepts(4000000000u, "4000000001"));
 }
 
 TEST(OtaAuth, RejectsSuffixesSignsWhitespaceAndOverflow) {
-    EXPECT_FALSE(otaPinAccepts(1234, "1234junk"));
-    EXPECT_FALSE(otaPinAccepts(1234, "+1234"));
-    EXPECT_FALSE(otaPinAccepts(1234, " 1234"));
+    EXPECT_FALSE(otaPinAccepts(123456, "123456junk"));
+    EXPECT_FALSE(otaPinAccepts(123456, "+123456"));
+    EXPECT_FALSE(otaPinAccepts(123456, " 123456"));
     EXPECT_FALSE(otaPinAccepts(1, "4294967297"));
+}
+
+TEST(OtaAuth, RequiresSixDigitEligibleDevicePin) {
+    EXPECT_FALSE(otaDevicePinEligible(0));
+    EXPECT_FALSE(otaDevicePinEligible(99999));   // 5 digits
+    EXPECT_TRUE(otaDevicePinEligible(100000));   // 6 digits
+    EXPECT_TRUE(otaDevicePinEligible(999999));
+    // Weak PINs never authenticate even with a matching submission.
+    EXPECT_FALSE(otaPinAccepts(1234, "1234"));
+    EXPECT_FALSE(otaPinAccepts(99999, "99999"));
 }
 
 TEST(OtaAccessPoint, ValidatesSsidAndWpaPasswordLengths) {

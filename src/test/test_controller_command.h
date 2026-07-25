@@ -32,7 +32,7 @@ inline bool sigurdos_test_controller_command_known_for_profile(const char* comma
       "debug", "emoji", "emoji-ac", "capture", "acmd", "loginstat", "tree",
       "widgets", "telemetry", "query", "crash", "drift", "scrolllist", "tap",
       "backlight", "fetchmsgs", "getrf", "setrf", "reboot", "restart",
-      "factoryreset", "wipe", "advert"};
+      "factoryreset", "wipe", "advert", "deep-sleep", "deepsleep"};
   for (const char* known : commands) {
     if (std::strcmp(command, known) == 0) return true;
   }

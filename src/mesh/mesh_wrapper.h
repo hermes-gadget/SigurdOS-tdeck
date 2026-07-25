@@ -176,7 +176,9 @@ bool     getLastAdvertUsedGps();
 bool saveState();
 bool saveChannels();
 void loadChannels();
-void shutdown();
+// wake_secs=0 uses the critical-battery default (15 min timer).
+// Non-zero requests a timed wake for tests/recovery.
+void shutdown(uint32_t wake_secs = 0);
 bool factoryReset();
 
 // Companion BLE bridge

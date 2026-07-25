@@ -17,6 +17,7 @@
 #include <Update.h>
 #include <esp_random.h>
 #include <esp_ota_ops.h>
+#include <esp_image_format.h>
 #include <atomic>
 #include <new>
 
@@ -83,6 +84,20 @@ static void otaServerWorker(void*) {
     vTaskDelete(nullptr);
 }
 
+
+static bool verifyPendingOtaImage() {
+    const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
+    if (!part) return false;
+    esp_image_metadata_t meta{};
+    const esp_partition_pos_t pos = {.offset = part->address, .size = part->size};
+    const esp_err_t err = esp_image_verify(ESP_IMAGE_VERIFY, &pos, &meta);
+    if (err != ESP_OK) {
+        SIG_LOGW("[ota] pending image verify failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    return true;
+}
+
 bool start(const char* ssid, const char* password) {
     if (active.load(std::memory_order_acquire)) return true;
 
@@ -110,6 +125,13 @@ bool start(const char* ssid, const char* password) {
         strncpy(last_error, "Set a device PIN before local OTA", sizeof(last_error) - 1);
         last_error[sizeof(last_error) - 1] = '\0';
         SIG_LOGW("[ota] REFUSED: no device PIN set — set a PIN before using WiFi OTA");
+        return false;
+    }
+    if (!otaDevicePinEligible(prefs_get().device_pin)) {
+        strncpy(last_error, "Set a 6+ digit device PIN before local OTA",
+                sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        SIG_LOGW("[ota] REFUSED: device PIN too weak for OTA (need 6+ digits)");
         return false;
     }
 
@@ -357,9 +379,22 @@ bool start(const char* ssid, const char* password) {
                     return;
                 }
                 if (Update.end(true)) {
-                    upload_state.started = false;
-                    upload_state.completed = true;
-                    SIG_LOGW("[ota] Update success: %u bytes", upload.totalSize);
+                    // Authenticate the written image as a valid ESP application
+                    // (header, segments, checksum/hash). Epoch was already
+                    // enforced on the first chunk.
+                    if (!verifyPendingOtaImage()) {
+                        upload_state.failed = true;
+                        upload_state.started = false;
+                        const esp_partition_t* running = esp_ota_get_running_partition();
+                        if (running) {
+                            (void)esp_ota_set_boot_partition(running);
+                        }
+                        SIG_LOGW("[ota] Upload rejected: image failed authenticity verify");
+                    } else {
+                        upload_state.started = false;
+                        upload_state.completed = true;
+                        SIG_LOGW("[ota] Update success: %u bytes", upload.totalSize);
+                    }
                 } else {
                     upload_state.failed = true;
                     upload_state.started = false;
