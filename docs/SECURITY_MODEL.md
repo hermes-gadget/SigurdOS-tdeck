@@ -38,15 +38,15 @@ phones must not regain an administrative session without pairing again.
 
 ## Stored secrets and physical access
 
-Release builds enable ESP32 flash encryption and encrypted NVS partitions.
-Those controls reduce offline extraction from a normally provisioned device;
-they do not make a powered, unlocked, debug-enabled, or physically modified
-device trustworthy. Debug and custom development builds can deliberately use a
-weaker configuration and must not be represented as release-equivalent.
+Current release artifacts are unsigned and do not enable ESP32 flash encryption
+or encrypted NVS. Secrets stored in flash therefore have no hardware-backed
+at-rest protection. Secure Boot, flash encryption, and hardware anti-rollback
+are intentionally disabled because this repository's build and runtime paths
+must never burn eFuses.
 
 Assume an attacker with sustained physical possession can erase or replace the
-device. Back up identity material only to a trusted system and erase/bond-reset
-the device before transferring ownership.
+device or extract unencrypted stored data. Back up identity material only to a
+trusted system and erase/bond-reset the device before transferring ownership.
 
 ## Firmware update trust
 
