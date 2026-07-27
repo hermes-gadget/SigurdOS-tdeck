@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -6,15 +7,22 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StorageSecurityContractTests(unittest.TestCase):
-    def test_production_profile_requires_flash_and_nvs_encryption(self):
+    def test_default_profile_disables_efuse_burning_security_features(self):
         config = (ROOT / "sdkconfig.defaults").read_text()
         for setting in (
-            "CONFIG_SECURE_FLASH_ENC_ENABLED=y",
-            "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y",
-            "CONFIG_NVS_ENCRYPTION=y",
-            "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y",
+            "CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK",
+            "CONFIG_SECURE_BOOT",
+            "CONFIG_SECURE_BOOT_V2_ENABLED",
+            "CONFIG_SECURE_FLASH_ENC_ENABLED",
+            "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE",
+            "CONFIG_SECURE_DISABLE_ROM_DL_MODE",
         ):
-            self.assertIn(setting, config)
+            self.assertNotRegex(
+                config,
+                rf"(?m)^{re.escape(setting)}=(?:y|1)$",
+                f"{setting} must not be enabled in sdkconfig.defaults",
+            )
+            self.assertIn(f"# {setting} is not set", config)
 
     def test_canonical_partition_table_protects_secret_bearing_data(self):
         platformio = (ROOT / "platformio.ini").read_text()
