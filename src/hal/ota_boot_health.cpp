@@ -7,6 +7,13 @@
 #include <Arduino.h>
 #include <esp_ota_ops.h>
 
+// With application anti-rollback active,
+// esp_ota_mark_app_valid_cancel_rollback() burns the secure-version eFuse.
+// SigurdOS must never compile this OTA health path in that configuration.
+#ifdef CONFIG_APP_ANTI_ROLLBACK
+#error "SigurdOS OTA health requires CONFIG_APP_ANTI_ROLLBACK to be disabled"
+#endif
+
 // Arduino otherwise accepts a pending image in initArduino(), before setup()
 // can validate SigurdOS's display, storage, settings, UI, and main loop.
 #if defined(CONFIG_APP_ROLLBACK_ENABLE)
