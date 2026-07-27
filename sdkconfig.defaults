@@ -1,8 +1,12 @@
+# This configuration intentionally never burns eFuses. See docs/EFUSE_AUDIT.md and docs/PRODUCTION_ROOT_OF_TRUST.md.
+#
 # Keep a newly booted OTA image pending until SigurdOS completes its own
 # display/UI/storage/settings/main-loop health contract.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
-# Every network OTA image must carry at least this monotonic secure_version.
-# Deployments may bind this to the ESP32-S3 eFuse secure-version counter; local
-# development does not automatically burn irreversible eFuses.
-CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=y
-CONFIG_BOOTLOADER_APP_SECURE_VERSION=1
+
+# CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK is not set
+# CONFIG_SECURE_BOOT is not set
+# CONFIG_SECURE_BOOT_V2_ENABLED is not set
+# CONFIG_SECURE_FLASH_ENC_ENABLED is not set
+# CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE is not set
+# CONFIG_SECURE_DISABLE_ROM_DL_MODE is not set
