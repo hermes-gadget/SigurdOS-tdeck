@@ -3,4 +3,4 @@
 #   --output-file ci/requirements-coverage.txt \
 #   --generate-hashes --python-version 3.12
 -r requirements-platformio.in
-gcovr==8.4
+gcovr==8.6
