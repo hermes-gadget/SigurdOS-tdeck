@@ -13,6 +13,15 @@ ROOT = Path(__file__).resolve().parents[2]
 PLATFORMIO_ENV_RE = re.compile(r"^\[env:([^]]+)]$", re.MULTILINE)
 MATRIX_ENV_RE = re.compile(r"^\s+- env:\s+(\S+)\s*$", re.MULTILINE)
 
+# Remote-test radio profiles are exercised on hardware during device testing,
+# not compiled in the nightly validation matrix (trimmed 2026-07-31).
+NOT_SCHEDULED = {
+    "SigurdOS_TDeck_remote_test_radio_testfreq",
+    "SigurdOS_TDeck_remote_test_radio_roomtest",
+    "SigurdOS_TDeck_remote_test_radio_usca",
+    "SigurdOS_TDeck_remote_test_radio_usca_rxonly",
+}
+
 
 class ValidationMatrixTests(unittest.TestCase):
     @classmethod
@@ -29,7 +38,7 @@ class ValidationMatrixTests(unittest.TestCase):
             if not environment.startswith("native")
         }
         scheduled = set(MATRIX_ENV_RE.findall(self.workflow))
-        self.assertEqual(scheduled, configured)
+        self.assertEqual(scheduled, configured - NOT_SCHEDULED)
         self.assertEqual(len(scheduled), len(MATRIX_ENV_RE.findall(self.workflow)))
 
     def test_every_cell_builds_and_requires_an_artifact(self) -> None:

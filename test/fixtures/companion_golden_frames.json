@@ -3,7 +3,7 @@
   "source": {
     "path": "lib/meshcore/examples/companion_radio/MyMesh.cpp",
     "sha256": "a363d3fcc8c0529bbc0a58577924d964d5f11b174d729543be69c3a7ab26208d",
-    "submodule_commit": "a9b5174158882554c9722a6d58143db68fefc7ee",
+    "submodule_commit": "c5787ee46124d540944ea238ff443f8d87ca0899",
     "protocol_codes_sha256": "37ed4b4636de7d9535c91b3f3087750d6f788699de180783998f5a35105c22c1"
   },
   "reviewed_upstream": {
@@ -14,24 +14,119 @@
     "reviewed_at": "2026-07-21"
   },
   "frames": [
-    {"name": "app_start", "direction": "host_to_device", "symbol": "CMD_APP_START", "hex": "0100000000000000"},
-    {"name": "get_contacts", "direction": "host_to_device", "symbol": "CMD_GET_CONTACTS", "hex": "04"},
-    {"name": "get_device_time", "direction": "host_to_device", "symbol": "CMD_GET_DEVICE_TIME", "hex": "05"},
-    {"name": "set_device_time", "direction": "host_to_device", "symbol": "CMD_SET_DEVICE_TIME", "hex": "0604030201"},
-    {"name": "sync_next_message", "direction": "host_to_device", "symbol": "CMD_SYNC_NEXT_MESSAGE", "hex": "0a"},
-    {"name": "get_battery_and_storage", "direction": "host_to_device", "symbol": "CMD_GET_BATT_AND_STORAGE", "hex": "14"},
-    {"name": "device_query_v3", "direction": "host_to_device", "symbol": "CMD_DEVICE_QUERY", "hex": "1603"},
-    {"name": "get_channel_zero", "direction": "host_to_device", "symbol": "CMD_GET_CHANNEL", "hex": "1f00"},
-    {"name": "get_core_stats", "direction": "host_to_device", "symbol": "CMD_GET_STATS", "hex": "3800"},
-    {"name": "ok", "direction": "device_to_host", "symbol": "RESP_CODE_OK", "hex": "00"},
-    {"name": "unsupported_command", "direction": "device_to_host", "symbol": "RESP_CODE_ERR", "hex": "0101"},
-    {"name": "contacts_start", "direction": "device_to_host", "symbol": "RESP_CODE_CONTACTS_START", "hex": "0200000000"},
-    {"name": "end_of_contacts", "direction": "device_to_host", "symbol": "RESP_CODE_END_OF_CONTACTS", "hex": "04"},
-    {"name": "no_more_messages", "direction": "device_to_host", "symbol": "RESP_CODE_NO_MORE_MESSAGES", "hex": "0a"},
-    {"name": "message_waiting", "direction": "device_to_host", "symbol": "PUSH_CODE_MSG_WAITING", "hex": "83"},
-    {"name": "log_rx_data", "direction": "device_to_host", "symbol": "PUSH_CODE_LOG_RX_DATA", "hex": "88"},
-    {"name": "binary_response", "direction": "device_to_host", "symbol": "PUSH_CODE_BINARY_RESPONSE", "hex": "8c"},
-    {"name": "path_discovery_response", "direction": "device_to_host", "symbol": "PUSH_CODE_PATH_DISCOVERY_RESPONSE", "hex": "8d"},
-    {"name": "control_data", "direction": "device_to_host", "symbol": "PUSH_CODE_CONTROL_DATA", "hex": "8e"}
+    {
+      "name": "app_start",
+      "direction": "host_to_device",
+      "symbol": "CMD_APP_START",
+      "hex": "0100000000000000"
+    },
+    {
+      "name": "get_contacts",
+      "direction": "host_to_device",
+      "symbol": "CMD_GET_CONTACTS",
+      "hex": "04"
+    },
+    {
+      "name": "get_device_time",
+      "direction": "host_to_device",
+      "symbol": "CMD_GET_DEVICE_TIME",
+      "hex": "05"
+    },
+    {
+      "name": "set_device_time",
+      "direction": "host_to_device",
+      "symbol": "CMD_SET_DEVICE_TIME",
+      "hex": "0604030201"
+    },
+    {
+      "name": "sync_next_message",
+      "direction": "host_to_device",
+      "symbol": "CMD_SYNC_NEXT_MESSAGE",
+      "hex": "0a"
+    },
+    {
+      "name": "get_battery_and_storage",
+      "direction": "host_to_device",
+      "symbol": "CMD_GET_BATT_AND_STORAGE",
+      "hex": "14"
+    },
+    {
+      "name": "device_query_v3",
+      "direction": "host_to_device",
+      "symbol": "CMD_DEVICE_QUERY",
+      "hex": "1603"
+    },
+    {
+      "name": "get_channel_zero",
+      "direction": "host_to_device",
+      "symbol": "CMD_GET_CHANNEL",
+      "hex": "1f00"
+    },
+    {
+      "name": "get_core_stats",
+      "direction": "host_to_device",
+      "symbol": "CMD_GET_STATS",
+      "hex": "3800"
+    },
+    {
+      "name": "ok",
+      "direction": "device_to_host",
+      "symbol": "RESP_CODE_OK",
+      "hex": "00"
+    },
+    {
+      "name": "unsupported_command",
+      "direction": "device_to_host",
+      "symbol": "RESP_CODE_ERR",
+      "hex": "0101"
+    },
+    {
+      "name": "contacts_start",
+      "direction": "device_to_host",
+      "symbol": "RESP_CODE_CONTACTS_START",
+      "hex": "0200000000"
+    },
+    {
+      "name": "end_of_contacts",
+      "direction": "device_to_host",
+      "symbol": "RESP_CODE_END_OF_CONTACTS",
+      "hex": "04"
+    },
+    {
+      "name": "no_more_messages",
+      "direction": "device_to_host",
+      "symbol": "RESP_CODE_NO_MORE_MESSAGES",
+      "hex": "0a"
+    },
+    {
+      "name": "message_waiting",
+      "direction": "device_to_host",
+      "symbol": "PUSH_CODE_MSG_WAITING",
+      "hex": "83"
+    },
+    {
+      "name": "log_rx_data",
+      "direction": "device_to_host",
+      "symbol": "PUSH_CODE_LOG_RX_DATA",
+      "hex": "88"
+    },
+    {
+      "name": "binary_response",
+      "direction": "device_to_host",
+      "symbol": "PUSH_CODE_BINARY_RESPONSE",
+      "hex": "8c"
+    },
+    {
+      "name": "path_discovery_response",
+      "direction": "device_to_host",
+      "symbol": "PUSH_CODE_PATH_DISCOVERY_RESPONSE",
+      "hex": "8d"
+    },
+    {
+      "name": "control_data",
+      "direction": "device_to_host",
+      "symbol": "PUSH_CODE_CONTROL_DATA",
+      "hex": "8e"
+    }
   ]
 }

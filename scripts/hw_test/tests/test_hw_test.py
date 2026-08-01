@@ -542,7 +542,9 @@ class ConstantsAndFlashTests(unittest.TestCase):
             "hw_test.hw_flash._run",
             side_effect=[FlashError("mDNS timed out"), reachable],
         ):
-            self.assertEqual(find_pi_host(), "hermes-pi")
+            # PI_HOSTS order: hermes-portable, hermes-pi.local, hermes-pi, ...
+            # First candidate times out; second is reachable.
+            self.assertEqual(find_pi_host(), "hermes-pi.local")
 
     def test_boot_log_filters_known_noise_but_rejects_bad_image(self) -> None:
         clean = (

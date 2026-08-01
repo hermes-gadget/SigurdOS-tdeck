@@ -23,7 +23,6 @@ EXTERNAL_ACTION_REF = re.compile(r"uses:\s+(?!\./)[^@\s]+@([^\s]+)")
 PRE_UPDATE_CACHE_WORKFLOW = "dependency-refresh.yml"
 CACHE_EXEMPT_WORKFLOWS = {
     PRE_UPDATE_CACHE_WORKFLOW,
-    "security.yml",
 }
 
 
@@ -91,29 +90,33 @@ class PlatformioCacheContractTest(unittest.TestCase):
         content = path.read_text(encoding="utf-8")
         workflow = yaml.safe_load(content)
         steps = workflow["jobs"]["refresh"]["steps"]
-        direct_caches = [
+        self.assertNotIn("uses: actions/cache@", content)
+        helpers = [
             step for step in steps
-            if str(step.get("uses", "")).startswith("actions/cache@")
+            if str(step.get("uses", "")) == HELPER_ACTION
         ]
-        self.assertEqual(len(direct_caches), 1)
-        cache = direct_caches[0]["with"]
-        self.assertIn("platformio.ini", cache["key"])
-        self.assertIn("lib/meshcore/library.json", cache["key"])
-        self.assertIn("ci/requirements-platformio.txt", cache["key"])
-        self.assertNotIn(".pio/build", cache["path"])
+        self.assertEqual(len(helpers), 1)
+        cache = helpers[0]["with"]
+        dependency_hash = cache.get("dependency-hash", "")
+        for dependency_input in HASH_INPUTS:
+            self.assertIn(dependency_input, dependency_hash)
+        helper_yaml = (
+            ROOT / ".github/actions/cache-platformio/action.yml"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn(".pio/build", helper_yaml)
 
-        cache_index = steps.index(direct_caches[0])
+        cache_index = steps.index(helpers[0])
         update_index = next(
             index for index, step in enumerate(steps)
             if "update_pio_dependency.py" in str(step.get("run", ""))
         )
         self.assertLess(cache_index, update_index)
 
-    def test_security_inventory_resolves_without_a_package_cache(self):
+    def test_security_inventory_reverifies_platformio_from_cache(self):
         content = (WORKFLOWS / "security.yml").read_text(encoding="utf-8")
         self.assertNotIn("uses: actions/cache@", content)
-        self.assertNotIn(HELPER_ACTION, content)
-        self.assertIn("pio pkg install -e SigurdOS_TDeck", content)
+        self.assertIn(HELPER_ACTION, content)
+        self.assertIn("pio pkg install --force -e SigurdOS_TDeck", content)
         self.assertIn("pio pkg list -e SigurdOS_TDeck", content)
 
     def test_helper_caches_packages_but_never_build_outputs(self):

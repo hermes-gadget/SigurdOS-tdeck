@@ -38,3 +38,4 @@ platformio.local.ini
 *.bak
 scripts/official-meshcore-client-test/node_modules/
 scripts/font-tools/node_modules/
+.tokensave/
