@@ -259,13 +259,13 @@ The WiFi Networks screen no longer performs a blocking scan. Instead:
 
 ## Related Screens
 
-|| Screen | Relationship |
-||--------|-------------|
-|| **Signal** ([SIGNAL_SCREEN](SIGNAL_SCREEN.md)) | Radio stats (RSSI, SNR, noise) — same radio hardware |
-|| **Contacts** (`contacts_screen_show`) | Full contact list (alphabetical, all ages) — tapped to DM |
-|| **Packets** (`heard_screen_show`) | Raw packet log with per-packet RSSI/SNR — useful alongside ping diagnostics |
-|| **Advertise** (`advertise_screen_show`) | Manual advert broadcast to announce presence on the mesh |
-|| **WiFi Networks** (`screen_wifi_networks.cpp`) | WiFi scan and connect — uses the coordinator for radio arbitration |
+| Screen | Relationship |
+|--------|-------------|
+| **Signal** ([SIGNAL_SCREEN](SIGNAL_SCREEN.md)) | Radio stats (RSSI, SNR, noise) — same radio hardware |
+| **Contacts** (`contacts_screen_show`) | Full contact list (alphabetical, all ages) — tapped to DM |
+| **Packets** (`heard_screen_show`) | Raw packet log with per-packet RSSI/SNR — useful alongside ping diagnostics |
+| **Advertise** (`advertise_screen_show`) | Manual advert broadcast to announce presence on the mesh |
+| **WiFi Networks** (`screen_wifi_networks.cpp`) | WiFi scan and connect — uses the coordinator for radio arbitration |
 
 ---
 
