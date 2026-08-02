@@ -30,6 +30,7 @@ if __package__ in (None, ""):
     from hw_test.hw_flash import (  # type: ignore[import-not-found]
         FlashError,
         HardwareFlasher,
+        cleanup_remote_stage,
         firmware_sha256,
         find_pi_host,
         validate_merged_firmware,
@@ -67,6 +68,7 @@ else:
     from .hw_flash import (
         FlashError,
         HardwareFlasher,
+        cleanup_remote_stage,
         firmware_sha256,
         find_pi_host,
         validate_merged_firmware,
@@ -927,6 +929,7 @@ def _build_or_flash(args: argparse.Namespace, metadata: dict[str, Any]) -> None:
         port=port,
         pi_host=args.pi_host,
         esptool=args.esptool,
+        keep_remote=args.keep_remote,
     )
     if args.firmware:
         firmware = validate_merged_firmware(
@@ -1224,46 +1227,61 @@ def _run_pi_worker(args: argparse.Namespace, metadata: dict[str, Any]) -> int:
     host = find_pi_host(args.pi_host)
     remote_root = f"/tmp/sigurdos-hw-test-runner-{int(time.time())}"
     remote_output = f"{remote_root}/results"
-    created = _run(["ssh", host, "mkdir", "-p", remote_root], timeout=20)
-    if created.returncode != 0:
-        raise RuntimeError(f"cannot create Pi worker directory: {created.stderr.strip()}")
-    package_dir = Path(__file__).resolve().parent
-    scripts_dir = package_dir.parent
-    copied = _run(["scp", "-r", str(package_dir), f"{host}:{remote_root}/"], timeout=120, echo=True)
-    if copied.returncode != 0:
-        raise RuntimeError(f"cannot deploy Pi worker: {copied.stderr.strip()}")
-    # hw_flash imports audit_launcher_artifact from scripts/; ship it beside the package.
-    artifact_helper = scripts_dir / "audit_launcher_artifact.py"
-    if artifact_helper.is_file():
-        helper = _run(
-            ["scp", str(artifact_helper), f"{host}:{remote_root}/audit_launcher_artifact.py"],
-            timeout=60,
+    created = False
+    try:
+        created_result = _run(["ssh", host, "mkdir", "-p", remote_root], timeout=20)
+        if created_result.returncode != 0:
+            raise RuntimeError(
+                f"cannot create Pi worker directory: {created_result.stderr.strip()}"
+            )
+        created = True
+        package_dir = Path(__file__).resolve().parent
+        scripts_dir = package_dir.parent
+        copied = _run(
+            ["scp", "-r", str(package_dir), f"{host}:{remote_root}/"],
+            timeout=120,
             echo=True,
         )
-        if helper.returncode != 0:
-            raise RuntimeError(f"cannot deploy audit helper: {helper.stderr.strip()}")
-    worker = _worker_arguments(args, remote_output, metadata)
-    # Ensure scripts/ root is on PYTHONPATH so audit_launcher_artifact imports resolve.
-    command = (
-        f"cd {shlex.quote(remote_root)} && "
-        f"PYTHONPATH={shlex.quote(remote_root)}:${{PYTHONPATH:-}} "
-        f"{shlex.join(worker)}"
-    )
-    print(f"Running hardware tests on {host}:{args.port or PI_TDECK_PORT}", flush=True)
-    result = subprocess.run(["ssh", host, command], check=False)
-    args.outdir.mkdir(parents=True, exist_ok=True)
-    fetched = _run(
-        ["scp", "-r", f"{host}:{remote_output}/.", str(args.outdir)],
-        timeout=180,
-        echo=True,
-    )
-    if fetched.returncode != 0:
-        raise RuntimeError(f"cannot retrieve Pi results: {fetched.stderr.strip()}")
-    metadata.update({"pi_host": host, "pi_port": args.port or PI_TDECK_PORT})
-    _merge_report_metadata(args.outdir, metadata, transport="pi")
-    if result.returncode in (0, 1, 2):
-        return result.returncode
-    return 2
+        if copied.returncode != 0:
+            raise RuntimeError(f"cannot deploy Pi worker: {copied.stderr.strip()}")
+        # hw_flash imports audit_launcher_artifact from scripts/; ship it beside the package.
+        artifact_helper = scripts_dir / "audit_launcher_artifact.py"
+        if artifact_helper.is_file():
+            helper = _run(
+                ["scp", str(artifact_helper), f"{host}:{remote_root}/audit_launcher_artifact.py"],
+                timeout=60,
+                echo=True,
+            )
+            if helper.returncode != 0:
+                raise RuntimeError(f"cannot deploy audit helper: {helper.stderr.strip()}")
+        worker = _worker_arguments(args, remote_output, metadata)
+        # Ensure scripts/ root is on PYTHONPATH so audit_launcher_artifact imports resolve.
+        command = (
+            f"cd {shlex.quote(remote_root)} && "
+            f"PYTHONPATH={shlex.quote(remote_root)}:${{PYTHONPATH:-}} "
+            f"{shlex.join(worker)}"
+        )
+        print(f"Running hardware tests on {host}:{args.port or PI_TDECK_PORT}", flush=True)
+        result = subprocess.run(["ssh", host, command], check=False)
+        args.outdir.mkdir(parents=True, exist_ok=True)
+        fetched = _run(
+            ["scp", "-r", f"{host}:{remote_output}/.", str(args.outdir)],
+            timeout=180,
+            echo=True,
+        )
+        if fetched.returncode != 0:
+            raise RuntimeError(f"cannot retrieve Pi results: {fetched.stderr.strip()}")
+        metadata.update({"pi_host": host, "pi_port": args.port or PI_TDECK_PORT})
+        _merge_report_metadata(args.outdir, metadata, transport="pi")
+        if result.returncode in (0, 1, 2):
+            return result.returncode
+        return 2
+    finally:
+        if created:
+            if args.keep_remote:
+                print(f"Keeping Pi staging directory: {remote_root}", flush=True)
+            else:
+                cleanup_remote_stage(host, remote_root)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1293,6 +1311,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baud", type=int, default=SERIAL_BAUD)
     parser.add_argument("--env", default=DEFAULT_BUILD_ENV, help="expected/build environment")
     parser.add_argument("--outdir", type=Path, default=default_output_dir())
+    parser.add_argument(
+        "--keep-remote",
+        action="store_true",
+        help="keep the Pi staging directory for debugging instead of removing it",
+    )
 
     parser.add_argument("--iterations", type=int, default=1, help="UI sweep iterations")
     parser.add_argument("--duration", type=float, default=1800.0, help="soak duration in seconds")

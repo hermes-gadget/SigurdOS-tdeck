@@ -117,6 +117,10 @@ The Pi path stages the merged image with `scp`, then runs:
   --baud 921600 write-flash 0 firmware-merged.bin
 ```
 
+Pi staging directories are removed after flashing or result retrieval, including
+failure paths. Use `--keep-remote` only when debugging a run and the temporary
+firmware or evidence must be retained for inspection.
+
 After flashing, the tool opens the serial port without explicit DTR/RTS calls
 and verifies a clean boot log. Boot-time I2C Error 263 during the first five
 seconds and `SPIFFS Already Mounted` messages are ignored. Invalid image, panic,

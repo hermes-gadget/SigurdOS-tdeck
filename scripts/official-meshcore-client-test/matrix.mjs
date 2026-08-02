@@ -135,7 +135,7 @@ async function main() {
       await connection.close();
       add("disconnect", true);
     } catch (e) {
-      add("disconnect", false, e?.message || String(e));
+      add("disconnect", false, redactError(e));
     }
   }
 

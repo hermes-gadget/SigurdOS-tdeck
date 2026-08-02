@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -35,6 +36,22 @@ class PlatformioSbomTests(unittest.TestCase):
     def test_output_is_deterministic(self) -> None:
         lock = ROOT / "ci" / "platformio-packages.lock"
         self.assertEqual(MODULE.generate(lock), MODULE.generate(lock))
+
+    def test_inventory_includes_nested_dependencies_at_any_depth(self) -> None:
+        lock_text = """\
+Libraries
+├── MeshCore @ 1.10.0 (required: file://lib/meshcore @ 1.10.0)
+│   ├── RTClib @ 2.1.4 (required: adafruit/RTClib @ ^2.1.3)
+│   │   └── RadioLib @ 7.7.1 (required: jgromes/RadioLib @ ^7.6.0)
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "platformio-packages.lock"
+            lock.write_text(lock_text, encoding="utf-8")
+            components = MODULE.generate(lock)["components"]
+
+        names = [component["name"] for component in components]
+        self.assertEqual(names.count("RTClib"), 1)
+        self.assertEqual(names.count("RadioLib"), 1)
 
 
 if __name__ == "__main__":

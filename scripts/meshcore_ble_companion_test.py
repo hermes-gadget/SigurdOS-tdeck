@@ -224,12 +224,6 @@ async def run_protocol_matrix(mc) -> list[CaseResult]:
     except Exception as e:
         add("get_batt_storage", False, f"{type(e).__name__}: {e}")
 
-    try:
-        await mc.disconnect()
-        add("disconnect", True)
-    except Exception as e:
-        add("disconnect", False, f"{type(e).__name__}: {e}")
-
     return results
 
 
@@ -251,6 +245,78 @@ async def connect_ble(address: Optional[str], pin: Optional[str], timeout: float
         default_timeout=timeout,
         auto_reconnect=False,
     )
+
+
+async def run_protocol_invocation(
+    transport: str,
+    serial: str,
+    baud: int,
+    address: Optional[str],
+    pin: Optional[str],
+    timeout: float,
+    scan_seconds: float,
+    debug: bool,
+) -> tuple[Optional[str], list[dict[str, str]], list[CaseResult]]:
+    """Run scan, connection, matrix, and disconnect on one asyncio event loop."""
+
+    devices: list[dict[str, str]] = []
+    if transport == "ble-health":
+        devices = await scan_meshcore(scan_seconds)
+        return address, devices, [
+            CaseResult(
+                name="ble_advertise",
+                ok=bool(devices),
+                detail=f"found={len(devices)}",
+                data={"devices": devices},
+            )
+        ]
+
+    resolved_address = address
+    if transport == "usb":
+        mc = await connect_usb(serial, baud, timeout, debug)
+    else:
+        devices = await scan_meshcore(scan_seconds)
+        if not resolved_address and devices:
+            resolved_address = devices[0]["address"]
+        if not resolved_address:
+            raise RuntimeError("No MeshCore BLE advertiser found")
+        if not pin:
+            raise RuntimeError("BLE PIN required (use --auto or --pin)")
+        LOG.info("Connecting BLE address=%s pin=******", resolved_address)
+        mc = await connect_ble(resolved_address, pin, timeout, debug)
+
+    if mc is None:
+        if transport == "usb":
+            raise RuntimeError("MeshCore.create_serial failed")
+        raise RuntimeError(
+            "MeshCore.create_ble failed — BlueZ MITM pairing often needs a "
+            "registered agent; see docs/COMPANION_BLE_TEST_ENV.md"
+        )
+
+    results: list[CaseResult] = []
+    try:
+        results = await run_protocol_matrix(mc)
+    except Exception as exc:
+        results.append(
+            CaseResult(
+                name="protocol_matrix",
+                ok=False,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+        )
+    finally:
+        try:
+            await mc.disconnect()
+            results.append(CaseResult(name="disconnect", ok=True))
+        except Exception as exc:
+            results.append(
+                CaseResult(
+                    name="disconnect",
+                    ok=False,
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
+            )
+    return resolved_address, devices, results
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -309,8 +375,20 @@ def main(argv: Optional[list[str]] = None) -> int:
             else:
                 time.sleep(2.0)
 
+        address, devices, results = asyncio.run(
+            run_protocol_invocation(
+                args.transport,
+                args.serial,
+                args.baud,
+                address,
+                pin,
+                args.timeout,
+                args.scan_seconds,
+                args.verbose,
+            )
+        )
+
         if args.transport == "ble-health":
-            devices = asyncio.run(scan_meshcore(args.scan_seconds))
             payload["devices"] = devices
             payload["summary"] = {
                 "total": 1,
@@ -318,12 +396,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 "failed": 0 if devices else 1,
             }
             payload["results"] = [
-                {
-                    "name": "ble_advertise",
-                    "ok": bool(devices),
-                    "detail": f"found={len(devices)}",
-                    "data": {"devices": devices},
-                }
+                asdict(result) for result in results
             ]
             print(json.dumps(payload, indent=2))
             if args.json_out:
@@ -331,37 +404,13 @@ def main(argv: Optional[list[str]] = None) -> int:
                     json.dump(payload, f, indent=2)
             return 0 if devices else 2
 
-        if args.transport == "usb":
-            mc = asyncio.run(
-                connect_usb(args.serial, args.baud, args.timeout, args.verbose)
-            )
-            if mc is None:
-                raise RuntimeError("MeshCore.create_serial failed")
-            results = asyncio.run(run_protocol_matrix(mc))
-        else:
-            devices = asyncio.run(scan_meshcore(args.scan_seconds))
-            payload["devices"] = devices
-            if not address and devices:
-                address = devices[0]["address"]
-            if not address:
-                raise RuntimeError("No MeshCore BLE advertiser found")
-            if not pin:
-                raise RuntimeError("BLE PIN required (use --auto or --pin)")
-            LOG.info("Connecting BLE address=%s pin=******", address)
-            mc = asyncio.run(connect_ble(address, pin, args.timeout, args.verbose))
-            if mc is None:
-                raise RuntimeError(
-                    "MeshCore.create_ble failed — BlueZ MITM pairing often needs a "
-                    "registered agent; see docs/COMPANION_BLE_TEST_ENV.md"
-                )
-            results = asyncio.run(run_protocol_matrix(mc))
-
         payload["results"] = [asdict(r) for r in results]
         payload["summary"] = {
             "total": len(results),
             "passed": sum(1 for r in results if r.ok),
             "failed": sum(1 for r in results if not r.ok),
         }
+        payload["devices"] = devices
         payload["address"] = address
         payload["pin_present"] = bool(pin)
         print(json.dumps(payload, indent=2))

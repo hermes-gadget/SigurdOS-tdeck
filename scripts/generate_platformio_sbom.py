@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 PACKAGE = re.compile(
-    r"^[├└]──\s+(.+?)\s+@\s+(\S+)\s+\(required:\s+(.+?)\s+@\s+(.+?)\)$"
+    r"^[│ ]*[├└]──\s+(.+?)\s+@\s+(\S+)\s+\(required:\s+(.+?)\s+@\s+(.+?)\)$"
 )
 MESHCORE = re.compile(r"^MeshCore submodule @ ([0-9a-f]{40})$")
 PLATFORM = re.compile(
