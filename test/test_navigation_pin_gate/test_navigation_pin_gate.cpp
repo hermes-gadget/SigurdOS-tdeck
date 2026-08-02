@@ -7,6 +7,7 @@
 #define SIGURDOS_NAVIGATION_TEST 1
 
 #include <array>
+#include <string>
 
 #include <gtest/gtest.h>
 
@@ -22,6 +23,9 @@ int g_pin_prompt_count = 0;
 Screen g_pin_prompt_target = Screen::COUNT;
 int g_dispatch_count = 0;
 Screen g_last_dispatched = Screen::COUNT;
+std::string g_last_contact_name;
+std::string g_last_repeater_name;
+bool g_last_repeater_skip_login = false;
 
 void record_dispatch(Screen screen)
 {
@@ -73,13 +77,16 @@ void message_search_screen_show() { record_dispatch(Screen::MessageSearch); }
 void mesh_dashboard_screen_show() { record_dispatch(Screen::MeshDashboard); }
 void file_browser_screen_show() { record_dispatch(Screen::FileBrowser); }
 
-void contact_detail_screen_show(const char*)
+void contact_detail_screen_show(const char* name)
 {
+    g_last_contact_name = name ? name : "";
     record_dispatch(Screen::ContactDetail);
 }
 
-void repeater_detail_screen_show(const char*, bool)
+void repeater_detail_screen_show(const char* name, bool skip_login)
 {
+    g_last_repeater_name = name ? name : "";
+    g_last_repeater_skip_login = skip_login;
     record_dispatch(Screen::RepeaterDetail);
 }
 
@@ -89,7 +96,7 @@ void repeater_detail_screen_show(const char*, bool)
 
 namespace {
 
-constexpr std::array<Screen, 13> PROTECTED_ROUTES = {
+constexpr std::array<Screen, 15> PROTECTED_ROUTES = {
     Screen::Settings,
     Screen::Terminal,
     Screen::RadioSetup,
@@ -103,6 +110,8 @@ constexpr std::array<Screen, 13> PROTECTED_ROUTES = {
     Screen::Regions,
     Screen::CustomRadioSetup,
     Screen::FileBrowser,
+    Screen::ContactDetail,
+    Screen::RepeaterDetail,
 };
 
 bool expected_protected(Screen screen)
@@ -127,6 +136,9 @@ protected:
         g_pin_prompt_target = Screen::COUNT;
         g_dispatch_count = 0;
         g_last_dispatched = Screen::COUNT;
+        g_last_contact_name.clear();
+        g_last_repeater_name.clear();
+        g_last_repeater_skip_login = false;
         sigurdos::ui::navigation_reset_for_test();
     }
 };
@@ -144,6 +156,7 @@ TEST_F(NavigationPinGateTest, RouteTableClassifiesEveryScreen)
 TEST_F(NavigationPinGateTest, DirectNavigationDeniesEveryProtectedRouteUntilUnlock)
 {
     for (const Screen target : PROTECTED_ROUTES) {
+        if (target == Screen::ContactDetail || target == Screen::RepeaterDetail) continue;
         sigurdos::ui::navigation_reset_for_test();
         g_pin_prompt_count = 0;
         g_dispatch_count = 0;
@@ -184,21 +197,77 @@ TEST_F(NavigationPinGateTest, UnprotectedDirectRoutesRemainAvailable)
     }
 }
 
-TEST_F(NavigationPinGateTest, ParameterizedDetailRoutesRemainAvailable)
+TEST_F(NavigationPinGateTest, ParameterizedDetailRoutesRequirePinAndPreserveArguments)
 {
     sigurdos::ui::navigate_to_contact_detail("Alice");
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    EXPECT_EQ(g_pin_prompt_count, 1);
+    EXPECT_EQ(g_pin_prompt_target, Screen::ContactDetail);
+    EXPECT_EQ(g_dispatch_count, 0);
+
+    sigurdos::ui::navigation_pin_unlocked(Screen::ContactDetail);
     EXPECT_EQ(sigurdos::ui::current_screen(), Screen::ContactDetail);
-    EXPECT_EQ(g_pin_prompt_count, 0);
-    EXPECT_EQ(g_last_dispatched, Screen::ContactDetail);
+    EXPECT_EQ(g_last_contact_name, "Alice");
+    EXPECT_EQ(g_dispatch_count, 1);
 
     sigurdos::ui::navigation_reset_for_test();
+    g_pin_prompt_count = 0;
     g_dispatch_count = 0;
     g_last_dispatched = Screen::COUNT;
     sigurdos::ui::navigate_to_repeater_detail("Repeater", true);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    EXPECT_EQ(g_pin_prompt_count, 1);
+    EXPECT_EQ(g_pin_prompt_target, Screen::RepeaterDetail);
+    EXPECT_EQ(g_dispatch_count, 0);
+
+    sigurdos::ui::navigation_pin_unlocked(Screen::RepeaterDetail);
     EXPECT_EQ(sigurdos::ui::current_screen(), Screen::RepeaterDetail);
-    EXPECT_EQ(g_pin_prompt_count, 0);
+    EXPECT_EQ(g_last_repeater_name, "Repeater");
+    EXPECT_TRUE(g_last_repeater_skip_login);
     EXPECT_EQ(g_dispatch_count, 1);
-    EXPECT_EQ(g_last_dispatched, Screen::RepeaterDetail);
+}
+
+TEST_F(NavigationPinGateTest, DetailRefreshCannotBypassPin)
+{
+    g_pin_grace = true;
+    sigurdos::ui::navigate_to_contact_detail("Alice");
+    ASSERT_EQ(sigurdos::ui::current_screen(), Screen::ContactDetail);
+
+    g_pin_grace = false;
+    g_pin_prompt_count = 0;
+    g_dispatch_count = 0;
+    sigurdos::ui::navigate_to_contact_detail("Bob");
+
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::ContactDetail);
+    EXPECT_EQ(g_pin_prompt_count, 1);
+    EXPECT_EQ(g_pin_prompt_target, Screen::ContactDetail);
+    EXPECT_EQ(g_dispatch_count, 0);
+
+    sigurdos::ui::navigation_pin_unlocked(Screen::ContactDetail);
+    EXPECT_EQ(g_dispatch_count, 1);
+    EXPECT_EQ(g_last_contact_name, "Bob");
+}
+
+TEST_F(NavigationPinGateTest, RepeaterDetailRefreshCannotBypassPin)
+{
+    g_pin_grace = true;
+    sigurdos::ui::navigate_to_repeater_detail("Repeater A", false);
+    ASSERT_EQ(sigurdos::ui::current_screen(), Screen::RepeaterDetail);
+
+    g_pin_grace = false;
+    g_pin_prompt_count = 0;
+    g_dispatch_count = 0;
+    sigurdos::ui::navigate_to_repeater_detail("Repeater B", true);
+
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::RepeaterDetail);
+    EXPECT_EQ(g_pin_prompt_count, 1);
+    EXPECT_EQ(g_pin_prompt_target, Screen::RepeaterDetail);
+    EXPECT_EQ(g_dispatch_count, 0);
+
+    sigurdos::ui::navigation_pin_unlocked(Screen::RepeaterDetail);
+    EXPECT_EQ(g_dispatch_count, 1);
+    EXPECT_EQ(g_last_repeater_name, "Repeater B");
+    EXPECT_TRUE(g_last_repeater_skip_login);
 }
 
 TEST_F(NavigationPinGateTest, InvalidAndArgumentlessRoutesDoNotMutateState)

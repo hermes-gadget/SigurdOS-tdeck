@@ -760,7 +760,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
         // Rebuild screen in post-login mode
-        repeater_detail_screen_show(n, true);
+        navigate_to_repeater_detail(n, true);
         start_connection_watch_timer(n);
         free(n);
     } else if (st == LOGIN_STATUS_FAILED || st == LOGIN_STATUS_TIMEOUT ||
@@ -783,7 +783,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
         delete ctx;
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
-        repeater_detail_screen_show(n, false);
+        navigate_to_repeater_detail(n, false);
         free(n);
     }
     // LOGIN_PENDING/LOGIN_NONE while waiting, or LOGIN_OK while watching, keep polling.
@@ -1430,7 +1430,7 @@ void contact_detail_screen_show(const char* contact_name)
                         "Contact permission was not saved");
                     return;
                 }
-                sigurdos::ui::contact_detail_screen_show(name);
+                sigurdos::ui::navigate_to_contact_detail(name);
             }
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(demote_btn, [](lv_event_t* e) {
@@ -1460,7 +1460,7 @@ void contact_detail_screen_show(const char* contact_name)
                         "Contact permission was not saved");
                     return;
                 }
-                sigurdos::ui::contact_detail_screen_show(name);
+                sigurdos::ui::navigate_to_contact_detail(name);
             }
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(promote_btn, [](lv_event_t* e) {
@@ -1793,7 +1793,7 @@ void contact_detail_screen_show(const char* contact_name)
                 char copy[sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN] = {};
                 if (value) strncpy(copy, value, sizeof(copy) - 1);
                 if (copy[0] && sigurdos::mesh::resetPathTo(copy)) {
-                    contact_detail_screen_show(copy);
+                    navigate_to_contact_detail(copy);
                 } else {
                     notifications_post(
                         NotificationEvent::UiError,

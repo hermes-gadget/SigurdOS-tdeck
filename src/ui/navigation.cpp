@@ -121,6 +121,8 @@ bool is_pin_protected_route(Screen screen)
     case Screen::Regions:
     case Screen::CustomRadioSetup:
     case Screen::FileBrowser:
+    case Screen::ContactDetail:
+    case Screen::RepeaterDetail:
         return true;
     default:
         return false;
@@ -271,6 +273,7 @@ void navigate_to_contact_detail(const char* contact_name)
     if (pending_navigation.type != PendingNavigationType::None) return;
     if (!copy_route_name(contact_detail_name, sizeof(contact_detail_name), contact_name)) return;
     if (current == Screen::ContactDetail) {
+        if (!authorize_route(Screen::ContactDetail, PendingNavigationType::Refresh)) return;
         contact_detail_screen_show(contact_detail_name);
         return;
     }
@@ -284,6 +287,7 @@ void navigate_to_repeater_detail(const char* contact_name, bool skip_login)
     if (!copy_route_name(repeater_detail_name, sizeof(repeater_detail_name), contact_name)) return;
     repeater_detail_skip_login = skip_login;
     if (current == Screen::RepeaterDetail) {
+        if (!authorize_route(Screen::RepeaterDetail, PendingNavigationType::Refresh)) return;
         repeater_detail_screen_show(repeater_detail_name, repeater_detail_skip_login);
         return;
     }

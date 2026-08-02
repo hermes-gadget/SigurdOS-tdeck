@@ -484,7 +484,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                         return;
                     }
 
-                    repeater_detail_screen_show(name, true);
+                    navigate_to_repeater_detail(name, true);
 
                 }
             }, LV_EVENT_CLICKED, nullptr);
