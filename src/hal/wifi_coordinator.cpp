@@ -11,6 +11,7 @@ namespace sigurdos::wifi {
 namespace {
 
 Coordinator coordinator;
+ReleaseRequestQueue release_requests;
 
 #ifdef ESP32_PLATFORM
 RadioMode readRadioMode() {
@@ -62,6 +63,22 @@ bool release(Owner owner) {
     const ReleasePlan plan = coordinator.release(owner);
     if (!plan.released) return false;
     return applyRadioMode(plan.restored_mode);
+}
+
+void requestRelease(Owner owner) {
+    release_requests.request(owner);
+}
+
+void servicePendingReleases() {
+    const uint8_t pending = release_requests.take();
+    constexpr Owner owners[] = {
+        Owner::Scan, Owner::ApOta, Owner::GitHubOta, Owner::Sta,
+    };
+    for (const Owner owner : owners) {
+        if ((pending & releaseRequestMask(owner)) != 0) {
+            (void)release(owner);
+        }
+    }
 }
 
 bool canAcquire(Owner owner) {

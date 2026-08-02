@@ -11,6 +11,7 @@
 #include "hal/sdcard.h"
 #include "hal/wifi_ota.h"
 #include "hal/github_ota.h"
+#include "hal/wifi_coordinator.h"
 #include "hal/prefs.h"
 #include "hal/launcher_env.h"
 #include "hal/buzzer.h"
@@ -265,6 +266,7 @@ void loop()
 #if SIGURDOS_TELEMETRY
     uint32_t loop_start_us = micros();
 #endif
+    sigurdos::wifi::servicePendingReleases();
     // Low-battery auto-shutdown (matches MeshCore pattern)
     static uint32_t last_batt_check = 0;
     if (millis() - last_batt_check > 30000) {  // every 30s

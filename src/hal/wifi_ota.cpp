@@ -63,7 +63,7 @@ static void cleanupServer() {
     }
     if (Update.isRunning()) Update.abort();
     if (using_access_point) WiFi.softAPdisconnect(true);
-    wifi::release(wifi::Owner::ApOta);
+    wifi::requestRelease(wifi::Owner::ApOta);
     using_access_point = false;
     session_started_at = 0;
     upload_state = {};
