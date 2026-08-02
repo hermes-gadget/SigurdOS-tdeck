@@ -21,6 +21,11 @@ constexpr size_t OTA_TRANSFER_SLICE_BYTES = 16U * 1024U;
 constexpr uint32_t OTA_TRANSFER_SLICE_MS = 8U;
 constexpr size_t OTA_MAX_IMAGE_BYTES = 6U * 1024U * 1024U;
 
+inline bool otaRebootMayFinalize(bool reboot_pending, bool worker_active)
+{
+    return reboot_pending && !worker_active;
+}
+
 inline bool otaTransferSliceExhausted(size_t bytes_processed,
                                       uint32_t slice_started_at,
                                       uint32_t now) {

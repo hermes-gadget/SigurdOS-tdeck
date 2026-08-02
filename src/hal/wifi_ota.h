@@ -99,6 +99,10 @@ void stop();
 // Returns true if OTA is active.
 bool isActive();
 
+// Returns true after an upload has completed and until the main loop has
+// checkpointed state and performed the orderly reboot.
+bool isRebootPending();
+
 // Human-readable reason for the most recent start failure.
 const char* getLastError();
 

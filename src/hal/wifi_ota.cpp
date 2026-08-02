@@ -12,9 +12,11 @@
 #include "ota_write_policy.h"
 #include "prefs.h"
 #include "wifi_coordinator.h"
+#include "../mesh/mesh_wrapper.h"
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Update.h>
+#include <SPIFFS.h>
 #include <esp_random.h>
 #include <esp_ota_ops.h>
 #include <esp_image_format.h>
@@ -27,6 +29,7 @@ namespace ota {
 static WebServer* server = nullptr;
 static std::atomic<bool> active{false};
 static std::atomic<bool> stop_requested{false};
+static std::atomic<bool> reboot_pending{false};
 static char server_ip[16] = "";
 static char ap_password[64] = "";
 static char last_error[96] = "";
@@ -100,6 +103,13 @@ static bool verifyPendingOtaImage() {
 
 bool start(const char* ssid, const char* password) {
     if (active.load(std::memory_order_acquire)) return true;
+
+    if (reboot_pending.load(std::memory_order_acquire)) {
+        strncpy(last_error, "OTA reboot pending", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        SIG_LOGW("[ota] REFUSED: reboot pending after completed upload");
+        return false;
+    }
 
     last_error[0] = '\0';
 
@@ -272,8 +282,11 @@ bool start(const char* ssid, const char* password) {
                 server->send(500, "text/plain", error);
             } else {
                 server->send(200, "text/plain", "OK");
-                delay(2000);
-                ESP.restart();
+                // The WebServer worker must not restart the MCU. Let it finish
+                // this response and release all OTA resources; loop() owns
+                // the durable checkpoint and reboot handoff.
+                reboot_pending.store(true, std::memory_order_release);
+                stop_requested.store(true, std::memory_order_release);
             }
         },
         // Upload handler (receives chunks)
@@ -433,7 +446,24 @@ bool start(const char* ssid, const char* password) {
 
 void loop() {
     // WebServer multipart parsing and Update writes are worker-owned so a slow
-    // or body-less client cannot hold Arduino's loopTask.
+    // or body-less client cannot hold Arduino's loopTask. Once that worker has
+    // released its resources, the loop task owns the normal reboot path.
+    if (!hal::otaRebootMayFinalize(
+            reboot_pending.load(std::memory_order_acquire),
+            active.load(std::memory_order_acquire))) {
+        return;
+    }
+    if (!reboot_pending.exchange(false, std::memory_order_acq_rel)) return;
+
+    if (!sigurdos::mesh::saveState()) {
+        SIG_LOGE("[ota] Reboot deferred: durable state checkpoint failed");
+        reboot_pending.store(true, std::memory_order_release);
+        return;
+    }
+
+    SPIFFS.end();
+    delay(500);
+    ESP.restart();
 }
 
 void stop() {
@@ -445,6 +475,10 @@ void stop() {
 
 bool isActive() {
     return active.load(std::memory_order_acquire);
+}
+
+bool isRebootPending() {
+    return reboot_pending.load(std::memory_order_acquire);
 }
 
 const char* getLastError() {
