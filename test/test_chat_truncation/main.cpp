@@ -84,6 +84,17 @@ TEST(Utf8Truncation, DropsIncompleteLeadByteAtLimit) {
     EXPECT_EQ(utf8_truncate_bytes(s, sizeof(s)), (size_t)2);
 }
 
+TEST(Utf8Truncation, NullTerminatedShortMalformedSequencesStayWithinAllocation) {
+    const char two_byte[] = {static_cast<char>(0xC3), '\0'};
+    const char three_byte[] = {static_cast<char>(0xE2), static_cast<char>(0x82), '\0'};
+    const char four_byte[] = {static_cast<char>(0xF0), static_cast<char>(0x9F),
+                              static_cast<char>(0x9A), '\0'};
+
+    EXPECT_EQ(utf8_truncate_bytes(two_byte, sizeof(two_byte) + 8), 0u);
+    EXPECT_EQ(utf8_truncate_bytes(three_byte, sizeof(three_byte) + 8), 0u);
+    EXPECT_EQ(utf8_truncate_bytes(four_byte, sizeof(four_byte) + 8), 0u);
+}
+
 TEST(Utf8Truncation, PreservesCompleteMultibyteAtLimitWithoutTerminator) {
     const char s[] = {
         '5',
