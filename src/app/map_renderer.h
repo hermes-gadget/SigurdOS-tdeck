@@ -99,6 +99,13 @@ inline bool sigurdos_map_generation_owns(std::uint32_t owner_generation,
     return owner_generation == work_generation;
 }
 
+inline bool sigurdos_map_completion_owned(std::uint32_t owner_generation,
+                                          std::uint32_t work_generation,
+                                          bool map_initialized) {
+    return map_initialized &&
+           sigurdos_map_generation_owns(owner_generation, work_generation);
+}
+
 enum class SigurdosMapTileCompletionStatus : std::uint8_t {
     Ready,
     Missing,

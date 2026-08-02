@@ -253,6 +253,7 @@ static QueueHandle_t tile_request_queue = nullptr;
 static QueueHandle_t tile_completion_queue = nullptr;
 static TaskHandle_t tile_worker_task_handle = nullptr;
 static std::atomic<uint32_t> tile_generation{1};
+static portMUX_TYPE tile_lifecycle_mux = portMUX_INITIALIZER_UNLOCKED;
 
 enum class TileLoadResult : uint8_t { Ready, Missing, Deferred };
 
@@ -423,8 +424,16 @@ static void tile_worker_task(void*) {
             if (completion.pixels) map_free(completion.pixels);
             continue;
         }
-        if (xQueueSend(tile_completion_queue, &completion, 0) != pdTRUE &&
-            completion.pixels) {
+        bool queued = false;
+        portENTER_CRITICAL(&tile_lifecycle_mux);
+        if (sigurdos_map_completion_owned(
+                tile_generation.load(std::memory_order_acquire),
+                request.generation, initialized) &&
+            xQueueSend(tile_completion_queue, &completion, 0) == pdTRUE) {
+            queued = true;
+        }
+        portEXIT_CRITICAL(&tile_lifecycle_mux);
+        if (!queued && completion.pixels) {
             map_free(completion.pixels);
         }
     }
@@ -457,10 +466,17 @@ static bool ensure_tile_worker() {
     return true;
 }
 
-static uint32_t advance_tile_generation() {
+static uint32_t advance_tile_generation_locked() {
     const uint32_t next =
         tile_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (tile_request_queue) xQueueReset(tile_request_queue);
+    return next;
+}
+
+static uint32_t advance_tile_generation() {
+    portENTER_CRITICAL(&tile_lifecycle_mux);
+    const uint32_t next = advance_tile_generation_locked();
+    portEXIT_CRITICAL(&tile_lifecycle_mux);
     return next;
 }
 
@@ -912,7 +928,9 @@ void sigurdos_map_init() {
     //
     // Tile discovery is deferred to first map screen visit to avoid blocking
     // boot with large SD card tile sets (30-120s on 2GB /tiles dir).
+    portENTER_CRITICAL(&tile_lifecycle_mux);
     initialized = true;
+    portEXIT_CRITICAL(&tile_lifecycle_mux);
 }
 bool sigurdos_map_initialized() { return initialized; }
 void sigurdos_map_reparent(lv_obj_t* new_parent) {
@@ -1233,16 +1251,29 @@ SigurdosMapDiscoveryProgress sigurdos_map_discovery_progress() {
 }
 
 void sigurdos_map_deinit() {
-    advance_tile_generation();
-    sigurdos_map_cancel_discovery();
-    sigurdos_map_release_owned_buffer(discovery_xcache, map_free);
+    SigurdosMapTileCompletion stale_completions[
+        SIGURDOS_MAP_TILE_COMPLETION_QUEUE_LENGTH]{};
+    std::size_t stale_count = 0;
+    bool was_initialized = false;
+    portENTER_CRITICAL(&tile_lifecycle_mux);
+    advance_tile_generation_locked();
+    was_initialized = initialized;
+    initialized = false;
     if (tile_completion_queue) {
         SigurdosMapTileCompletion completion{};
-        while (xQueueReceive(tile_completion_queue, &completion, 0) == pdTRUE) {
-            if (completion.pixels) map_free(completion.pixels);
+        while (stale_count < SIGURDOS_MAP_TILE_COMPLETION_QUEUE_LENGTH &&
+               xQueueReceive(tile_completion_queue, &completion, 0) == pdTRUE) {
+            stale_completions[stale_count++] = completion;
         }
     }
-    if (!initialized) return;
+    portEXIT_CRITICAL(&tile_lifecycle_mux);
+
+    for (std::size_t i = 0; i < stale_count; ++i) {
+        if (stale_completions[i].pixels) map_free(stale_completions[i].pixels);
+    }
+    sigurdos_map_cancel_discovery();
+    sigurdos_map_release_owned_buffer(discovery_xcache, map_free);
+    if (!was_initialized) return;
     delete_cb_registered = false;
 
     // Clean up contact marker dots so dangling LVGL pointers don't
@@ -1258,7 +1289,6 @@ void sigurdos_map_deinit() {
     // Canvas widget is destroyed by LVGL via auto-delete —
     // null our pointer so the next map visit reinitializes
     map_canvas = nullptr;
-    initialized = false;
 }
 
 void sigurdos_map_set_view(double lat, double lon, int zoom) {
@@ -1430,9 +1460,8 @@ bool sigurdos_map_process_tile_completions() {
     const uint32_t owner_generation =
         tile_generation.load(std::memory_order_acquire);
     while (xQueueReceive(tile_completion_queue, &completion, 0) == pdTRUE) {
-        if (!sigurdos_map_generation_owns(
-                owner_generation, completion.generation) ||
-            !initialized) {
+        if (!sigurdos_map_completion_owned(
+                owner_generation, completion.generation, initialized)) {
             if (completion.pixels) map_free(completion.pixels);
             continue;
         }

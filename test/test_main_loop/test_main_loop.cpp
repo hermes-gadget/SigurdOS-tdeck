@@ -51,6 +51,20 @@ TEST(MainLoopDispatchTest, ServicesRemoteTestTelemetryAndDebugAfterGpsWork)
     EXPECT_LT(timing_pos, debug_pos);
 }
 
+TEST(MainLoopDispatchTest, ServicesWorkerWifiReleasesBeforeUiCanAcquire)
+{
+    const std::string source = read_project_file("src/main.cpp");
+    ASSERT_FALSE(source.empty());
+
+    const size_t release_pos = source.find(
+        "sigurdos::wifi::servicePendingReleases();");
+    const size_t ui_pos = source.find("sigurdos::ui::loop();");
+
+    ASSERT_NE(release_pos, std::string::npos);
+    ASSERT_NE(ui_pos, std::string::npos);
+    EXPECT_LT(release_pos, ui_pos);
+}
+
 TEST(MainLoopDispatchTest, IntegratesBootHealthAndValidatedDisplayRetryInOrder)
 {
     const std::string source = read_project_file("src/main.cpp");

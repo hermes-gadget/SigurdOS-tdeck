@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <thread>
 
 #include "hal/wifi_ota.h"
 #include "hal/wifi_coordinator.h"
@@ -262,6 +263,29 @@ TEST(WifiCoordinatorTest, ConflictAndWrongReleaseNeverMutateActiveLease) {
     EXPECT_FALSE(coordinator.release(Owner::Scan).released);
     EXPECT_EQ(coordinator.currentOwner(), Owner::GitHubOta);
     EXPECT_EQ(coordinator.depth(), 1);
+}
+
+TEST(WifiCoordinatorTest, WorkerReleaseRequestsAreCoalescedForLoopTask) {
+    using sigurdos::wifi::Owner;
+    using sigurdos::wifi::ReleaseRequestQueue;
+
+    ReleaseRequestQueue requests;
+    std::thread workers[2];
+    for (auto& worker : workers) {
+        worker = std::thread([&requests]() {
+            for (int i = 0; i < 256; ++i) {
+                requests.request(Owner::GitHubOta);
+                requests.request(Owner::ApOta);
+            }
+        });
+    }
+    for (auto& worker : workers) worker.join();
+
+    const uint8_t pending = requests.take();
+    EXPECT_EQ(pending,
+              static_cast<uint8_t>(sigurdos::wifi::releaseRequestMask(Owner::GitHubOta) |
+                                   sigurdos::wifi::releaseRequestMask(Owner::ApOta)));
+    EXPECT_EQ(requests.take(), 0U);
 }
 
 } // namespace

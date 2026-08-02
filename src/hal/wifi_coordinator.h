@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 
 namespace sigurdos::wifi {
@@ -26,6 +27,29 @@ struct ReleasePlan {
     bool released = false;
     Owner restored_owner = Owner::None;
     RadioMode restored_mode = RadioMode::Off;
+};
+
+// A worker task may request cleanup, but ownership transitions and WiFi driver
+// calls remain on the Arduino/LVGL loop task. Requests are coalesced by owner.
+inline uint8_t releaseRequestMask(Owner owner) {
+    return owner == Owner::None
+        ? 0
+        : static_cast<uint8_t>(1U << static_cast<uint8_t>(owner));
+}
+
+class ReleaseRequestQueue {
+public:
+    void request(Owner owner) {
+        const uint8_t bit = releaseRequestMask(owner);
+        if (bit != 0) pending_.fetch_or(bit, std::memory_order_release);
+    }
+
+    uint8_t take() {
+        return pending_.exchange(0, std::memory_order_acq_rel);
+    }
+
+private:
+    std::atomic<uint8_t> pending_{0};
 };
 
 // Main-loop-only WiFi ownership state. A persistent STA lease may be
@@ -93,5 +117,10 @@ bool release(Owner owner);
 bool canAcquire(Owner owner);
 Owner currentOwner();
 const char* ownerName(Owner owner);
+
+// Worker-safe release request API. Only servicePendingReleases() invokes the
+// coordinator and WiFi driver, and it must be called from the main loop task.
+void requestRelease(Owner owner);
+void servicePendingReleases();
 
 }  // namespace sigurdos::wifi

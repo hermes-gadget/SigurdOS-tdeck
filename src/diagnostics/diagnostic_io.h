@@ -4,6 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 
+#if defined(ESP32_PLATFORM)
+#include <freertos/FreeRTOS.h>
+#else
+#include <mutex>
+#endif
+
 namespace sigurdos::diagnostics {
 
 class NonBlockingWriter {
@@ -22,10 +28,21 @@ public:
     void printf(const char* format, ...);
     void flush();
     void drain(std::size_t byte_budget = 256);
-    uint32_t dropped_records() const { return dropped_records_; }
+    uint32_t dropped_records() const;
     void reset();
 
 private:
+    void lock() const;
+    void unlock() const;
+
+    struct LockGuard {
+        explicit LockGuard(const NonBlockingWriter& writer) : writer_(writer) {
+            writer_.lock();
+        }
+        ~LockGuard() { writer_.unlock(); }
+        const NonBlockingWriter& writer_;
+    };
+
     char record_[RECORD_CAPACITY]{};
     uint8_t queue_[QUEUE_CAPACITY]{};
     std::size_t record_size_ = 0;
@@ -38,6 +55,13 @@ private:
 
     void append(const char* data, std::size_t length);
     void commit();
+    void drain_locked(std::size_t byte_budget);
+
+#if defined(ESP32_PLATFORM)
+    mutable portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
+#else
+    mutable std::mutex mutex_;
+#endif
 };
 
 NonBlockingWriter& writer();

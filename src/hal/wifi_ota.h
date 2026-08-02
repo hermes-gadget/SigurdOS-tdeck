@@ -42,6 +42,12 @@ inline bool otaSessionExpired(uint32_t started_at, uint32_t now) {
     return static_cast<uint32_t>(now - started_at) >= OTA_SESSION_MAX_MS;
 }
 
+// AP credentials are session-scoped: an active STA-mode OTA must never expose
+// a password left over from an earlier access-point session.
+inline bool otaApPasswordVisible(bool ota_active, bool using_access_point) {
+    return ota_active && using_access_point;
+}
+
 inline bool otaAccessPointInputsValid(const char* ssid,
                                       const char* password) {
     if (!ssid) return false;
@@ -110,7 +116,8 @@ const char* getLastError();
 // Returns empty string if not active.
 const char* getIP();
 
-// WPA2 password for an AP-mode session; empty when OTA uses an existing STA.
+// WPA2 password for the current AP-mode session; empty when OTA uses an
+// existing STA or has already stopped.
 const char* getAPPassword();
 
 }  // namespace ota

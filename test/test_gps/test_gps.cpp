@@ -475,6 +475,19 @@ TEST_F(GPSIntegrationTest, ServiceDrainsMoreThanUartCapacityBetweenPublications)
     EXPECT_NEAR(sigurdos_gps_latitude(), 48.1173f, 0.01f);
 }
 
+TEST_F(GPSIntegrationTest, ServiceStopsAndRestartsUartWhenDemandChanges) {
+    const int initial_begin_count = Serial1.mock_begin_count();
+    EXPECT_TRUE(Serial1.mock_was_begun());
+
+    sigurdos_gps_service(false, 0);
+    EXPECT_FALSE(Serial1.mock_was_begun());
+    EXPECT_EQ(Serial1.mock_end_count(), 1);
+
+    sigurdos_gps_service(true, 1);
+    EXPECT_TRUE(Serial1.mock_was_begun());
+    EXPECT_EQ(Serial1.mock_begin_count(), initial_begin_count + 1);
+}
+
 TEST_F(GPSIntegrationTest, InitUsesLilyGoGpsShieldUartContract) {
     EXPECT_TRUE(Serial1.mock_was_begun());
     EXPECT_EQ(Serial1.mock_last_baud(), GPS_PRIMARY_BAUD_RATE);

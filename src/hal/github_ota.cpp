@@ -219,7 +219,7 @@ static void fail(const char* msg) {
     Serial.printf("[gh-ota] FAIL: %s\n", msg);
     setStatus(GitHubOTAState::Failed, 0, "Failed", msg);
     cleanupTransfer(true);
-    wifi::release(wifi::Owner::GitHubOta);
+    wifi::requestRelease(wifi::Owner::GitHubOta);
     s_active.store(false, std::memory_order_release);
 }
 
@@ -607,7 +607,7 @@ static void serviceWorker() {
                     setStatus(GitHubOTAState::Success, 100,
                               "Update complete — rebooting...");
                     cleanupTransfer(false);
-                    wifi::release(wifi::Owner::GitHubOta);
+                    wifi::requestRelease(wifi::Owner::GitHubOta);
                     s_reboot_pending.store(true, std::memory_order_release);
                 } else {
                     Serial.printf("[gh-ota] Update.end failed: %s\n",

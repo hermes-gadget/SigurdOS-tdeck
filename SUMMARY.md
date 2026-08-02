@@ -1,32 +1,41 @@
-# SigurdOS T-Deck Audit Fixes
+# Audit Concurrency Fixes
 
-## #1479 — keyed active-region activation
+Branch: `fix/audit-concurrency`, based on `dev`.
 
-Implemented the declared `setActiveRegionWithKey()` API and made the lower-level keyed helper create/update private regions, install the transport key, persist the region snapshot, and activate the runtime scope transactionally. Invalid or keyless private activations fail without leaving a persisted name or key behind.
+## Fixes
 
-## #1480 — remote RF frequency bounds
-
-Remote `setrf` parsing now shares the SX1262 operating limits and accepts only 150–960 MHz, including the production companion validator. Boundary and out-of-range tests cover rejection before persistence.
-
-## #1481 — map tile validation and resume repair
-
-The downloader now validates complete firmware-compatible PNG tiles before treating them as resumable or adding them to `index.json`. HTTP 200 responses are written to an fsynced temporary file, validated, and atomically replaced; invalid or interrupted files are retried instead of being permanently accepted.
-
-## #1482 — map zoom validation
-
-Downloader zoom ranges must be ordered, nonnegative, within the selected server’s advertised maximum, and within the firmware’s 0–18 range. Tests cover reversed, negative, firmware-overflow, and server-overflow ranges.
+- **#1468 — Diagnostic ring writer:** synchronized all mutable writer state with
+  an ESP32 critical section or native mutex, and made diagnostic log records
+  commit atomically.
+- **#1469 — WiFi ownership:** worker tasks now enqueue coalesced release
+  requests; the main loop alone performs coordinator and WiFi-driver releases.
+- **#1476 — Map teardown:** lifecycle locking makes the final generation check
+  and completion enqueue atomic with deinit generation invalidation and queue
+  draining; stale buffers are freed by their owning side.
+- **#1478 — GPS disable:** zero effective demand stops `Serial1`; later demand
+  reinitializes the GPS UART while one-shot sync/high-rate demand remains active.
+- **#1490 — OTA credentials:** AP passwords are cleared at session boundaries,
+  wiped after AP shutdown, and exposed only for an active AP-mode OTA session.
 
 ## Files changed
 
-- Region activation: `src/mesh/mesh_wrapper.cpp`, `src/mesh/regions.cpp`, `src/mesh/regions.h`, `test/mocks/mock_mesh_wrapper.cpp`, `test/test_regions/test_regions.cpp`
-- RF bounds: `src/mesh/companion_adapter.cpp`, `src/mesh/radio_config_policy.h`, `src/test/test_controller.cpp`, `src/test/test_controller.h`, `test/test_controller/test_controller.cpp`
-- Map downloader and tests: `scripts/download_maps.py`, `scripts/tests/test_download_maps.py`
+- **#1468:** `src/diagnostics/diagnostic_io.cpp`,
+  `src/diagnostics/diagnostic_io.h`, `test/test_log/main.cpp`
+- **#1469:** `src/hal/wifi_coordinator.cpp`,
+  `src/hal/wifi_coordinator.h`, `src/hal/wifi_ota.cpp`,
+  `src/hal/github_ota.cpp`, `src/main.cpp`,
+  `test/test_wifi_scan/test_wifi_scan.cpp`,
+  `test/test_main_loop/test_main_loop.cpp`
+- **#1476:** `src/app/map_renderer.cpp`, `src/app/map_renderer.h`,
+  `test/test_map_renderer/test_map_renderer.cpp`
+- **#1478:** `src/hal/gps.cpp`, `src/hal/gps.h`, `test/mocks/Arduino.h`,
+  `test/test_gps/test_gps.cpp`
+- **#1490:** `src/hal/wifi_ota.cpp`, `src/hal/wifi_ota.h`,
+  `test/test_ota_auth/test_ota_auth.cpp`
 
-## Verification and tests
+## Verification
 
-- `pio test -e native_test -v` — 1,565 passed, 1 skipped
-- `pio run -e SigurdOS_TDeck` — successful firmware build
-- `python3 -m unittest scripts.tests.test_download_maps -v` — 8 passed
-- `python3 -m py_compile scripts/download_maps.py` — passed
+- `pio test -e native_test -v` — **1567 passed, 1 expected skip**
+- `pio run -e SigurdOS_TDeck` — **success**
 
-Issue #1465 was intentionally left untouched; no EU 868 preset or radio-power code was changed.
+No device was flashed and no remote branch or pull request was created.

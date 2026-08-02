@@ -61,8 +61,8 @@ void sigurdos_gps_start_time_sync(uint32_t timeout_ms = 60000);
 void sigurdos_gps_cancel_time_sync();
 SigurdOSGpsSyncStatus sigurdos_gps_time_sync_status();
 uint32_t sigurdos_gps_time_sync_remaining_ms();
-// Call on every application loop. Once UART has been initialized, input is
-// always drained; background/foreground demand controls snapshot publication.
+// Call on every application loop. Active background/foreground demand keeps
+// UART acquisition running; with no demand the service stops Serial1.
 void sigurdos_gps_service(bool background_enabled, uint32_t background_interval_s);
 // Returns a fresh GPS UTC value when the clock has never been synchronized, an
 // interactive sync is waiting, or the periodic resynchronization interval has

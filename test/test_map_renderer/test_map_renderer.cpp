@@ -402,6 +402,12 @@ TEST_F(MapRendererMathTest, StaleCompletionIsNotOwnedByCurrentView) {
     EXPECT_FALSE(sigurdos_map_generation_owns(13, stale.generation));
 }
 
+TEST_F(MapRendererMathTest, CompletionAfterTeardownCannotRetainOwnedPixels) {
+    EXPECT_TRUE(sigurdos_map_completion_owned(13, 13, true));
+    EXPECT_FALSE(sigurdos_map_completion_owned(13, 12, true));
+    EXPECT_FALSE(sigurdos_map_completion_owned(13, 13, false));
+}
+
 TEST_F(MapRendererMathTest, TileIndexEntriesRequireBoundedRealSample) {
     const SigurdosMapTileIndexEntry valid = {8, 100, 110, 80, 90,
                                               103, 84, 42};
@@ -468,9 +474,9 @@ TEST_F(MapRendererMathTest, NavigationTeardownOwnsTilePollAndCancelsWork) {
               std::string::npos);
     const size_t deinit = renderer.find("void sigurdos_map_deinit()");
     const size_t generation =
-        renderer.find("advance_tile_generation();", deinit);
+        renderer.find("advance_tile_generation_locked();", deinit);
     const size_t initialized_guard =
-        renderer.find("if (!initialized) return;", deinit);
+        renderer.find("if (!was_initialized) return;", deinit);
     ASSERT_NE(deinit, std::string::npos);
     ASSERT_NE(generation, std::string::npos);
     ASSERT_NE(initialized_guard, std::string::npos);
