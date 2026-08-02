@@ -135,6 +135,10 @@ public:
         _last_rx_pin = rx_pin;
         _last_tx_pin = tx_pin;
     }
+    void end() {
+        _begun = false;
+        _end_count++;
+    }
     int available() override { return (int)(_rx_len - _rx_pos); }
     int availableForWrite() { return _write_capacity; }
     int read() override {
@@ -206,6 +210,7 @@ public:
         mock_clear_tx();
         _begun = false;
         _begin_count = 0;
+        _end_count = 0;
         _last_baud = 0;
         _last_config = 0;
         _last_rx_pin = -1;
@@ -214,6 +219,7 @@ public:
     }
     bool mock_was_begun() const { return _begun; }
     int mock_begin_count() const { return _begin_count; }
+    int mock_end_count() const { return _end_count; }
     unsigned long mock_last_baud() const { return _last_baud; }
     uint32_t mock_last_config() const { return _last_config; }
     int8_t mock_last_rx_pin() const { return _last_rx_pin; }
@@ -233,6 +239,7 @@ private:
     std::string _tx_buf;
     bool _begun = false;
     int _begin_count = 0;
+    int _end_count = 0;
     unsigned long _last_baud = 0;
     uint32_t _last_config = 0;
     int8_t _last_rx_pin = -1;

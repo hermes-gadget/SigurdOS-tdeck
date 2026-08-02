@@ -136,6 +136,15 @@ static void gps_begin_uart(uint8_t index, bool count_switch)
     if (count_switch) gps.baud_switches++;
 }
 
+static void gps_stop_uart()
+{
+    if (!gps.initialized) return;
+    Serial1.end();
+    gps.initialized = false;
+    nmea_pos = 0;
+    nmea_discarding = false;
+}
+
 static void gps_maybe_cycle_baud()
 {
     if (GPS_BAUD_CANDIDATE_COUNT < 2) return;
@@ -717,6 +726,10 @@ void sigurdos_gps_service(bool background_enabled, uint32_t background_interval_
     const uint32_t interval = sigurdos_gps_effective_publish_ms(
         background_enabled, background_interval_s, gps_map_high_rate,
         gps_sync_status == SigurdOSGpsSyncStatus::Waiting);
+    if (interval == 0) {
+        gps_stop_uart();
+        return;
+    }
     if (interval > 0 && !gps.initialized) sigurdos_gps_init();
     if (!gps.initialized) return;
 
