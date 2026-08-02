@@ -5,6 +5,7 @@
 
 #include "wifi_ota.h"
 #include "../diagnostics/log.h"
+#include "../comms/secure_wipe.h"
 #include "launcher_env.h"
 #include "ota_allocation_policy.h"
 #include "ota_runtime_policy.h"
@@ -31,7 +32,7 @@ static char server_ip[16] = "";
 static char ap_password[64] = "";
 static char last_error[96] = "";
 static uint32_t session_started_at = 0;
-static bool using_access_point = false;
+static std::atomic<bool> using_access_point{false};
 static String csrf_token;  // regenerated per OTA session
 static OtaUploadSessionState upload_state;
 
@@ -62,9 +63,11 @@ static void cleanupServer() {
         server = nullptr;
     }
     if (Update.isRunning()) Update.abort();
-    if (using_access_point) WiFi.softAPdisconnect(true);
+    const bool was_ap = using_access_point.load(std::memory_order_acquire);
+    if (was_ap) WiFi.softAPdisconnect(true);
+    using_access_point.store(false, std::memory_order_release);
+    sigurdos::comms::secureWipe(ap_password, sizeof(ap_password));
     wifi::requestRelease(wifi::Owner::ApOta);
-    using_access_point = false;
     session_started_at = 0;
     upload_state = {};
 }
@@ -101,6 +104,8 @@ static bool verifyPendingOtaImage() {
 bool start(const char* ssid, const char* password) {
     if (active.load(std::memory_order_acquire)) return true;
 
+    sigurdos::comms::secureWipe(ap_password, sizeof(ap_password));
+    using_access_point.store(false, std::memory_order_release);
     last_error[0] = '\0';
 
     if (!otaAccessPointInputsValid(ssid, password)) {
@@ -143,7 +148,7 @@ bool start(const char* ssid, const char* password) {
         SIG_LOGW("[ota] REFUSED: %s", last_error);
         return false;
     }
-    using_access_point = !reuse_sta;
+    using_access_point.store(!reuse_sta, std::memory_order_release);
 
     // Reset PIN brute-force counter on each OTA session start (SEC-001)
     pin_fail_count = 0;
@@ -456,7 +461,9 @@ const char* getIP() {
 }
 
 const char* getAPPassword() {
-    return active.load(std::memory_order_acquire) ? ap_password : "";
+    const bool ota_active = active.load(std::memory_order_acquire);
+    const bool ap_session = using_access_point.load(std::memory_order_acquire);
+    return otaApPasswordVisible(ota_active, ap_session) ? ap_password : "";
 }
 
 }  // namespace ota

@@ -104,6 +104,13 @@ TEST(OtaAccessPoint, ValidatesSsidAndWpaPasswordLengths) {
         "1234567890123456789012345678901234567890123456789012345678901234"));
 }
 
+TEST(OtaAccessPoint, PasswordVisibleOnlyForActiveApSession) {
+    EXPECT_TRUE(sigurdos::ota::otaApPasswordVisible(true, true));
+    EXPECT_FALSE(sigurdos::ota::otaApPasswordVisible(true, false));
+    EXPECT_FALSE(sigurdos::ota::otaApPasswordVisible(false, true));
+    EXPECT_FALSE(sigurdos::ota::otaApPasswordVisible(false, false));
+}
+
 TEST(OtaAuth, SessionExpiryIsDeadlineAndWrapSafe) {
     EXPECT_FALSE(otaSessionExpired(100, 100 + 599999));
     EXPECT_TRUE(otaSessionExpired(100, 100 + 600000));
