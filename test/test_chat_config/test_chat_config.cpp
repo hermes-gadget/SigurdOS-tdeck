@@ -109,6 +109,27 @@ TEST(ChatUnreadStore, RejectsInvalidAndOversizedConversationNames) {
     EXPECT_EQ(store.total(), 0);
 }
 
+TEST(ChatUnreadStore, TracksAllCanonicalMeshAndDmConversations) {
+    sigurdos::ui::ChatUnreadStore store;
+    constexpr int capacity = static_cast<int>(sigurdos::ui::CHAT_CONVERSATION_CAPACITY);
+
+    for (int i = 0; i < capacity; ++i) {
+        char name[sigurdos::ui::ChatUnreadStore::NAME_CAPACITY]{};
+        if (i < static_cast<int>(sigurdos::ui::CHAT_MESH_CONVERSATION_CAPACITY)) {
+            std::snprintf(name, sizeof(name), "#mesh-%02d", i);
+        } else {
+            std::snprintf(name, sizeof(name), "DM: Contact-%02d", i);
+        }
+        ASSERT_TRUE(store.increment(name, i == capacity - 1)) << "conversation " << i;
+    }
+
+    EXPECT_EQ(store.total(), capacity);
+    EXPECT_TRUE(store.has_mentions());
+    EXPECT_EQ(store.count("DM: Contact-31"), 1);
+    EXPECT_FALSE(store.increment("overflow", false));
+    EXPECT_EQ(store.total(), capacity);
+}
+
 TEST(MessageDetail, FormatsRouteSignalTypeAndPrefix) {
     sigurdos::mesh::StoredMessage msg{};
     msg.route_known = true;

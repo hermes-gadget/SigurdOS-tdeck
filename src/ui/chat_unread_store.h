@@ -5,11 +5,13 @@
 #include <cstdint>
 #include <cstring>
 
+#include "chat_conversation_view.h"
+
 namespace sigurdos::ui {
 
 class ChatUnreadStore {
 public:
-    static constexpr int CAPACITY = 16;
+    static constexpr std::size_t CAPACITY = CHAT_CONVERSATION_CAPACITY;
     static constexpr int NAME_CAPACITY = 37;
 
     bool increment(const char* conversation, bool mention)
