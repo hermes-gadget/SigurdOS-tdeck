@@ -1255,8 +1255,8 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         if (len >= 3) { p.telemetry_modes = _cmd_frame[2]; p.telemetry_present = true; }
         if (len >= 4) { p.advert_loc_policy = _cmd_frame[3]; p.loc_policy_present = true; }
         if (len >= 5) { p.multi_acks = _cmd_frame[4]; p.multi_acks_present = true; }
-        _host->setOtherParams(p);
-        writeOKFrame();
+        if (_host->setOtherParams(p)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_FILE_IO_ERROR);
         return true;
     }
 
@@ -1272,8 +1272,8 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     if (cmd == CMD_SET_AUTOADD_CONFIG && len >= 2) {
         uint8_t max_hops = (len >= 3) ? _cmd_frame[2] : 0;
         if (max_hops > 64) max_hops = 64;
-        _host->setAutoAddConfig(_cmd_frame[1], max_hops);
-        writeOKFrame();
+        if (_host->setAutoAddConfig(_cmd_frame[1], max_hops)) writeOKFrame();
+        else writeErrFrame(ERR_CODE_FILE_IO_ERROR);
         return true;
     }
 

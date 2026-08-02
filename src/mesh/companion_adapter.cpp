@@ -447,7 +447,7 @@ public:
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         strncpy(p.node_name, name, sizeof(p.node_name) - 1);
         p.node_name[sizeof(p.node_name) - 1] = '\0';
-        sigurdos::prefs_set(p);
+        if (!sigurdos::prefs_set(p)) return false;
         sigurdos::mesh::setOwnName(p.node_name);
         return true;
     }
@@ -460,8 +460,7 @@ public:
         p.advert_location_valid = true;
         p.advert_lat = lat;
         p.advert_lon = lon;
-        sigurdos::prefs_set(p);
-        return true;
+        return sigurdos::prefs_set(p);
     }
 
     bool setRadioParams(uint32_t freq_khz,
@@ -538,8 +537,7 @@ public:
         p.airtime_factor = (float)airtime_factor_x1000 / 1000.0f;
         p.duty_cycle = sigurdos::mesh::airtime_policy::factorToDutyCyclePercent(
             p.airtime_factor);
-        sigurdos::prefs_set(p);
-        return true;
+        return sigurdos::prefs_set(p);
     }
 
     bool setBlePin(uint32_t pin) override {
@@ -563,33 +561,32 @@ public:
         return meshImportSelfIdentity(key64);
     }
 
-    void setOtherParams(const CompanionOtherParams& op) override {
+    bool setOtherParams(const CompanionOtherParams& op) override {
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         if (op.telemetry_present) p.telemetry_modes = op.telemetry_modes;
         if (op.loc_policy_present) p.advert_loc_policy = op.advert_loc_policy;
         // A-11: this is a retransmission count, not a boolean.
         if (op.multi_acks_present) p.multi_acks = op.multi_acks;
         p.manual_add_contacts = op.manual_add_contacts;
-        sigurdos::prefs_set(p);
+        return sigurdos::prefs_set(p);
     }
     bool setPathHashMode(uint8_t mode) override {
         // Modes 0-2 = 1/2/3-byte path hash. Mode 3 is reserved (rejected).
         if (mode > 2) return false;
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         p.path_hash_mode = mode;
-        sigurdos::prefs_set(p);
-        return true;
+        return sigurdos::prefs_set(p);
     }
     void getAutoAddConfig(uint8_t* cfg, uint8_t* max_hops) const override {
         const sigurdos::NodePrefs& p = sigurdos::prefs_get();
         if (cfg) *cfg = p.autoadd_config;
         if (max_hops) *max_hops = p.autoadd_max_hops;
     }
-    void setAutoAddConfig(uint8_t cfg, uint8_t max_hops) override {
+    bool setAutoAddConfig(uint8_t cfg, uint8_t max_hops) override {
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         p.autoadd_config = cfg;
         p.autoadd_max_hops = max_hops;
-        sigurdos::prefs_set(p);
+        return sigurdos::prefs_set(p);
     }
     int8_t maxTxPowerDbm() const override { return 22; }
 
@@ -954,8 +951,7 @@ public:
         sigurdos::NodePrefs p = sigurdos::prefs_get();
         if (strcmp(name, "gps") == 0) {
             p.gps_enabled = (value[0] == '1');
-            sigurdos::prefs_set(p);
-            return true;
+            return sigurdos::prefs_set(p);
         } else if (strcmp(name, "gps_interval") == 0) {
             char* end = nullptr;
             const unsigned long interval = std::strtoul(value, &end, 10);
@@ -1357,15 +1353,20 @@ bool companionBleAvailable() {
 bool companionBleSetEnabled(bool enabled) {
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
     CompanionBridge* b = companionBridge();
-    if (!b || !b->setEnabled(enabled)) return false;
-#endif
-    // Only persist after successful enablement to avoid state mismatch
+    if (!b) return false;
+    const bool previous = b->isEnabled();
+    if (!b->setEnabled(enabled)) return false;
     sigurdos::NodePrefs p = sigurdos::prefs_get();
     p.ble_enabled = enabled;
-    sigurdos::prefs_set(p);
-#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    if (!sigurdos::prefs_set(p)) {
+        // Do not leave the live transport in a state that will be lost on
+        // reboot when the preference commit fails.
+        (void)b->setEnabled(previous);
+        return false;
+    }
     return true;
 #else
+    (void)enabled;
     return false;
 #endif
 }

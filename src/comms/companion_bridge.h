@@ -316,10 +316,10 @@ public:
     virtual bool setRadioTxPower(int8_t dbm) = 0;
     virtual bool setTuningParams(uint32_t rx_base_x1000, uint32_t airtime_x1000) = 0;
     virtual void tuningParams(uint32_t& rx_base_x1000, uint32_t& airtime_x1000) const = 0;
-    virtual void setOtherParams(const CompanionOtherParams& p) = 0;
+    virtual bool setOtherParams(const CompanionOtherParams& p) = 0;
     virtual bool setPathHashMode(uint8_t mode) = 0;
     virtual void getAutoAddConfig(uint8_t* cfg, uint8_t* max_hops) const = 0;
-    virtual void setAutoAddConfig(uint8_t cfg, uint8_t max_hops) = 0;
+    virtual bool setAutoAddConfig(uint8_t cfg, uint8_t max_hops) = 0;
     virtual int8_t maxTxPowerDbm() const = 0;
 
     // ── Contact CRUD / connection ────────────────────────────

@@ -105,6 +105,8 @@ public:
     int set_ble_pin_calls = 0;
     uint32_t last_ble_pin = 0;
     bool set_ble_pin_result = true;
+    bool set_other_params_result = true;
+    bool set_autoadd_config_result = true;
     bool path_discovery_called = false;
     uint8_t path_discovery_key[32] = {};
     sigurdos::comms::CompanionSendResult path_discovery_result{
@@ -308,7 +310,10 @@ public:
     uint32_t last_trace_tag = 0; uint8_t last_trace_path_len = 0;
     int      sign_len_seen = -1;
 
-    void setOtherParams(const sigurdos::comms::CompanionOtherParams& p) override { last_other = p; }
+    bool setOtherParams(const sigurdos::comms::CompanionOtherParams& p) override {
+        last_other = p;
+        return set_other_params_result;
+    }
     bool setPathHashMode(uint8_t mode) override {
         if (mode > 2) return false;
         path_hash_mode = mode;
@@ -317,7 +322,11 @@ public:
     void getAutoAddConfig(uint8_t* cfg, uint8_t* hops) const override {
         if (cfg) *cfg = autoadd_cfg; if (hops) *hops = autoadd_hops;
     }
-    void setAutoAddConfig(uint8_t cfg, uint8_t hops) override { autoadd_cfg = cfg; autoadd_hops = hops; }
+    bool setAutoAddConfig(uint8_t cfg, uint8_t hops) override {
+        autoadd_cfg = cfg;
+        autoadd_hops = hops;
+        return set_autoadd_config_result;
+    }
     int8_t maxTxPowerDbm() const override { return 22; }
     bool getContactByPubKey(const uint8_t* pub_key, sigurdos::comms::CompanionContact& out) const override {
         if (!contact_found) return false;
@@ -1305,6 +1314,26 @@ TEST_F(CompanionProtocolTest, AutoAddConfigRoundTrip) {
     EXPECT_EQ(out[0], cc::RESP_CODE_AUTOADD_CONFIG);
     EXPECT_EQ(out[1], 0x0A);
     EXPECT_EQ(out[2], 7);
+}
+
+TEST_F(CompanionProtocolTest, OtherParamsPersistenceFailureIsReported) {
+    host.set_other_params_result = false;
+    const uint8_t frame[] = {cc::CMD_SET_OTHER_PARAMS, 1};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_FILE_IO_ERROR);
+}
+
+TEST_F(CompanionProtocolTest, AutoAddPersistenceFailureIsReported) {
+    host.set_autoadd_config_result = false;
+    const uint8_t frame[] = {cc::CMD_SET_AUTOADD_CONFIG, 0x0A, 7};
+
+    ASSERT_TRUE(bridge.handleFrame(frame, sizeof(frame)));
+    ASSERT_EQ(serial.writes.size(), 1u);
+    EXPECT_EQ(serial.writes[0][0], cc::RESP_CODE_ERR);
+    EXPECT_EQ(serial.writes[0][1], cc::ERR_CODE_FILE_IO_ERROR);
 }
 
 TEST_F(CompanionProtocolTest, SetAdvertNameAndLatLon) {
