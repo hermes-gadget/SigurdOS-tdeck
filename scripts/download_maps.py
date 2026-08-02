@@ -71,6 +71,8 @@ TILE_SERVERS = {
     },
 }
 
+FIRMWARE_MIN_ZOOM = 0
+FIRMWARE_MAX_ZOOM = 18
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_TILE_SIZE = 256
 PNG_MAX_COMPRESSED_BYTES = 320 * 1024
@@ -375,7 +377,7 @@ def build_tile_index(output_dir):
     )
     for zoom_name in zoom_names:
         zoom = int(zoom_name)
-        if zoom < 0 or zoom > 18:
+        if zoom < FIRMWARE_MIN_ZOOM or zoom > FIRMWARE_MAX_ZOOM:
             continue
         zoom_dir = os.path.join(output_dir, zoom_name)
         if not os.path.isdir(zoom_dir):
@@ -496,6 +498,23 @@ def parse_args(argv=None):
     if args.workers < 1:
         parser.error("--workers must be at least 1")
 
+    zoom_min, zoom_max = args.zoom
+    server_max_zoom = TILE_SERVERS[args.server]["max_zoom"]
+    if zoom_min > zoom_max:
+        parser.error("zoom range requires MIN to be no greater than MAX")
+    if zoom_min < FIRMWARE_MIN_ZOOM:
+        parser.error(f"minimum zoom must be at least {FIRMWARE_MIN_ZOOM}")
+    if zoom_max > server_max_zoom:
+        parser.error(
+            f"maximum zoom {zoom_max} exceeds {args.server} server limit "
+            f"of {server_max_zoom}"
+        )
+    if zoom_max > FIRMWARE_MAX_ZOOM:
+        parser.error(
+            f"maximum zoom {zoom_max} exceeds firmware limit "
+            f"of {FIRMWARE_MAX_ZOOM}"
+        )
+
     # Parse bounding box
     if args.bbox is not None:
         try:
@@ -525,8 +544,6 @@ def main(argv=None):
         print(f"City '{args.city}': bbox={lat1},{lon1},{lat2},{lon2}")
 
     zoom_min, zoom_max = args.zoom
-    if zoom_min > zoom_max:
-        zoom_min, zoom_max = zoom_max, zoom_min
 
     server_config = TILE_SERVERS[args.server]
     output_dir = args.output or f"maps-{args.name}"

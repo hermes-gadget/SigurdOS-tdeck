@@ -163,6 +163,34 @@ class DownloadMapsTests(unittest.TestCase):
                 json.loads((root / "index.json").read_text()), index)
             self.assertFalse((root / "index.json.tmp").exists())
 
+    def test_zoom_range_matches_server_and_firmware_limits(self) -> None:
+        valid = download_maps.parse_args(
+            ["--city", "London", "--zoom", "0", "18"]
+        )
+        self.assertEqual(valid.zoom, [0, 18])
+
+        invalid_ranges = (
+            ["--city", "London", "--zoom", "14", "8"],
+            ["--city", "London", "--zoom", "-1", "2"],
+            ["--city", "London", "--zoom", "18", "19"],
+        )
+        for argv in invalid_ranges:
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                download_maps.parse_args(argv)
+
+        limited_server = {
+            "url": "https://example.invalid/{z}/{x}/{y}.png",
+            "attribution": "test",
+            "max_zoom": 5,
+        }
+        with mock.patch.dict(
+            download_maps.TILE_SERVERS, {"limited": limited_server}
+        ):
+            with self.assertRaises(SystemExit):
+                download_maps.parse_args(
+                    ["--city", "London", "--server", "limited", "--zoom", "0", "6"]
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
