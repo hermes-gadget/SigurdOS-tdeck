@@ -310,8 +310,20 @@ TEST_F(NavigationPinGateTest, CancelClearsPendingRouteWithoutGrantingAccess)
 {
     sigurdos::ui::navigate_to(Screen::SettingsGPS);
     ASSERT_EQ(g_pin_prompt_target, Screen::SettingsGPS);
+    ASSERT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    ASSERT_EQ(g_dispatch_count, 0);
 
     sigurdos::ui::navigation_pin_cancelled();
+
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    EXPECT_EQ(g_dispatch_count, 1);
+    EXPECT_EQ(g_last_dispatched, Screen::Home);
+
+    // A delayed success event from the deleted PIN screen must be ignored.
+    sigurdos::ui::navigation_pin_unlocked(Screen::SettingsGPS);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Home);
+    EXPECT_EQ(g_dispatch_count, 1);
+
     sigurdos::ui::navigate_to(Screen::Chat);
 
     EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Chat);

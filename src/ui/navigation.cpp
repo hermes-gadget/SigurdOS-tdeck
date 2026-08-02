@@ -335,19 +335,13 @@ void navigation_pin_unlocked(Screen target_screen)
 {
     const PendingNavigation pending = pending_navigation;
     clear_pending_navigation();
+
+    // A cancelled or already-consumed PIN screen may still deliver a delayed
+    // success callback. It must not turn that stale callback into navigation.
+    if (pending.type == PendingNavigationType::None) return;
+
     if (!route_ready(target_screen) ||
         (forced_navigation && target_screen != forced_screen)) {
-        return;
-    }
-
-    // Screen-local checks remain as defence in depth.  If a renderer was
-    // invoked outside the router, there is no pending operation to resume.
-    if (pending.type == PendingNavigationType::None) {
-        if (current == target_screen) {
-            dispatch_screen_unchecked(target_screen);
-        } else {
-            navigate_forward_unchecked(target_screen);
-        }
         return;
     }
 
@@ -373,7 +367,16 @@ void navigation_pin_unlocked(Screen target_screen)
 
 void navigation_pin_cancelled()
 {
+    const PendingNavigation pending = pending_navigation;
     clear_pending_navigation();
+
+    // PIN entry is a replacement screen, not a history entry. Restore the
+    // exact source screen explicitly; go_back() cannot restore Home because
+    // Home has no history predecessor.
+    if (pending.type != PendingNavigationType::None &&
+        pending.source == current && route_ready(pending.source)) {
+        dispatch_screen_unchecked(pending.source);
+    }
 }
 
 #ifdef SIGURDOS_NAVIGATION_TEST

@@ -340,7 +340,6 @@ void pin_entry_show(Screen target_screen) {
     lv_obj_center(cancel_lbl);
     lv_obj_add_event_cb(cancel_btn, [](lv_event_t*) {
         navigation_pin_cancelled();
-        go_back();
     }, LV_EVENT_CLICKED, nullptr);
 
     // Allocate context
