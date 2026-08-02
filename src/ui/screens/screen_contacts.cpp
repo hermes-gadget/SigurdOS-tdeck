@@ -27,6 +27,7 @@
 #include "../contact_list_power.h"
 #include "../repeater_transcript.h"
 #include "../generation_owner.h"
+#include "../room_fetch_policy.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../mesh/contact_store.h"
@@ -1149,7 +1150,14 @@ void show_fetch_msgs_dialog(const char* contact_name)
         if (d && d->name) {
             const char* channel = lv_textarea_get_text(d->ta);
             if (channel && channel[0]) {
-                sigurdos::mesh::sendRoomMsgFetchRequest(d->name, channel);
+                const bool accepted = sigurdos::mesh::sendRoomMsgFetchRequest(
+                    d->name, channel);
+                if (room_fetch_ui_action(accepted) == RoomFetchUiAction::KeepDialog) {
+                    notifications_post(
+                        NotificationEvent::UiError,
+                        "Room fetch not sent; check radio and contact");
+                    return;
+                }
                 char confirm[64];
                 snprintf(confirm, sizeof(confirm), "Fetching msgs from %s channel %s",
                          d->name, channel);
