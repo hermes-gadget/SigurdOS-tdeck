@@ -469,8 +469,8 @@ public:
                         uint8_t sf,
                         uint8_t cr,
                         uint8_t client_repeat) override {
-        if (freq_khz < SX1262_MIN_FREQUENCY_KHZ ||
-            freq_khz > SX1262_MAX_FREQUENCY_KHZ) return false;
+        if (freq_khz < sigurdos::mesh::SX1262_MIN_FREQUENCY_KHZ ||
+            freq_khz > sigurdos::mesh::SX1262_MAX_FREQUENCY_KHZ) return false;
         if (!sigurdos::mesh::sx1262BandwidthSupportedHz(bw_hz)) return false;
         if (sf < 5 || sf > 12) return false;
         if (cr < 5 || cr > 8) return false;
