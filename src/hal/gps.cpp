@@ -37,8 +37,10 @@ static struct GPSData {
     uint8_t  satellites;
     uint8_t  fix_quality;
     uint8_t  hour, minute, second;
+    uint8_t  coherent_hour, coherent_minute, coherent_second;
     uint16_t year;
     uint8_t  month, day;
+    bool     coherent_time_valid;
     bool     has_fix;
     bool     initialized;
     bool     time_synced;
@@ -201,6 +203,12 @@ static bool nmea_float(const char* value, bool allow_negative, float* out) {
     return true;
 }
 
+static uint32_t gps_seconds_since_midnight(uint8_t hour, uint8_t minute,
+                                           uint8_t second)
+{
+    return (uint32_t)hour * 3600UL + (uint32_t)minute * 60UL + second;
+}
+
 static bool nmea_time(const char* value, uint8_t* hour, uint8_t* minute, uint8_t* second) {
     if (!value || !hour || !minute || !second || strlen(value) < 6) return false;
     if (!nmea_digits(value, 6)) return false;
@@ -361,6 +369,18 @@ static bool parse_gga(const char* sentence) {
     gps.hour = parsed_hour;
     gps.minute = parsed_minute;
     gps.second = parsed_second;
+    // GGA has no date. Keep its time-of-day for the display, but only let it
+    // participate in clock synchronization while it moves forward within the
+    // date-bearing RMC sample. A backwards jump is the UTC midnight rollover;
+    // wait for the next RMC sentence to pair the new time with its date.
+    if (gps.coherent_time_valid &&
+        gps_seconds_since_midnight(parsed_hour, parsed_minute, parsed_second) >=
+            gps_seconds_since_midnight(gps.coherent_hour, gps.coherent_minute,
+                                       gps.coherent_second)) {
+        gps.coherent_hour = parsed_hour;
+        gps.coherent_minute = parsed_minute;
+        gps.coherent_second = parsed_second;
+    }
     gps.latitude = parsed_lat;
     gps.longitude = parsed_lon;
     gps.fix_quality = (uint8_t)parsed_fix_quality;
@@ -427,6 +447,7 @@ static bool parse_rmc(const char* sentence) {
 
     gps.rmc_status = parsed_status;
     if (parsed_status == 'V') {
+        gps.coherent_time_valid = false;
         gps_invalidate_fix();
         return true;
     }
@@ -439,6 +460,10 @@ static bool parse_rmc(const char* sentence) {
     gps.day = parsed_day;
     gps.month = parsed_month;
     gps.year = parsed_year;
+    gps.coherent_hour = parsed_hour;
+    gps.coherent_minute = parsed_minute;
+    gps.coherent_second = parsed_second;
+    gps.coherent_time_valid = true;
     gps.latitude = parsed_lat;
     gps.longitude = parsed_lon;
     gps.has_fix = true;
@@ -607,7 +632,8 @@ static void drain_gps_uart() {
                 // not consume it: main.cpp marks it synced only after the mesh
                 // clock accepts the update.
                 const uint32_t now = millis();
-                if (gps_time_sync_due(now) && gps_fix_is_fresh(now) && gps.year >= 2020) {
+                if (gps_time_sync_due(now) && gps_fix_is_fresh(now) &&
+                    gps.year >= 2020 && gps.coherent_time_valid) {
                     // Compute Unix epoch from GPS date/time using Howard
                     // Hinnant's date algorithm — shared with the onboarding
                     // and manual time-set paths (mesh_wrapper.cpp makeEpoch)
@@ -620,8 +646,10 @@ static void drain_gps_uart() {
                     unsigned doy = (153u * (m - 3u) + 2u) / 5u + (unsigned)(gps.day - 1);
                     unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
                     int days = (int)(era * 146097) + (int)doe - 719468;
-                    uint32_t epoch = (uint32_t)days * 86400UL + gps.hour * 3600UL
-                                   + gps.minute * 60UL + gps.second;
+                    uint32_t epoch = (uint32_t)days * 86400UL +
+                                   gps.coherent_hour * 3600UL +
+                                   gps.coherent_minute * 60UL +
+                                   gps.coherent_second;
                     gps.epoch = epoch;
                 }
             }
@@ -734,11 +762,12 @@ void sigurdos_gps_service(bool background_enabled, uint32_t background_interval_
 bool sigurdos_gps_get_pending_time(SigurdOSGpsUtcTime* out) {
     const uint32_t now = millis();
     if (!out || !gps_time_sync_due(now) || !gps_fix_is_fresh(now) || gps.year < 2020 ||
+        !gps.coherent_time_valid ||
         gps.month < 1 || gps.month > 12 || gps.day < 1 || gps.day > 31) {
         return false;
     }
     *out = {gps.year, gps.month, gps.day,
-            gps.hour, gps.minute, gps.second};
+            gps.coherent_hour, gps.coherent_minute, gps.coherent_second};
     return true;
 }
 void sigurdos_gps_mark_time_synced() {

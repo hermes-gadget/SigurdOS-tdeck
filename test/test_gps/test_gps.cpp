@@ -681,6 +681,39 @@ TEST_F(GPSIntegrationTest, ValidFixExposesUtcUntilClockAcceptsIt) {
     EXPECT_FALSE(sigurdos_gps_get_pending_time(&utc));
 }
 
+TEST_F(GPSIntegrationTest, GgaCannotPairNewUtcDayWithPreviousRmcDate) {
+    sigurdos_gps_start_time_sync();
+    feed_body("GPRMC,235959,A,4807.038,N,01131.000,E,0.0,0.0,010124,,,A");
+
+    SigurdOSGpsUtcTime utc{};
+    ASSERT_TRUE(sigurdos_gps_get_pending_time(&utc));
+    EXPECT_EQ(utc.year, 2024);
+    EXPECT_EQ(utc.month, 1);
+    EXPECT_EQ(utc.day, 1);
+    EXPECT_EQ(utc.hour, 23);
+    EXPECT_EQ(utc.minute, 59);
+    EXPECT_EQ(utc.second, 59);
+    EXPECT_EQ(sigurdos_gps_epoch(), 1704153599u);
+
+    // GGA has crossed midnight, but its date is unavailable. Keep the last
+    // coherent RMC time until RMC confirms the new date.
+    feed_body("GPGGA,000001,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,");
+    ASSERT_TRUE(sigurdos_gps_get_pending_time(&utc));
+    EXPECT_EQ(utc.day, 1);
+    EXPECT_EQ(utc.hour, 23);
+    EXPECT_EQ(utc.minute, 59);
+    EXPECT_EQ(utc.second, 59);
+    EXPECT_EQ(sigurdos_gps_epoch(), 1704153599u);
+
+    feed_body("GPRMC,000002,A,4807.038,N,01131.000,E,0.0,0.0,020124,,,A");
+    ASSERT_TRUE(sigurdos_gps_get_pending_time(&utc));
+    EXPECT_EQ(utc.day, 2);
+    EXPECT_EQ(utc.hour, 0);
+    EXPECT_EQ(utc.minute, 0);
+    EXPECT_EQ(utc.second, 2);
+    EXPECT_EQ(sigurdos_gps_epoch(), 1704153602u);
+}
+
 TEST_F(GPSIntegrationTest, ClockResynchronizesAfterThirtyMinutesAcrossMillisWrap) {
     arduino_mock::current_millis = UINT32_MAX - 1000u;
     feed_body("GPRMC,123519,A,4807.038,N,01131.000,E,0.0,0.0,290224,,,A");
