@@ -100,6 +100,21 @@ def _run(
     return result
 
 
+def cleanup_remote_stage(host: str, remote_dir: str) -> None:
+    """Remove one generated Pi staging directory after its artifacts are fetched."""
+
+    if not re.fullmatch(r"/tmp/sigurdos-hw-(?:flash|test-runner)-\d+", remote_dir):
+        raise FlashError(f"refusing to remove unexpected Pi staging path: {remote_dir}")
+    result = _run(
+        ["ssh", host, "rm", "-rf", "--", remote_dir],
+        timeout=20,
+    )
+    if result.returncode != 0:
+        raise FlashError(
+            f"cannot remove Pi staging directory {remote_dir}: {result.stderr.strip()}"
+        )
+
+
 def find_pi_host(preferred: str | None = None) -> str:
     """Return the first gateway that accepts non-interactive SSH."""
 
@@ -225,12 +240,14 @@ class HardwareFlasher:
         port: str,
         pi_host: str | None = None,
         esptool: str | None = None,
+        keep_remote: bool = False,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.pi_mode = pi_mode
         self.port = port
         self.pi_host = pi_host
         self.esptool = esptool
+        self.keep_remote = keep_remote
 
     def build(self, environment: str) -> BuildResult:
         """Build any PlatformIO environment and require its merged image."""
@@ -284,23 +301,38 @@ class HardwareFlasher:
     def _flash_pi(self, firmware: Path) -> tuple[str, str]:
         host = find_pi_host(self.pi_host)
         remote_dir = f"/tmp/sigurdos-hw-flash-{int(time.time())}"
-        mkdir = _run(["ssh", host, "mkdir", "-p", remote_dir], timeout=20)
-        if mkdir.returncode != 0:
-            raise FlashError(f"cannot create Pi staging directory: {mkdir.stderr.strip()}")
-        remote_firmware = f"{remote_dir}/{MERGED_FIRMWARE_NAME}"
-        copied = _run(["scp", str(firmware), f"{host}:{remote_firmware}"], timeout=120, echo=True)
-        if copied.returncode != 0:
-            raise FlashError(f"firmware transfer failed: {copied.stderr.strip()}")
-        command = (
-            f"{PI_ESPTOOL} --chip {ESP_CHIP} --port {shlex.quote(self.port)} "
-            f"--baud {FLASH_BAUD} --before default-reset --after hard-reset "
-            f"write-flash 0 {shlex.quote(remote_firmware)}"
-        )
-        result = _run(["ssh", host, command], timeout=180, echo=True)
-        output = result.stdout + result.stderr
-        if result.returncode != 0 or "Hash of data verified" not in output:
-            raise FlashError(f"Pi flash failed:\n{output[-3000:]}")
-        return host, output
+        created = False
+        try:
+            mkdir = _run(["ssh", host, "mkdir", "-p", remote_dir], timeout=20)
+            if mkdir.returncode != 0:
+                raise FlashError(
+                    f"cannot create Pi staging directory: {mkdir.stderr.strip()}"
+                )
+            created = True
+            remote_firmware = f"{remote_dir}/{MERGED_FIRMWARE_NAME}"
+            copied = _run(
+                ["scp", str(firmware), f"{host}:{remote_firmware}"],
+                timeout=120,
+                echo=True,
+            )
+            if copied.returncode != 0:
+                raise FlashError(f"firmware transfer failed: {copied.stderr.strip()}")
+            command = (
+                f"{PI_ESPTOOL} --chip {ESP_CHIP} --port {shlex.quote(self.port)} "
+                f"--baud {FLASH_BAUD} --before default-reset --after hard-reset "
+                f"write-flash 0 {shlex.quote(remote_firmware)}"
+            )
+            result = _run(["ssh", host, command], timeout=180, echo=True)
+            output = result.stdout + result.stderr
+            if result.returncode != 0 or "Hash of data verified" not in output:
+                raise FlashError(f"Pi flash failed:\n{output[-3000:]}")
+            return host, output
+        finally:
+            if created:
+                if self.keep_remote:
+                    print(f"Keeping Pi staging directory: {remote_dir}", flush=True)
+                else:
+                    cleanup_remote_stage(host, remote_dir)
 
     @staticmethod
     def _serial_capture_code(port: str, duration_s: float) -> str:
@@ -445,6 +477,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pi-host")
     parser.add_argument("--port")
     parser.add_argument("--esptool")
+    parser.add_argument(
+        "--keep-remote",
+        action="store_true",
+        help="keep the Pi staging directory for debugging instead of removing it",
+    )
     parser.add_argument("--build-only", action="store_true")
     parser.add_argument("--no-verify", action="store_true")
     parser.add_argument("--cold-boot", action="store_true")
@@ -466,6 +503,7 @@ def main(argv: list[str] | None = None) -> int:
         port=port,
         pi_host=args.pi_host,
         esptool=args.esptool,
+        keep_remote=args.keep_remote,
     )
     try:
         if args.firmware:

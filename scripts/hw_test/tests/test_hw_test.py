@@ -37,6 +37,7 @@ from hw_test.hw_test_runner import (
     _check_variant,
     _merge_report_metadata,
     _parse_radio_profile,
+    _run_pi_worker,
     build_parser,
     run_crash_recovery,
     run_radio,
@@ -213,6 +214,33 @@ class ReportTests(unittest.TestCase):
             payload = json.loads((output / "results.json").read_text(encoding="utf-8"))
             self.assertEqual(payload["transport"], "pi")
             self.assertEqual(payload["metadata"]["pi_host"], "hermes-pi")
+
+    def test_pi_worker_removes_staging_after_deploy_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            args = SimpleNamespace(
+                pi_host="hermes-pi",
+                port="/dev/ttyACM0",
+                outdir=Path(directory),
+                keep_remote=False,
+            )
+            created = mock.Mock(returncode=0, stdout="", stderr="")
+            failed_copy = mock.Mock(returncode=1, stdout="", stderr="copy failed")
+            with (
+                mock.patch("hw_test.hw_test_runner.find_pi_host", return_value="hermes-pi"),
+                mock.patch(
+                    "hw_test.hw_test_runner._run",
+                    side_effect=[created, failed_copy],
+                ),
+                mock.patch("hw_test.hw_test_runner.cleanup_remote_stage") as cleanup,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "cannot deploy Pi worker"):
+                    _run_pi_worker(args, {})
+
+            cleanup.assert_called_once()
+            self.assertEqual(cleanup.call_args.args[0], "hermes-pi")
+            self.assertRegex(
+                cleanup.call_args.args[1], r"^/tmp/sigurdos-hw-test-runner-\d+$"
+            )
 
     def test_expected_radio_variant_fails_for_no_radio_device(self) -> None:
         report = HardwareReport(mode="smoke", transport="local")
@@ -545,6 +573,50 @@ class ConstantsAndFlashTests(unittest.TestCase):
             # PI_HOSTS order: hermes-portable, hermes-pi.local, hermes-pi, ...
             # First candidate times out; second is reachable.
             self.assertEqual(find_pi_host(), "hermes-pi.local")
+
+    def test_pi_flash_removes_staging_after_transfer_failure(self) -> None:
+        flasher = HardwareFlasher(
+            Path("/tmp/repo"),
+            pi_mode=True,
+            port="/dev/ttyACM0",
+            pi_host="hermes-pi",
+        )
+        mkdir = mock.Mock(returncode=0, stdout="", stderr="")
+        failed_copy = mock.Mock(returncode=1, stdout="", stderr="copy failed")
+        cleanup = mock.Mock(returncode=0, stdout="", stderr="")
+        with (
+            mock.patch("hw_test.hw_flash.find_pi_host", return_value="hermes-pi"),
+            mock.patch(
+                "hw_test.hw_flash._run",
+                side_effect=[mkdir, failed_copy, cleanup],
+            ) as run,
+        ):
+            with self.assertRaisesRegex(FlashError, "firmware transfer failed"):
+                flasher._flash_pi(Path("/tmp/firmware-merged.bin"))
+
+        cleanup_command = run.call_args_list[-1].args[0]
+        self.assertEqual(cleanup_command[:5], ["ssh", "hermes-pi", "rm", "-rf", "--"])
+        self.assertRegex(cleanup_command[5], r"^/tmp/sigurdos-hw-flash-\d+$")
+
+    def test_pi_flash_keep_remote_opt_in_skips_cleanup(self) -> None:
+        flasher = HardwareFlasher(
+            Path("/tmp/repo"),
+            pi_mode=True,
+            port="/dev/ttyACM0",
+            pi_host="hermes-pi",
+            keep_remote=True,
+        )
+        ok = mock.Mock(returncode=0, stdout="Hash of data verified", stderr="")
+        with (
+            mock.patch("hw_test.hw_flash.find_pi_host", return_value="hermes-pi"),
+            mock.patch("hw_test.hw_flash._run", side_effect=[ok, ok, ok]) as run,
+        ):
+            self.assertEqual(
+                flasher._flash_pi(Path("/tmp/firmware-merged.bin")),
+                ("hermes-pi", "Hash of data verified"),
+            )
+
+        self.assertEqual(run.call_count, 3)
 
     def test_boot_log_filters_known_noise_but_rejects_bad_image(self) -> None:
         clean = (
