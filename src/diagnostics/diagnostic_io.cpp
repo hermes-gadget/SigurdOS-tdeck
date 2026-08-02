@@ -109,21 +109,39 @@ void NonBlockingWriter::printf(const char* format, ...) {
 }
 
 void NonBlockingWriter::drain_locked(std::size_t byte_budget) {
-    while (queue_size_ > 0 && byte_budget > 0) {
-        const int available = Serial.availableForWrite();
-        if (available <= 0) return;
-        std::size_t contiguous = QUEUE_CAPACITY - queue_tail_;
-        if (contiguous > queue_size_) contiguous = queue_size_;
-        if (contiguous > byte_budget) contiguous = byte_budget;
-        if (contiguous > static_cast<std::size_t>(available)) {
-            contiguous = static_cast<std::size_t>(available);
-        }
-        if (contiguous == 0) return;
-        const std::size_t written = Serial.write(queue_ + queue_tail_, contiguous);
-        if (written == 0) return;
+    if (queue_size_ == 0 || byte_budget == 0) return;
+
+    const int available = Serial.availableForWrite();
+    if (available <= 0) return;
+
+    std::size_t to_write = queue_size_;
+    if (to_write > byte_budget) to_write = byte_budget;
+    if (to_write > static_cast<std::size_t>(available)) {
+        to_write = static_cast<std::size_t>(available);
+    }
+    if (to_write == 0) return;
+
+    // Copy drainable bytes from the ring buffer into a stack buffer
+    // while the lock is still held (ring index math is the shared state).
+    char drain_buf[256];
+    std::size_t count = to_write;
+    if (count > sizeof(drain_buf)) count = sizeof(drain_buf);
+    std::size_t idx = queue_tail_;
+    for (std::size_t i = 0; i < count; ++i) {
+        drain_buf[i] = static_cast<char>(queue_[idx]);
+        idx = (idx + 1) % QUEUE_CAPACITY;
+    }
+
+    // Serial I/O MUST NOT run inside the critical section on ESP32:
+    // the USB-CDC driver depends on interrupts/FreeRTOS primitives.
+    unlock();
+    const std::size_t written =
+        Serial.write(reinterpret_cast<const uint8_t*>(drain_buf), count);
+    lock();
+
+    if (written > 0) {
         queue_tail_ = (queue_tail_ + written) % QUEUE_CAPACITY;
         queue_size_ -= written;
-        byte_budget -= written;
     }
 
     // Report losses only after the queued diagnostics have drained. The report is

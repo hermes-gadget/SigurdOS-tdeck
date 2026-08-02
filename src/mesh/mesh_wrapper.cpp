@@ -2232,6 +2232,12 @@ bool factoryReset()
         } else {
             Serial.println("[mesh] factory reset aborted: SPIFFS format failed");
         }
+        // Remount SPIFFS — it was unmounted before the erase attempt and the
+        // device continues running after this failure (no reboot).
+        if (!SPIFFS.begin(true)) {
+            Serial.println("[mesh] SPIFFS remount after factory-reset failure also "
+                           "failed; reboot required");
+        }
         return false;
     }
 

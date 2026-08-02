@@ -411,4 +411,34 @@ TEST_F(NavigationPinGateTest, StalePinScreenCannotResumeDifferentPendingTarget)
     EXPECT_EQ(g_dispatch_count, 0);
 }
 
+TEST_F(NavigationPinGateTest, CancelFromNonHomeSourceRestoresSourceScreen)
+{
+    // Navigate to Chat first (unprotected, succeeds).
+    sigurdos::ui::navigate_to(Screen::Chat);
+    ASSERT_EQ(sigurdos::ui::current_screen(), Screen::Chat);
+    ASSERT_EQ(g_dispatch_count, 1);
+    ASSERT_EQ(g_last_dispatched, Screen::Chat);
+
+    // Navigate from Chat to a protected screen — PIN should be prompted,
+    // staying on Chat (the source), not Home.
+    g_pin_prompt_count = 0;
+    g_dispatch_count  = 0;
+    sigurdos::ui::navigate_to(Screen::SettingsGPS);
+    EXPECT_EQ(g_pin_prompt_count, 1);
+    EXPECT_EQ(g_pin_prompt_target, Screen::SettingsGPS);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Chat);
+    EXPECT_EQ(g_dispatch_count, 0);  // no screen dispatched yet
+
+    // Cancel the PIN — must restore Chat, not Home.
+    sigurdos::ui::navigation_pin_cancelled();
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Chat);
+    EXPECT_EQ(g_last_dispatched, Screen::Chat);
+    EXPECT_EQ(g_dispatch_count, 1);  // one re-dispatch to Chat
+
+    // A delayed success from the cancelled PIN screen must be ignored.
+    sigurdos::ui::navigation_pin_unlocked(Screen::SettingsGPS);
+    EXPECT_EQ(sigurdos::ui::current_screen(), Screen::Chat);
+    EXPECT_EQ(g_dispatch_count, 1);
+}
+
 } // namespace

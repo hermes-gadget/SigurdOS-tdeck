@@ -15,6 +15,10 @@ from pathlib import Path
 PACKAGE = re.compile(
     r"^[│ ]*[├└]──\s+(.+?)\s+@\s+(\S+)\s+\(required:\s+(.+?)\s+@\s+(.+?)\)$"
 )
+# URL/local-path requirements (e.g. lvgl) lack the `owner @ version` form.
+PACKAGE_URL = re.compile(
+    r"^[│ ]*[├└]──\s+(.+?)\s+@\s+(\S+)\s+\(required:\s+(https?://.+)\)$"
+)
 MESHCORE = re.compile(r"^MeshCore submodule @ ([0-9a-f]{40})$")
 PLATFORM = re.compile(
     r"^Platform\s+(.+?)\s+@\s+(\S+)\s+\(required:\s+(.+?)\s+@\s+(.+?)\)$"
@@ -60,6 +64,11 @@ def generate(lock_path: Path) -> dict[str, object]:
         if match:
             name, version, owner, requirement = match.groups()
             components.append(component(name, version, f"{owner} @ {requirement}"))
+            continue
+        url_match = PACKAGE_URL.match(line)
+        if url_match:
+            name, version, url = url_match.groups()
+            components.append(component(name, version, url))
             continue
         meshcore = MESHCORE.match(line)
         if meshcore:

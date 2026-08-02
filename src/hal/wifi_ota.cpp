@@ -31,6 +31,8 @@ static WebServer* server = nullptr;
 static std::atomic<bool> active{false};
 static std::atomic<bool> stop_requested{false};
 static std::atomic<bool> reboot_pending{false};
+static int  save_state_retries  = 0;
+static constexpr int MAX_SAVE_STATE_RETRIES = 5;
 static char server_ip[16] = "";
 static char ap_password[64] = "";
 static char last_error[96] = "";
@@ -463,6 +465,13 @@ void loop() {
     if (!sigurdos::mesh::saveState()) {
         SIG_LOGE("[ota] Reboot deferred: durable state checkpoint failed");
         reboot_pending.store(true, std::memory_order_release);
+        if (++save_state_retries >= MAX_SAVE_STATE_RETRIES) {
+            SIG_LOGE("[ota] saveState retry limit reached — rebooting without "
+                     "checkpoint");
+            SPIFFS.end();
+            delay(500);
+            ESP.restart();
+        }
         return;
     }
 
