@@ -14,6 +14,22 @@ NonBlockingWriter s_writer;
 
 NonBlockingWriter& writer() { return s_writer; }
 
+void NonBlockingWriter::lock() const {
+#if defined(ESP32_PLATFORM)
+    portENTER_CRITICAL(&mux_);
+#else
+    mutex_.lock();
+#endif
+}
+
+void NonBlockingWriter::unlock() const {
+#if defined(ESP32_PLATFORM)
+    portEXIT_CRITICAL(&mux_);
+#else
+    mutex_.unlock();
+#endif
+}
+
 void NonBlockingWriter::append(const char* data, std::size_t length) {
     if (!data || length == 0 || record_overflow_) return;
     if (length > RECORD_CAPACITY - record_size_) {
@@ -39,32 +55,42 @@ void NonBlockingWriter::commit() {
 }
 
 void NonBlockingWriter::print(const char* value) {
+    LockGuard guard(*this);
     if (value) append(value, strlen(value));
 }
-void NonBlockingWriter::print(char value) { append(&value, 1); }
+void NonBlockingWriter::print(char value) {
+    LockGuard guard(*this);
+    append(&value, 1);
+}
 void NonBlockingWriter::print(int value) { printf("%d", value); }
 void NonBlockingWriter::print(unsigned int value) { printf("%u", value); }
 void NonBlockingWriter::print(long value) { printf("%ld", value); }
 void NonBlockingWriter::print(unsigned long value) { printf("%lu", value); }
 
 void NonBlockingWriter::println() {
+    LockGuard guard(*this);
     append("\n", 1);
     commit();
-    drain(RECORD_CAPACITY);
+    drain_locked(RECORD_CAPACITY);
 }
 
 void NonBlockingWriter::println(const char* value) {
-    print(value);
-    println();
+    LockGuard guard(*this);
+    if (value) append(value, strlen(value));
+    append("\n", 1);
+    commit();
+    drain_locked(RECORD_CAPACITY);
 }
 
 std::size_t NonBlockingWriter::write(uint8_t value) {
+    LockGuard guard(*this);
     const char byte = static_cast<char>(value);
     append(&byte, 1);
     return record_overflow_ ? 0 : 1;
 }
 
 void NonBlockingWriter::printf(const char* format, ...) {
+    LockGuard guard(*this);
     if (!format || record_overflow_) return;
     char formatted[RECORD_CAPACITY];
     va_list args;
@@ -78,11 +104,11 @@ void NonBlockingWriter::printf(const char* format, ...) {
     append(formatted, static_cast<std::size_t>(result));
     if (result > 0 && formatted[result - 1] == '\n') {
         commit();
-        drain(RECORD_CAPACITY);
+        drain_locked(RECORD_CAPACITY);
     }
 }
 
-void NonBlockingWriter::drain(std::size_t byte_budget) {
+void NonBlockingWriter::drain_locked(std::size_t byte_budget) {
     while (queue_size_ > 0 && byte_budget > 0) {
         const int available = Serial.availableForWrite();
         if (available <= 0) return;
@@ -115,9 +141,23 @@ void NonBlockingWriter::drain(std::size_t byte_budget) {
     }
 }
 
-void NonBlockingWriter::flush() { drain(QUEUE_CAPACITY); }
+void NonBlockingWriter::drain(std::size_t byte_budget) {
+    LockGuard guard(*this);
+    drain_locked(byte_budget);
+}
+
+void NonBlockingWriter::flush() {
+    LockGuard guard(*this);
+    drain_locked(QUEUE_CAPACITY);
+}
+
+uint32_t NonBlockingWriter::dropped_records() const {
+    LockGuard guard(*this);
+    return dropped_records_;
+}
 
 void NonBlockingWriter::reset() {
+    LockGuard guard(*this);
     record_size_ = 0;
     queue_head_ = queue_tail_ = queue_size_ = 0;
     dropped_records_ = 0;
@@ -144,8 +184,7 @@ void diagnostic_logf(const char* prefix, const char* format, ...) {
         writer().println("diagnostic log record exceeded bound");
         return;
     }
-    writer().print(message);
-    writer().println();
+    writer().println(message);
 }
 
 }  // namespace sigurdos::diagnostics
