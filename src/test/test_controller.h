@@ -16,6 +16,8 @@
 #include <cmath>
 #include <cstdio>
 
+#include "mesh/radio_config_policy.h"
+
 // Remote diagnostics run on the same cooperative loop as the UI and mesh.
 // Keep their resource policies visible here so native tests can lock the
 // bounds without linking the hardware-only controller implementation.
@@ -133,7 +135,8 @@ sigurdos_test_controller_parse_rf_params(const char* arg,
         return SigurdOSTestRfParseResult::NonFiniteValue;
     }
 
-    if (freq < 400.0f || freq > 1000.0f) {
+    if (freq < sigurdos::mesh::SX1262_MIN_FREQUENCY_MHZ ||
+        freq > sigurdos::mesh::SX1262_MAX_FREQUENCY_MHZ) {
         return SigurdOSTestRfParseResult::FrequencyOutOfRange;
     }
     if (sf < 6 || sf > 12) {

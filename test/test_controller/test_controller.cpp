@@ -109,15 +109,15 @@ TEST(TestControllerRfParserTest, BadArgumentCountIsReported) {
 TEST(TestControllerRfParserTest, SupportsRangeBoundaries) {
     SigurdOSTestRfParams out{};
 
-    EXPECT_EQ(parse("400 6 7.8 5 2", &out), SigurdOSTestRfParseResult::Ok);
-    EXPECT_FLOAT_EQ(out.freq, 400.0f);
+    EXPECT_EQ(parse("150 6 7.8 5 2", &out), SigurdOSTestRfParseResult::Ok);
+    EXPECT_FLOAT_EQ(out.freq, 150.0f);
     EXPECT_EQ(out.sf, 6);
     EXPECT_FLOAT_EQ(out.bw, 7.8f);
     EXPECT_EQ(out.cr, 5);
     EXPECT_EQ(out.tx_power_dbm, 2);
 
-    EXPECT_EQ(parse("1000 12 500 8 22", &out), SigurdOSTestRfParseResult::Ok);
-    EXPECT_FLOAT_EQ(out.freq, 1000.0f);
+    EXPECT_EQ(parse("960 12 500 8 22", &out), SigurdOSTestRfParseResult::Ok);
+    EXPECT_FLOAT_EQ(out.freq, 960.0f);
     EXPECT_EQ(out.sf, 12);
     EXPECT_FLOAT_EQ(out.bw, 500.0f);
     EXPECT_EQ(out.cr, 8);
@@ -127,9 +127,9 @@ TEST(TestControllerRfParserTest, SupportsRangeBoundaries) {
 TEST(TestControllerRfParserTest, RejectsFrequencyOutsideRange) {
     SigurdOSTestRfParams out{};
 
-    EXPECT_EQ(parse("399.9 10 250 5 22", &out),
+    EXPECT_EQ(parse("149.9 10 250 5 22", &out),
               SigurdOSTestRfParseResult::FrequencyOutOfRange);
-    EXPECT_EQ(parse("1000.1 10 250 5 22", &out),
+    EXPECT_EQ(parse("960.1 10 250 5 22", &out),
               SigurdOSTestRfParseResult::FrequencyOutOfRange);
 }
 

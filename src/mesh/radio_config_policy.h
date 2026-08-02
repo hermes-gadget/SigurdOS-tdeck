@@ -11,6 +11,10 @@ namespace sigurdos {
 namespace mesh {
 
 static constexpr int16_t RADIO_DRIVER_OK = 0;
+static constexpr float SX1262_MIN_FREQUENCY_MHZ = 150.0f;
+static constexpr float SX1262_MAX_FREQUENCY_MHZ = 960.0f;
+static constexpr uint32_t SX1262_MIN_FREQUENCY_KHZ = 150000U;
+static constexpr uint32_t SX1262_MAX_FREQUENCY_KHZ = 960000U;
 
 struct RadioConfig {
     float frequency_mhz;
@@ -120,8 +124,8 @@ inline bool sx1262BandwidthSupportedKHz(float bandwidth_khz)
 inline bool sx1262RadioConfigSupported(const RadioConfig& config)
 {
     return std::isfinite(config.frequency_mhz) &&
-           config.frequency_mhz >= 150.0f &&
-           config.frequency_mhz <= 960.0f &&
+           config.frequency_mhz >= SX1262_MIN_FREQUENCY_MHZ &&
+           config.frequency_mhz <= SX1262_MAX_FREQUENCY_MHZ &&
            sx1262BandwidthSupportedKHz(config.bandwidth_khz) &&
            config.spreading_factor >= 5 && config.spreading_factor <= 12 &&
            config.coding_rate >= 5 && config.coding_rate <= 8 &&

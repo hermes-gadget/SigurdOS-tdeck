@@ -1868,7 +1868,7 @@ static void cmd_setrf(const char* arg) {
         } else if (parse == SigurdOSTestRfParseResult::BadArgumentCount) {
             Serial.printf("[test] setrf: expected 5 args, got %d\n", parsed_fields);
         } else if (parse == SigurdOSTestRfParseResult::FrequencyOutOfRange) {
-            Serial.println("[test] setrf: freq out of range (400-1000 MHz)");
+            Serial.println("[test] setrf: freq out of range (150-960 MHz)");
         } else if (parse == SigurdOSTestRfParseResult::SpreadingFactorOutOfRange) {
             Serial.println("[test] setrf: SF out of range (6-12)");
         } else if (parse == SigurdOSTestRfParseResult::BandwidthOutOfRange) {
