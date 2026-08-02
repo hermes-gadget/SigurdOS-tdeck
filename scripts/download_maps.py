@@ -29,11 +29,14 @@ Copyright (C) 2025 Ben
 """
 
 import argparse
+import binascii
+import json
 import math
 import os
+import struct
 import sys
 import time
-import json
+import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
@@ -67,6 +70,10 @@ TILE_SERVERS = {
         "user_agent": "SigurdOS-MapDownloader/1.0",
     },
 }
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+PNG_TILE_SIZE = 256
+PNG_MAX_COMPRESSED_BYTES = 320 * 1024
 
 CITIES = {
     "london": (51.3, -0.5, 51.7, 0.3),
@@ -144,6 +151,103 @@ def tiles_for_bbox(lat1, lon1, lat2, lon2, zoom):
 
     return count
 
+
+def is_valid_png_tile(data):
+    """Validate a firmware-compatible, complete 256x256 PNG tile."""
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        return False
+    if len(data) > PNG_MAX_COMPRESSED_BYTES or len(data) < 45:
+        return False
+    if bytes(data[:8]) != PNG_SIGNATURE:
+        return False
+
+    offset = 8
+    saw_ihdr = False
+    saw_idat = False
+    saw_iend = False
+    saw_palette = False
+    idat_data = []
+    bit_depth = color_type = 0
+
+    while offset < len(data):
+        if saw_iend or len(data) - offset < 12:
+            return False
+        length = struct.unpack_from(">I", data, offset)[0]
+        chunk_end = offset + 12 + length
+        if chunk_end > len(data):
+            return False
+
+        chunk_type = bytes(data[offset + 4:offset + 8])
+        chunk_data = bytes(data[offset + 8:offset + 8 + length])
+        stored_crc = struct.unpack_from(">I", data, offset + 8 + length)[0]
+        calculated_crc = binascii.crc32(chunk_type + chunk_data) & 0xFFFFFFFF
+        if stored_crc != calculated_crc:
+            return False
+
+        if not saw_ihdr:
+            if chunk_type != b"IHDR" or length != 13:
+                return False
+            width, height, bit_depth, color_type, compression, filtering, interlace = \
+                struct.unpack(">IIBBBBB", chunk_data)
+            if width != PNG_TILE_SIZE or height != PNG_TILE_SIZE:
+                return False
+            if color_type in (0, 3):
+                if bit_depth not in (1, 2, 4, 8):
+                    return False
+            elif color_type in (2, 4, 6):
+                if bit_depth != 8:
+                    return False
+            else:
+                return False
+            if compression != 0 or filtering != 0 or interlace != 0:
+                return False
+            saw_ihdr = True
+        elif chunk_type == b"IHDR":
+            return False
+
+        if chunk_type == b"PLTE":
+            if length == 0 or length > 768 or length % 3 != 0:
+                return False
+            saw_palette = True
+        elif chunk_type == b"IDAT":
+            if length == 0:
+                return False
+            saw_idat = True
+            idat_data.append(chunk_data)
+        elif chunk_type == b"IEND":
+            if length != 0:
+                return False
+            saw_iend = True
+
+        offset = chunk_end
+
+    if not saw_ihdr or not saw_idat or not saw_iend:
+        return False
+    if color_type == 3 and not saw_palette:
+        return False
+
+    channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}[color_type]
+    row_bytes = (PNG_TILE_SIZE * channels * bit_depth + 7) // 8
+    expected_size = PNG_TILE_SIZE * (row_bytes + 1)
+    try:
+        decoded = zlib.decompress(b"".join(idat_data))
+    except zlib.error:
+        return False
+    if len(decoded) != expected_size:
+        return False
+    return all(decoded[row * (row_bytes + 1)] <= 4
+               for row in range(PNG_TILE_SIZE))
+
+
+def is_valid_png_tile_file(path):
+    """Return whether path contains one complete firmware-compatible tile."""
+    try:
+        with open(path, "rb") as tile_file:
+            data = tile_file.read(PNG_MAX_COMPRESSED_BYTES + 1)
+    except OSError:
+        return False
+    return is_valid_png_tile(data)
+
 # ── Download logic ──────────────────────────────────────────
 
 stats_lock = Lock()
@@ -178,45 +282,63 @@ def download_tile(args):
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"{y}.png")
 
-    # Resume keeps a prior non-empty tile. The default refreshes it.
-    if resume and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+    # Resume keeps only a complete, firmware-compatible tile. Invalid or
+    # truncated files are deliberately downloaded again.
+    if resume and is_valid_png_tile_file(out_path):
         with stats_lock:
             download_stats["done"] += 1
         return x, y, zoom, True
 
+    temporary_path = out_path + ".tmp"
     # Download with retries
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            resp = session.get(url, timeout=30)
-            if resp.status_code == 200:
-                with open(out_path, "wb") as f:
-                    f.write(resp.content)
+    try:
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if os.path.exists(temporary_path):
+                    os.unlink(temporary_path)
+                resp = session.get(url, timeout=30)
+                if resp.status_code == 200:
+                    if not is_valid_png_tile(resp.content):
+                        raise ValueError("HTTP 200 response was not a valid PNG tile")
+                    with open(temporary_path, "wb") as f:
+                        f.write(resp.content)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    if not is_valid_png_tile_file(temporary_path):
+                        raise ValueError("temporary tile failed validation")
+                    os.replace(temporary_path, out_path)
 
-                with stats_lock:
-                    download_stats["done"] += 1
-                return x, y, zoom, True
-            elif resp.status_code == 404:
-                # Tile doesn't exist at this zoom (e.g., ocean tile)
-                if os.path.exists(out_path):
-                    os.unlink(out_path)
-                with stats_lock:
-                    download_stats["done"] += 1
-                return x, y, zoom, True
-            elif resp.status_code == 429:
-                time.sleep(2 * (attempt + 1))
-            else:
+                    with stats_lock:
+                        download_stats["done"] += 1
+                    return x, y, zoom, True
+                elif resp.status_code == 404:
+                    # Tile doesn't exist at this zoom (e.g., ocean tile)
+                    if os.path.exists(out_path):
+                        os.unlink(out_path)
+                    with stats_lock:
+                        download_stats["done"] += 1
+                    return x, y, zoom, True
+                elif resp.status_code == 429:
+                    time.sleep(2 * (attempt + 1))
+                else:
+                    time.sleep(1 * (attempt + 1))
+            except Exception:
+                if attempt == max_retries - 1:
+                    with stats_lock:
+                        download_stats["failed"] += 1
+                    return x, y, zoom, False
                 time.sleep(1 * (attempt + 1))
-        except Exception as e:
-            if attempt == max_retries - 1:
-                with stats_lock:
-                    download_stats["failed"] += 1
-                return x, y, zoom, False
-            time.sleep(1 * (attempt + 1))
 
-    with stats_lock:
-        download_stats["failed"] += 1
-    return x, y, zoom, False
+        with stats_lock:
+            download_stats["failed"] += 1
+        return x, y, zoom, False
+    finally:
+        if os.path.exists(temporary_path):
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
 
 # ── Metadata ────────────────────────────────────────────────
 
@@ -281,7 +403,7 @@ def build_tile_index(output_dir):
                 y = int(stem)
                 path = os.path.join(x_dir, filename)
                 if (y < 0 or y >= tiles_per_axis or
-                        not os.path.isfile(path) or os.path.getsize(path) == 0):
+                        not is_valid_png_tile_file(path)):
                     continue
                 if sample_x is None:
                     sample_x, sample_y = x, y
