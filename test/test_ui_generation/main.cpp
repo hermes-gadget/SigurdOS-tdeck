@@ -23,6 +23,15 @@ TEST(UiGenerationOwner, SkipsZeroWhenTheCounterWraps)
     EXPECT_EQ(next_ui_generation(UINT32_MAX), 1U);
 }
 
+TEST(UiGenerationOwner, DeferredActionsRequireCurrentTimerRouteAndGeneration)
+{
+    int owner = 0;
+    EXPECT_TRUE(ui_deferred_action_matches(true, true, &owner, 9, &owner, 9));
+    EXPECT_FALSE(ui_deferred_action_matches(false, true, &owner, 9, &owner, 9));
+    EXPECT_FALSE(ui_deferred_action_matches(true, false, &owner, 9, &owner, 9));
+    EXPECT_FALSE(ui_deferred_action_matches(true, true, &owner, 9, &owner, 10));
+}
+
 int main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);

@@ -73,10 +73,10 @@ static void start_logout_timer()
     if (!ctx) return;
     g_logout_timer = lv_timer_create([](lv_timer_t* timer) {
         auto* owned = static_cast<LogoutTimerCtx*>(lv_timer_get_user_data(timer));
-        const bool still_current = timer == g_logout_timer && owned &&
-            ui_generation_matches(g_contact_detail_root, g_contact_detail_generation,
-                                  owned->root, owned->generation) &&
-            current_screen() == Screen::ContactDetail;
+        const bool still_current = ui_deferred_action_matches(
+            timer == g_logout_timer, current_screen() == Screen::ContactDetail,
+            g_contact_detail_root, g_contact_detail_generation,
+            owned ? owned->root : nullptr, owned ? owned->generation : 0);
         if (timer == g_logout_timer) g_logout_timer = nullptr;
         delete owned;
         lv_timer_del(timer);
