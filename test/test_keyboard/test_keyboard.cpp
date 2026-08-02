@@ -355,6 +355,28 @@ TEST_F(KeyboardTest, KeyModeAcceptsC3ShiftedLetters) {
     EXPECT_TRUE(sigurdos_keyboard_consume_event());
 }
 
+TEST_F(KeyboardTest, KeyModePlainDigitClearsPreviousLetterShiftState) {
+    init_with_ack();
+    scan_keymode_byte('U');
+    EXPECT_TRUE(sigurdos_keyboard_is_shift());
+    ASSERT_TRUE(sigurdos_keyboard_consume_event());
+    sigurdos_keyboard_consume_key();
+
+    scan_keymode_byte('2');
+    EXPECT_FALSE(sigurdos_keyboard_is_shift());
+}
+
+TEST_F(KeyboardTest, KeyModeShiftedDigitPublishesShiftState) {
+    init_with_ack();
+    scan_keymode_byte('u');
+    EXPECT_FALSE(sigurdos_keyboard_is_shift());
+    ASSERT_TRUE(sigurdos_keyboard_consume_event());
+    sigurdos_keyboard_consume_key();
+
+    scan_keymode_byte('!');
+    EXPECT_TRUE(sigurdos_keyboard_is_shift());
+}
+
 TEST_F(KeyboardTest, KeyModeAcceptsC3SymbolLayerCharacters) {
     init_with_ack();
     scan_keymode_byte('2');

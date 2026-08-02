@@ -189,6 +189,15 @@ static uint32_t diag_last_output_codepoint = 0;
 static uint32_t diag_event_count = 0;
 static uint32_t diag_last_event_ms = 0;
 
+static bool is_shifted_digit_symbol(uint32_t key_code)
+{
+    static constexpr char shifted_digits[] = ")!@#$%^&*(";
+    for (char symbol : shifted_digits) {
+        if (key_code == (uint8_t)symbol) return true;
+    }
+    return false;
+}
+
 static bool raw_key_down(const uint8_t matrix[KB_RAW_COLS], uint8_t col, uint8_t row)
 {
     if (col >= KB_RAW_COLS || row >= KB_RAW_ROWS) return false;
@@ -257,6 +266,17 @@ static void enqueue_key(uint32_t key_code)
     if (key_code >= 'A' && key_code <= 'Z') {
         shift_held = true;
     } else if (key_code >= 'a' && key_code <= 'z') {
+        shift_held = false;
+    } else if (key_code >= '0' && key_code <= '9') {
+        // Key-mode returns an unshifted digit directly.
+        shift_held = false;
+    } else if (is_shifted_digit_symbol(key_code)) {
+        // The C3 returns Shift+digit as its punctuation byte (e.g. '!').
+        // Preserve that information for the alternate layout digit table.
+        shift_held = true;
+    } else {
+        // Do not let a previous letter's case leak into controls or other
+        // punctuation that carries no shift information.
         shift_held = false;
     }
 }
