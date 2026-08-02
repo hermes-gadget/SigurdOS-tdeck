@@ -119,9 +119,11 @@ const char* getActiveRegion();
 /// propagate to mesh; call mesh_wrapper::setActiveRegion for that).
 bool setActiveRegionName(const char* name);
 
-/// Commit the active name after validating the matching private key. key_hex
-/// is accepted for companion compatibility but key material is persisted only
-/// in /regions2. The in-memory name cache changes only after all commits pass.
+/// Validate/create a private region, install its key, and commit the active
+/// name. key_hex is accepted for companion compatibility; key material is
+/// persisted only in /regions2. The in-memory name cache changes only after
+/// all commits pass. Public/hash regions may pass a null key to commit only
+/// the active name.
 bool setActiveRegionNameWithKey(const char* name, const char* key_hex);
 
 // ── Channel sync ────────────────────────────────────────

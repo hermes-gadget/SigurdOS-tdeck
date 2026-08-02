@@ -353,6 +353,45 @@ TEST(RegionsTest, ActiveRegionCanBeSetAndGet) {
     EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "");
 }
 
+TEST(RegionsTest, ActivePrivateRegionWithKeyInstallsAndActivates) {
+    removeAllRegionEntriesNamed("$active_key");
+    const uint8_t expected[16] = {
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+        0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
+    };
+
+    ASSERT_TRUE(sigurdos::mesh::setActiveRegionWithKey(
+        "$active_key", expected));
+    EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "$active_key");
+
+    uint8_t actual[16]{};
+    ASSERT_TRUE(sigurdos::mesh::getPrivateRegionKey("$active_key", actual));
+    EXPECT_EQ(std::memcmp(actual, expected, sizeof(expected)), 0);
+
+    sigurdos::mesh::setActiveRegionWithKey("", nullptr);
+    removeAllRegionEntriesNamed("$active_key");
+}
+
+TEST(RegionsTest, ActivePrivateRegionWithoutKeyIsRejected) {
+    removeAllRegionEntriesNamed("$missing_key");
+    ASSERT_NE(sigurdos::mesh::addRegion("$missing_key", nullptr), nullptr);
+
+    EXPECT_FALSE(sigurdos::mesh::setActiveRegion("$missing_key"));
+    EXPECT_STREQ(sigurdos::mesh::getActiveRegion(), "");
+
+    removeAllRegionEntriesNamed("$missing_key");
+}
+
+TEST(RegionsTest, ActiveRegionWithKeyRejectsInvalidInputs) {
+    const uint8_t zero_key[16]{};
+    const uint8_t valid_key[16] = {1};
+
+    EXPECT_FALSE(sigurdos::mesh::setActiveRegionWithKey(nullptr, valid_key));
+    EXPECT_FALSE(sigurdos::mesh::setActiveRegionWithKey("#public", valid_key));
+    EXPECT_FALSE(sigurdos::mesh::setActiveRegionWithKey("$zero", zero_key));
+    EXPECT_FALSE(sigurdos::mesh::setActiveRegionWithKey("", valid_key));
+}
+
 // ── Home region ─────────────────────────────────────────
 
 TEST(RegionsTest, HomeRegionSig) {
@@ -728,6 +767,12 @@ TEST(RegionsTest, GetActiveRegionSignature) {
 TEST(RegionsTest, SetActiveRegionNameSignature) {
     using fn_t = bool (*)(const char*);
     (void)static_cast<fn_t>(sigurdos::mesh::setActiveRegionName);
+    SUCCEED();
+}
+
+TEST(RegionsTest, SetActiveRegionWithKeySignature) {
+    using fn_t = bool (*)(const char*, const uint8_t*);
+    (void)static_cast<fn_t>(sigurdos::mesh::setActiveRegionWithKey);
     SUCCEED();
 }
 
