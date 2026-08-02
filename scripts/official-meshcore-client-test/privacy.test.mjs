@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { redactError, sanitize, summarize } from "./privacy.mjs";
@@ -58,4 +59,10 @@ test("error details are reduced to non-identifying categories", () => {
   );
   assert.equal(detail, "transport unavailable");
   assertNoSecrets(detail);
+});
+
+test("disconnect failures use the same redaction contract as other failures", () => {
+  const matrix = readFileSync(new URL("./matrix.mjs", import.meta.url), "utf8");
+  assert.match(matrix, /add\("disconnect", false, redactError\(e\)\)/);
+  assert.doesNotMatch(matrix, /add\("disconnect", false, e\?\.message/);
 });
