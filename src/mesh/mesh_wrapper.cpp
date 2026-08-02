@@ -30,6 +30,7 @@
 #include "capacity_policy.h"
 #include "radio_config_policy.h"
 #include "region_name.h"
+#include "scope_key_hex.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
 #include "hal/boot_watchdog.h"
@@ -2766,6 +2767,21 @@ bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz)
 // mesh_wrapper provides g_mesh-dependent extras.
 
 bool setActiveRegion(const char* name) {
+    // Do not persist a private region name unless its transport key is
+    // already available. Otherwise the reboot-time restore cannot activate
+    // the scope and traffic silently falls back to wildcard routing.
+    if (name && name[0]) {
+        RegionMap* map = sigurdos::mesh::getRegionMap();
+        ::RegionEntry* region = sigurdos::mesh::findRegion(name);
+        if (name[0] == '$' && !region) return false;
+        if (region) {
+            TransportKey keys[1];
+            if (!map || map->getTransportKeysFor(*region, keys, 1) <= 0) {
+                return false;
+            }
+        }
+    }
+
     // Update NodePrefs + cache (via regions module)
     if (!sigurdos::mesh::setActiveRegionName(name)) return false;
 
@@ -2786,10 +2802,35 @@ bool setActiveRegion(const char* name) {
             }
             // Region name saved but key not in store — clear scope
             g_mesh->clearActiveScope();
+            return false;
         } else {
             g_mesh->clearActiveScope();
         }
     }
+    return true;
+}
+
+bool setActiveRegionWithKey(const char* name, const uint8_t* private_key) {
+    if (!name) return false;
+    if (!name[0]) {
+        if (private_key ||
+            !sigurdos::mesh::setActiveRegionNameWithKey("", nullptr)) {
+            return false;
+        }
+        if (g_mesh) g_mesh->clearActiveScope();
+        return true;
+    }
+    if (name[0] != '$' || !private_key ||
+        !sigurdos::mesh::scopeKeyNonZero(private_key)) {
+        return false;
+    }
+
+    char key_hex[33];
+    sigurdos::mesh::scopeKeyHexEncode(private_key, key_hex);
+    if (!sigurdos::mesh::setActiveRegionNameWithKey(name, key_hex)) {
+        return false;
+    }
+    if (g_mesh) g_mesh->setActiveScope(private_key);
     return true;
 }
 

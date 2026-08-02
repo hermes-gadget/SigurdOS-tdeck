@@ -4,6 +4,7 @@
 #include "mesh/mesh_wrapper.h"
 #include "mesh/region_name.h"
 #include "mesh/regions.h"
+#include "mesh/scope_key_hex.h"
 #include "mocks/mock_mesh_state.h"
 #include <cstring>
 
@@ -421,9 +422,42 @@ bool setActiveRegionName(const char* name) {
     return true;
 }
 
+bool setActiveRegionNameWithKey(const char* name, const char* key_hex) {
+    if (!name) return false;
+    if (!name[0]) {
+        return key_hex == nullptr && setActiveRegionName("");
+    }
+    if (name[0] != '$' || !key_hex) return setActiveRegionName(name);
+
+    uint8_t key[16];
+    if (!scopeKeyHexDecode(key_hex, key)) return false;
+    RegionEntry* region = findRegion(name);
+    if (!region) region = addPrivateRegion(name, key, nullptr);
+    else if (!setPrivateRegionKey(name, key)) return false;
+    return region && setActiveRegionName(name);
+}
+
 // mesh_wrapper-level setter: mirrors setActiveRegionName for the cache so
 // getActiveRegion() reflects the change (real build also propagates to g_mesh).
-bool setActiveRegion(const char* name) { return setActiveRegionName(name); }
+bool setActiveRegion(const char* name) {
+    if (name && name[0] == '$') {
+        uint8_t key[16];
+        if (!findRegion(name) || !getPrivateRegionKey(name, key)) return false;
+    }
+    return setActiveRegionName(name);
+}
+
+bool setActiveRegionWithKey(const char* name, const uint8_t* private_key) {
+    if (!name) return false;
+    if (!name[0]) {
+        return !private_key && setActiveRegionNameWithKey("", nullptr);
+    }
+    if (name[0] != '$' || !private_key ||
+        !scopeKeyNonZero(private_key)) return false;
+    char key_hex[33];
+    scopeKeyHexEncode(private_key, key_hex);
+    return setActiveRegionNameWithKey(name, key_hex);
+}
 
 void setSendUnscopedOnce(bool v) { (void)v; }
 

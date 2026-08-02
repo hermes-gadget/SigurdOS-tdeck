@@ -594,7 +594,70 @@ bool setActiveRegionName(const char* name) {
 }
 
 bool setActiveRegionNameWithKey(const char* name, const char* key_hex) {
-    return commitActiveRegionPrefs(name, key_hex, true);
+    if (!name) return false;
+    if (!name[0]) {
+        return key_hex == nullptr &&
+            commitActiveRegionPrefs(name, nullptr, true);
+    }
+
+    // A keyed activation is only meaningful for a private region. Keep the
+    // public/hash-region compatibility path below keyless.
+    if (name[0] != '$' || !key_hex || !g_region_map || !g_region_store ||
+        !regionNameValid(name)) {
+        return !key_hex && name[0] != '$' &&
+            commitActiveRegionPrefs(name, nullptr, true);
+    }
+
+    uint8_t checked_key[16];
+    if (!scopeKeyHexDecode(key_hex, checked_key)) return false;
+
+    const RegionMap previous_map = *g_region_map;
+    const bool previous_dirty = g_regions_dirty;
+    const NodePrefs previous_prefs = prefs_get();
+    char previous_active[sizeof(g_active_name)];
+    memcpy(previous_active, g_active_name, sizeof(previous_active));
+
+    ::RegionEntry* region = g_region_map->findByName(name);
+    const bool existed = region != nullptr;
+    uint16_t region_id = 0;
+    TransportKey previous_keys[4]{};
+    int previous_key_count = 0;
+
+    if (region) {
+        if (region->name[0] != '$') return false;
+        region_id = region->id;
+        previous_key_count = g_region_store->loadKeysFor(
+            region_id, previous_keys, 4);
+    } else {
+        region = g_region_map->putRegion(name, 0);
+        if (!region) return false;
+        region->flags = 0;
+        region_id = region->id;
+    }
+
+    TransportKey transport_key{};
+    memcpy(transport_key.key, checked_key, sizeof(transport_key.key));
+    if (!g_region_store->saveKeysFor(region_id, &transport_key, 1)) {
+        restoreRegionMap(previous_map, previous_dirty);
+        return false;
+    }
+
+    if (commitActiveRegionPrefs(name, nullptr, true)) return true;
+
+    // commitActiveRegionPrefs() restores its own map/prefs snapshot on
+    // failure, but the key store is a separate RAM cache. Restore that cache
+    // and the outer snapshot as one operation so a failed activation cannot
+    // leave an uncommitted key behind.
+    if (existed && previous_key_count > 0) {
+        g_region_store->saveKeysFor(region_id, previous_keys,
+                                    previous_key_count);
+    } else {
+        g_region_store->removeKeys(region_id);
+    }
+    restoreRegionMap(previous_map, previous_dirty);
+    memcpy(g_active_name, previous_active, sizeof(g_active_name));
+    prefs_set(previous_prefs);
+    return false;
 }
 
 // ── Channel sync ────────────────────────────────────────
