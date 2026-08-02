@@ -34,6 +34,7 @@
 #include "hal/tdeck_pins.h"
 #include "hal/boot_watchdog.h"
 #include "hal/gps.h"
+#include "hal/factory_reset_policy.h"
 #include "hal/prefs.h"
 #include "hal/radio_profiles.h"
 #include "hal/github_ota.h"
@@ -2180,6 +2181,13 @@ void shutdown(uint32_t wake_secs)
 
 bool factoryReset()
 {
+    // Commit the safe BLE interlock before any destructive operation. If this
+    // fails, do not erase anything and do not claim that reset succeeded.
+    if (!sigurdos::prefs_arm_factory_reset()) {
+        Serial.println("[mesh] factory reset failed: could not arm BLE interlock");
+        return false;
+    }
+
     // Save identity in case we need it for rollback, then wipe everything
     if (g_mesh) saveIdentity(g_mesh->self_id);
     saveChannels();
@@ -2188,32 +2196,51 @@ bool factoryReset()
     // Close SPIFFS before reformatting
     SPIFFS.end();
 
-    // Erase known NVS namespaces (prefs + channels, repeater passwords)
-    {
-        Preferences nvs;
-        if (nvs.begin("sigurdos", false)) {
-            nvs.clear();
-            nvs.end();
+    const auto apply_nvs_target = [](const hal::factory_reset::NvsTarget& target,
+                                     void*) -> bool {
+        if (target.action == hal::factory_reset::NvsAction::ReplaceWithSafePrefs) {
+            return sigurdos::prefs_commit_factory_reset();
         }
-    }
-    {
-        Preferences nvs;
-        if (nvs.begin("sigurdos_pw", false)) {
-            nvs.clear();
-            nvs.end();
-        }
-    }
 
-    // Reformat SPIFFS to wipe identity, contacts, and any other files
-    SPIFFS.format();
+        Preferences nvs;
+        if (!nvs.begin(target.name, false)) {
+            Serial.printf("[mesh] factory reset failed: could not open NVS namespace %s\n",
+                          target.name);
+            return false;
+        }
+        const bool cleared = nvs.clear();
+        nvs.end();
+        if (!cleared) {
+            Serial.printf("[mesh] factory reset failed: could not clear NVS namespace %s\n",
+                          target.name);
+        }
+        return cleared;
+    };
+    const auto format_spiffs = [](void*) -> bool {
+        return SPIFFS.format();
+    };
+
+    const hal::factory_reset::NvsTarget* failed_target = nullptr;
+    hal::factory_reset::FailureStage failed_stage = hal::factory_reset::FailureStage::None;
+    if (!hal::factory_reset::eraseOwnedStorage(
+            apply_nvs_target, nullptr, format_spiffs, nullptr,
+            &failed_target, &failed_stage)) {
+        if (failed_stage == hal::factory_reset::FailureStage::Nvs && failed_target) {
+            Serial.printf("[mesh] factory reset aborted during NVS namespace %s\n",
+                          failed_target->name);
+        } else {
+            Serial.println("[mesh] factory reset aborted: SPIFFS format failed");
+        }
+        return false;
+    }
 
     // Only erase SigurdOS-owned NVS namespaces — do NOT erase the full
     // NVS partition (which would destroy PHY calibration data, BLE bonding
     // keys, and other ESP-IDF system state). A full NVS erase requires an
     // explicit "deep reset" action with user confirmation.
     //
-    // Namespace-scoped erase is already done above for 'sigurdos' and
-    // 'sigurdos_pw'. No nvs_flash_erase() here — it was too broad.
+    // Namespace-scoped erasure above covers every SigurdOS-owned namespace;
+    // no nvs_flash_erase() here — it would be too broad.
 
     // Give flash writes time to complete before restart
     delay(200);

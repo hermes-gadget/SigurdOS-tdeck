@@ -33,6 +33,14 @@ static constexpr NvsTarget NVS_TARGETS[] = {
 
 using ApplyNvsTargetFn = bool (*)(const NvsTarget&, void*);
 
+enum class FailureStage : uint8_t {
+    None,
+    Nvs,
+    Spiffs,
+};
+
+using FormatStorageFn = bool (*)(void*);
+
 inline bool applyNvsTargets(ApplyNvsTargetFn apply, void* context,
                             const NvsTarget** failed_target = nullptr)
 {
@@ -41,6 +49,27 @@ inline bool applyNvsTargets(ApplyNvsTargetFn apply, void* context,
     for (const NvsTarget& target : NVS_TARGETS) {
         if (apply(target, context)) continue;
         if (failed_target) *failed_target = &target;
+        return false;
+    }
+    return true;
+}
+
+// Keep the destructive sequence injectable so callers can refuse to reboot
+// when either the namespace reset or filesystem format did not complete.
+inline bool eraseOwnedStorage(ApplyNvsTargetFn apply_nvs, void* nvs_context,
+                              FormatStorageFn format_storage, void* format_context,
+                              const NvsTarget** failed_target = nullptr,
+                              FailureStage* failed_stage = nullptr)
+{
+    if (failed_target) *failed_target = nullptr;
+    if (failed_stage) *failed_stage = FailureStage::None;
+
+    if (!applyNvsTargets(apply_nvs, nvs_context, failed_target)) {
+        if (failed_stage) *failed_stage = FailureStage::Nvs;
+        return false;
+    }
+    if (!format_storage || !format_storage(format_context)) {
+        if (failed_stage) *failed_stage = FailureStage::Spiffs;
         return false;
     }
     return true;

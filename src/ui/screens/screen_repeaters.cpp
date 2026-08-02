@@ -25,6 +25,7 @@
 #include "../chat_screen.h"
 #include "../repeater_command_policy.h"
 #include "../notifications.h"
+#include "../generation_owner.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../mesh/contact_store.h"
@@ -42,6 +43,45 @@ using namespace theme;
 using namespace responsive;
 
 static int g_repeaters_page = 0;
+static lv_obj_t* g_repeater_detail_root = nullptr;
+static lv_timer_t* g_repeater_logout_timer = nullptr;
+static uint32_t g_repeater_detail_generation = 0;
+
+struct RepeaterLogoutTimerCtx {
+    lv_obj_t* root;
+    uint32_t generation;
+};
+
+static void cancel_repeater_logout_timer()
+{
+    if (!g_repeater_logout_timer) return;
+    delete static_cast<RepeaterLogoutTimerCtx*>(
+        lv_timer_get_user_data(g_repeater_logout_timer));
+    lv_timer_del(g_repeater_logout_timer);
+    g_repeater_logout_timer = nullptr;
+}
+
+static void start_repeater_logout_timer()
+{
+    cancel_repeater_logout_timer();
+    auto* ctx = new(std::nothrow) RepeaterLogoutTimerCtx{
+        g_repeater_detail_root, g_repeater_detail_generation};
+    if (!ctx) return;
+    g_repeater_logout_timer = lv_timer_create([](lv_timer_t* timer) {
+        auto* owned = static_cast<RepeaterLogoutTimerCtx*>(
+            lv_timer_get_user_data(timer));
+        const bool still_current = ui_deferred_action_matches(
+            timer == g_repeater_logout_timer,
+            current_screen() == Screen::RepeaterDetail,
+            g_repeater_detail_root, g_repeater_detail_generation,
+            owned ? owned->root : nullptr, owned ? owned->generation : 0);
+        if (timer == g_repeater_logout_timer) g_repeater_logout_timer = nullptr;
+        delete owned;
+        lv_timer_del(timer);
+        if (still_current) go_back();
+    }, 600, ctx);
+    if (!g_repeater_logout_timer) delete ctx;
+}
 
 static int compare_contacts_by_last_seen_desc(const void* a, const void* b)
 {
@@ -403,6 +443,15 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
     }
 
     lv_obj_t* scr = make_screen_full(screen_title);
+    cancel_repeater_logout_timer();
+    g_repeater_detail_root = scr;
+    g_repeater_detail_generation = next_ui_generation(g_repeater_detail_generation);
+    lv_obj_add_event_cb(scr, [](lv_event_t* e) {
+        lv_obj_t* deleted = static_cast<lv_obj_t*>(lv_event_get_target(e));
+        if (deleted != g_repeater_detail_root) return;
+        cancel_repeater_logout_timer();
+        g_repeater_detail_root = nullptr;
+    }, LV_EVENT_DELETE, nullptr);
 
     if (!target) {
         lv_obj_t* err = lv_label_create(scr);
@@ -484,7 +533,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                         return;
                     }
 
-                    repeater_detail_screen_show(name, true);
+                    navigate_to_repeater_detail(name, true);
 
                 }
             }, LV_EVENT_CLICKED, nullptr);
@@ -886,10 +935,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
                 const char* name = (const char*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
                 if (name) {
                     sigurdos::mesh::sendLogout(name);
-                    lv_timer_create([](lv_timer_t* t) {
-                        go_back();
-                        lv_timer_del(t);
-                    }, 600, nullptr);
+                    start_repeater_logout_timer();
                 }
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {

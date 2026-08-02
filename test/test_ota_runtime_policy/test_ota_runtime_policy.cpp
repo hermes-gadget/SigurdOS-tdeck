@@ -39,6 +39,12 @@ TEST(OtaRuntimePolicyTest, ConnectedClientWithoutBodyCannotOwnLoopTask) {
     EXPECT_NE(OTA_WORKER_CORE, 1);
 }
 
+TEST(OtaRuntimePolicyTest, RebootWaitsForWorkerCleanup) {
+    EXPECT_FALSE(otaRebootMayFinalize(false, false));
+    EXPECT_FALSE(otaRebootMayFinalize(true, true));
+    EXPECT_TRUE(otaRebootMayFinalize(true, false));
+}
+
 TEST(OtaRuntimePolicyTest, ThrottledSixMegabyteUploadUsesBoundedWorkerSlices) {
     size_t remaining = OTA_MAX_IMAGE_BYTES;
     size_t slices = 0;

@@ -22,4 +22,16 @@ inline bool ui_generation_matches(const void* expected_owner,
            expected_generation == actual_generation;
 }
 
+inline bool ui_deferred_action_matches(bool timer_is_current,
+                                       bool route_is_current,
+                                       const void* expected_owner,
+                                       uint32_t expected_generation,
+                                       const void* actual_owner,
+                                       uint32_t actual_generation)
+{
+    return timer_is_current && route_is_current &&
+           ui_generation_matches(expected_owner, expected_generation,
+                                 actual_owner, actual_generation);
+}
+
 } // namespace sigurdos::ui

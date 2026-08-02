@@ -1386,7 +1386,8 @@ void settings_system_show()
 
         lv_obj_t* message = lv_label_create(dlg);
         const bool allowed = system_reboot_allowed(
-            sigurdos::ota::isActive(), sigurdos::github_ota::isActive());
+            sigurdos::ota::isActive() || sigurdos::ota::isRebootPending(),
+            sigurdos::github_ota::isActive());
         lv_label_set_text(message, allowed
             ? "Save all state and restart?"
             : "Reboot blocked while an update is active.");
@@ -1418,8 +1419,9 @@ void settings_system_show()
         lv_obj_add_event_cb(confirm, [](lv_event_t* event) {
             lv_obj_t* button = (lv_obj_t*)lv_event_get_target(event);
             lv_obj_t* dialog = lv_obj_get_parent(button);
-            if (!system_reboot_allowed(sigurdos::ota::isActive(),
-                                       sigurdos::github_ota::isActive())) return;
+            if (!system_reboot_allowed(
+                    sigurdos::ota::isActive() || sigurdos::ota::isRebootPending(),
+                    sigurdos::github_ota::isActive())) return;
             lv_obj_add_state(button, LV_STATE_DISABLED);
             lv_obj_t* label = lv_obj_get_child(dialog, 1);
             if (label) lv_label_set_text(label, "Saving state...");
@@ -1427,8 +1429,9 @@ void settings_system_show()
                 lv_obj_t* dialog = (lv_obj_t*)lv_timer_get_user_data(task);
                 lv_timer_del(task);
                 if (!lv_obj_is_valid(dialog)) return;
-                if (!system_reboot_allowed(sigurdos::ota::isActive(),
-                                           sigurdos::github_ota::isActive())) {
+                if (!system_reboot_allowed(
+                        sigurdos::ota::isActive() || sigurdos::ota::isRebootPending(),
+                        sigurdos::github_ota::isActive())) {
                     lv_label_set_text(lv_obj_get_child(dialog, 1),
                                       "Update started; reboot cancelled.");
                     return;

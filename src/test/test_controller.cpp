@@ -421,7 +421,7 @@ static void cmd_navigate(const char* arg) {
     if (strncmp(arg, "contactdetail ", 14) == 0) {
         const char* name = arg + 14;
         if (name[0]) {
-            sigurdos::ui::contact_detail_screen_show(name);
+            sigurdos::ui::navigate_to_contact_detail(name);
             return;
         }
     }
@@ -447,7 +447,7 @@ static void cmd_navigate(const char* arg) {
             }
             if (name[0]) {
                 bool skip = (sigurdos::mesh::getLoginStatus(name) == 2);
-                sigurdos::ui::repeater_detail_screen_show(name, skip);
+                sigurdos::ui::navigate_to_repeater_detail(name, skip);
                 return;
             }
         }

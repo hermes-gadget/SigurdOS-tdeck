@@ -435,6 +435,18 @@ struct FactoryResetNamespaceRecorder {
     }
 };
 
+struct FactoryResetFormatRecorder {
+    bool result = true;
+    int calls = 0;
+
+    static bool format(void* raw)
+    {
+        auto* self = static_cast<FactoryResetFormatRecorder*>(raw);
+        self->calls++;
+        return self->result;
+    }
+};
+
 TEST(FactoryResetPolicyTest, ResetsEveryOwnedNamespaceAndReplacesPrefsLast) {
     using namespace sigurdos::hal::factory_reset;
     FactoryResetNamespaceRecorder recorder;
@@ -464,6 +476,40 @@ TEST(FactoryResetPolicyTest, StopsAndReportsTheNamespaceThatFailed) {
     ASSERT_NE(failed, nullptr);
     EXPECT_STREQ(failed->name, CHAT_SCOPES_NAMESPACE);
     EXPECT_EQ(recorder.targets.size(), 2u);
+}
+
+TEST(FactoryResetPolicyTest, NvsFailurePreventsFilesystemFormat) {
+    using namespace sigurdos::hal::factory_reset;
+    FactoryResetNamespaceRecorder namespaces;
+    namespaces.fail_at = 1;
+    FactoryResetFormatRecorder format;
+    const NvsTarget* failed = nullptr;
+    FailureStage stage = FailureStage::None;
+
+    EXPECT_FALSE(eraseOwnedStorage(
+        FactoryResetNamespaceRecorder::apply, &namespaces,
+        FactoryResetFormatRecorder::format, &format, &failed, &stage));
+    ASSERT_NE(failed, nullptr);
+    EXPECT_STREQ(failed->name, CHAT_SCOPES_NAMESPACE);
+    EXPECT_EQ(stage, FailureStage::Nvs);
+    EXPECT_EQ(format.calls, 0);
+}
+
+TEST(FactoryResetPolicyTest, FilesystemFailureIsReportedAfterNvsReset) {
+    using namespace sigurdos::hal::factory_reset;
+    FactoryResetNamespaceRecorder namespaces;
+    FactoryResetFormatRecorder format;
+    format.result = false;
+    const NvsTarget* failed = reinterpret_cast<const NvsTarget*>(1);
+    FailureStage stage = FailureStage::None;
+
+    EXPECT_FALSE(eraseOwnedStorage(
+        FactoryResetNamespaceRecorder::apply, &namespaces,
+        FactoryResetFormatRecorder::format, &format, &failed, &stage));
+    EXPECT_EQ(failed, nullptr);
+    EXPECT_EQ(stage, FailureStage::Spiffs);
+    EXPECT_EQ(format.calls, 1);
+    EXPECT_EQ(namespaces.targets.size(), nvsTargetCount());
 }
 
 struct FactoryResetInterlockWriter {

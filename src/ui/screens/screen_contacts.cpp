@@ -27,6 +27,7 @@
 #include "../contact_list_power.h"
 #include "../repeater_transcript.h"
 #include "../generation_owner.h"
+#include "../room_fetch_policy.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../mesh/contact_store.h"
@@ -73,10 +74,10 @@ static void start_logout_timer()
     if (!ctx) return;
     g_logout_timer = lv_timer_create([](lv_timer_t* timer) {
         auto* owned = static_cast<LogoutTimerCtx*>(lv_timer_get_user_data(timer));
-        const bool still_current = timer == g_logout_timer && owned &&
-            ui_generation_matches(g_contact_detail_root, g_contact_detail_generation,
-                                  owned->root, owned->generation) &&
-            current_screen() == Screen::ContactDetail;
+        const bool still_current = ui_deferred_action_matches(
+            timer == g_logout_timer, current_screen() == Screen::ContactDetail,
+            g_contact_detail_root, g_contact_detail_generation,
+            owned ? owned->root : nullptr, owned ? owned->generation : 0);
         if (timer == g_logout_timer) g_logout_timer = nullptr;
         delete owned;
         lv_timer_del(timer);
@@ -760,7 +761,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
         // Rebuild screen in post-login mode
-        repeater_detail_screen_show(n, true);
+        navigate_to_repeater_detail(n, true);
         start_connection_watch_timer(n);
         free(n);
     } else if (st == LOGIN_STATUS_FAILED || st == LOGIN_STATUS_TIMEOUT ||
@@ -783,7 +784,7 @@ static void on_login_poll_timer(lv_timer_t* t) {
         delete ctx;
         lv_timer_del(t);
         if (g_login_poll_timer == t) g_login_poll_timer = nullptr;
-        repeater_detail_screen_show(n, false);
+        navigate_to_repeater_detail(n, false);
         free(n);
     }
     // LOGIN_PENDING/LOGIN_NONE while waiting, or LOGIN_OK while watching, keep polling.
@@ -1149,7 +1150,14 @@ void show_fetch_msgs_dialog(const char* contact_name)
         if (d && d->name) {
             const char* channel = lv_textarea_get_text(d->ta);
             if (channel && channel[0]) {
-                sigurdos::mesh::sendRoomMsgFetchRequest(d->name, channel);
+                const bool accepted = sigurdos::mesh::sendRoomMsgFetchRequest(
+                    d->name, channel);
+                if (room_fetch_ui_action(accepted) == RoomFetchUiAction::KeepDialog) {
+                    notifications_post(
+                        NotificationEvent::UiError,
+                        "Room fetch not sent; check radio and contact");
+                    return;
+                }
                 char confirm[64];
                 snprintf(confirm, sizeof(confirm), "Fetching msgs from %s channel %s",
                          d->name, channel);
@@ -1430,7 +1438,7 @@ void contact_detail_screen_show(const char* contact_name)
                         "Contact permission was not saved");
                     return;
                 }
-                sigurdos::ui::contact_detail_screen_show(name);
+                sigurdos::ui::navigate_to_contact_detail(name);
             }
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(demote_btn, [](lv_event_t* e) {
@@ -1460,7 +1468,7 @@ void contact_detail_screen_show(const char* contact_name)
                         "Contact permission was not saved");
                     return;
                 }
-                sigurdos::ui::contact_detail_screen_show(name);
+                sigurdos::ui::navigate_to_contact_detail(name);
             }
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(promote_btn, [](lv_event_t* e) {
@@ -1793,7 +1801,7 @@ void contact_detail_screen_show(const char* contact_name)
                 char copy[sigurdos::mesh::SIGURDOS_CONTACT_ID_BUFFER_LEN] = {};
                 if (value) strncpy(copy, value, sizeof(copy) - 1);
                 if (copy[0] && sigurdos::mesh::resetPathTo(copy)) {
-                    contact_detail_screen_show(copy);
+                    navigate_to_contact_detail(copy);
                 } else {
                     notifications_post(
                         NotificationEvent::UiError,
