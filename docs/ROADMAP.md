@@ -3,9 +3,12 @@
 **Fresh start — 2026-08-03.** Supersedes the previous ROADMAP.md, MISSING_FEATURES.md,
 COMPANION_PARITY_ACTION_PLAN.md, audit.md, REVIEW.md and the Launcher/EFUSE audit docs
 (all purged as historical). This is the single source of truth for where the project
-is and where it is going.
+is, where it is going, and **exactly how to ship it**. Companion:
+[`PROJECT_HISTORY.md`](PROJECT_HISTORY.md) (the full-arc history and end-goal analysis).
 
-## Design Goals
+---
+
+## 1. Design Goals
 
 1. **"Discord UI on a LoRa radio"** — a polished, handheld mesh messenger on the
    LilyGo T-Deck (ESP32-S3, SX1262, ST7789, GT911, I2C keyboard, trackball).
@@ -25,7 +28,9 @@ is and where it is going.
    roles (dedicated repeaters / room servers / sensors), Launcher listing (O1,
    externally blocked), board breadth.
 
-## Current State (verified 2026-08-03)
+---
+
+## 2. Current State (verified 2026-08-03)
 
 All items below are merged on `dev`; native suite 1622 green (1621 pass + 1
 ESP32-only skip); production + debug + remote-test builds compile; the feature set
@@ -44,61 +49,200 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 | Native tests | ✅ 1622 | Extended by every wave |
 | Hardware verification | ✅ | 2026-08-03 campaign: home, transports, lock/unlock, i18n switch, WiFi scan, storage indicator |
 
-## Known Gaps (audit findings, 2026-08-03)
+---
+
+## 3. Known Gaps (audit findings, 2026-08-03)
 
 1. **NVS settings reset on every full merged-image reflash** — issue **#1492**.
    Language and other NVS prefs are lost on USB reflash while SPIFFS state survives.
-   Root cause unconfirmed; OTA (app-only) persistence unverified on hardware.
-2. **Only 4 locales.** Dutch (NL) is wanted (Ben verified overflow with it); Wadamesh
-   ships 12. Add NL + IT + PT as a minimum.
+2. **Only 4 locales.** Dutch (NL) is wanted; Wadamesh ships 12. Add NL + IT + PT.
 3. **Text-fit residuals** — FR `Configurer la radio`, ES `CONFIGURACIÓN` /
-   `Configura la radio` still overflow the SETUP tile even at the 8px floor.
-   Fix via shorter translations or ellipsis/wrap policy.
+   `Configura la radio` still overflow the SETUP tile at the 8px floor.
 4. **TCP/WS transports never exercised end-to-end with real WiFi creds.**
-   UI verified (OFF/waiting states, WiFi scan); actual client connections + sync
-   dedup unproven on hardware.
-5. **Companion interop matrix incomplete** — official-app protocol over USB/BLE
-   validated earlier; TCP/WS leg pending (ties to #4).
-6. **GPS** — T-Deck has no GPS module; position comes from the phone/companion.
-   UX for "no position" not finalized.
+5. **Companion interop matrix incomplete** — USB/BLE validated; TCP/WS leg pending.
+6. **GPS UX** — no module on T-Deck; position comes from the phone/companion.
 7. **Launcher O2** (return-to-Launcher) — hardware/API gated, evidence pending.
-   Everything else launcher-related is complete.
-8. **Battery life** — power regime exists; no long-duration battery measurement.
-9. **Release gates** — RELEASE_EVIDENCE warning budget + hardware interop matrix +
-   soak evidence not yet satisfied for a production release.
+8. **Battery life unmeasured** — power regime exists; no long-duration numbers.
+9. **Release gates open** — RELEASE_EVIDENCE warning budget + interop matrix +
+   soak evidence not yet satisfied for a stable release.
 
-## Forward Plan
+---
 
-### Phase A — Reliability (P1)
-- [ ] Root-cause + fix #1492 (NVS persistence across reflash/OTA); add a
-      reflash-persistence test to the hardware campaign
-- [ ] OTA round-trip on hardware (dual OTA slots, branch switches)
-- [ ] Battery-life measurement under the idle power regime (target: >2 weeks idle)
-- [ ] Soak evidence (12h+, flat heap/PSRAM) recorded in RELEASE_EVIDENCE
+## 4. How to Ship — Phase A: Reliability (P1, do first)
 
-### Phase B — i18n completion (P1)
-- [ ] Add Dutch (NL) — first, Ben's language
-- [ ] Add Italian (IT) + Portuguese (PT) toward Wadamesh's 12-locale parity
-- [ ] Resolve SETUP-tile residuals (shorten translations or ellipsis policy)
-- [ ] Verify every locale renders clip-free on hardware (grid sweep)
+> **Why first:** device identity equals mesh presence. Data loss is the one bug
+> that breaks the product promise. Everything below has a concrete exit criterion.
 
-### Phase C — Transport proof (P1)
-- [ ] Hardware E2E with real WiFi: TCP client + WS client connect, push-to-all,
-      per-client sync dedup verified against the official companion protocol
-- [ ] Companion interop matrix completed across USB/BLE/TCP/WS
+### A1 — Fix NVS persistence across reflash/OTA (issue #1492)
+- [ ] Reproduce controlled: flash the same merged image twice (identical ptable);
+      check whether NVS survives (`nav s-display` → language; or serial
+      `Preferences` log). Dump the partition table before/after
+      (`esptool read_flash 0x8000 0x1000`).
+- [ ] If ptable rewrite is the trigger: make the flash tooling avoid rewriting an
+      unchanged ptable (flash component files, not the merged image), or align the
+      NVS partition offset.
+- [ ] Regression test: add a "reflash persistence" step to the hardware campaign —
+      language + node name must survive 3 consecutive merged-image flashes and one
+      OTA round-trip.
+- **Exit:** settings survive reflash + OTA on hardware; #1492 closed.
 
-### Phase D — Field polish (P2)
-- [ ] GPS position UX (phone-provided position display)
-- [ ] Offline map + SD tile storage verification on hardware
-- [ ] Notifications depth (banner actions, unread badges per channel)
-- [ ] Power/lock tuning from battery measurements
+### A2 — OTA round-trip on hardware
+- [ ] Dual-slot OTA: flash release build → OTA a test build → verify boot → OTA back.
+- [ ] Verify rollback path (bad image → fallback slot) and WiFi OTA + SD sideload
+      entry points.
+- **Exit:** both slots verified, rollback verified, documented in RELEASE_EVIDENCE.
 
-### Phase E — Release (P2)
-- [ ] RELEASE_EVIDENCE gates: warning budget, interop matrix, soak
-- [ ] test-builds branch flow for reporter builds
-- [ ] Web flasher manifest refresh + release PR
+### A3 — Battery-life measurement
+- [ ] Charge to 100%, run the idle power regime (screen auto-off, lock), log battery
+      % over time (serial `status` or telemetry) until 20%.
+- [ ] Target: **>2 weeks idle** on a full charge.
+- **Exit:** measurement recorded in RELEASE_EVIDENCE; tuning changes if below target.
 
-### Deferred / declined (no work planned)
-- WebMirror (cancelled 2026-08-03), on-device MQTT (cancelled 2026-08-03),
-  board breadth / T-Deck Plus, Launcher listing (externally blocked),
-  infrastructure roles.
+### A4 — Soak evidence
+- [ ] 12h+ soak on the production build: flat heap + PSRAM, zero crashes/asserts,
+      heartbeat artifacts (see `docs/HARDWARE_TESTING.md`).
+- **Exit:** soak report appended to RELEASE_EVIDENCE.
+
+---
+
+## 5. How to Ship — Phase B: i18n Completion (P1)
+
+### B1 — Dutch (NL), first
+- [ ] Add `Language::Dutch` to `src/i18n/i18n.h`; translate all strings in
+      `src/i18n/i18n.cpp` (fallback to English for gaps); extend the i18n tests.
+- [ ] On-device: flash `SigurdOS_TDeck_remote_test_radio`, `nav s-display` → pick
+      Dutch, `tree` + `capture` every screen; **no clipped text anywhere**
+      (pixel-check labels like the German sweep: max brightness ≈244, box ≥ text).
+
+### B2 — Italian (IT) + Portuguese (PT)
+- [ ] Same procedure as B1 for both locales (toward Wadamesh's 12-locale parity).
+
+### B3 — SETUP-tile residuals
+- [ ] FR `Configurer la radio` / ES `CONFIGURACIÓN` / `Configura la radio` exceed
+      the 8px floor in the 74px tile. Fix by shortening the translations (e.g.
+      `Configurer la radio` → `Configurer radio`) or adding an ellipsis policy in
+      the fitter (`text_fit_lvgl.cpp`) for the last-resort case.
+- **Exit:** zero clipped labels across EN/DE/FR/ES/NL/IT/PT on hardware.
+
+---
+
+## 6. How to Ship — Phase C: Transport Proof (P1)
+
+### C1 — TCP:5000 end-to-end
+- [ ] Get WiFi creds; enter them on-device (Settings → Network → WiFi, or wizard).
+- [ ] From the VM: `python3` socket client → `192.168.1.102:5000` (or the device's
+      STA IP) → complete a protocol handshake (login frame, status request).
+- [ ] Send a DM from the mesh/companion side and verify the client receives it
+      (push-to-all).
+
+### C2 — WS:8765 end-to-end
+- [ ] `websocat ws://<device-ip>:8765` (or browser) → verify the companion WS
+      protocol exchange; confirm the mirror-free companion framing is intact.
+
+### C3 — Multi-client sync dedup
+- [ ] Two clients connected simultaneously → send one message → both receive it
+      exactly once (per-client sync dedup verified on the wire).
+
+### C4 — Complete the interop matrix
+- [ ] USB/BLE (already validated) + TCP/WS legs: fill the matrix in
+      `docs/COMPANION_SUPPORT.md` and record in RELEASE_EVIDENCE.
+- **Exit:** all four transports proven against the official companion protocol.
+
+---
+
+## 7. How to Ship — Phase D: Field Polish (P2)
+
+- [ ] **GPS UX** — position comes from the phone/companion; define and implement
+      the "no position" state and last-known-position display in chat/map.
+- [ ] **Offline map verification** — SD tile storage + markers verified on hardware;
+      negative-cache/online tiles remain a v0.6 item.
+- [ ] **Notifications depth** — banner actions, unread badges per channel.
+- [ ] **Power/lock tuning** — from A3 measurements (timeouts, backlight curve).
+
+---
+
+## 8. How to Ship — Phase E: Release (P2) — the ship instructions
+
+> The goal: **the first stable (non-RC) tag** — `0.1.0` — with evidence. RC tags
+> are currently cut every ~2 weeks; a stable needs the gates below satisfied.
+
+### E1 — RELEASE_EVIDENCE gates (docs/RELEASE_EVIDENCE.md)
+- [ ] Warning budget: no new warnings over budget in any env build.
+- [ ] Interop matrix complete (C4).
+- [ ] Soak evidence (A4) + battery measurement (A3) attached.
+- [ ] Golden frames: home/settings/chat captures from the release build, vision-verified.
+
+### E2 — Test gates
+- [ ] `pio test -e native_test` → **1622+ green** (or new count, 0 failures).
+- [ ] `pio test -e native_sanitize` → ASan/UBSan clean.
+- [ ] Builds: `pio run -e SigurdOS_TDeck`, `-e SigurdOS_TDeck_debug`,
+      `-e SigurdOS_TDeck_remote_test_radio` all clean.
+
+### E3 — Reporter build flow
+- [ ] Push the production binary to the `test-builds` orphan branch; share the raw
+      URL + MD5 (existing protocol).
+
+### E4 — Web flasher + artifacts
+- [ ] Refresh the firmware manifest (`firmware/README.md` / web flasher manifest);
+      release publishes `SigurdOS-tdeck-launcher.bin` (byte-identical to
+      `firmware-merged.bin`) plus the debug and test builds.
+
+### E5 — Cut the release
+- [ ] Tag `0.1.0` on `dev` at the verified commit; release notes with the feature
+      list + evidence links; CI `build-release.yml` builds and attaches artifacts.
+- [ ] Flash the production build to the T-Deck; boot-verify (serial log to
+      "Radio ready", no asserts); final soak start.
+
+### E6 — Post-release
+- [ ] Bump `SIGURDOS_VERSION` on `dev`; update FEATURES_OVERVIEW/PROJECT_HISTORY
+      with the stable milestone.
+- **Exit:** `0.1.0` stable release live with evidence, device running it.
+
+---
+
+## 9. v0.6 Ship-Ready Backlog (from the 2026-08-02 brainstorm)
+
+> Ship after the stable. Each item is scoped with tests + hardware verification
+> per the HARDWARE_TESTING protocol. **Top-3 first: backup, canned messages, SOS.**
+
+| # | Item | Concrete scope | Effort | Tests |
+| --- | --- | --- | --- | --- |
+| 1 | **SD backup bundle** | One-tap export of identity + contacts + channels + prefs to a dated file on SD; restore from the same menu | M | test_backup_bundle (round-trip), HW: backup→factory reset→restore |
+| 2 | **Canned messages** | 3–5 editable presets ("73", "QTH?", "Testing 1-2-3") inserted in 2 taps in chat | S | test_canned_messages, HW: insert in DM |
+| 3 | **SOS beacon** | Hold combo → SOS + GPS position, repeats every N min until cancelled, buzzer pattern | M | test_sos (rate/timer logic), HW: trigger + cancel |
+| 4 | GPX track export | Recorded GPS tracks → `.gpx` on SD | S | test_gpx_writer, HW: export + parse |
+| 5 | Airtime/duty-cycle meter | "Airtime today: 0.6% / 1%" in Signal/settings | S | test_duty_cycle (TX accounting) |
+| 6 | Mesh time sync | Take time from any heard node when GPS/app unavailable | S | test_time_sync (ordering), HW: two nodes |
+| 7 | Reply/quote + forward | Quote on reply; forward received messages to another chat | S | test_chat_actions |
+| 8 | In-chat location sharing | "Send my position" as a map-renderable message | S–M | test_location_message |
+| 9 | Keyword & contact alerts | Alert on chosen contact/keyword, even on other screens | M | test_alerts, HW: banner on cross-screen hit |
+| 10 | Waypoints + nav | Save position as named waypoint; bearing/distance to it or a contact | M | test_waypoints |
+| 11 | SD OTA sideload | Copy `firmware.bin` to SD, flash from Settings | M | HW: sideload full update |
+| 12 | Pull-forward: draft persistence | Don't lose half-typed messages on navigation | S | test_draft_store |
+| 13 | Pull-forward: power profiles | "Field" (low TX, GPS off) vs "Desk" one-tap | M | test_power_profiles, HW: battery |
+| 14 | Pull-forward: online map tiles + neg-cache | Maps usable beyond pre-cached SD tiles | M | test_tile_negcache |
+| 15 | Pull-forward: guided login errors | Explicit repeater/room login errors instead of timeouts | S | test_login_errors |
+
+---
+
+## 10. Definition of Done — the project's end goal
+
+The stable release is shipped **and**:
+1. **No data loss** — #1492 fixed, backup bundle shipped, reflash/OTA persistence proven
+2. **All transports proven** — USB/BLE/TCP/WS interop matrix complete
+3. **Languages complete** — NL/IT/PT in, zero clipped text, lockstep translation rule
+4. **Field-tested** — battery >2 weeks idle, soak clean, GPS UX final
+5. **Safety story** — SOS beacon + location sharing shipped
+6. **Docs current** — ROADMAP/PROJECT_HISTORY/FEATURES_OVERVIEW/KNOWN_ISSUES updated
+
+---
+
+## 11. Standing Process Rules
+
+- Issue-first: no code without a GitHub issue (CONTRIBUTING.md).
+- Tests before merge: full native suite green on every branch; sanitizer env on
+  release candidates.
+- Hardware verification protocol (docs/HARDWARE_TESTING.md) for every feature;
+  screenshots vision-verified, boot/soak logs attached.
+- Read ROADMAP before proposing work — declined scope must not be re-proposed.
+- Keep the living docs current in the same PR that changes the code.
