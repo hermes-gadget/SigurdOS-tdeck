@@ -253,6 +253,26 @@ inline void apply_pixel_badge(lv_obj_t* obj) {
     lv_obj_set_style_pad_all(obj, 2, 0);
 }
 
+// ── Lock-screen styles ─────────────────────────────────
+// Keep the lock screen visually distinct without introducing a second
+// palette.  These helpers are additive so lock-screen widgets follow runtime
+// theme changes just like the rest of the UI.
+inline void apply_lock_screen_bg(lv_obj_t* obj) {
+    apply_dark_bg(obj);
+    lv_obj_set_style_border_width(obj, 0, 0);
+    lv_obj_set_style_radius(obj, 0, 0);
+}
+
+inline void apply_lock_screen_panel(lv_obj_t* obj) {
+    apply_pixel_card_accent(obj);
+    lv_obj_set_style_pad_all(obj, 10, 0);
+}
+
+inline void apply_lock_screen_input(lv_obj_t* obj) {
+    apply_pixel_input(obj);
+    lv_obj_set_style_border_color(obj, lv_color_hex(ACCENT), 0);
+}
+
 // ── Legacy card style (kept for compatibility) ──────────
 inline void apply_card_style(lv_obj_t* obj) {
     apply_pixel_card(obj);

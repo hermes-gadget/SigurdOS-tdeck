@@ -55,6 +55,7 @@ enum class Screen {
     MessageSearch,
     MeshDashboard,
     FileBrowser,
+    Lock,
     COUNT
 };
 
@@ -94,6 +95,13 @@ bool can_go_back();
 
 // Return the screen currently owned by the navigation stack.
 Screen current_screen();
+
+// The lock screen is a transient replacement for the current screen. It is
+// deliberately not a history entry, so unlocking restores the exact screen
+// that was visible before idle power-save engaged.
+void lock_screen_enter();
+void lock_screen_unlocked();
+bool lock_screen_active();
 
 // Re-dispatch the current screen without modifying history.
 // Used after theme/style changes to rebuild widgets with new globals.

@@ -20,6 +20,7 @@
 
 #include <lvgl.h>
 #include "../hal/trackball.h"
+#include "../power/screen_sleep.h"
 
 namespace sigurdos::ui {
 void heard_screen_show();
@@ -53,6 +54,10 @@ void bluetooth_screen_show();
 void regions_screen_show();
 void message_search_screen_show();
 void mesh_dashboard_screen_show();
+void lock_screen_show();
+bool lock_screen_handle_trackball(SigurdOSTrackballEvent event);
+bool lock_screen_is_active();
+void lock_screen_note_wake(sigurdos::power::WakeReason reason);
 void update_wifi_status();
 void update_companion_status();
 

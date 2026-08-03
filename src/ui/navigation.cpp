@@ -74,6 +74,8 @@ static char repeater_detail_name[
 static bool repeater_detail_skip_login = false;
 static bool forced_navigation = false;
 static Screen forced_screen = Screen::Home;
+static bool lock_active = false;
+static Screen locked_previous = Screen::Home;
 
 enum class PendingNavigationType : uint8_t {
     None,
@@ -196,6 +198,7 @@ static void dispatch_screen_unchecked(Screen screen)
     case Screen::MessageSearch:  message_search_screen_show(); break;
     case Screen::MeshDashboard:    mesh_dashboard_screen_show(); break;
     case Screen::FileBrowser:      file_browser_screen_show(); break;
+    case Screen::Lock:              lock_screen_show();          break;
     default: break;
     }
 }
@@ -243,6 +246,12 @@ static void navigate_back_unchecked(Screen target)
 void navigate_to(Screen screen)
 {
     if (!route_ready(screen)) return;
+    if (screen == Screen::Lock) {
+        if (pending_navigation.type != PendingNavigationType::None) return;
+        lock_screen_enter();
+        return;
+    }
+    if (lock_active) return;
     if (screen == current) return;
     if (forced_navigation && screen != forced_screen) return;
     if (pending_navigation.type != PendingNavigationType::None) return;
@@ -254,6 +263,7 @@ void navigate_to_forced(Screen screen)
 {
     // Forced navigation is intentionally narrow: it is the first-boot setup
     // root, not a general way to bypass PIN authorization or history.
+    if (lock_active) return;
     if (screen != Screen::Onboarding || !route_ready(screen)) return;
     clear_pending_navigation();
     history_top = -1;
@@ -269,7 +279,7 @@ bool navigation_is_forced() { return forced_navigation; }
 
 void navigate_to_contact_detail(const char* contact_name)
 {
-    if (forced_navigation) return;
+    if (forced_navigation || lock_active) return;
     if (pending_navigation.type != PendingNavigationType::None) return;
     if (!copy_route_name(contact_detail_name, sizeof(contact_detail_name), contact_name)) return;
     if (current == Screen::ContactDetail) {
@@ -282,7 +292,7 @@ void navigate_to_contact_detail(const char* contact_name)
 
 void navigate_to_repeater_detail(const char* contact_name, bool skip_login)
 {
-    if (forced_navigation) return;
+    if (forced_navigation || lock_active) return;
     if (pending_navigation.type != PendingNavigationType::None) return;
     if (!copy_route_name(repeater_detail_name, sizeof(repeater_detail_name), contact_name)) return;
     repeater_detail_skip_login = skip_login;
@@ -301,7 +311,7 @@ void navigate_to_custom_radio_setup()
 
 void go_back()
 {
-    if (forced_navigation) return;
+    if (forced_navigation || lock_active) return;
     if (pending_navigation.type != PendingNavigationType::None) return;
     if (history_empty()) return; // nowhere to go back to
 
@@ -312,7 +322,7 @@ void go_back()
 
 bool can_go_back()
 {
-    return !forced_navigation && !history_empty();
+    return !forced_navigation && !lock_active && !history_empty();
 }
 
 Screen current_screen()
@@ -320,8 +330,44 @@ Screen current_screen()
     return current;
 }
 
+void lock_screen_enter()
+{
+    if (lock_active || current == Screen::Lock) return;
+
+    const Screen previous = current;
+    locked_previous = route_ready(previous) ? previous : Screen::Home;
+    lock_active = true;
+    clear_pending_navigation();
+    back_swipe_commit = 0;
+    highlight_back_button(false);
+    current = Screen::Lock;
+    dispatch_screen_unchecked(Screen::Lock);
+    report_transition(previous, Screen::Lock);
+}
+
+void lock_screen_unlocked()
+{
+    if (!lock_active) return;
+
+    const Screen previous = locked_previous;
+    lock_active = false;
+    locked_previous = Screen::Home;
+    current = route_ready(previous) && previous != Screen::Lock
+        ? previous : Screen::Home;
+    back_swipe_commit = 0;
+    highlight_back_button(false);
+    dispatch_screen_unchecked(current);
+    report_transition(Screen::Lock, current);
+}
+
+bool lock_screen_active()
+{
+    return lock_active;
+}
+
 void refresh_current_screen()
 {
+    if (lock_active) return;
     if (!route_ready(current)) return;
     if (pending_navigation.type != PendingNavigationType::None) return;
     if (!authorize_route(current, PendingNavigationType::Refresh)) return;
@@ -394,6 +440,8 @@ void navigation_reset_for_test(Screen initial)
     repeater_detail_skip_login = false;
     forced_navigation = false;
     forced_screen = Screen::Home;
+    lock_active = false;
+    locked_previous = Screen::Home;
     clear_pending_navigation();
 }
 #endif
@@ -403,6 +451,8 @@ void navigation_reset_for_test(Screen initial)
 // ════════════════════════════════════════════════════
 bool handle_back_swipe(SigurdOSTrackballEvent event)
 {
+    if (lock_active) return lock_screen_handle_trackball(event);
+
     // Any non-Left event resets the counter and clears visual feedback
     if (event != SigurdOSTrackballEvent::Left) {
         back_swipe_commit = 0;
