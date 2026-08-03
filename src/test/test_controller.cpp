@@ -336,6 +336,8 @@ static const ScreenEntry screen_table[] = {
     {"s-radio",         sigurdos::ui::Screen::SettingsRadio},
     {"s-gps",           sigurdos::ui::Screen::SettingsGPS},
     {"bluetooth",       sigurdos::ui::Screen::Bluetooth},
+    {"transports",      sigurdos::ui::Screen::Transports},
+    {"lock",            sigurdos::ui::Screen::Lock},
     // Hyphenated aliases used by hw_test UI_SCREEN_TARGETS
     {"node-status",     sigurdos::ui::Screen::NodeStatus},
 };

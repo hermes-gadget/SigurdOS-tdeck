@@ -39,3 +39,6 @@ platformio.local.ini
 scripts/official-meshcore-client-test/node_modules/
 scripts/font-tools/node_modules/
 .tokensave/
+
+# fw-context local index (tooling)
+.fw-context/
