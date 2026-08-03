@@ -66,6 +66,26 @@ static void update_time_source_row()
     update_row_label(g_time_source_row, row);
 }
 
+static void format_wifi_system_row(char* out, size_t capacity)
+{
+    if (!out || capacity == 0) return;
+    const auto info = sigurdos::wifi_sta::getStatusInfo();
+    if (sigurdos::ota::isAccessPointActive()) {
+        snprintf(out, capacity, "  WiFi: OTA AP active");
+    } else if (info.status == sigurdos::wifi_sta::Status::Connected) {
+        snprintf(out, capacity, "  WiFi: %s (%s)",
+                 info.ssid[0] ? info.ssid : "Connected",
+                 info.ip[0] ? info.ip : "no IP");
+    } else if (info.status == sigurdos::wifi_sta::Status::Connecting) {
+        snprintf(out, capacity, "  WiFi: Connecting to %s",
+                 info.ssid[0] ? info.ssid : "network");
+    } else if (info.error[0]) {
+        snprintf(out, capacity, "  WiFi: %s", info.error);
+    } else {
+        snprintf(out, capacity, "  WiFi: Not connected");
+    }
+}
+
 struct GitHubOtaDialogCtx {
     lv_obj_t* dialog;
     LvTimerOwner poll_timer;
@@ -874,9 +894,7 @@ void settings_system_show()
 
     // WiFi SSID / Password (for GitHub OTA)
     {
-        const char* ssid_label = p.wifi_ssid[0]
-            ? p.wifi_ssid : "Not set";
-        snprintf(buf, sizeof(buf), "  WiFi: %s", ssid_label);
+        format_wifi_system_row(buf, sizeof(buf));
         lv_obj_t* btn_wifi = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
         lv_obj_set_style_bg_color(btn_wifi, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
         lv_obj_set_style_bg_opa(btn_wifi, LV_OPA_COVER, 0);
@@ -888,7 +906,11 @@ void settings_system_show()
     }
 
     // OTA firmware update (WiFi AP + web upload)
-    lv_obj_t* btn_ota = lv_list_add_btn(list, LV_SYMBOL_WIFI, "  OTA Update");
+    const char* ota_state = sigurdos::ota::isActive()
+        ? (sigurdos::ota::isAccessPointActive() ? "AP active" : "STA active")
+        : "Ready";
+    snprintf(buf, sizeof(buf), "  OTA Update: %s", ota_state);
+    lv_obj_t* btn_ota = lv_list_add_btn(list, LV_SYMBOL_WIFI, buf);
     lv_obj_set_style_bg_color(btn_ota, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(btn_ota, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(btn_ota, lv_color_hex(TEXT_PRIMARY), 0);

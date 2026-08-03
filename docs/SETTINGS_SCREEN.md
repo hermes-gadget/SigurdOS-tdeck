@@ -7,6 +7,7 @@ The Settings screen is a **category hub**: a short tappable list that routes to 
 │          Settings                │  ← top bar + back button
 ├──────────────────────────────────┤
 │ 📶 WiFi                       >  │  ← Screen::WiFiNetworks
+│ 📶 Network                    >  │  ← Screen::Transports
 │ 📶 Bluetooth                  >  │  ← Screen::Bluetooth
 │ 📶 Radio / Mesh               >  │  ← Screen::SettingsRadio
 │ 🛰  GPS / Location             >  │  ← Screen::SettingsGPS
@@ -34,6 +35,7 @@ If a device PIN is configured (`NodePrefs::device_pin != 0`) and the PIN grace p
 | `src/ui/screens/screen_settings_system.cpp` | System sub-screen — name, SD, date/time, wizard, PIN, WiFi credentials, OTA, power controls, version |
 | `src/ui/screens/screen_radio_setup.cpp` | Radio Setup screen — frequency presets, SF/BW/CR/TX power, multi-ACK toggle, Custom RF |
 | `src/ui/screens/screen_wifi_networks.cpp` | WiFi networks screen — scan, connect, AP management |
+| `src/ui/screens/screen_transports.cpp` / `.h` | Network screen — TCP/WebSocket companion toggles and live status |
 | `src/ui/screens/screen_bluetooth.cpp` | Bluetooth screen — BLE companion enable/disable, PIN display, connection status |
 | `src/ui/screens/screen_node_stats.cpp` | Node statistics screen |
 | `src/ui/screens/screen_regions.cpp` | Regions (flood scope) screen — reached from Radio / Mesh |
@@ -55,6 +57,7 @@ If a device PIN is configured (`NodePrefs::device_pin != 0`) and the PIN grace p
 | Row | Target | Sub-screen contents |
 |-----|--------|---------------------|
 | WiFi | `Screen::WiFiNetworks` | Network scan, connect/disconnect, saved credentials |
+| Network | `Screen::Transports` | TCP and WebSocket companion servers; BLE remains on Bluetooth |
 | Bluetooth | `Screen::Bluetooth` | BLE companion toggle, pairing PIN, connection status |
 | Radio / Mesh | `Screen::SettingsRadio` | See below |
 | GPS / Location | `Screen::SettingsGPS` | See below |
@@ -165,14 +168,36 @@ Same +/- pattern. Steps by 16, clamped to `[CHAT_MSGS_MIN_CAP, CHAT_MSGS_MAX]` =
 | `Time source: <source>, <age>` | Shows Manual, Companion, GPS, or Unknown; tap to refresh the age |
 | `Run Setup Wizard` | `navigate_to(Screen::Onboarding)` |
 | `Device PIN: Set/Change` | PIN protecting Settings entry (`NodePrefs::device_pin`) |
-| `WiFi: <ssid> / Not set` | Stores credentials for GitHub OTA (`NodePrefs::wifi_ssid/wifi_password`) |
-| `OTA Update` | Starts AP-mode upload OTA (`SigurdOS-OTA` AP, upload page at `192.168.4.1`) |
+| `WiFi: <ssid> / Not set` | Shows live STA/AP status and stores credentials for GitHub OTA (`NodePrefs::wifi_ssid/wifi_password`) |
+| `OTA Update` | Starts AP-mode upload OTA (`SigurdOS-OTA` AP, upload page at `192.168.4.1`); companion TCP/WebSocket servers are parked for the AP session |
 | `OTA Branch` / `Pre-releases` | GitHub OTA release-selection options |
 | `OTA from GitHub` | Downloads the latest release `firmware.bin` and flashes it |
 | `Shut down` / `Reboot` / `Factory reset` | Power controls with confirmation; state is saved before restart |
 | `SigurdOS <version>` | Read-only — `SIGURDOS_VERSION` from `src/hal/tdeck_pins.h` |
 
 Self-OTA rows refuse to start when the firmware detects it is running under bmorcelli/Launcher (see `docs/LAUNCHER_ROADMAP.md`) — updating must then go through Launcher instead.
+
+### WiFi Networks
+
+The WiFi screen keeps the existing bounded asynchronous scan and password
+dialog, and adds a live status card. It reports STA SSID, local IP, RSSI, and
+the current connection error; failed authentication is cleared when a new
+connection attempt starts. The Reconnect action retries the saved credentials,
+while an OTA access point is shown explicitly and temporarily disables that
+action. Scan status reports busy, progress, completion, and failure without
+blocking the LVGL loop.
+
+### Network / Transports
+
+The Network category exposes independent TCP and WebSocket companion-server
+toggles. Each row is refreshed from `transport_status()` and shows enabled or
+parked state, connection state, client count, and the implementation detail
+string. Toggle changes call `transport_set_enabled()`; persistence remains
+owned by the transport layer. BLE is intentionally separate and remains under
+Settings → Bluetooth. An OTA AP parks companion listeners at runtime without
+rewriting their persisted enabled settings; the transport implementation must
+register the `ota::setCompanionTransportParkHook()` callback and check
+`ota::companionTransportsAllowed()` before enabling and while servicing.
 
 On an unconfigured device, boot enters Onboarding as a forced navigation root:
 history is cleared, no top-bar Back button is shown, and other routes are

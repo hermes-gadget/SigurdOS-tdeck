@@ -55,6 +55,7 @@ enum class Screen {
     MessageSearch,
     MeshDashboard,
     FileBrowser,
+    Transports,
     COUNT
 };
 

@@ -44,10 +44,13 @@ using namespace responsive;
 static sigurdos::wifi_scan::APInfo g_wifi_aps[30];
 static int g_wifi_ap_count = 0;
 
-struct WifiScanCtx {
+struct WifiScreenCtx {
     lv_obj_t* list;
-    lv_obj_t* status;
-    LvTimerOwner timer;
+    lv_obj_t* scan_status;
+    lv_obj_t* connection_status;
+    lv_obj_t* reconnect;
+    LvTimerOwner scan_timer;
+    LvTimerOwner status_timer;
     uint32_t token = 0;
 };
 
@@ -64,6 +67,69 @@ struct WifiDialogCtx {
 
 static WifiDialogCtx* g_wifi_dialog = nullptr;
 static uint32_t g_wifi_dialog_generation = 0;
+
+static void wifi_screen_update_status(WifiScreenCtx* ctx)
+{
+    if (!ctx || !ctx->connection_status || !lv_obj_is_valid(ctx->connection_status)) {
+        return;
+    }
+
+    const auto info = sigurdos::wifi_sta::getStatusInfo();
+    char status[192];
+    uint32_t color = TEXT_SECONDARY;
+    bool reconnect_allowed = true;
+
+    if (sigurdos::ota::isAccessPointActive()) {
+        const char* ip = sigurdos::ota::getIP();
+        snprintf(status, sizeof(status), "AP mode (OTA)\nIP: %s",
+                 ip && ip[0] ? ip : "starting");
+        color = ACCENT_ORANGE;
+        reconnect_allowed = false;
+    } else if (info.status == sigurdos::wifi_sta::Status::Connected &&
+               info.connected) {
+        snprintf(status, sizeof(status), "STA: %s\nIP: %s  %d dBm",
+                 info.ssid[0] ? info.ssid : "connected",
+                 info.ip[0] ? info.ip : "no IP", info.rssi);
+        color = ACCENT_GREEN;
+    } else if (info.status == sigurdos::wifi_sta::Status::Connecting) {
+        snprintf(status, sizeof(status), "STA: connecting to %s...",
+                 info.ssid[0] ? info.ssid : "network");
+        color = ACCENT;
+    } else if (info.status == sigurdos::wifi_sta::Status::Failed) {
+        snprintf(status, sizeof(status), "STA: failed\n%s",
+                 info.error[0] ? info.error : "Connection failed");
+        color = ACCENT_RED;
+    } else if (info.error[0]) {
+        snprintf(status, sizeof(status), "STA: disconnected\n%s",
+                 info.error);
+        color = ACCENT_ORANGE;
+    } else {
+        snprintf(status, sizeof(status), "STA: disconnected\nReconnect to saved WiFi");
+    }
+
+    lv_label_set_text(ctx->connection_status, status);
+    lv_obj_set_style_text_color(ctx->connection_status, lv_color_hex(color), 0);
+
+    if (ctx->reconnect && lv_obj_is_valid(ctx->reconnect)) {
+        if (reconnect_allowed) {
+            lv_obj_clear_state(ctx->reconnect, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(ctx->reconnect, LV_STATE_DISABLED);
+        }
+    }
+}
+
+static void wifi_screen_status_poll(lv_timer_t* timer)
+{
+    auto* ctx = static_cast<WifiScreenCtx*>(lv_timer_get_user_data(timer));
+    if (!ctx || !ctx->connection_status ||
+        !lv_obj_is_valid(ctx->connection_status)) {
+        if (ctx) ctx->status_timer.complete(timer);
+        else lv_timer_del(timer);
+        return;
+    }
+    wifi_screen_update_status(ctx);
+}
 
 static bool wifi_dialog_current(const WifiDialogCtx* ctx)
 {
@@ -110,7 +176,9 @@ static void wifi_connection_poll(lv_timer_t* timer)
             ctx->dismiss_timer.attach(dismiss);
         }
     } else if (status == sigurdos::wifi_sta::Status::Failed) {
-        lv_label_set_text(ctx->title, "Connection failed");
+        const auto info = sigurdos::wifi_sta::getStatusInfo();
+        lv_label_set_text(ctx->title,
+                          info.error[0] ? info.error : "Connection failed");
         lv_obj_set_style_text_color(ctx->title, lv_color_hex(ACCENT_RED), 0);
         lv_obj_clear_state(ctx->save_btn, LV_STATE_DISABLED);
         ctx->poll_timer.complete(timer);
@@ -287,9 +355,10 @@ static void wifi_render_results(lv_obj_t* list) {
 }
 
 static void wifi_scan_poll(lv_timer_t* timer) {
-    auto* ctx = (WifiScanCtx*)lv_timer_get_user_data(timer);
-    if (!ctx || !lv_obj_is_valid(ctx->list) || !lv_obj_is_valid(ctx->status)) {
-        if (ctx) ctx->timer.complete(timer);
+    auto* ctx = static_cast<WifiScreenCtx*>(lv_timer_get_user_data(timer));
+    if (!ctx || !lv_obj_is_valid(ctx->list) ||
+        !lv_obj_is_valid(ctx->scan_status)) {
+        if (ctx) ctx->scan_timer.complete(timer);
         else lv_timer_del(timer);
         return;
     }
@@ -302,31 +371,32 @@ static void wifi_scan_poll(lv_timer_t* timer) {
         char progress[48];
         if (result.count > 0) {
             snprintf(progress, sizeof(progress), "Reading networks... %d", result.count);
-            lv_label_set_text(ctx->status, progress);
+            lv_label_set_text(ctx->scan_status, progress);
         }
         return;
     }
 
-    ctx->timer.complete(timer);
+    ctx->scan_timer.complete(timer);
     if (result.status == sigurdos::wifi_scan::Status::Complete) {
         if (result.count == 0) {
-            lv_label_set_text(ctx->status, "No networks found");
+            lv_label_set_text(ctx->scan_status, "No networks found");
         } else {
             char found[40];
             snprintf(found, sizeof(found), "%d networks found", result.count);
-            lv_label_set_text(ctx->status, found);
+            lv_label_set_text(ctx->scan_status, found);
             wifi_render_results(ctx->list);
         }
     } else if (result.status == sigurdos::wifi_scan::Status::Error) {
-        lv_label_set_text(ctx->status, "WiFi scan failed");
-        lv_obj_set_style_text_color(ctx->status, lv_color_hex(ACCENT_RED), 0);
+        lv_label_set_text(ctx->scan_status, "WiFi scan failed");
+        lv_obj_set_style_text_color(ctx->scan_status, lv_color_hex(ACCENT_RED), 0);
     }
 }
 
 void wifi_networks_screen_show()
 {
     lv_obj_t* scr = make_screen_full("WiFi");
-    
+    apply_dark_bg(scr);
+
     // Content container
     lv_obj_t* cont = lv_obj_create(scr);
     lv_obj_set_size(cont, CONTENT_W, CONTENT_H);
@@ -335,9 +405,66 @@ void wifi_networks_screen_show()
     lv_obj_set_style_border_width(cont, 0, 0);
     lv_obj_set_style_pad_all(cont, 4, 0);
     lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
-    
+
+    // cppcheck-suppress legacyUninitvar
+    auto* screen_ctx = new(std::nothrow) WifiScreenCtx{};
+    if (!screen_ctx) {
+        lv_obj_t* failure = lv_label_create(cont);
+        lv_label_set_text(failure, "Unable to create WiFi status");
+        lv_obj_set_style_text_color(failure, lv_color_hex(ACCENT_RED), 0);
+        show_screen(scr);
+        return;
+    }
+
+    lv_obj_add_event_cb(cont, [](lv_event_t* e) {
+        auto* owned = static_cast<WifiScreenCtx*>(lv_event_get_user_data(e));
+        if (!owned) return;
+        sigurdos::wifi_scan::cancel(owned->token);
+        delete owned;
+    }, LV_EVENT_DELETE, screen_ctx);
+
+    // Live connection card — this remains useful even when scanning is
+    // blocked by an OTA session or another WiFi owner.
+    const int status_h = CONTENT_H / 4 < 54 ? 54 : CONTENT_H / 4;
+    lv_obj_t* status_card = lv_obj_create(cont);
+    lv_obj_set_size(status_card, CONTENT_W - 8, status_h);
+    apply_pixel_card(status_card);
+    lv_obj_set_style_pad_all(status_card, 6, 0);
+
+    screen_ctx->connection_status = lv_label_create(status_card);
+    lv_label_set_text(screen_ctx->connection_status, "WiFi: checking...");
+    lv_obj_set_width(screen_ctx->connection_status, CONTENT_W - 108);
+    lv_label_set_long_mode(screen_ctx->connection_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(screen_ctx->connection_status,
+                                lv_color_hex(TEXT_SECONDARY), 0);
+    lv_obj_set_style_text_font(screen_ctx->connection_status,
+                               emoji_wrapped_montserrat_10, 0);
+    lv_obj_align(screen_ctx->connection_status, LV_ALIGN_TOP_LEFT, 2, 2);
+
+    screen_ctx->reconnect = lv_btn_create(status_card);
+    lv_obj_set_size(screen_ctx->reconnect, capped_width(86), 28);
+    lv_obj_align(screen_ctx->reconnect, LV_ALIGN_BOTTOM_RIGHT, -2, -2);
+    apply_pixel_btn_outline(screen_ctx->reconnect);
+    lv_obj_t* reconnect_label = lv_label_create(screen_ctx->reconnect);
+    lv_label_set_text(reconnect_label, "Reconnect");
+    lv_obj_center(reconnect_label);
+    lv_group_add_obj(lv_group_get_default(), screen_ctx->reconnect);
+    lv_obj_add_event_cb(screen_ctx->reconnect, [](lv_event_t* e) {
+        auto* owned = static_cast<WifiScreenCtx*>(lv_event_get_user_data(e));
+        if (!owned || sigurdos::ota::isAccessPointActive()) return;
+        lv_obj_add_state(owned->reconnect, LV_STATE_DISABLED);
+        sigurdos::wifi_sta::reconnect();
+        wifi_screen_update_status(owned);
+    }, LV_EVENT_CLICKED, screen_ctx);
+
+    lv_timer_t* status_timer =
+        lv_timer_create(wifi_screen_status_poll, 500, screen_ctx);
+    screen_ctx->status_timer.attach(status_timer);
+    wifi_screen_update_status(screen_ctx);
+
     // Scanning indicator
     lv_obj_t* scanning = lv_label_create(cont);
+    screen_ctx->scan_status = scanning;
     lv_label_set_text(scanning, "Scanning for networks...");
     lv_obj_set_style_text_color(scanning, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(scanning, emoji_wrapped_montserrat_12, 0);
@@ -349,13 +476,16 @@ void wifi_networks_screen_show()
                  sigurdos::wifi::ownerName(sigurdos::wifi::currentOwner()));
         lv_label_set_text(scanning, busy);
         lv_obj_set_style_text_color(scanning, lv_color_hex(ACCENT_RED), 0);
+        wifi_screen_update_status(screen_ctx);
         show_screen(scr);
         return;
     }
-    
+
     // Results list (scrollable, flex column)
     lv_obj_t* list = lv_obj_create(cont);
-    lv_obj_set_size(list, CONTENT_W - 8, CONTENT_H - 40);
+    int list_h = CONTENT_H - status_h - 34;
+    if (list_h < 40) list_h = 40;
+    lv_obj_set_size(list, CONTENT_W - 8, list_h);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(list, 0, 0);
     lv_obj_set_style_pad_all(list, 2, 0);
@@ -366,29 +496,15 @@ void wifi_networks_screen_show()
     // Trackball support
     lv_group_t* g = lv_group_get_default();
     lv_indev_set_group(lv_indev_get_next(nullptr), g);
-    
-    g_wifi_ap_count = 0;
 
-    // cppcheck-suppress legacyUninitvar
-    auto* scan_ctx = new(std::nothrow) WifiScanCtx{};
-    if (!scan_ctx) {
-        lv_label_set_text(scanning, "Unable to start scan");
-        show_screen(scr);
-        return;
-    }
-    scan_ctx->list = list;
-    scan_ctx->status = scanning;
-    lv_obj_add_event_cb(list, [](lv_event_t* e) {
-        auto* owned = (WifiScanCtx*)lv_event_get_user_data(e);
-        if (!owned) return;
-        sigurdos::wifi_scan::cancel(owned->token);
-        delete owned;
-    }, LV_EVENT_DELETE, scan_ctx);
+    g_wifi_ap_count = 0;
+    screen_ctx->list = list;
 
     const auto started = sigurdos::wifi_scan::begin();
-    scan_ctx->token = started.token;
+    screen_ctx->token = started.token;
     if (started.status == sigurdos::wifi_scan::Status::Complete) {
         lv_label_set_text(scanning, "No networks found");
+        wifi_screen_update_status(screen_ctx);
         show_screen(scr);
         return;
     }
@@ -402,14 +518,15 @@ void wifi_networks_screen_show()
         }
         lv_label_set_text(scanning, failure);
         lv_obj_set_style_text_color(scanning, lv_color_hex(ACCENT_RED), 0);
+        wifi_screen_update_status(screen_ctx);
         show_screen(scr);
         return;
     }
 
-    lv_timer_t* scan_timer = lv_timer_create(wifi_scan_poll, 50, scan_ctx);
-    scan_ctx->timer.attach(scan_timer);
+    lv_timer_t* scan_timer = lv_timer_create(wifi_scan_poll, 50, screen_ctx);
+    screen_ctx->scan_timer.attach(scan_timer);
     if (!scan_timer) {
-        sigurdos::wifi_scan::cancel(scan_ctx->token);
+        sigurdos::wifi_scan::cancel(screen_ctx->token);
         lv_label_set_text(scanning, "Unable to start scan");
     }
 

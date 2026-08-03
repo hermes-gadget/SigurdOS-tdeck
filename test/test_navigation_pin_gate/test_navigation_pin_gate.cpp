@@ -76,6 +76,7 @@ void custom_rf_screen_show() { record_dispatch(Screen::CustomRadioSetup); }
 void message_search_screen_show() { record_dispatch(Screen::MessageSearch); }
 void mesh_dashboard_screen_show() { record_dispatch(Screen::MeshDashboard); }
 void file_browser_screen_show() { record_dispatch(Screen::FileBrowser); }
+void transports_screen_show() { record_dispatch(Screen::Transports); }
 
 void contact_detail_screen_show(const char* name)
 {
@@ -96,7 +97,7 @@ void repeater_detail_screen_show(const char* name, bool skip_login)
 
 namespace {
 
-constexpr std::array<Screen, 15> PROTECTED_ROUTES = {
+constexpr std::array<Screen, 16> PROTECTED_ROUTES = {
     Screen::Settings,
     Screen::Terminal,
     Screen::RadioSetup,
@@ -107,6 +108,7 @@ constexpr std::array<Screen, 15> PROTECTED_ROUTES = {
     Screen::NodeStats,
     Screen::WiFiNetworks,
     Screen::Bluetooth,
+    Screen::Transports,
     Screen::Regions,
     Screen::CustomRadioSetup,
     Screen::FileBrowser,

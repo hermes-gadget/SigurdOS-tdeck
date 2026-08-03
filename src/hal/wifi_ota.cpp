@@ -38,6 +38,8 @@ static char ap_password[64] = "";
 static char last_error[96] = "";
 static uint32_t session_started_at = 0;
 static std::atomic<bool> using_access_point{false};
+static std::atomic<bool> companion_transport_parked{false};
+static std::atomic<CompanionTransportParkHook> companion_transport_park_hook{nullptr};
 static String csrf_token;  // regenerated per OTA session
 static OtaUploadSessionState upload_state;
 
@@ -61,6 +63,14 @@ static const hal::OtaAllocationOps OTA_SERVER_ALLOCATOR{
     nullptr, createOtaServer, nullptr
 };
 
+static void notifyCompanionTransportParked(bool parked)
+{
+    companion_transport_parked.store(parked, std::memory_order_release);
+    const CompanionTransportParkHook hook =
+        companion_transport_park_hook.load(std::memory_order_acquire);
+    if (hook) hook(parked);
+}
+
 static void cleanupServer() {
     if (server) {
         server->stop();
@@ -71,10 +81,33 @@ static void cleanupServer() {
     const bool was_ap = using_access_point.load(std::memory_order_acquire);
     if (was_ap) WiFi.softAPdisconnect(true);
     using_access_point.store(false, std::memory_order_release);
+    if (was_ap) notifyCompanionTransportParked(false);
     sigurdos::comms::secureWipe(ap_password, sizeof(ap_password));
     wifi::requestRelease(wifi::Owner::ApOta);
     session_started_at = 0;
     upload_state = {};
+}
+
+void setCompanionTransportParkHook(CompanionTransportParkHook hook)
+{
+    companion_transport_park_hook.store(hook, std::memory_order_release);
+    const bool parked = using_access_point.load(std::memory_order_acquire);
+    companion_transport_parked.store(parked, std::memory_order_release);
+    if (hook) hook(parked);
+}
+
+bool companionTransportsAllowed()
+{
+    return companionTransportsAllowed(
+               using_access_point.load(std::memory_order_acquire)) &&
+           !companion_transport_parked.load(std::memory_order_acquire);
+}
+
+bool isAccessPointActive()
+{
+    // using_access_point is set before the radio is switched to AP mode so
+    // transports are blocked during the setup window as well as the session.
+    return using_access_point.load(std::memory_order_acquire);
 }
 
 static void otaServerWorker(void*) {
@@ -161,6 +194,7 @@ bool start(const char* ssid, const char* password) {
         return false;
     }
     using_access_point.store(!reuse_sta, std::memory_order_release);
+    if (!reuse_sta) notifyCompanionTransportParked(true);
 
     // Reset PIN brute-force counter on each OTA session start (SEC-001)
     pin_fail_count = 0;
@@ -638,17 +672,127 @@ void cancel(uint32_t token) {
 // ── WiFi STA Client ──────────────────────────────────────
 namespace wifi_sta {
 
-static bool     s_connected   = false;
-static int      s_rssi        = 0;
-static Status   s_status      = Status::Idle;
-static unsigned long s_conn_start = 0;
+namespace {
+
+static constexpr uint32_t AUTO_RECONNECT_INTERVAL_MS = 30000U;
+
+bool s_connected = false;
+int s_rssi = 0;
+Status s_status = Status::Idle;
+uint32_t s_conn_start = 0;
+uint32_t s_reconnect_attempts = 0;
+uint32_t s_last_attempt_ms = 0;
+uint32_t s_next_reconnect_ms = 0;
+char s_ssid[WIFI_STA_SSID_CAPACITY] = {};
+char s_ip[WIFI_STA_IP_CAPACITY] = {};
+char s_error[WIFI_STA_ERROR_CAPACITY] = {};
+
+void copyBounded(char* destination, size_t capacity, const char* value)
+{
+    if (!destination || capacity == 0) return;
+    if (!value) value = "";
+    strncpy(destination, value, capacity - 1);
+    destination[capacity - 1] = '\0';
+}
+
+void clearIp()
+{
+    s_ip[0] = '\0';
+}
+
+void clearError()
+{
+    s_error[0] = '\0';
+}
+
+void setError(const char* error)
+{
+    copyBounded(s_error, sizeof(s_error), error);
+}
+
+void captureSsid()
+{
+    copyBounded(s_ssid, sizeof(s_ssid), WiFi.SSID().c_str());
+}
+
+void captureIp()
+{
+    if (!s_connected) {
+        clearIp();
+        return;
+    }
+    const IPAddress ip = WiFi.localIP();
+    snprintf(s_ip, sizeof(s_ip), "%u.%u.%u.%u",
+             static_cast<unsigned>(ip[0]), static_cast<unsigned>(ip[1]),
+             static_cast<unsigned>(ip[2]), static_cast<unsigned>(ip[3]));
+}
+
+bool deadlineReached(uint32_t now, uint32_t deadline)
+{
+    return deadline != 0U && static_cast<int32_t>(now - deadline) >= 0;
+}
+
+bool hardwareFailureDetected()
+{
+    const auto status = WiFi.status();
+    return status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL;
+}
+
+const char* hardwareFailureText()
+{
+    switch (WiFi.status()) {
+    case WL_NO_SSID_AVAIL:
+        return "Network not found";
+    case WL_CONNECT_FAILED:
+        return "Authentication failed";
+    case WL_CONNECTION_LOST:
+        return "Connection lost";
+    case WL_DISCONNECTED:
+        return "No response from access point";
+    default:
+        return "Connection timed out";
+    }
+}
+
+void markConnected()
+{
+    s_connected = true;
+    s_status = Status::Connected;
+    s_rssi = WiFi.RSSI();
+    captureSsid();
+    captureIp();
+    clearError();
+    s_next_reconnect_ms = 0;
+}
+
+void releaseAfterFailure(const char* error)
+{
+    WiFi.disconnect();
+    wifi::release(wifi::Owner::Sta);
+    s_status = Status::Failed;
+    s_connected = false;
+    s_rssi = 0;
+    clearIp();
+    setError(error);
+    s_next_reconnect_ms = millis() + AUTO_RECONNECT_INTERVAL_MS;
+}
+
+}  // namespace
 
 bool beginConnect(const char* ssid, const char* password) {
     if (!ssid || !ssid[0]) {
         s_status = Status::Failed;
+        s_connected = false;
+        s_rssi = 0;
+        clearIp();
+        setError("WiFi network name is empty");
         return false;
     }
     if (!wifi::acquire(wifi::Owner::Sta, wifi::RadioMode::Sta)) {
+        char busy[WIFI_STA_ERROR_CAPACITY];
+        snprintf(busy, sizeof(busy), "WiFi busy: %s",
+                 wifi::ownerName(wifi::currentOwner()));
+        setError(busy);
         SIG_LOGW("[wifi-sta] connect refused: WiFi busy with %s",
                  wifi::ownerName(wifi::currentOwner()));
         return false;
@@ -657,14 +801,50 @@ bool beginConnect(const char* ssid, const char* password) {
     WiFi.begin(ssid, password);
     s_status = Status::Connecting;
     s_conn_start = millis();
+    s_last_attempt_ms = s_conn_start;
+    ++s_reconnect_attempts;
+    s_next_reconnect_ms = s_conn_start + AUTO_RECONNECT_INTERVAL_MS;
     s_connected = false;
     s_rssi = 0;
+    clearIp();
+    copyBounded(s_ssid, sizeof(s_ssid), ssid);
+    clearError();
     SIG_LOGD("[wifi-sta] connecting to %s...", ssid);
     return true;
 }
 
 Status getStatus() {
     return s_status;
+}
+
+StatusInfo getStatusInfo()
+{
+    StatusInfo info{};
+    info.status = s_status;
+    info.mode = ota::isAccessPointActive()
+        ? LinkMode::AccessPoint
+        : ((s_connected || s_status == Status::Connecting)
+            ? LinkMode::Station : LinkMode::Off);
+    info.connected = s_connected;
+    info.rssi = s_rssi;
+    info.reconnect_attempts = s_reconnect_attempts;
+    info.last_attempt_ms = s_last_attempt_ms;
+    info.next_reconnect_ms = s_next_reconnect_ms;
+    copyBounded(info.ssid, sizeof(info.ssid), s_ssid);
+    copyBounded(info.ip, sizeof(info.ip), s_ip);
+    copyBounded(info.error, sizeof(info.error), s_error);
+    return info;
+}
+
+bool reconnect()
+{
+    const NodePrefs& prefs = sigurdos::prefs_get();
+    if (!prefs.wifi_ssid[0]) {
+        s_status = Status::Failed;
+        setError("No saved WiFi credentials");
+        return false;
+    }
+    return beginConnect(prefs.wifi_ssid, prefs.wifi_password);
 }
 
 void disconnect() {
@@ -676,6 +856,9 @@ void disconnect() {
     s_connected = false;
     s_rssi = 0;
     s_status = Status::Idle;
+    s_next_reconnect_ms = 0;
+    clearIp();
+    clearError();
 }
 
 bool isConnected() {
@@ -684,12 +867,14 @@ bool isConnected() {
     // change the radio state without going through our state machine.
     bool hw = (WiFi.status() == WL_CONNECTED);
     if (hw) {
-        s_connected = true;
-        s_status = Status::Connected;
+        if (!s_connected) markConnected();
     } else if (s_connected || s_status == Status::Connected) {
         s_connected = false;
         s_rssi = 0;
         s_status = Status::Idle;
+        clearIp();
+        setError("Connection lost");
+        s_next_reconnect_ms = millis() + AUTO_RECONNECT_INTERVAL_MS;
     }
     return s_connected;
 }
@@ -713,43 +898,41 @@ void loop() {
         const Status next = advanceConnectingStatus(
             s_status, hw, static_cast<uint32_t>(millis() - s_conn_start));
         if (next == Status::Connected) {
-            s_status = next;
-            s_connected = true;
-            s_rssi = WiFi.RSSI();
+            markConnected();
             SIG_LOGD("[wifi-sta] connected! (%d dBm)", s_rssi);
-        } else if (next == Status::Failed) {
-            WiFi.disconnect();
-            wifi::release(wifi::Owner::Sta);
-            s_status = next;
-            s_connected = false;
-            s_rssi = 0;
-            SIG_LOGW("[wifi-sta] connection timed out");
+        } else if (next == Status::Failed || hardwareFailureDetected()) {
+            const char* error = hardwareFailureText();
+            releaseAfterFailure(error);
+            SIG_LOGW("[wifi-sta] connection failed: %s", error);
         }
         hw = s_connected;
     }
 
     if (hw && !s_connected && s_status != Status::Connecting) {
         // Hardware is connected but we didn't know — external reconnect.
-        s_connected = true;
-        s_rssi = WiFi.RSSI();
-        s_status = Status::Connected;
+        markConnected();
         SIG_LOGD("[wifi-sta] reconnected externally (%d dBm)", s_rssi);
     } else if (!hw && (s_connected || s_status == Status::Connected)) {
         // Was connected, now not.
         s_connected = false;
         s_rssi = 0;
         s_status = Status::Idle;
-        SIG_LOGW("[wifi-sta] disconnected");
+        clearIp();
+        setError("Connection lost");
+        s_next_reconnect_ms = millis() + AUTO_RECONNECT_INTERVAL_MS;
+        SIG_LOGW("[wifi-sta] disconnected; reconnect scheduled");
     }
 
     // ── Auto-reconnect ──────────────────────────────────────
     // If we have saved credentials and aren't connected/connecting,
     // periodically attempt to reconnect (every 30 seconds).
     if (!s_connected && s_status != Status::Connecting) {
-        static unsigned long last_reconnect = 0;
-        if (millis() - last_reconnect > 30000) {
-            last_reconnect = millis();
+        const uint32_t now = millis();
+        if (s_next_reconnect_ms == 0U) {
+            s_next_reconnect_ms = now + AUTO_RECONNECT_INTERVAL_MS;
+        } else if (deadlineReached(now, s_next_reconnect_ms)) {
             const NodePrefs& p = sigurdos::prefs_get();
+            s_next_reconnect_ms = now + AUTO_RECONNECT_INTERVAL_MS;
             if (p.wifi_ssid[0]) {
                 SIG_LOGD("[wifi-sta] auto-reconnecting to %s...",
                          p.wifi_ssid);

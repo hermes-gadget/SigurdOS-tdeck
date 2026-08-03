@@ -49,6 +49,7 @@ void telemetry_screen_show();
 void node_stats_screen_show();
 void node_status_screen_show();
 void wifi_networks_screen_show();
+void transports_screen_show();
 void bluetooth_screen_show();
 void regions_screen_show();
 void message_search_screen_show();
