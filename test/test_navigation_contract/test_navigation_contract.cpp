@@ -52,7 +52,7 @@ std::string read_project_file(const char* path)
     return {};
 }
 
-constexpr std::array<Screen, 32> kScreens = {
+constexpr std::array<Screen, 33> kScreens = {
     Screen::Home,
     Screen::Chat,
     Screen::Contacts,
