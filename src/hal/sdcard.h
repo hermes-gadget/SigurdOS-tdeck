@@ -111,3 +111,17 @@ bool sigurdos_sdcard_delete_file(const char* path);
 // Persistence-safe replacement: syncs a same-directory temp, marks it ready,
 // then atomically promotes it. Reads recover any interrupted promotion.
 bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len);
+
+// Offset-based helpers used by the append-only message log. Paths use the
+// same `/sdcard`-relative convention as the existing file API.
+uint64_t sigurdos_sdcard_file_size(const char* path);
+bool sigurdos_sdcard_read_at(const char* path, uint64_t offset,
+                             uint8_t* data, size_t len);
+bool sigurdos_sdcard_write_at(const char* path, uint64_t offset,
+                              const uint8_t* data, size_t len);
+bool sigurdos_sdcard_append(const char* path, const uint8_t* data, size_t len);
+bool sigurdos_sdcard_remove_path(const char* path);
+bool sigurdos_sdcard_rename_path(const char* from, const char* to);
+// Complete a previously validated `.ready` promotion. The message-store
+// adapter validates the ready payload before calling this during boot.
+bool sigurdos_sdcard_recover_file(const char* path);

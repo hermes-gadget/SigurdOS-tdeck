@@ -96,6 +96,42 @@ static constexpr size_t MESSAGE_STORE_RECORD_SIZE =
     8 +   // extra
     1;    // flags
 
+// The public message-store API is intentionally independent of the backing
+// filesystem.  The SD implementation registers this file contract at boot;
+// the default implementation remains the bounded SPIFFS log.  Keep this in
+// detail so chat UI and companion callers continue to use the declarations
+// above without knowing which store is active.
+using MessageStoreValidateBytesFn = bool (*)(const uint8_t* data, size_t len,
+                                             void* ctx);
+
+struct MessageStoreBackend {
+    void* context;
+    const char* (*path)(void* context);
+    uint32_t max_records;
+    uint32_t compact_to_records;
+    bool (*ensure)(void* context);
+    bool (*exists)(void* context, const char* path);
+    size_t (*size)(void* context, const char* path);
+    bool (*read_at)(void* context, const char* path, size_t offset,
+                    uint8_t* data, size_t len);
+    bool (*write_at)(void* context, const char* path, size_t offset,
+                     const uint8_t* data, size_t len);
+    bool (*append)(void* context, const char* path, const uint8_t* data,
+                   size_t len);
+    bool (*replace)(void* context, const char* path, const uint8_t* data,
+                    size_t len);
+    bool (*recover)(void* context, const char* path,
+                    MessageStoreValidateBytesFn validate, void* validate_ctx);
+    bool (*remove)(void* context, const char* path);
+    bool (*rename)(void* context, const char* from, const char* to);
+};
+
+void messageStoreSelectBackend(const MessageStoreBackend* backend);
+void messageStoreSelectDefaultBackend();
+bool messageStoreBackendSelected();
+uint32_t messageStoreBackendMaxRecords();
+uint32_t messageStoreBackendCompactToRecords();
+
 bool storedMessageSameIdentity(const StoredMessage& a, const StoredMessage& b);
 void storedMessageNormalize(StoredMessage& msg);
 } // namespace detail

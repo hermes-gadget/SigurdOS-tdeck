@@ -9,6 +9,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
+#include <vector>
 
 #if defined(ESP32_PLATFORM)
 #include <SPIFFS.h>
@@ -25,8 +27,7 @@ namespace {
 static constexpr const char* STORE_PATH = "/companion_msgs";
 #endif
 
-static constexpr uint32_t MESSAGE_STORE_RECOVERY_MAX_RECORDS =
-    MESSAGE_STORE_MAX_RECORDS + 1;
+static const detail::MessageStoreBackend* g_backend = nullptr;
 static uint32_t g_companion_backlog_drop_count = 0;
 static MessageStoreRecoveryResult g_last_recovery_result =
     MessageStoreRecoveryResult::Clean;
@@ -40,7 +41,8 @@ struct IdentityIndexEntry {
     uint32_t store_id;
 };
 
-static IdentityIndexEntry g_identity_index[MESSAGE_STORE_MAX_RECORDS];
+static IdentityIndexEntry* g_identity_index = nullptr;
+static uint32_t g_identity_index_capacity = 0;
 static uint32_t g_identity_index_count = 0;
 static bool g_identity_index_valid = false;
 
@@ -57,6 +59,64 @@ static void copyZ(char* dest, size_t dest_sz, const char* src)
     dest[dest_sz - 1] = '\0';
 }
 #endif
+
+static void* allocateRaw(size_t bytes)
+{
+    if (bytes == 0) return nullptr;
+#if defined(ESP32_PLATFORM)
+    void* memory = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!memory) memory = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    return memory;
+#else
+    return std::malloc(bytes);
+#endif
+}
+
+static void freeRaw(void* memory)
+{
+#if defined(ESP32_PLATFORM)
+    heap_caps_free(memory);
+#else
+    std::free(memory);
+#endif
+}
+
+static uint32_t backendMaxRecords()
+{
+    return g_backend && g_backend->max_records > 0
+        ? g_backend->max_records
+        : MESSAGE_STORE_MAX_RECORDS;
+}
+
+static uint32_t backendRecoveryMaxRecords()
+{
+    const uint32_t max_records = backendMaxRecords();
+    return max_records == UINT32_MAX ? max_records : max_records + 1;
+}
+
+static uint32_t backendCompactToRecords()
+{
+    if (!g_backend || g_backend->compact_to_records == 0) {
+        return MESSAGE_STORE_COMPACT_TO_RECORDS;
+    }
+    return g_backend->compact_to_records;
+}
+
+static bool ensureIdentityIndexCapacity(uint32_t capacity)
+{
+    if (capacity <= g_identity_index_capacity) return true;
+    IdentityIndexEntry* replacement = static_cast<IdentityIndexEntry*>(
+        allocateRaw(sizeof(IdentityIndexEntry) * (size_t)capacity));
+    if (!replacement) return false;
+    if (g_identity_index && g_identity_index_count > 0) {
+        std::memcpy(replacement, g_identity_index,
+                    sizeof(IdentityIndexEntry) * (size_t)g_identity_index_count);
+    }
+    freeRaw(g_identity_index);
+    g_identity_index = replacement;
+    g_identity_index_capacity = capacity;
+    return true;
+}
 
 static uint8_t flagsFor(const StoredMessage& msg)
 {
@@ -89,6 +149,7 @@ static bool writeHeaderIfNeeded();
 static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count,
                                uint32_t next_id = 0);
 static uint32_t nextAfter(uint32_t id);
+static const char* storePath();
 
 static uint32_t identityHash(const StoredMessage& msg)
 {
@@ -114,6 +175,11 @@ static uint32_t identityHash(const StoredMessage& msg)
 
 static void identityIndexClear()
 {
+    if (!ensureIdentityIndexCapacity(backendMaxRecords())) {
+        g_identity_index_count = 0;
+        g_identity_index_valid = false;
+        return;
+    }
     g_identity_index_count = 0;
     g_identity_index_valid = true;
 }
@@ -121,7 +187,7 @@ static void identityIndexClear()
 static void identityIndexAdd(const StoredMessage& msg)
 {
     if (!g_identity_index_valid || msg.store_id == 0 ||
-        g_identity_index_count >= MESSAGE_STORE_MAX_RECORDS) return;
+        g_identity_index_count >= g_identity_index_capacity) return;
     g_identity_index[g_identity_index_count++] = {identityHash(msg), msg.store_id};
 }
 
@@ -145,6 +211,7 @@ static uint32_t nextUnusedIdAfter(uint32_t id)
 #if defined(ESP32_PLATFORM)
 static bool ensureFs()
 {
+    if (g_backend) return g_backend->ensure && g_backend->ensure(g_backend->context);
     if (!sigurdos::storage_available()) return false;
     static bool mounted = false;
     if (!mounted) {
@@ -156,17 +223,26 @@ static bool ensureFs()
 
 static bool existsStore()
 {
+    if (g_backend) {
+        return g_backend->exists &&
+            g_backend->exists(g_backend->context, storePath());
+    }
     return SPIFFS.exists(STORE_PATH);
 }
 
 #else
 static bool ensureFs()
 {
+    if (g_backend) return g_backend->ensure && g_backend->ensure(g_backend->context);
     return true;
 }
 
 static bool existsStore()
 {
+    if (g_backend) {
+        return g_backend->exists &&
+            g_backend->exists(g_backend->context, storePath());
+    }
     FILE* f = std::fopen(g_native_path, "rb");
     if (!f) return false;
     std::fclose(f);
@@ -177,6 +253,7 @@ static bool existsStore()
 
 static const char* storePath()
 {
+    if (g_backend && g_backend->path) return g_backend->path(g_backend->context);
 #if defined(ESP32_PLATFORM)
     return STORE_PATH;
 #else
@@ -186,6 +263,10 @@ static const char* storePath()
 
 static bool pathExists(const char* path)
 {
+    if (g_backend) {
+        return path && g_backend->exists &&
+            g_backend->exists(g_backend->context, path);
+    }
 #if defined(ESP32_PLATFORM)
     return path && SPIFFS.exists(path);
 #else
@@ -199,6 +280,10 @@ static bool pathExists(const char* path)
 
 static bool removePath(const char* path)
 {
+    if (g_backend) {
+        return path && g_backend->remove &&
+            g_backend->remove(g_backend->context, path);
+    }
 #if defined(ESP32_PLATFORM)
     return path && (!SPIFFS.exists(path) || SPIFFS.remove(path));
 #else
@@ -208,10 +293,121 @@ static bool removePath(const char* path)
 
 static bool renamePath(const char* from, const char* to)
 {
+    if (g_backend) {
+        return from && to && g_backend->rename &&
+            g_backend->rename(g_backend->context, from, to);
+    }
 #if defined(ESP32_PLATFORM)
     return from && to && SPIFFS.rename(from, to);
 #else
     return from && to && std::rename(from, to) == 0;
+#endif
+}
+
+static size_t storeSize(const char* path)
+{
+    if (!path) return 0;
+    if (g_backend) {
+        return g_backend->size ? g_backend->size(g_backend->context, path) : 0;
+    }
+#if defined(ESP32_PLATFORM)
+    File file = SPIFFS.open(path, "r");
+    if (!file) return 0;
+    const size_t size = file.size();
+    file.close();
+    return size;
+#else
+    FILE* file = std::fopen(path, "rb");
+    if (!file) return 0;
+    if (std::fseek(file, 0, SEEK_END) != 0) {
+        std::fclose(file);
+        return 0;
+    }
+    const long end = std::ftell(file);
+    std::fclose(file);
+    return end < 0 ? 0 : (size_t)end;
+#endif
+}
+
+static bool storeReadAt(const char* path, size_t offset, uint8_t* data, size_t len)
+{
+    if (!path || (len > 0 && !data)) return false;
+    if (len == 0) return true;
+    if (g_backend) {
+        return g_backend->read_at &&
+            g_backend->read_at(g_backend->context, path, offset, data, len);
+    }
+#if defined(ESP32_PLATFORM)
+    File file = SPIFFS.open(path, "r");
+    if (!file) return false;
+    const bool ok = file.seek(offset, SeekSet) && file.read(data, len) == len;
+    file.close();
+    return ok;
+#else
+    FILE* file = std::fopen(path, "rb");
+    if (!file) return false;
+    const bool ok = std::fseek(file, (long)offset, SEEK_SET) == 0 &&
+        std::fread(data, 1, len, file) == len;
+    std::fclose(file);
+    return ok;
+#endif
+}
+
+static bool storeWriteAt(const char* path, size_t offset,
+                         const uint8_t* data, size_t len)
+{
+    if (!path || (len > 0 && !data)) return false;
+    if (len == 0) return true;
+    if (g_backend) {
+        return g_backend->write_at &&
+            g_backend->write_at(g_backend->context, path, offset, data, len);
+    }
+#if defined(ESP32_PLATFORM)
+    File file = SPIFFS.open(path, existsStore() ? "r+" : "w+");
+    if (!file) return false;
+    const bool ok = file.seek(offset, SeekSet) && file.write(data, len) == len;
+    file.close();
+    return ok;
+#else
+    FILE* file = std::fopen(path, existsStore() ? "r+b" : "w+b");
+    if (!file) return false;
+    size_t write_len = len;
+    if (offset == 0 && g_native_header_write_limit >= 0 &&
+        (size_t)g_native_header_write_limit < write_len) {
+        write_len = (size_t)g_native_header_write_limit;
+    }
+    const bool ok = std::fseek(file, (long)offset, SEEK_SET) == 0 &&
+        std::fwrite(data, 1, write_len, file) == len;
+    if (std::fclose(file) != 0) return false;
+    return ok;
+#endif
+}
+
+static bool storeAppend(const char* path, const uint8_t* data, size_t len)
+{
+    if (!path || (len > 0 && !data)) return false;
+    if (len == 0) return true;
+    if (g_backend) {
+        return g_backend->append &&
+            g_backend->append(g_backend->context, path, data, len);
+    }
+#if defined(ESP32_PLATFORM)
+    File file = SPIFFS.open(path, "a");
+    if (!file) return false;
+    const bool ok = file.write(data, len) == len;
+    file.close();
+    return ok;
+#else
+    FILE* file = std::fopen(path, "ab");
+    if (!file) return false;
+    size_t write_len = len;
+    if (g_native_record_write_limit >= 0 &&
+        (size_t)g_native_record_write_limit < write_len) {
+        write_len = (size_t)g_native_record_write_limit;
+    }
+    const bool ok = std::fwrite(data, 1, write_len, file) == len;
+    if (std::fclose(file) != 0) return false;
+    return ok;
 #endif
 }
 
@@ -241,24 +437,12 @@ static StoredMessage* allocateMessages(uint32_t count)
 {
     if (count == 0) return nullptr;
     const size_t bytes = sizeof(StoredMessage) * (size_t)count;
-#if defined(ESP32_PLATFORM)
-    void* memory = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!memory) {
-        memory = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    }
-    return static_cast<StoredMessage*>(memory);
-#else
-    return static_cast<StoredMessage*>(std::malloc(bytes));
-#endif
+    return static_cast<StoredMessage*>(allocateRaw(bytes));
 }
 
 static void freeMessages(StoredMessage* messages)
 {
-#if defined(ESP32_PLATFORM)
-    heap_caps_free(messages);
-#else
-    std::free(messages);
-#endif
+    freeRaw(messages);
 }
 
 static bool readRecordRaw(StoredMessage& msg, const uint8_t* rec, size_t len)
@@ -392,6 +576,27 @@ static bool readHeader(uint32_t* out_count, uint32_t* out_next_id)
 {
     if (!ensureFs() || !existsStore()) return false;
 
+    if (g_backend) {
+        uint8_t header[detail::MESSAGE_STORE_HEADER_SIZE]{};
+        if (!storeReadAt(storePath(), 0, header, sizeof(header))) return false;
+        uint32_t magic = 0;
+        uint8_t version = 0;
+        uint32_t count = 0;
+        uint32_t next_id = 0;
+        std::memcpy(&magic, header, sizeof(magic));
+        std::memcpy(&version, header + 4, sizeof(version));
+        std::memcpy(&count, header + 5, sizeof(count));
+        std::memcpy(&next_id, header + 9, sizeof(next_id));
+        if (magic != detail::MESSAGE_STORE_MAGIC ||
+            version != detail::MESSAGE_STORE_VERSION || next_id == 0 ||
+            count > backendRecoveryMaxRecords()) {
+            return false;
+        }
+        if (out_count) *out_count = count;
+        if (out_next_id) *out_next_id = next_id;
+        return true;
+    }
+
 #if defined(ESP32_PLATFORM)
     File f = SPIFFS.open(STORE_PATH, "r");
     if (!f) return false;
@@ -420,7 +625,7 @@ static bool readHeader(uint32_t* out_count, uint32_t* out_next_id)
 
     if (!ok || magic != detail::MESSAGE_STORE_MAGIC ||
         version != detail::MESSAGE_STORE_VERSION || next_id == 0 ||
-        count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) {
+        count > backendRecoveryMaxRecords()) {
         return false;
     }
     if (out_count) *out_count = count;
@@ -439,6 +644,10 @@ static bool writeHeaderState(uint32_t count, uint32_t next_id)
     std::memcpy(header + 4, &version, sizeof(version));
     std::memcpy(header + 5, &count, sizeof(count));
     std::memcpy(header + 9, &next_id, sizeof(next_id));
+
+    if (g_backend) {
+        return storeWriteAt(storePath(), 0, header, sizeof(header));
+    }
 
 #if defined(ESP32_PLATFORM)
     File f = SPIFFS.open(STORE_PATH, existsStore() ? "r+" : "w");
@@ -471,6 +680,20 @@ static bool writeHeaderIfNeeded()
     return atomicReplaceStore(nullptr, 0, 1);
 }
 
+static uint8_t* readPayload(uint32_t count, size_t header_size,
+                            size_t record_size)
+{
+    if (count == 0) return nullptr;
+    if (record_size > SIZE_MAX / (size_t)count) return nullptr;
+    const size_t payload_size = record_size * (size_t)count;
+    uint8_t* payload = static_cast<uint8_t*>(allocateRaw(payload_size));
+    if (!payload || !storeReadAt(storePath(), header_size, payload, payload_size)) {
+        freeRaw(payload);
+        return nullptr;
+    }
+    return payload;
+}
+
 static int loadAllInternal(StoredMessage* out, int max)
 {
     if (!out || max <= 0) return 0;
@@ -478,34 +701,20 @@ static int loadAllInternal(StoredMessage* out, int max)
     uint32_t count = 0;
     if (!readHeader(&count)) return 0;
 
-#if defined(ESP32_PLATFORM)
-    File f = SPIFFS.open(STORE_PATH, "r");
-    if (!f) return 0;
-    f.seek(detail::MESSAGE_STORE_HEADER_SIZE, SeekSet);
-#else
-    FILE* f = std::fopen(g_native_path, "rb");
-    if (!f) return 0;
-    std::fseek(f, (long)detail::MESSAGE_STORE_HEADER_SIZE, SEEK_SET);
-#endif
-
+    const uint32_t read_count = std::min<uint32_t>(count, (uint32_t)max);
+    uint8_t* payload = readPayload(read_count, detail::MESSAGE_STORE_HEADER_SIZE,
+                                   detail::MESSAGE_STORE_RECORD_SIZE);
+    if (read_count > 0 && !payload) return 0;
     int n = 0;
-    uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
-    for (uint32_t i = 0; i < count; i++) {
-#if defined(ESP32_PLATFORM)
-        if (f.read(rec, sizeof(rec)) != sizeof(rec)) break;
-#else
-        if (std::fread(rec, 1, sizeof(rec), f) != sizeof(rec)) break;
-#endif
+    for (uint32_t i = 0; i < read_count; i++) {
+        const uint8_t* rec = payload +
+            (size_t)i * detail::MESSAGE_STORE_RECORD_SIZE;
         StoredMessage msg;
-        if (!readRecordRaw(msg, rec, sizeof(rec))) continue;
-        if (n < max) out[n++] = msg;
+        if (readRecordRaw(msg, rec, detail::MESSAGE_STORE_RECORD_SIZE)) {
+            out[n++] = msg;
+        }
     }
-
-#if defined(ESP32_PLATFORM)
-    f.close();
-#else
-    std::fclose(f);
-#endif
+    freeRaw(payload);
     return n;
 }
 
@@ -516,28 +725,15 @@ static int loadRecentInternal(const char* conversation, StoredMessage* out,
     uint32_t count = 0;
     if (!readHeader(&count)) return 0;
 
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file) return 0;
-#else
-    FILE* file = std::fopen(g_native_path, "rb");
-    if (!file) return 0;
-#endif
-
+    uint8_t* payload = readPayload(count, detail::MESSAGE_STORE_HEADER_SIZE,
+                                   detail::MESSAGE_STORE_RECORD_SIZE);
+    if (count > 0 && !payload) return 0;
     int n = 0;
-    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
     for (int i = (int)count - 1; i >= 0 && n < max; --i) {
-        const size_t offset = detail::MESSAGE_STORE_HEADER_SIZE +
+        const uint8_t* record = payload +
             (size_t)i * detail::MESSAGE_STORE_RECORD_SIZE;
-#if defined(ESP32_PLATFORM)
-        const bool read_ok = file.seek(offset, SeekSet) &&
-            file.read(record, sizeof(record)) == sizeof(record);
-#else
-        const bool read_ok = std::fseek(file, (long)offset, SEEK_SET) == 0 &&
-            std::fread(record, 1, sizeof(record), file) == sizeof(record);
-#endif
         StoredMessage msg{};
-        if (!read_ok || !readRecordRaw(msg, record, sizeof(record))) continue;
+        if (!readRecordRaw(msg, record, detail::MESSAGE_STORE_RECORD_SIZE)) continue;
         if (unsent_only && msg.companion_sent) continue;
         if (conversation && conversation[0] &&
             std::strncmp(msg.conversation, conversation,
@@ -546,12 +742,7 @@ static int loadRecentInternal(const char* conversation, StoredMessage* out,
         }
         out[n++] = msg;
     }
-#if defined(ESP32_PLATFORM)
-    file.close();
-#else
-    std::fclose(file);
-#endif
-
+    freeRaw(payload);
     for (int i = 0; i < n / 2; ++i) {
         StoredMessage swap = out[i];
         out[i] = out[n - 1 - i];
@@ -572,52 +763,38 @@ static int loadUnsentInternal(StoredMessage* out, int max)
     uint32_t count = 0;
     if (!readHeader(&count)) return 0;
 
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file) return 0;
-    file.seek(detail::MESSAGE_STORE_HEADER_SIZE, SeekSet);
-#else
-    FILE* file = std::fopen(g_native_path, "rb");
-    if (!file) return 0;
-    std::fseek(file, (long)detail::MESSAGE_STORE_HEADER_SIZE, SEEK_SET);
-#endif
-
+    uint8_t* payload = readPayload(count, detail::MESSAGE_STORE_HEADER_SIZE,
+                                   detail::MESSAGE_STORE_RECORD_SIZE);
+    if (count > 0 && !payload) return 0;
     int n = 0;
-    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
     for (uint32_t i = 0; i < count && n < max; ++i) {
-#if defined(ESP32_PLATFORM)
-        const bool read_ok = file.read(record, sizeof(record)) == sizeof(record);
-#else
-        const bool read_ok =
-            std::fread(record, 1, sizeof(record), file) == sizeof(record);
-#endif
-        if (!read_ok) break;
+        const uint8_t* record = payload +
+            (size_t)i * detail::MESSAGE_STORE_RECORD_SIZE;
         StoredMessage msg{};
-        if (!readRecordRaw(msg, record, sizeof(record)) ||
+        if (!readRecordRaw(msg, record, detail::MESSAGE_STORE_RECORD_SIZE) ||
             msg.companion_sent || msg.is_self) {
             continue;
         }
         out[n++] = msg;
     }
-
-#if defined(ESP32_PLATFORM)
-    file.close();
-#else
-    std::fclose(file);
-#endif
+    freeRaw(payload);
     return n;
 }
 
 static bool rebuildIdentityIndex()
 {
     uint32_t count = 0;
-    if (!readHeader(&count) || count > MESSAGE_STORE_MAX_RECORDS) {
+    if (!readHeader(&count) || count > backendMaxRecords()) {
         g_identity_index_valid = false;
         return false;
     }
     if (count == 0) {
         identityIndexClear();
         return true;
+    }
+    if (!ensureIdentityIndexCapacity(count)) {
+        g_identity_index_valid = false;
+        return false;
     }
     StoredMessage* messages = allocateMessages(count);
     if (!messages) {
@@ -665,7 +842,7 @@ static bool writeStore(sigurdos::storage::AtomicFileWriter& writer, void* raw)
 {
     StoreWriteCtx* ctx = static_cast<StoreWriteCtx*>(raw);
     if (!ctx || ctx->next_id == 0 ||
-        ctx->count > MESSAGE_STORE_RECOVERY_MAX_RECORDS ||
+        ctx->count > backendRecoveryMaxRecords() ||
         (ctx->count > 0 && !ctx->messages)) return false;
     const uint32_t magic = detail::MESSAGE_STORE_MAGIC;
     const uint8_t version = detail::MESSAGE_STORE_VERSION;
@@ -696,12 +873,12 @@ static bool validateStore(sigurdos::storage::AtomicFileReader& reader, void*)
         reader.read(&next_id, sizeof(next_id)) != sizeof(next_id) ||
         magic != detail::MESSAGE_STORE_MAGIC ||
         version != detail::MESSAGE_STORE_VERSION ||
-        count > MESSAGE_STORE_RECOVERY_MAX_RECORDS || next_id == 0) {
+        count > backendRecoveryMaxRecords() || next_id == 0) {
         return false;
     }
     if (reader.size() != detail::MESSAGE_STORE_HEADER_SIZE +
         (size_t)count * detail::MESSAGE_STORE_RECORD_SIZE) return false;
-    uint32_t ids[MESSAGE_STORE_RECOVERY_MAX_RECORDS] = {};
+    std::vector<uint32_t> ids(backendRecoveryMaxRecords());
     uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
     for (uint32_t i = 0; i < count; ++i) {
         if (reader.read(record, sizeof(record)) != sizeof(record)) return false;
@@ -731,7 +908,7 @@ static bool validateStoreForRecovery(sigurdos::storage::AtomicFileReader& reader
     if (version != 4 && version != 5) return false;
     uint32_t count = 0;
     if (reader.read(&count, sizeof(count)) != sizeof(count) ||
-        count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
+        count > backendRecoveryMaxRecords()) return false;
     const size_t header_size = version == 4
         ? detail::MESSAGE_STORE_V4_HEADER_SIZE
         : detail::MESSAGE_STORE_HEADER_SIZE;
@@ -747,7 +924,7 @@ static bool validateStoreForRecovery(sigurdos::storage::AtomicFileReader& reader
     // fresh sequence. Version 5 promises stable IDs, so do not recover a temp
     // that would make those identities ambiguous.
     if (version == 4) return true;
-    uint32_t ids[MESSAGE_STORE_RECOVERY_MAX_RECORDS] = {};
+    std::vector<uint32_t> ids(backendRecoveryMaxRecords());
     uint8_t record[detail::MESSAGE_STORE_V5_RECORD_SIZE];
     for (uint32_t i = 0; i < count; ++i) {
         if (reader.read(record, sizeof(record)) != sizeof(record)) return false;
@@ -756,6 +933,46 @@ static bool validateStoreForRecovery(sigurdos::storage::AtomicFileReader& reader
         for (uint32_t j = 0; j < i; ++j) {
             if (ids[j] == ids[i]) return false;
         }
+    }
+    return true;
+}
+
+static bool validateStoreBytes(const uint8_t* data, size_t len, void*)
+{
+    if (!data || len < detail::MESSAGE_STORE_HEADER_SIZE) return false;
+    uint32_t magic = 0;
+    uint8_t version = 0;
+    uint32_t count = 0;
+    uint32_t next_id = 0;
+    std::memcpy(&magic, data, sizeof(magic));
+    std::memcpy(&version, data + 4, sizeof(version));
+    std::memcpy(&count, data + 5, sizeof(count));
+    std::memcpy(&next_id, data + 9, sizeof(next_id));
+    if (magic != detail::MESSAGE_STORE_MAGIC ||
+        version != detail::MESSAGE_STORE_VERSION || next_id == 0 ||
+        count > backendRecoveryMaxRecords() ||
+        len != detail::MESSAGE_STORE_HEADER_SIZE +
+            (size_t)count * detail::MESSAGE_STORE_RECORD_SIZE) {
+        return false;
+    }
+
+    std::vector<uint32_t> ids;
+    ids.reserve(count);
+    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
+    for (uint32_t i = 0; i < count; ++i) {
+        const size_t offset = detail::MESSAGE_STORE_HEADER_SIZE +
+            (size_t)i * detail::MESSAGE_STORE_RECORD_SIZE;
+        std::memcpy(record, data + offset, sizeof(record));
+        StoredMessage message{};
+        if (!readRecordRaw(message, record, sizeof(record)) ||
+            message.store_id == 0 || message.store_id == next_id) {
+            return false;
+        }
+        ids.push_back(message.store_id);
+    }
+    std::sort(ids.begin(), ids.end());
+    for (size_t i = 1; i < ids.size(); ++i) {
+        if (ids[i - 1] == ids[i]) return false;
     }
     return true;
 }
@@ -798,6 +1015,31 @@ static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count,
         uint32_t ignored_count = 0;
         if (!readHeader(&ignored_count, &next_id)) next_id = deriveNextId(msgs, count);
     }
+    if (g_backend) {
+        if (!g_backend->replace || count > backendRecoveryMaxRecords() ||
+            (count > 0 && !msgs)) return false;
+        const size_t total = detail::MESSAGE_STORE_HEADER_SIZE +
+            (size_t)count * detail::MESSAGE_STORE_RECORD_SIZE;
+        uint8_t* data = static_cast<uint8_t*>(allocateRaw(total));
+        if (!data) return false;
+        std::memset(data, 0, total);
+        const uint32_t magic = detail::MESSAGE_STORE_MAGIC;
+        const uint8_t version = detail::MESSAGE_STORE_VERSION;
+        std::memcpy(data, &magic, sizeof(magic));
+        std::memcpy(data + 4, &version, sizeof(version));
+        std::memcpy(data + 5, &count, sizeof(count));
+        std::memcpy(data + 9, &next_id, sizeof(next_id));
+        uint8_t* record = data + detail::MESSAGE_STORE_HEADER_SIZE;
+        for (uint32_t i = 0; i < count; ++i) {
+            writeRecordRaw(msgs[i], record, detail::MESSAGE_STORE_RECORD_SIZE);
+            record += detail::MESSAGE_STORE_RECORD_SIZE;
+        }
+        const bool valid = validateStoreBytes(data, total, nullptr);
+        const bool ok = valid && g_backend->replace(
+            g_backend->context, storePath(), data, total);
+        freeRaw(data);
+        return ok;
+    }
     StoreWriteCtx ctx{msgs, count, next_id};
     return sigurdos::storage::atomicFileReplace(
         storePath(), writeStore, &ctx, validateStore, nullptr);
@@ -806,34 +1048,16 @@ static bool atomicReplaceStore(const StoredMessage* msgs, uint32_t count,
 static bool readCompleteRecords(StoredMessage* out, uint32_t count, size_t header_size)
 {
     if (count > 0 && !out) return false;
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file || !file.seek(header_size, SeekSet)) {
-        if (file) file.close();
-        return false;
-    }
-#else
-    FILE* file = std::fopen(g_native_path, "rb");
-    if (!file || std::fseek(file, (long)header_size, SEEK_SET) != 0) {
-        if (file) std::fclose(file);
-        return false;
-    }
-#endif
-    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
+    uint8_t* payload = readPayload(count, header_size,
+                                   detail::MESSAGE_STORE_RECORD_SIZE);
+    if (count > 0 && !payload) return false;
     bool ok = true;
     for (uint32_t i = 0; ok && i < count; ++i) {
-#if defined(ESP32_PLATFORM)
-        ok = file.read(record, sizeof(record)) == sizeof(record);
-#else
-        ok = std::fread(record, 1, sizeof(record), file) == sizeof(record);
-#endif
-        if (ok) ok = readRecordRaw(out[i], record, sizeof(record));
+        ok = readRecordRaw(out[i], payload +
+            (size_t)i * detail::MESSAGE_STORE_RECORD_SIZE,
+            detail::MESSAGE_STORE_RECORD_SIZE);
     }
-#if defined(ESP32_PLATFORM)
-    file.close();
-#else
-    std::fclose(file);
-#endif
+    freeRaw(payload);
     return ok;
 }
 
@@ -845,28 +1069,13 @@ static bool readRecoverablePrefix(StoredMessage* out, uint32_t count,
 {
     if (!out_count || (count > 0 && !out)) return false;
     *out_count = 0;
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file || !file.seek(header_size, SeekSet)) {
-        if (file) file.close();
-        return false;
-    }
-#else
-    FILE* file = std::fopen(g_native_path, "rb");
-    if (!file || std::fseek(file, (long)header_size, SEEK_SET) != 0) {
-        if (file) std::fclose(file);
-        return false;
-    }
-#endif
-    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
+    uint8_t* payload = readPayload(count, header_size,
+                                   detail::MESSAGE_STORE_RECORD_SIZE);
+    if (count > 0 && !payload) return false;
     for (uint32_t i = 0; i < count; ++i) {
-#if defined(ESP32_PLATFORM)
-        const bool read_ok = file.read(record, sizeof(record)) == sizeof(record);
-#else
-        const bool read_ok =
-            std::fread(record, 1, sizeof(record), file) == sizeof(record);
-#endif
-        if (!read_ok || !readRecordRaw(out[i], record, sizeof(record)) ||
+        const uint8_t* record = payload +
+            (size_t)i * detail::MESSAGE_STORE_RECORD_SIZE;
+        if (!readRecordRaw(out[i], record, detail::MESSAGE_STORE_RECORD_SIZE) ||
             out[i].store_id == 0) {
             break;
         }
@@ -880,11 +1089,7 @@ static bool readRecoverablePrefix(StoredMessage* out, uint32_t count,
         if (duplicate) break;
         *out_count = i + 1;
     }
-#if defined(ESP32_PLATFORM)
-    file.close();
-#else
-    std::fclose(file);
-#endif
+    freeRaw(payload);
     return true;
 }
 
@@ -892,34 +1097,16 @@ static bool readVersion5Records(StoredMessage* out, uint32_t count,
                                 size_t header_size)
 {
     if (count > 0 && !out) return false;
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file || !file.seek(header_size, SeekSet)) {
-        if (file) file.close();
-        return false;
-    }
-#else
-    FILE* file = std::fopen(g_native_path, "rb");
-    if (!file || std::fseek(file, (long)header_size, SEEK_SET) != 0) {
-        if (file) std::fclose(file);
-        return false;
-    }
-#endif
-    uint8_t record[detail::MESSAGE_STORE_V5_RECORD_SIZE];
+    uint8_t* payload = readPayload(count, header_size,
+                                   detail::MESSAGE_STORE_V5_RECORD_SIZE);
+    if (count > 0 && !payload) return false;
     bool ok = true;
     for (uint32_t i = 0; ok && i < count; ++i) {
-#if defined(ESP32_PLATFORM)
-        ok = file.read(record, sizeof(record)) == sizeof(record);
-#else
-        ok = std::fread(record, 1, sizeof(record), file) == sizeof(record);
-#endif
-        if (ok) ok = readVersion5RecordRaw(out[i], record, sizeof(record));
+        ok = readVersion5RecordRaw(out[i], payload +
+            (size_t)i * detail::MESSAGE_STORE_V5_RECORD_SIZE,
+            detail::MESSAGE_STORE_V5_RECORD_SIZE);
     }
-#if defined(ESP32_PLATFORM)
-    file.close();
-#else
-    std::fclose(file);
-#endif
+    freeRaw(payload);
     return ok;
 }
 
@@ -941,29 +1128,18 @@ static MessageStoreRecoveryResult migrateOlderStore()
     uint8_t version = 0;
     uint32_t declared_count = 0;
     uint32_t declared_next_id = 0;
-    size_t file_size = 0;
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file) return MessageStoreRecoveryResult::Failed;
-    file_size = file.size();
-    const bool header_ok = file.read((uint8_t*)&magic, 4) == 4 &&
-        file.read(&version, 1) == 1 &&
-        file.read((uint8_t*)&declared_count, 4) == 4 &&
-        (version != 5 || file.read((uint8_t*)&declared_next_id, 4) == 4);
-    file.close();
-#else
-    FILE* file = std::fopen(g_native_path, "rb");
-    if (!file) return MessageStoreRecoveryResult::Failed;
-    std::fseek(file, 0, SEEK_END);
-    const long end = std::ftell(file);
-    file_size = end > 0 ? (size_t)end : 0;
-    std::fseek(file, 0, SEEK_SET);
-    const bool header_ok = std::fread(&magic, 1, 4, file) == 4 &&
-        std::fread(&version, 1, 1, file) == 1 &&
-        std::fread(&declared_count, 1, 4, file) == 4 &&
-        (version != 5 || std::fread(&declared_next_id, 1, 4, file) == 4);
-    std::fclose(file);
-#endif
+    const size_t file_size = storeSize(storePath());
+    uint8_t header[detail::MESSAGE_STORE_HEADER_SIZE]{};
+    bool header_ok = storeReadAt(storePath(), 0, header, 9);
+    if (header_ok) {
+        std::memcpy(&magic, header, 4);
+        std::memcpy(&version, header + 4, 1);
+        std::memcpy(&declared_count, header + 5, 4);
+        if (version == 5) {
+            header_ok = storeReadAt(storePath(), 9,
+                                    reinterpret_cast<uint8_t*>(&declared_next_id), 4);
+        }
+    }
     if (file_size < 5) return MessageStoreRecoveryResult::Clean;
     if (magic != detail::MESSAGE_STORE_MAGIC) {
         return MessageStoreRecoveryResult::Clean; // Current repair quarantines it.
@@ -982,7 +1158,7 @@ static MessageStoreRecoveryResult migrateOlderStore()
     const size_t payload_size = file_size - header_size;
     const uint32_t complete_count =
         (uint32_t)(payload_size / detail::MESSAGE_STORE_V5_RECORD_SIZE);
-    if (complete_count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) {
+    if (complete_count > backendRecoveryMaxRecords()) {
         return quarantineStoreAndReset();
     }
 
@@ -1014,29 +1190,15 @@ static MessageStoreRecoveryResult repairInterruptedAppend()
     uint8_t version = 0;
     uint32_t declared_count = 0;
     uint32_t declared_next_id = 0;
-    size_t file_size = 0;
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file) return MessageStoreRecoveryResult::Failed;
-    file_size = file.size();
-    const bool header_ok = file.read((uint8_t*)&magic, 4) == 4 &&
-        file.read(&version, 1) == 1 &&
-        file.read((uint8_t*)&declared_count, 4) == 4 &&
-        file.read((uint8_t*)&declared_next_id, 4) == 4;
-    file.close();
-#else
-    FILE* file = std::fopen(g_native_path, "rb");
-    if (!file) return MessageStoreRecoveryResult::Failed;
-    std::fseek(file, 0, SEEK_END);
-    const long end = std::ftell(file);
-    file_size = end > 0 ? (size_t)end : 0;
-    std::fseek(file, 0, SEEK_SET);
-    const bool header_ok = std::fread(&magic, 1, 4, file) == 4 &&
-        std::fread(&version, 1, 1, file) == 1 &&
-        std::fread(&declared_count, 1, 4, file) == 4 &&
-        std::fread(&declared_next_id, 1, 4, file) == 4;
-    std::fclose(file);
-#endif
+    const size_t file_size = storeSize(storePath());
+    uint8_t header[detail::MESSAGE_STORE_HEADER_SIZE]{};
+    const bool header_ok = storeReadAt(storePath(), 0, header, sizeof(header));
+    if (header_ok) {
+        std::memcpy(&magic, header, 4);
+        std::memcpy(&version, header + 4, 1);
+        std::memcpy(&declared_count, header + 5, 4);
+        std::memcpy(&declared_next_id, header + 9, 4);
+    }
     if (file_size < 5) return quarantineStoreAndReset();
     if (magic != detail::MESSAGE_STORE_MAGIC) {
         return quarantineStoreAndReset();
@@ -1053,7 +1215,7 @@ static MessageStoreRecoveryResult repairInterruptedAppend()
         (uint32_t)(payload_size / detail::MESSAGE_STORE_RECORD_SIZE);
     const bool has_torn_tail =
         payload_size % detail::MESSAGE_STORE_RECORD_SIZE != 0;
-    if (complete_count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) {
+    if (complete_count > backendRecoveryMaxRecords()) {
         return quarantineStoreAndReset();
     }
 
@@ -1079,7 +1241,7 @@ static MessageStoreRecoveryResult repairInterruptedAppend()
 
     const uint32_t recovered_next_id = deriveNextId(messages, recovered_count);
     const bool valid_header = header_ok &&
-        declared_count <= MESSAGE_STORE_RECOVERY_MAX_RECORDS &&
+        declared_count <= backendRecoveryMaxRecords() &&
         declared_next_id != 0;
     const bool exact = valid_header && !has_torn_tail &&
         declared_count == complete_count && recovered_count == complete_count &&
@@ -1154,6 +1316,34 @@ static bool compactStoreToRecent(uint32_t max_records)
 
 namespace detail {
 
+void messageStoreSelectBackend(const MessageStoreBackend* backend)
+{
+    g_backend = backend;
+    g_identity_index_count = 0;
+    g_identity_index_valid = false;
+    g_append_recovery_required = false;
+}
+
+void messageStoreSelectDefaultBackend()
+{
+    messageStoreSelectBackend(nullptr);
+}
+
+bool messageStoreBackendSelected()
+{
+    return g_backend != nullptr;
+}
+
+uint32_t messageStoreBackendMaxRecords()
+{
+    return backendMaxRecords();
+}
+
+uint32_t messageStoreBackendCompactToRecords()
+{
+    return backendCompactToRecords();
+}
+
 bool storedMessageSameIdentity(const StoredMessage& a, const StoredMessage& b)
 {
     bool a_has_prefix = false;
@@ -1197,8 +1387,11 @@ bool messageStoreBegin()
     }
     // A valid whole-store replacement wins. Invalid temps are removed without
     // touching the live file, which may still be repairable after an append.
-    const bool replacement_recovered = sigurdos::storage::atomicFileRecover(
-        storePath(), validateStoreForRecovery, nullptr);
+    const bool replacement_recovered = g_backend
+        ? (!g_backend->recover || g_backend->recover(
+              g_backend->context, storePath(), validateStoreBytes, nullptr))
+        : sigurdos::storage::atomicFileRecover(
+              storePath(), validateStoreForRecovery, nullptr);
     if (!replacement_recovered && !existsStore()) {
         char temp_path[192];
         const bool pending_valid_replacement =
@@ -1238,8 +1431,8 @@ bool messageStoreBegin()
         return false;
     }
     uint32_t count = 0;
-    if (readHeader(&count) && count > MESSAGE_STORE_MAX_RECORDS) {
-        if (!compactStoreToRecent(MESSAGE_STORE_MAX_RECORDS)) {
+    if (readHeader(&count) && count > backendMaxRecords()) {
+        if (!compactStoreToRecent(backendCompactToRecords())) {
             g_last_recovery_result = MessageStoreRecoveryResult::Failed;
             return false;
         }
@@ -1298,31 +1491,15 @@ bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out)
     uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
     writeRecordRaw(norm, rec, sizeof(rec));
 
-#if defined(ESP32_PLATFORM)
-    File f = SPIFFS.open(STORE_PATH, "a");
-    if (!f) return false;
     g_append_recovery_required = true;
-    bool ok = f.write(rec, sizeof(rec)) == sizeof(rec);
-    f.close();
-#else
-    FILE* f = std::fopen(g_native_path, "ab");
-    if (!f) return false;
-    g_append_recovery_required = true;
-    size_t write_size = sizeof(rec);
-    if (g_native_record_write_limit >= 0 &&
-        (size_t)g_native_record_write_limit < write_size) {
-        write_size = (size_t)g_native_record_write_limit;
-    }
-    bool ok = std::fwrite(rec, 1, write_size, f) == sizeof(rec);
-    if (std::fclose(f) != 0) ok = false;
-#endif
+    const bool ok = storeAppend(storePath(), rec, sizeof(rec));
     if (!ok) return false;
 
     uint32_t new_count = count + 1;
     if (!writeHeaderState(new_count, following_id)) return false;
     g_append_recovery_required = false;
-    if (new_count > MESSAGE_STORE_MAX_RECORDS) {
-        if (!compactStoreToRecent(MESSAGE_STORE_COMPACT_TO_RECORDS)) return false;
+    if (new_count > backendMaxRecords()) {
+        if (!compactStoreToRecent(backendCompactToRecords())) return false;
         if (!rebuildIdentityIndex()) return false;
     } else {
         identityIndexAdd(norm);
@@ -1346,7 +1523,7 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
     if (!conversation || !conversation[0] || timestamp == 0) return false;
     uint32_t count = 0;
     if (!readHeader(&count)) return false;
-    if (count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
+    if (count > backendRecoveryMaxRecords()) return false;
     StoredMessage* msgs = allocateMessages(count);
     if (!msgs) return false;
     int n = messageStoreLoadAll(msgs, (int)count);
@@ -1374,7 +1551,7 @@ bool messageStoreMarkConfirmationLost(const char* conversation, uint32_t timesta
     if (!conversation || !conversation[0] || timestamp == 0) return false;
     uint32_t count = 0;
     if (!readHeader(&count) || count == 0 ||
-        count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
+        count > backendRecoveryMaxRecords()) return false;
     StoredMessage* msgs = allocateMessages(count);
     if (!msgs) return false;
     int n = messageStoreLoadAll(msgs, (int)count);
@@ -1396,7 +1573,7 @@ int messageStoreMarkOrphanedPendingLost()
 {
     uint32_t count = 0;
     if (!readHeader(&count) || count == 0 ||
-        count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return 0;
+        count > backendRecoveryMaxRecords()) return 0;
     StoredMessage* msgs = allocateMessages(count);
     if (!msgs) return 0;
     int n = messageStoreLoadAll(msgs, (int)count);
@@ -1419,7 +1596,7 @@ bool messageStoreMarkCompanionSent(uint32_t store_id)
     uint32_t count = 0;
     if (!readHeader(&count)) return false;
     if (count == 0) return false;
-    if (count > MESSAGE_STORE_RECOVERY_MAX_RECORDS) return false;
+    if (count > backendRecoveryMaxRecords()) return false;
 
     StoredMessage* messages = allocateMessages(count);
     if (!messages) return false;
@@ -1455,43 +1632,21 @@ bool messageStoreGetById(uint32_t store_id, StoredMessage& out)
     uint32_t count = 0;
     if (!readHeader(&count) || count == 0) return false;
 
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file) return false;
-    if (!file.seek(detail::MESSAGE_STORE_HEADER_SIZE, SeekSet)) {
-        file.close();
-        return false;
-    }
-#else
-    FILE* file = std::fopen(g_native_path, "rb");
-    if (!file) return false;
-    if (std::fseek(file, (long)detail::MESSAGE_STORE_HEADER_SIZE, SEEK_SET) != 0) {
-        std::fclose(file);
-        return false;
-    }
-#endif
-
+    uint8_t* payload = readPayload(count, detail::MESSAGE_STORE_HEADER_SIZE,
+                                  detail::MESSAGE_STORE_RECORD_SIZE);
+    if (!payload) return false;
     bool found = false;
-    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
     for (uint32_t i = 0; i < count && !found; ++i) {
-#if defined(ESP32_PLATFORM)
-        const bool read_ok = file.read(record, sizeof(record)) == sizeof(record);
-#else
-        const bool read_ok = std::fread(record, 1, sizeof(record), file) == sizeof(record);
-#endif
+        const uint8_t* record = payload +
+            (size_t)i * detail::MESSAGE_STORE_RECORD_SIZE;
         StoredMessage candidate{};
-        if (!read_ok) break;
-        if (readRecordRaw(candidate, record, sizeof(record)) &&
+        if (readRecordRaw(candidate, record, detail::MESSAGE_STORE_RECORD_SIZE) &&
             candidate.store_id == store_id) {
             out = candidate;
             found = true;
         }
     }
-#if defined(ESP32_PLATFORM)
-    file.close();
-#else
-    std::fclose(file);
-#endif
+    freeRaw(payload);
     return found;
 }
 
@@ -1505,32 +1660,19 @@ bool messageStoreFindRecent(const char* conversation, const char* sender,
     uint32_t count = 0;
     if (!readHeader(&count) || count == 0) return false;
 
-#if defined(ESP32_PLATFORM)
-    File file = SPIFFS.open(STORE_PATH, "r");
-    if (!file) return false;
-#else
-    FILE* file = std::fopen(g_native_path, "rb");
-    if (!file) return false;
-#endif
-
     // UI timestamps can be sampled one tick after the durable append. Search
     // newest-first within a narrow window so the fallback cannot select an
     // older identical message from the conversation.
     static constexpr uint32_t RECENT_WINDOW_SECONDS = 2;
+    uint8_t* payload = readPayload(count, detail::MESSAGE_STORE_HEADER_SIZE,
+                                   detail::MESSAGE_STORE_RECORD_SIZE);
+    if (!payload) return false;
     bool found = false;
-    uint8_t record[detail::MESSAGE_STORE_RECORD_SIZE];
     for (int i = (int)count - 1; i >= 0 && !found; --i) {
-        const size_t offset = detail::MESSAGE_STORE_HEADER_SIZE +
+        const uint8_t* record = payload +
             (size_t)i * detail::MESSAGE_STORE_RECORD_SIZE;
-#if defined(ESP32_PLATFORM)
-        const bool read_ok = file.seek(offset, SeekSet) &&
-            file.read(record, sizeof(record)) == sizeof(record);
-#else
-        const bool read_ok = std::fseek(file, (long)offset, SEEK_SET) == 0 &&
-            std::fread(record, 1, sizeof(record), file) == sizeof(record);
-#endif
         StoredMessage candidate{};
-        if (!read_ok || !readRecordRaw(candidate, record, sizeof(record))) continue;
+        if (!readRecordRaw(candidate, record, detail::MESSAGE_STORE_RECORD_SIZE)) continue;
         const uint32_t delta = candidate.timestamp > timestamp
             ? candidate.timestamp - timestamp : timestamp - candidate.timestamp;
         if (delta <= RECENT_WINDOW_SECONDS && candidate.is_self == is_self &&
@@ -1542,11 +1684,7 @@ bool messageStoreFindRecent(const char* conversation, const char* sender,
             found = true;
         }
     }
-#if defined(ESP32_PLATFORM)
-    file.close();
-#else
-    std::fclose(file);
-#endif
+    freeRaw(payload);
     return found;
 }
 

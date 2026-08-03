@@ -22,6 +22,7 @@
 #include "app/gps_track_log.h"
 #include "app/gps_clock_handoff.h"
 #include "mesh/mesh_wrapper.h"
+#include "mesh/sd_message_store.h"
 #include "ui/ui.h"
 #include "ui/screens_common.h"
 #include "ui/theme.h"
@@ -196,6 +197,12 @@ void setup()
     } else {
         boot_status("SD card ready");
     }
+
+    // ── Phase 2: select the deep chat-history backend ──
+    // Mesh/UI callers keep using message_store; this boot-time selector
+    // chooses SD when mounted and leaves the bounded SPIFFS fallback active
+    // otherwise.
+    sigurdos::mesh::sdMessageStoreSelect(spiffs_ok);
 
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Radio);
     boot_status("Starting radio...");
