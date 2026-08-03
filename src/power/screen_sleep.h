@@ -4,8 +4,9 @@
 // Copyright (C) 2026 Ben
 
 // The structure of this small policy module follows the GPL-3.0-or-later
-// Wadamesh TouchSleep reference.  SigurdOS deliberately keeps the radio and
-// both ESP32-S3 cores awake: the implementation throttles the main loop with
+// TouchSleep reference from ALLFATHER-BV/wadamesh
+// (src/ui-touch/TouchSleep.*). SigurdOS deliberately keeps the radio and both
+// ESP32-S3 cores awake: the implementation throttles the main loop with
 // vTaskDelay and never enters light sleep.
 
 #include <cstdint>
