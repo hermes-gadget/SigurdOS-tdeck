@@ -15,6 +15,7 @@
 #include "../mesh/mesh_wrapper.h"
 #include <Arduino.h>
 #include <lvgl.h>
+#include "text_fit_lvgl.h"
 #include <cstdio>
 #include <cstring>
 

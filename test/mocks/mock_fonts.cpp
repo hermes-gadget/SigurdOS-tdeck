@@ -10,9 +10,11 @@
 #include "fonts/emoji_font.h"
 #include "fonts/keyboard_layout_font.h"
 #include "fonts/latin_ext_font.h"
+#include "fonts/montserrat_8.h"
 
 // Minimal lv_font_t stub — the .fallback pointer is the only member
 // the mock needs. Other fields are zero-initialized for C compatibility.
+const lv_font_t sigurdos_montserrat_8 = {nullptr};
 const lv_font_t lv_font_montserrat_10   = {nullptr};
 const lv_font_t lv_font_montserrat_12   = {nullptr};
 const lv_font_t lv_font_montserrat_14   = {nullptr};

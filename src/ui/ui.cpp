@@ -33,6 +33,7 @@ using namespace sigurdos::responsive;
 #include "../fonts/emoji_font.h"
 #include <Arduino.h>
 #include <lvgl.h>
+#include "text_fit_lvgl.h"
 
 namespace sigurdos {
 namespace ui {

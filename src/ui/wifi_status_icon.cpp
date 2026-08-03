@@ -5,6 +5,7 @@
 #include "screens.h"
 #include "theme.h"
 #include "../hal/wifi_ota.h"
+#include "text_fit_lvgl.h"
 
 #include <cstdint>
 #include <cstdio>
