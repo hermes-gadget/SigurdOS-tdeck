@@ -57,15 +57,47 @@ validated and durably committed, login sessions and identity-derived contact
 secrets are invalidated, contacts are reloaded, and bridge session state is
 reset. A failed durable write leaves the running identity unchanged.
 
-## BLE and forwarding policy
+## Companion transports and forwarding policy
 
-BLE is a single-client, compile-time-selected companion transport; BLE and USB
-are not served simultaneously and there is no runtime transport switch. BLE
-re-advertises after disconnect. Clients should use write-with-response. Because
-the installed Arduino callback runs after the ATT acknowledgement, an invalid,
-oversized, or queue-saturating write is treated as a transport fault: the peer
-is disconnected and must reconnect and resynchronize. The observer's
-`ble_write_drop_count` therefore counts connection-fatal RX faults, not silent
+The companion dispatcher is transport-agnostic. Production firmware keeps BLE
+NUS enabled by default and registers optional plain WiFi transports alongside
+it:
+
+| Transport | Endpoint | Clients | Default |
+|---|---|---:|---|
+| BLE NUS | MeshCore NUS service | 1 | Enabled |
+| TCP | `tcp://<device-ip>:5000` | 4 | Disabled |
+| WebSocket | `ws://<device-ip>:8765` | 4 | Disabled |
+
+TCP and WebSocket are opt-in and their enable choices are persisted in NVS.
+They start and stop at runtime; a WiFi STA connection or active soft-AP is
+required before either listener is opened. Disabling a listener immediately
+drops its clients. Both listeners are intentionally plain-text companion
+protocol endpoints with no additional network authentication, so they should
+be used only on a trusted LAN or isolated test network. BLE bonding remains
+the production BLE authorization boundary, while USB companion mode continues
+to trust physical cable access.
+
+TCP is a byte stream using the serial-compatible framing: inbound frames are
+<, a little-endian uint16 payload length, then the payload; outbound frames
+use > instead of <. WebSocket clients use binary WebSocket messages and
+carry that same companion frame inside the message. Payloads are bounded by
+the MeshCore MAX_FRAME_SIZE (176 bytes); fragmented TCP and WebSocket input
+is reassembled per client, and malformed/oversized frames do not desynchronize
+the following frame.
+
+Command responses, including history sync, are sent only to the client that
+issued the command. Unsolicited events—received-message notifications, RX/raw
+logs, adverts, path updates, acknowledgements, and async responses—are pushed
+to every connected client on every enabled transport. Pushes remain
+best-effort under congestion; durable message history is replayed per client
+and is acknowledged only by that client's next sync request.
+
+BLE re-advertises after disconnect. Clients should use write-with-response.
+Because the installed Arduino callback runs after the ATT acknowledgement, an
+invalid, oversized, or queue-saturating write is treated as a transport fault:
+the peer is disconnected and must reconnect and resynchronize. The observer's
+ble_write_drop_count therefore counts connection-fatal RX faults, not silent
 telemetry loss.
 
 Existing bonded devices may authenticate whenever BLE is enabled. A new device
@@ -102,7 +134,7 @@ bond revocation, reset, private-key, and physical-access assumptions.
 
 | PlatformIO environment | Companion transport | Intended use |
 |---|---|---|
-| `SigurdOS_TDeck` | BLE NUS, enabled by default | Normal release firmware; users may disable advertising at runtime |
+| `SigurdOS_TDeck` | BLE NUS + optional TCP/WS listeners | Normal release firmware; BLE on, TCP/WS off by default |
 | `SigurdOS_TDeck_ble_validation` | BLE NUS + validation instrumentation | Compile/memory validation of the production BLE path |
 | `SigurdOS_TDeck_ble_agent` | BLE NUS + radio + remote test telemetry | Automated advertising and pairing diagnostics on hardware |
 | `SigurdOS_TDeck_companion_usb` | USB CDC binary framing; BLE compiled out | Host protocol matrix and wired companion operation; core debug level is forced to 0 |
