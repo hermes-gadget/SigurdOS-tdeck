@@ -121,6 +121,19 @@ TEST_F(MessageStoreTest, AppendLoadAndDedup) {
     EXPECT_FALSE(out[0].is_self);
 }
 
+TEST_F(MessageStoreTest, ExplicitDefaultBackendKeepsPublicLogContract) {
+    auto msg = makeMsg("DM: Alice", "Alice", "persisted", 9, false, false);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+    EXPECT_FALSE(sigurdos::mesh::detail::messageStoreBackendSelected());
+    EXPECT_EQ(sigurdos::mesh::detail::messageStoreBackendMaxRecords(),
+              sigurdos::mesh::MESSAGE_STORE_MAX_RECORDS);
+
+    sigurdos::mesh::detail::messageStoreSelectDefaultBackend();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+}
+
 TEST_F(MessageStoreTest, PathLenRoundTrips) {
     auto msg = makeMsg("Public", "Alice", "Alice: hi", 100, false, true);
     msg.path_len = 0x83;  // distinct from the zero-init default
