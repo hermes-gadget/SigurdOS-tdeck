@@ -18,7 +18,6 @@ SOURCE_CONTRACTS = (
     ("docs/SETTINGS_SCREEN.md", "NodePrefs::advert_loc_policy", "src/hal/prefs.h", "advert_loc_policy"),
     ("docs/FEATURES_OVERVIEW.md", "SIGURDOS_SERIAL_DEBUG_COMMANDS_ACTIVE", "src/hal/display.cpp", "SIGURDOS_SERIAL_DEBUG_COMMANDS_ACTIVE"),
     ("docs/FEATURES_OVERVIEW.md", "GPIO 46 (active high)", "src/hal/tdeck_pins.h", "#define PIN_BUZZER       46"),
-    ("docs/LauncherCompatibility.md", "never sends raw-mode command `0x03`", "src/hal/keyboard.cpp", "CMD 0x03 (raw matrix mode) is intentionally unsupported"),
 )
 
 

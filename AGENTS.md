@@ -19,10 +19,8 @@ These are the reference documents you should load before starting work. Which on
 | **`docs/KNOWN_ISSUES.md`** | Before feature work | What's broken or unfinished — don't duplicate effort |
 | **`docs/CONTACT_STORE.md`** | When working on contact management | Contact store API, persistence, and data model |
 | **`docs/LAUNCHER.md`** | When working on Launcher compatibility | Launcher detection, OTA gating, partition layout |
-| **`docs/LauncherCompatibility.md`** | When working on Launcher compatibility | Detailed pin/partition comparison vs bmorcelli/Launcher, install matrix |
-| **`docs/LAUNCHER_ROADMAP.md`** | When working on Launcher compatibility | Launcher maintenance record — C1–C7/O3 implemented status, external blockers |
+| **`docs/ROADMAP.md`** | Understanding project direction | Development roadmap and planned features |
 | **`docs/LOGGING.md`** | Before debugging serial output | Logging subsystem API, verbosity levels, and configuration |
-| **`docs/MISSING_FEATURES.md`** | Before implementing new features | Catalog of MeshCore protocol features not yet implemented, with source references and effort estimates |
 | **`firmware/README.md`** | Releasing or CI work | Release artifact structure, web flasher manifest format |
 | **`test/README.md`** | Writing new tests | Test framework, mock structure, naming conventions |
 | **`docs/HARDWARE.md`** | When working on hardware/drivers | Full hardware reference: pinout, boot sequence, peripheral details |
@@ -30,7 +28,6 @@ These are the reference documents you should load before starting work. Which on
 | **`docs/CHAT_SCREEN.md`** | When working on chat UI | Chat screen architecture, data model, input routing, persistence |
 | **`docs/FEATURES_OVERVIEW.md`** | Getting oriented on features | Top-level index of all features with source cross-references |
 | **`docs/HOME_SCREEN.md`** | When working on home screen | Home screen layout, tile grid, icon mapping |
-| **`docs/ROADMAP.md`** | Understanding project direction | Development roadmap and planned features |
 | **`docs/TERMINAL.md`** | When working on terminal | Terminal screen commands, serial protocol, debug levels |
 | **`docs/MAP_SCREEN.md`** | When working on the map | Map screen rendering, tile cache, PSRAM usage |
 | **`docs/NETWORK_SCREEN.md`** | When working on network/finder | Node discovery, Ping Nearby, network neighbourhood view |
@@ -47,7 +44,7 @@ These are the reference documents you should load before starting work. Which on
 **Critical rules — follow all:**
 1. **Check for an existing issue on the upstream repo.** Before writing any code, check if there's already an open GitHub issue on `hermes-gadget/SigurdOS-tdeck` covering what you plan to do. If not, open one. No issue = no PR accepted.
 2. **Read `docs/KNOWN_ISSUES.md`** before starting any feature work. If someone already tried and documented a problem, you'll find it there.
-3. **Read `docs/MISSING_FEATURES.md`** before implementing any new feature. If the capability is listed there, don't duplicate the research — use the MeshCore source references and effort estimates provided.
+3. **Read `docs/ROADMAP.md`** before starting any feature work. It is the single source of truth for scope, including explicitly declined work (WebMirror, on-device MQTT, board breadth) that must not be re-proposed.
 4. **Follow `CONTRIBUTING.md`** — it's not optional. Every step applies to AI agents the same as human contributors.
 
 ---

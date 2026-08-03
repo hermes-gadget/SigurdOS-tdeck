@@ -66,4 +66,4 @@ outside the SigurdOS repository and can irreversibly alter hardware.
 - [x] Production provisioning profile and stale process removed
 - [x] Security documentation describes unsigned, unencrypted artifacts
 
-See [the eFuse audit](EFUSE_AUDIT.md) for the findings and technical basis.
+See [issue #1210](https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1210) for the eFuse posture findings and technical basis.

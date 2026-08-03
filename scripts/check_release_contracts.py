@@ -73,8 +73,6 @@ def check(root: Path) -> list[str]:
                 )
 
     for path in documentation_files(root):
-        if path.name == "COMPANION_PARITY_ACTION_PLAN.md":
-            continue
         if "releases/latest" in path.read_text(errors="replace"):
             violations.append(
                 f"{path.relative_to(root)}: use a versioned /releases/download/<tag>/ URL"

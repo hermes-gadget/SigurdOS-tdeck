@@ -286,7 +286,7 @@ is green while an official companion is connected. See
 - **Self-OTA gating** — WiFi AP and GitHub OTA refuse to run under Launcher to protect co-installed firmware
 - **Boot diagnostics** — targeted warning when an app-only Launcher install leaves the device without a SPIFFS partition
 - **Install artifact** — releases publish `SigurdOS-tdeck-launcher.bin` (byte-identical to `firmware-merged.bin`) for Launcher SD/WebUI/URL installs
-**Full documentation:** [`docs/LAUNCHER.md`](LAUNCHER.md), [`docs/LAUNCHER_ROADMAP.md`](LAUNCHER_ROADMAP.md), [`docs/LAUNCHER_SIZE_AUDIT.md`](LAUNCHER_SIZE_AUDIT.md), [`firmware/README.md`](../firmware/README.md)
+**Full documentation:** [`docs/LAUNCHER.md`](LAUNCHER.md), [`firmware/README.md`](../firmware/README.md)
 **Sources:** [`src/hal/launcher_env.cpp`](../src/hal/launcher_env.cpp), [`src/hal/launcher_env.h`](../src/hal/launcher_env.h), [`test/test_launcher_env/`](../test/test_launcher_env/)
 
 ### Companion BLE (Official MeshCore App)
@@ -302,6 +302,30 @@ is green while an official companion is connected. See
 **Sources:** [`src/comms/companion_bridge.h`](../src/comms/companion_bridge.h), [`src/comms/companion_bridge.cpp`](../src/comms/companion_bridge.cpp), [`src/mesh/companion_adapter.cpp`](../src/mesh/companion_adapter.cpp), [`src/mesh/companion_adapter.h`](../src/mesh/companion_adapter.h), [`src/mesh/message_store.h`](../src/mesh/message_store.h), [`src/mesh/message_store.cpp`](../src/mesh/message_store.cpp), [`src/ui/screens/screen_bluetooth.cpp`](../src/ui/screens/screen_bluetooth.cpp), [`platformio.ini`](../platformio.ini), [`test/test_companion_protocol/`](../test/test_companion_protocol/), [`test/test_message_store/`](../test/test_message_store/)
 
 ---
+
+### 2026 Wave-1 Additions
+
+**Multi-transport companion** — simultaneous USB + BLE + TCP (5000) + WebSocket (8765)
+companion serving with push-to-all-clients and per-client sync dedup. Contract in
+`src/comms/transport_iface.h`; servers in `transport_tcp.*` / `transport_ws.*`;
+transports screen under Settings → Network. UI-verified on hardware (2026-08-03);
+end-to-end client proof pending WiFi creds (see ROADMAP Phase C).
+
+**Lock screen + idle power regime** — auto-off → lock screen with swipe/key unlock,
+idle predicates throttle the main loop only when the display is off. Sources:
+`src/power/screen_sleep.*`, `src/ui/screens/screen_lock.cpp`.
+
+**i18n** — EN/DE/FR/ES with a language picker in Settings → Display/UI; missing or
+empty translations fall back to English. Sources: `src/i18n/*`. Locale expansion is
+planned in ROADMAP Phase B (NL first).
+
+**SD deep history** — message history stored on the SD card (`/sdcard/msgs`, 5000
+messages) with SPIFFS fallback; live usage shown in Settings → System.
+Sources: `src/mesh/sd_message_store.*`.
+
+**Adaptive text fit** — every UI label routes through a central fitter
+(`src/ui/text_fit_lvgl.*`) that descends a font ladder (16→8, 8px floor is
+Montserrat SemiBold) until the text fits its box; no per-element layout changes.
 
 ## Hardware Features
 
@@ -442,12 +466,11 @@ Run it with `pio test -e native_test`. See [`test/README.md`](../test/README.md)
 | [`docs/LOGGING.md`](LOGGING.md) | Logging subsystem API, verbosity levels, and configuration |
 | [`docs/MAP_SCREEN.md`](MAP_SCREEN.md) | Map screen and tile cache system documentation |
 | [`docs/MESH_NETWORKING.md`](MESH_NETWORKING.md) | Mesh networking protocol and features documentation |
-| [`docs/MISSING_FEATURES.md`](MISSING_FEATURES.md) | Companion parity audit: implemented, declined, and out-of-scope MeshCore deltas |
+| [`docs/ROADMAP.md`](ROADMAP.md) | Roadmap, scope decisions, and forward plan |
 | [`docs/COMPANION_SUPPORT.md`](COMPANION_SUPPORT.md) | Current BLE companion command support matrix and interoperability limits |
 | [`docs/NETWORK_SCREEN.md`](NETWORK_SCREEN.md) | Network screen documentation |
-| [`docs/ROADMAP.md`](ROADMAP.md) | Development roadmap and planned features |
 | [`docs/SETTINGS_SCREEN.md`](SETTINGS_SCREEN.md) | Settings screen documentation |
-| [`docs/SIGNAL_SCREEN.md`](SIGNAL_SCREEN.md) | Signal diagnostics screen documentation |
+| [`docs/SIGNAL_SCREEN.md`](SIGNAL_SCREEN.md) | Signal screen documentation |
 | [`docs/TERMINAL.md`](TERMINAL.md) | Terminal screen documentation |
 | [`test/README.md`](../test/README.md) | Test suite structure, mock guidelines, running tests |
 | [`firmware/README.md`](../firmware/README.md) | Flash instructions, binary layout, web flasher |

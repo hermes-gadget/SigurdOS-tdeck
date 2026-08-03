@@ -95,6 +95,5 @@ node matrix.mjs --port /dev/ttyUSB0 --label heltec --json-out /tmp/official_helt
 
 ## Related
 
-- `docs/COMPANION_BLE_TEST_ENV.md` — BLE advertise health harness  
-- `docs/COMPANION_SUPPORT.md` — command support matrix  
-- `docs/COMPANION_PARITY_ACTION_PLAN.md` — broader parity plan  
+- `docs/COMPANION_BLE_TEST_ENV.md` — BLE advertise health harness
+- `docs/COMPANION_SUPPORT.md` — command support matrix

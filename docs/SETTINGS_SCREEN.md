@@ -175,7 +175,7 @@ Same +/- pattern. Steps by 16, clamped to `[CHAT_MSGS_MIN_CAP, CHAT_MSGS_MAX]` =
 | `Shut down` / `Reboot` / `Factory reset` | Power controls with confirmation; state is saved before restart |
 | `SigurdOS <version>` | Read-only — `SIGURDOS_VERSION` from `src/hal/tdeck_pins.h` |
 
-Self-OTA rows refuse to start when the firmware detects it is running under bmorcelli/Launcher (see `docs/LAUNCHER_ROADMAP.md`) — updating must then go through Launcher instead.
+Self-OTA rows refuse to start when the firmware detects it is running under bmorcelli/Launcher (see `docs/LAUNCHER.md`) — updating must then go through Launcher instead.
 
 ### WiFi Networks
 
@@ -267,7 +267,7 @@ All dialogs use zero radius, zero border width, and `dialog_size()` bounds — c
 ## Further Reading
 
 - `docs/HOME_SCREEN.md` — Home screen with the SETTINGS tile launcher
-- `docs/LAUNCHER_ROADMAP.md` — why self-OTA is gated under Launcher
+- `docs/LAUNCHER.md` — why self-OTA is gated under Launcher
 - `src/hal/prefs.h` — `NodePrefs` struct definition and all persisted fields
 - `src/ui/responsive.h` — `dialog_size()` helper and layout constants
 - `src/ui/theme.h` — Full pixel theme colour palette

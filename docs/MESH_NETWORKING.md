@@ -874,6 +874,6 @@ onPeerDataRecv / onGroupDataRecv / onAnonDataRecv
 | [`FEATURES_OVERVIEW.md`](FEATURES_OVERVIEW.md) | High-level feature catalog — all 12 home screen tiles and system capabilities |
 | [`CHAT_SCREEN.md`](CHAT_SCREEN.md) | Chat screen UI — channel tabs, DM conversations, message history |
 | [`TERMINAL.md`](TERMINAL.md) | Terminal commands — mesh diagnostics, advert, trace, ping, inject |
-| [`MISSING_FEATURES.md`](MISSING_FEATURES.md) | Companion parity audit — implemented, declined, and out-of-scope MeshCore deltas |
+| [`ROADMAP.md`](ROADMAP.md) | Roadmap, scope decisions, and forward plan |
 | [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | Tracked bugs, limitations, and workarounds |
 | [`AGENTS.md`](../AGENTS.md) | Full architecture guide — hardware, UI conventions, boot sequence |

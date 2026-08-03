@@ -184,7 +184,6 @@ python3 ~/SigurdOS-tdeck/scripts/meshcore_ble_companion_test.py --transport usb 
 
 - `scripts/official-meshcore-client-test/README.md` — official client matrix how-to
 - `docs/COMPANION_SUPPORT.md` — command support matrix
-- `docs/COMPANION_PARITY_ACTION_PLAN.md` — broader parity plan
 
 ## Next hardening (optional follow-ups)
 

@@ -3,7 +3,7 @@
 > **Source**: `src/hal/launcher_env.h`, `src/hal/launcher_env.cpp`
 > **Tests**: `test/test_launcher_env/test_launcher_env.cpp`
 > **Mocks**: `test/mocks/esp_partition.h`, `test/mocks/mock_esp_partition.cpp`
-> **Related**: `docs/LAUNCHER_ROADMAP.md` (full compatibility analysis), `docs/KNOWN_ISSUES.md` → "SigurdOS Launcher compatibility"
+> **Related**: `docs/KNOWN_ISSUES.md` → "SigurdOS Launcher compatibility"
 
 ---
 
