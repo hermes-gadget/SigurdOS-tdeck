@@ -53,6 +53,7 @@ void settings_screen_show()
     struct Cat { const char* icon; const char* label; Screen target; };
     Cat cats[] = {
         {LV_SYMBOL_WIFI,    "WiFi",             Screen::WiFiNetworks},
+        {LV_SYMBOL_WIFI,    "Network",          Screen::Transports},
         {LV_SYMBOL_WIFI,    "Bluetooth",        Screen::Bluetooth},
         {LV_SYMBOL_WIFI,    "Radio / Mesh",     Screen::SettingsRadio},
         {LV_SYMBOL_GPS,     "GPS / Location",   Screen::SettingsGPS},

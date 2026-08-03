@@ -52,7 +52,7 @@ std::string read_project_file(const char* path)
     return {};
 }
 
-constexpr std::array<Screen, 31> kScreens = {
+constexpr std::array<Screen, 32> kScreens = {
     Screen::Home,
     Screen::Chat,
     Screen::Contacts,
@@ -84,6 +84,7 @@ constexpr std::array<Screen, 31> kScreens = {
     Screen::MessageSearch,
     Screen::MeshDashboard,
     Screen::FileBrowser,
+    Screen::Transports,
 };
 
 TEST(NavigationContractTest, ScreenEnumCountMatchesInventory) {
@@ -141,6 +142,7 @@ TEST(NavigationContractTest, NestedRoutesRemainInInventory) {
     EXPECT_EQ(static_cast<int>(Screen::MessageSearch), 28);
     EXPECT_EQ(static_cast<int>(Screen::MeshDashboard), 29);
     EXPECT_EQ(static_cast<int>(Screen::FileBrowser), 30);
+    EXPECT_EQ(static_cast<int>(Screen::Transports), 31);
 }
 
 TEST(NavigationContractTest, ParameterizedRouteAPIsExist) {
