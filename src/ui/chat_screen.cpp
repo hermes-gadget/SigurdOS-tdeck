@@ -37,6 +37,7 @@
 #include "../mesh/message_store.h"
 #include "../mesh/contact_store.h"
 #include "../hal/prefs.h"
+#include "../i18n/i18n.h"
 #include "chat_store_migration.h"
 #include "../fonts/emoji_font.h"
 #include <lvgl.h>
@@ -285,7 +286,7 @@ static void update_scope_composer_indicator()
         !input_field || !lv_obj_is_valid(input_field) ||
         active_channel < 0 || active_channel >= dyn_count) return;
     const ChatNamedScopeState* scope = get_chat_named_scope(dyn_channels[active_channel]);
-    lv_label_set_text(scope_indicator, scope ? scope->name : "PUBLIC");
+    lv_label_set_text(scope_indicator, scope ? scope->name : TR(ChatPublic));
     lv_obj_set_style_text_color(scope_indicator,
         lv_color_hex(scope ? ACCENT_ORANGE : ACCENT_GREEN), 0);
     lv_obj_set_style_border_color(scope_indicator,
@@ -636,7 +637,7 @@ static void populate_channel_rows(lv_obj_t* list) {
 
         lv_obj_t* prev = lv_label_create(row);
         lv_label_set_text(prev,
-            ch_meta[i].preview[0] ? ch_meta[i].preview : "No messages yet");
+            ch_meta[i].preview[0] ? ch_meta[i].preview : TR(ChatNoMessagesYet));
         lv_obj_set_style_text_color(prev, lv_color_hex(TEXT_SECONDARY), 0);
         lv_obj_set_style_text_font(prev, emoji_wrapped_montserrat_10, 0);
         lv_label_set_long_mode(prev, LV_LABEL_LONG_DOT);
@@ -704,14 +705,15 @@ static void populate_channel_rows(lv_obj_t* list) {
                 lv_obj_set_style_pad_all(dlg, 8, 0);
 
                 lv_obj_t* title = lv_label_create(dlg);
-                lv_label_set_text(title, "Delete channel?");
+                lv_label_set_text(title, TR(ChatDeleteChannelQuestion));
                 lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
                 lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
                 lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
                 lv_obj_t* msg = lv_label_create(dlg);
                 char msg_buf[64];
-                snprintf(msg_buf, sizeof(msg_buf), "Delete channel #%s?", dyn_channels[idx]);
+                snprintf(msg_buf, sizeof(msg_buf), TR(ChatDeleteChannelFormat),
+                         dyn_channels[idx]);
                 lv_label_set_text(msg, msg_buf);
                 lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_SECONDARY), 0);
                 lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
@@ -723,7 +725,7 @@ static void populate_channel_rows(lv_obj_t* list) {
                 lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(BG_INPUT), 0);
                 lv_obj_set_style_radius(cancel_btn, 0, 0);
                 lv_obj_t* cl = lv_label_create(cancel_btn);
-                lv_label_set_text(cl, "Cancel");
+                lv_label_set_text(cl, TR(ChatCancel));
                 lv_obj_center(cl);
                 lv_obj_add_event_cb(cancel_btn, [](lv_event_t* ce) {
                     lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ce)));
@@ -735,14 +737,14 @@ static void populate_channel_rows(lv_obj_t* list) {
                 lv_obj_set_style_bg_color(confirm_btn, lv_color_hex(ACCENT_RED), 0);
                 lv_obj_set_style_radius(confirm_btn, 0, 0);
                 lv_obj_t* cfl_lb = lv_label_create(confirm_btn);
-                lv_label_set_text(cfl_lb, "Delete");
+                lv_label_set_text(cfl_lb, TR(ChatDelete));
                 lv_obj_center(cfl_lb);
                 lv_obj_add_event_cb(confirm_btn, [](lv_event_t* ce) {
                     int idx2 = (int)(intptr_t)lv_event_get_user_data(ce);
                     if (!sigurdos::mesh::removeChannel(idx2)) {
                         notifications_post(
                             NotificationEvent::UiError,
-                            "Channel removal was not saved");
+                            TR(ChatRemovalNotSaved));
                         return;
                     }
                     lv_obj_t* s2 = lv_obj_get_screen((lv_obj_t*)lv_event_get_target(ce));
@@ -942,7 +944,7 @@ static lv_obj_t* make_chat_list_screen()
     // Chat title and active flood-scope chip.
     {
         lv_obj_t* ttl = lv_label_create(top);
-        lv_label_set_text(ttl, "Chat");
+        lv_label_set_text(ttl, TR(ChatTitle));
         lv_obj_set_style_text_color(ttl, lv_color_hex(TEXT_SECONDARY), 0);
         lv_obj_set_style_text_font(ttl, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(ttl, LV_ALIGN_LEFT_MID, 32, 0);
@@ -950,7 +952,7 @@ static lv_obj_t* make_chat_list_screen()
         const char* active = sigurdos::mesh::getActiveRegion();
         char scope_text[40];
         snprintf(scope_text, sizeof(scope_text), "[%s]",
-                 active && active[0] ? active : "PUBLIC");
+                 active && active[0] ? active : TR(ChatPublic));
         lv_obj_t* chip = lv_label_create(top);
         lv_label_set_text(chip, scope_text);
         lv_label_set_long_mode(chip, LV_LABEL_LONG_DOT);
@@ -1083,7 +1085,10 @@ static void show_channel_list()
     lv_obj_set_style_border_width(ch_add_btn, 0, 0);
     lv_obj_set_style_radius(ch_add_btn, 0, 0);
     lv_obj_t* al = lv_label_create(ch_add_btn);
-    lv_label_set_text(al, LV_SYMBOL_PLUS " Add # Channel");
+    char add_ribbon[64];
+    snprintf(add_ribbon, sizeof(add_ribbon), "%s %s", LV_SYMBOL_PLUS,
+             TR(ChatAddChannelRibbon));
+    lv_label_set_text(al, add_ribbon);
     lv_obj_set_style_text_font(al, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_text_color(al, lv_color_hex(ACCENT_FOREGROUND), 0);
     lv_obj_center(al);
@@ -1225,7 +1230,7 @@ static void show_search_bar()
         lv_obj_set_style_pad_all(search_input, 3, 0);
         lv_textarea_set_one_line(search_input, true);
         lv_textarea_set_max_length(search_input, 30);
-        lv_textarea_set_placeholder_text(search_input, "Search messages...");
+        lv_textarea_set_placeholder_text(search_input, TR(ChatSearchPlaceholder));
         lv_obj_remove_flag(search_input, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
         lv_obj_set_style_outline_width(search_input, 0, LV_STATE_FOCUSED);
         lv_obj_set_style_outline_width(search_input, 0, (lv_state_t)(LV_STATE_FOCUSED | LV_STATE_EDITED));
@@ -1558,7 +1563,7 @@ static void create_message_list()
     lv_obj_set_size(chat_older_btn, LV_PCT(100), 24);
     apply_pixel_btn_outline(chat_older_btn);
     lv_obj_t* older_label = lv_label_create(chat_older_btn);
-    lv_label_set_text(older_label, "Load older messages");
+    lv_label_set_text(older_label, TR(ChatLoadOlder));
     lv_obj_center(older_label);
     lv_obj_add_event_cb(chat_older_btn, [](lv_event_t*) {
         chat_render_offset += CHAT_RENDER_WINDOW;
@@ -1575,7 +1580,7 @@ static void create_message_list()
     lv_obj_set_size(chat_newer_btn, LV_PCT(100), 24);
     apply_pixel_btn_outline(chat_newer_btn);
     lv_obj_t* newer_label = lv_label_create(chat_newer_btn);
-    lv_label_set_text(newer_label, "Return toward newest");
+    lv_label_set_text(newer_label, TR(ChatReturnNewest));
     lv_obj_center(newer_label);
     lv_obj_add_event_cb(chat_newer_btn, [](lv_event_t*) {
         chat_render_offset -= CHAT_RENDER_WINDOW;
@@ -1585,7 +1590,7 @@ static void create_message_list()
     lv_obj_add_flag(chat_newer_btn, LV_OBJ_FLAG_HIDDEN);
 
     chat_no_results = lv_label_create(msg_list);
-    lv_label_set_text(chat_no_results, "No matching messages");
+    lv_label_set_text(chat_no_results, TR(ChatNoMatching));
     lv_obj_set_style_text_color(chat_no_results, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(chat_no_results, emoji_wrapped_montserrat_12, 0);
     lv_obj_add_flag(chat_no_results, LV_OBJ_FLAG_HIDDEN);
@@ -1754,7 +1759,7 @@ static void show_emoji_picker(lv_obj_t* parent)
     }, LV_EVENT_CLICKED, nullptr);
 
     lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Emoji");
+    lv_label_set_text(title, TR(ChatEmoji));
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
@@ -1838,7 +1843,8 @@ static void do_send()
     if (sent) {
         snprintf(display_text, sizeof(display_text), "%s", text);
     } else {
-        snprintf(display_text, sizeof(display_text), "%s [FAILED]", text);
+        snprintf(display_text, sizeof(display_text), "%s%s", text,
+                 TR(ChatFailedSuffix));
     }
     append_channel_message(sent_channel, sigurdos::mesh::getOwnName(), display_text, ts, true);
     mark_channel_used(sent_channel);
@@ -1877,7 +1883,7 @@ static void create_input_bar()
     scope_indicator = lv_label_create(input_bar);
     lv_obj_set_size(scope_indicator, SCOPE_INDICATOR_W, INPUT_H - 8);
     lv_obj_align(scope_indicator, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_label_set_text(scope_indicator, "PUBLIC");
+    lv_label_set_text(scope_indicator, TR(ChatPublic));
     lv_label_set_long_mode(scope_indicator, LV_LABEL_LONG_DOT);
     lv_obj_set_style_bg_color(scope_indicator, lv_color_hex(BG_INPUT), 0);
     lv_obj_set_style_bg_opa(scope_indicator, LV_OPA_COVER, 0);
@@ -1902,7 +1908,7 @@ static void create_input_bar()
     lv_obj_set_style_radius(input_field, 0, 0);
     lv_obj_set_style_pad_all(input_field, 4, 0);
     lv_textarea_set_one_line(input_field, true);
-    lv_textarea_set_placeholder_text(input_field, "Message");
+    lv_textarea_set_placeholder_text(input_field, TR(ChatMessagePlaceholder));
     lv_textarea_set_max_length(input_field, MAX_MSG_BYTES);
     lv_obj_remove_flag(input_field, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_set_style_outline_width(input_field, 0, LV_STATE_FOCUSED);
@@ -1946,7 +1952,7 @@ static void create_input_bar()
     lv_obj_set_style_border_width(send_btn, 0, 0);
 
     lv_obj_t* send_label = lv_label_create(send_btn);
-    lv_label_set_text(send_label, "Send");
+    lv_label_set_text(send_label, TR(ChatSend));
     lv_obj_set_style_text_font(send_label, emoji_wrapped_montserrat_10, 0);
     lv_obj_set_style_text_color(send_label, lv_color_hex(ACCENT_FOREGROUND), 0);
     lv_obj_center(send_label);
@@ -2124,13 +2130,13 @@ static void show_add_channel_options(lv_obj_t* parent) {
     lv_obj_set_style_pad_all(dlg, 8, 0);
 
     lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Add Channel");
+    lv_label_set_text(title, TR(ChatAddChannelTitle));
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
     lv_obj_t* nl = lv_label_create(dlg);
-    lv_label_set_text(nl, "Name:");
+    lv_label_set_text(nl, TR(ChatNameLabel));
     lv_obj_set_style_text_color(nl, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_align(nl, LV_ALIGN_TOP_LEFT, 4, 24);
 
@@ -2143,11 +2149,11 @@ static void show_add_channel_options(lv_obj_t* parent) {
     lv_obj_set_style_border_width(ni, 0, 0);
     lv_textarea_set_one_line(ni, true);
     lv_textarea_set_max_length(ni, MAX_NAME_LEN);
-    lv_textarea_set_placeholder_text(ni, "e.g. #general");
+    lv_textarea_set_placeholder_text(ni, TR(ChatNamePlaceholder));
     apply_focus_style(ni);
 
     lv_obj_t* pl = lv_label_create(dlg);
-    lv_label_set_text(pl, "PSK (optional):");
+    lv_label_set_text(pl, TR(ChatPskOptional));
     lv_obj_set_style_text_color(pl, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_align(pl, LV_ALIGN_TOP_LEFT, 4, 72);
 
@@ -2160,7 +2166,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
     lv_obj_set_style_border_width(pi, 0, 0);
     lv_textarea_set_one_line(pi, true);
     lv_textarea_set_max_length(pi, 44); // base64 PSK keys are 24 bytes -> 32 base64 chars
-    lv_textarea_set_placeholder_text(pi, "base64 key (blank = public)");
+    lv_textarea_set_placeholder_text(pi, TR(ChatPskPlaceholder));
     apply_focus_style(pi);
 
     lv_group_t* g = lv_group_get_default();
@@ -2181,7 +2187,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(add, lv_color_hex(ACCENT_GREEN), 0);
     lv_obj_set_style_radius(add, 0, 0);
     lv_obj_t* al = lv_label_create(add);
-    lv_label_set_text(al, "Add");
+    lv_label_set_text(al, TR(ChatAdd));
     lv_obj_center(al);
 
     auto submit = [](lv_event_t* e) {
@@ -2201,7 +2207,10 @@ static void show_add_channel_options(lv_obj_t* parent) {
         const char* nm  = inputs[0] ? lv_textarea_get_text(inputs[0]) : "";
         const char* psk = inputs[1] ? lv_textarea_get_text(inputs[1]) : "";
 
-        if (!nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter channel name"); return; }
+        if (!nm[0]) {
+            if (feedback) lv_label_set_text(feedback, TR(ChatEnterChannelName));
+            return;
+        }
 
         // Validate channel name before passing to mesh
         const char* val_reason = nullptr;
@@ -2225,7 +2234,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
         } else {
             if (feedback) {
                 lv_label_set_text(
-                    feedback, "Invalid, full, or save failed");
+                    feedback, TR(ChatInvalidFullSave));
             }
         }
     };
@@ -2257,7 +2266,10 @@ static void show_add_channel_options(lv_obj_t* parent) {
             // No PSK — submit directly
             lv_obj_t* sc = lv_obj_get_screen(d);
             const char* nm = lv_textarea_get_text(input);
-            if (!nm || !nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter channel name"); return; }
+            if (!nm || !nm[0]) {
+                if (feedback) lv_label_set_text(feedback, TR(ChatEnterChannelName));
+                return;
+            }
             // Validate channel name before passing to mesh
             const char* val_reason2 = nullptr;
             if (!sigurdos::mesh::channel_name_valid(nm, &val_reason2)) {
@@ -2271,7 +2283,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
             } else {
                 if (feedback) {
                     lv_label_set_text(
-                        feedback, "Invalid, full, or save failed");
+                        feedback, TR(ChatInvalidFullSave));
                 }
             }
         }
@@ -2295,7 +2307,10 @@ static void show_add_channel_options(lv_obj_t* parent) {
 
         const char* nm  = inputs[0] ? lv_textarea_get_text(inputs[0]) : "";
         const char* psk = inputs[1] ? lv_textarea_get_text(inputs[1]) : "";
-        if (!nm || !nm[0]) { if (feedback) lv_label_set_text(feedback, "Enter channel name"); return; }
+        if (!nm || !nm[0]) {
+            if (feedback) lv_label_set_text(feedback, TR(ChatEnterChannelName));
+            return;
+        }
 
         // Validate channel name before passing to mesh
         const char* val_reason3 = nullptr;
@@ -2316,7 +2331,7 @@ static void show_add_channel_options(lv_obj_t* parent) {
         } else {
             if (feedback) {
                 lv_label_set_text(
-                    feedback, "Invalid, full, or save failed");
+                    feedback, TR(ChatInvalidFullSave));
             }
         }
     }, LV_EVENT_ALL, (void*)fb);
@@ -2364,7 +2379,7 @@ static void channel_menu_action_cb(lv_event_t* e) {
         if (!g_chat_unread.has_mentions()) notifications_clear_unread_mentions();
         rebuild_channel_ribbon();
         if (feedback) {
-            lv_label_set_text(feedback, "Marked all read");
+            lv_label_set_text(feedback, TR(ChatMarkedAllRead));
             lv_obj_set_style_text_color(feedback, lv_color_hex(ACCENT_GREEN), 0);
         }
         return;
@@ -2373,7 +2388,7 @@ static void channel_menu_action_cb(lv_event_t* e) {
     if (action == ChannelAction::LeaveChannel) {
         if (!channel_menu_perform(action, channel, idx)) {
             if (feedback) {
-                lv_label_set_text(feedback, "Leave failed");
+                lv_label_set_text(feedback, TR(ChatLeaveFailed));
                 lv_obj_set_style_text_color(feedback, lv_color_hex(ACCENT_RED), 0);
             }
             return;
@@ -2426,8 +2441,8 @@ void chat_screen_show_channel_menu()
     lv_obj_t* scope_lbl = lv_label_create(dlg);
     char scope_buf[48];
     const ChatNamedScopeState* scope = get_chat_named_scope(channel);
-    if (scope) snprintf(scope_buf, sizeof(scope_buf), "Named: %s (random key)", scope->name);
-    else       snprintf(scope_buf, sizeof(scope_buf), "Named: none (public)");
+    if (scope) snprintf(scope_buf, sizeof(scope_buf), TR(ChatNamedFormat), scope->name);
+    else       snprintf(scope_buf, sizeof(scope_buf), "%s", TR(ChatNamedNone));
     lv_label_set_text(scope_lbl, scope_buf);
     lv_obj_set_style_text_color(scope_lbl, lv_color_hex(TEXT_SECONDARY), 0);
     lv_obj_set_style_text_font(scope_lbl, emoji_wrapped_montserrat_10, 0);
@@ -2488,7 +2503,7 @@ void chat_screen_show_channel_menu()
     lv_obj_set_style_radius(close, 0, 0);
     lv_obj_set_style_border_width(close, 0, 0);
     lv_obj_t* cl = lv_label_create(close);
-    lv_label_set_text(cl, "Close");
+    lv_label_set_text(cl, TR(ChatClose));
     lv_obj_set_style_text_font(cl, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(cl);
     lv_obj_add_event_cb(close, [](lv_event_t* e) {
@@ -2514,8 +2529,8 @@ static void update_named_scope_subtitle()
     if (!g_scope_subtitle || !lv_obj_is_valid(g_scope_subtitle)) return;
     const ChatNamedScopeState* scope = get_chat_named_scope(current_scope_channel());
     char sb[48];
-    if (scope) snprintf(sb, sizeof(sb), "This chat: %s", scope->name);
-    else       snprintf(sb, sizeof(sb), "This chat: none");
+    if (scope) snprintf(sb, sizeof(sb), TR(ChatThisChatFormat), scope->name);
+    else       snprintf(sb, sizeof(sb), "%s", TR(ChatThisChatNone));
     lv_label_set_text(g_scope_subtitle, sb);
     lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(TEXT_SECONDARY), 0);
 }
@@ -2531,7 +2546,8 @@ static void scope_custom_apply(lv_obj_t* ta) {
     uint8_t key[16];
     if (!named_scope_prepare(text, name, sizeof(name), key, &reason)) {
         if (g_scope_subtitle && lv_obj_is_valid(g_scope_subtitle)) {
-            lv_label_set_text(g_scope_subtitle, reason ? reason : "Invalid scope");
+            lv_label_set_text(g_scope_subtitle,
+                              reason ? reason : TR(ChatInvalidScope));
             lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(ACCENT_RED), 0);
         }
         return;
@@ -2540,7 +2556,7 @@ static void scope_custom_apply(lv_obj_t* ta) {
     if (name[0]) {
         if (!set_chat_named_scope(channel, name, key)) {
             if (g_scope_subtitle && lv_obj_is_valid(g_scope_subtitle)) {
-                lv_label_set_text(g_scope_subtitle, "Scope was not saved");
+                lv_label_set_text(g_scope_subtitle, TR(ChatScopeNotSaved));
                 lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(ACCENT_RED), 0);
             }
             return;
@@ -2548,7 +2564,7 @@ static void scope_custom_apply(lv_obj_t* ta) {
     } else {
         if (!clear_chat_named_scope(channel)) {
             if (g_scope_subtitle && lv_obj_is_valid(g_scope_subtitle)) {
-                lv_label_set_text(g_scope_subtitle, "Clear failed; scope stays active");
+                lv_label_set_text(g_scope_subtitle, TR(ChatScopeClearFailed));
                 lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(ACCENT_RED), 0);
             }
             return;
@@ -2583,7 +2599,7 @@ static void show_scope_picker() {
     }, LV_EVENT_DELETE, nullptr);
 
     lv_obj_t* title = lv_label_create(dlg);
-    lv_label_set_text(title, "Named routing scope");
+    lv_label_set_text(title, TR(ChatNamedRoutingScope));
     lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
@@ -2603,7 +2619,7 @@ static void show_scope_picker() {
     lv_obj_set_style_radius(ta, 0, 0);
     lv_textarea_set_one_line(ta, true);
     lv_textarea_set_max_length(ta, 30);
-    lv_textarea_set_placeholder_text(ta, "local name (random key)");
+    lv_textarea_set_placeholder_text(ta, TR(ChatScopeNamePlaceholder));
     apply_focus_style(ta);
 
     lv_obj_t* set_btn = lv_btn_create(dlg);
@@ -2613,7 +2629,7 @@ static void show_scope_picker() {
     lv_obj_set_style_radius(set_btn, 0, 0);
     lv_obj_set_style_border_width(set_btn, 0, 0);
     lv_obj_t* sl = lv_label_create(set_btn);
-    lv_label_set_text(sl, "Set");
+    lv_label_set_text(sl, TR(ChatSet));
     lv_obj_set_style_text_font(sl, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(sl);
     lv_obj_add_event_cb(set_btn, [](lv_event_t* e) {
@@ -2632,7 +2648,7 @@ static void show_scope_picker() {
     lv_obj_set_style_radius(clear, 0, 0);
     lv_obj_set_style_border_width(clear, 0, 0);
     lv_obj_t* clr = lv_label_create(clear);
-    lv_label_set_text(clr, "Clear");
+    lv_label_set_text(clr, TR(ChatClear));
     lv_obj_set_style_text_font(clr, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(clr);
     lv_obj_add_event_cb(clear, [](lv_event_t*) {
@@ -2640,7 +2656,7 @@ static void show_scope_picker() {
             update_named_scope_subtitle();
             update_scope_composer_indicator();
         } else if (g_scope_subtitle && lv_obj_is_valid(g_scope_subtitle)) {
-            lv_label_set_text(g_scope_subtitle, "Clear failed; scope stays active");
+            lv_label_set_text(g_scope_subtitle, TR(ChatScopeClearFailed));
             lv_obj_set_style_text_color(g_scope_subtitle, lv_color_hex(ACCENT_RED), 0);
         }
     }, LV_EVENT_CLICKED, nullptr);
@@ -2652,7 +2668,7 @@ static void show_scope_picker() {
     lv_obj_set_style_radius(close, 0, 0);
     lv_obj_set_style_border_width(close, 0, 0);
     lv_obj_t* cl = lv_label_create(close);
-    lv_label_set_text(cl, "Close");
+    lv_label_set_text(cl, TR(ChatClose));
     lv_obj_set_style_text_font(cl, emoji_wrapped_montserrat_10, 0);
     lv_obj_center(cl);
     lv_obj_add_event_cb(close, [](lv_event_t* e) {
@@ -2717,7 +2733,7 @@ void chat_screen_open_dm(const char* contact_name)
     char dm_name[CHANNEL_NAME_CAP];
     const int written = snprintf(dm_name, sizeof(dm_name), "DM: %s", contact_name);
     if (written < 0 || static_cast<size_t>(written) >= sizeof(dm_name)) {
-        notifications_post(NotificationEvent::UiError, "Cannot open DM: name too long");
+        notifications_post(NotificationEvent::UiError, TR(ChatDmNameTooLong));
         return;
     }
 
@@ -2732,8 +2748,7 @@ void chat_screen_open_dm(const char* contact_name)
     }
 
     if (idx < 0) {
-        notifications_post(NotificationEvent::UiError,
-                           "Cannot open DM: conversation list full");
+        notifications_post(NotificationEvent::UiError, TR(ChatDmListFull));
         return;
     }
 

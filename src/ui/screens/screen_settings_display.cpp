@@ -25,6 +25,7 @@
 #include "../../hal/prefs.h"
 #include "../../hal/display.h"
 #include "../../hal/keyboard.h"
+#include "../../i18n/i18n.h"
 #include "../../fonts/emoji_font.h"
 #include <Arduino.h>
 #include <lvgl.h>
@@ -38,6 +39,7 @@ using namespace responsive;
 static lv_obj_t* g_backlight_row   = nullptr;
 static lv_obj_t* g_auto_off_row    = nullptr;
 static lv_obj_t* g_chat_history_row = nullptr;
+static lv_obj_t* g_language_row    = nullptr;
 
 struct BacklightCtx {
     lv_obj_t* value_label;
@@ -68,6 +70,57 @@ static void refresh_chat_cap_dialog(ChatHistoryCapCtx* ctx)
     lv_label_set_text(ctx->warning_label,
         chat_history_cap_reduces_history(ctx->original_cap, ctx->cap)
             ? "Reducing deletes older history on Set" : "");
+}
+
+static void language_picker(lv_obj_t* parent)
+{
+    auto dlg_sz = dialog_size(190, 160);
+    lv_obj_t* dlg = lv_obj_create(parent);
+    lv_obj_set_size(dlg, dlg_sz.w, dlg_sz.h);
+    lv_obj_center(dlg);
+    lv_obj_set_style_bg_color(dlg, lv_color_hex(BG_SECONDARY), 0);
+    lv_obj_set_style_radius(dlg, 0, 0);
+    lv_obj_set_style_border_width(dlg, 2, 0);
+    lv_obj_set_style_border_color(dlg, lv_color_hex(ACCENT), 0);
+    lv_obj_set_style_pad_all(dlg, 8, 0);
+
+    lv_obj_t* title = lv_label_create(dlg);
+    lv_label_set_text(title, TR(SettingsLanguage));
+    lv_obj_set_style_text_color(title, lv_color_hex(TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    const sigurdos::i18n::Language current =
+        sigurdos::i18n::current_language();
+    for (size_t index = 0; index < sigurdos::i18n::language_count; ++index) {
+        const auto language = static_cast<sigurdos::i18n::Language>(index);
+        lv_obj_t* button = lv_btn_create(dlg);
+        lv_obj_set_size(button, dlg_sz.w - 16, 24);
+        lv_obj_align(button, LV_ALIGN_TOP_MID, 0, 24 + static_cast<int>(index) * 27);
+        lv_obj_set_style_bg_color(
+            button, lv_color_hex(language == current ? ACCENT : BG_INPUT), 0);
+        lv_obj_set_style_radius(button, 0, 0);
+        lv_obj_set_style_border_width(button, language == current ? 2 : 0, 0);
+        lv_obj_set_style_border_color(button, lv_color_hex(ACCENT), 0);
+
+        lv_obj_t* label = lv_label_create(button);
+        lv_label_set_text(label, sigurdos::i18n::language_name(language));
+        lv_obj_set_style_text_color(
+            label, lv_color_hex(language == current ? ACCENT_FOREGROUND : TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_font(label, emoji_wrapped_montserrat_10, 0);
+        lv_obj_center(label);
+
+        lv_obj_add_event_cb(button, [](lv_event_t* event) {
+            const auto language = static_cast<sigurdos::i18n::Language>(
+                (intptr_t)lv_event_get_user_data(event));
+            if (!sigurdos::i18n::set_language(language)) return;
+            lv_obj_del_async(lv_obj_get_parent(
+                (lv_obj_t*)lv_event_get_target(event)));
+            // Rebuild the settings screen after the click handler returns so
+            // LVGL never deletes the widget currently dispatching the event.
+            lv_async_call([](void*) { refresh_current_screen(); }, nullptr);
+        }, LV_EVENT_CLICKED, (void*)(intptr_t)index);
+    }
 }
 
 static void chat_message_cap_dialog(lv_obj_t* parent, lv_obj_t* row_label)
@@ -585,10 +638,32 @@ void settings_display_show()
         row++;
     }
 
+    // Language selector
+    {
+        char language_buf[96];
+        snprintf(language_buf, sizeof(language_buf), "  %s: %s",
+                 TR(SettingsLanguage),
+                 sigurdos::i18n::language_name(
+                     sigurdos::i18n::current_language()));
+        lv_obj_t* btn_language = lv_list_add_btn(
+            list, LV_SYMBOL_SETTINGS, language_buf);
+        lv_obj_set_style_bg_color(
+            btn_language, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
+        lv_obj_set_style_bg_opa(btn_language, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_color(btn_language, lv_color_hex(TEXT_PRIMARY), 0);
+        g_language_row = btn_language;
+        lv_obj_add_event_cb(btn_language, [](lv_event_t* event) {
+            language_picker(lv_obj_get_screen(
+                (lv_obj_t*)lv_event_get_target(event)));
+        }, LV_EVENT_CLICKED, nullptr);
+        row++;
+    }
+
     lv_obj_add_event_cb(scr, [](lv_event_t*) {
         g_backlight_row = nullptr;
         g_chat_history_row = nullptr;
         g_auto_off_row = nullptr;
+        g_language_row = nullptr;
     }, LV_EVENT_DELETE, nullptr);
 
     show_screen(scr);

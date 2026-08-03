@@ -26,6 +26,7 @@
 #include "home_routes.h"
 #include "theme.h"
 #include "responsive.h"
+#include "../i18n/i18n.h"
 #include "../hal/tdeck_pins.h"
 #include "../hal/prefs.h"
 #include "../hal/battery.h"
@@ -39,6 +40,11 @@
 #include <lvgl.h>
 #include <cstdio>
 #include <cstring>
+
+// The protected PlatformIO source filter does not enumerate new src/i18n
+// files. Keep the implementation linked through this already-selected UI
+// translation unit until the integrator can add the directory to that filter.
+#include "../i18n/i18n.cpp"
 
 namespace sigurdos::ui {
 
@@ -62,6 +68,21 @@ static const char* const ICON_SYMBOLS[HOME_ROUTE_COUNT] = {
     LV_SYMBOL_CALL, LV_SYMBOL_WIFI, LV_SYMBOL_BELL, LV_SYMBOL_GPS,
     LV_SYMBOL_KEYBOARD, LV_SYMBOL_LIST, LV_SYMBOL_SETTINGS,
     LV_SYMBOL_HOME, LV_SYMBOL_BARS,
+};
+
+static constexpr sigurdos::i18n::StringId ICON_LABEL_IDS[HOME_ROUTE_COUNT] = {
+    sigurdos::i18n::StringId::HomeChats,
+    sigurdos::i18n::StringId::HomeDms,
+    sigurdos::i18n::StringId::HomeRooms,
+    sigurdos::i18n::StringId::HomeContacts,
+    sigurdos::i18n::StringId::HomeRepeaters,
+    sigurdos::i18n::StringId::HomeAdvertise,
+    sigurdos::i18n::StringId::HomeMap,
+    sigurdos::i18n::StringId::HomeTerminal,
+    sigurdos::i18n::StringId::HomePackets,
+    sigurdos::i18n::StringId::HomeSettings,
+    sigurdos::i18n::StringId::HomeSetup,
+    sigurdos::i18n::StringId::HomeSignal,
 };
 
 static constexpr int ICON_COUNT = static_cast<int>(HOME_ROUTE_COUNT);
@@ -200,7 +221,8 @@ static void create_top_bar()
     // Radio status / setup warning (replaces old channel hashtags)
     const bool configured = sigurdos::prefs_get().configured;
     hashtag_label = lv_label_create(top_bar);
-    lv_label_set_text(hashtag_label, configured ? "" : "Do setup for radio");
+    lv_label_set_text(hashtag_label,
+                      configured ? "" : TR(HomeSetupWarning));
     lv_label_set_long_mode(hashtag_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(hashtag_label, HASHTAG_LABEL_W());
     lv_obj_set_style_text_color(hashtag_label,
@@ -293,7 +315,7 @@ static lv_obj_t* create_icon_tile(lv_obj_t* parent, const HomeRoute& route,
     lv_obj_align(icon_label, LV_ALIGN_CENTER, 0, -8);
 
     lv_obj_t* label = lv_label_create(tile);
-    lv_label_set_text(label, route.label);
+    lv_label_set_text(label, sigurdos::i18n::tr(ICON_LABEL_IDS[idx]));
     lv_obj_set_style_text_color(label, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(label, emoji_wrapped_montserrat_10, 0);
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 12);
@@ -496,7 +518,8 @@ void home_screen_update_channels()
 {
     if (!hashtag_label) return;
     const bool configured = sigurdos::prefs_get().configured;
-    lv_label_set_text(hashtag_label, configured ? "" : "Do setup for radio");
+    lv_label_set_text(hashtag_label,
+                      configured ? "" : TR(HomeSetupWarning));
     lv_obj_set_style_text_color(hashtag_label,
         lv_color_hex(configured ? CHANNEL_HASH : ACCENT_RED), 0);
 }
