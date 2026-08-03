@@ -1,0 +1,502 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ben
+
+#include "sd_message_store.h"
+
+#include "message_store.h"
+#include "hal/sdcard.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <climits>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+#if !defined(ESP32_PLATFORM)
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+#include <unistd.h>
+#endif
+
+namespace sigurdos::mesh {
+
+namespace {
+
+static bool g_using_sd = false;
+static bool g_degraded = false;
+
+#if !defined(ESP32_PLATFORM)
+static char g_native_root[160] = "/tmp/sigurdos_sd_store";
+static char g_native_path[192] = "/tmp/sigurdos_sd_store/msgs";
+static bool g_native_mounted = false;
+static int g_native_append_write_limit = -1;
+
+static void updateNativePath()
+{
+    std::snprintf(g_native_path, sizeof(g_native_path), "%s/msgs", g_native_root);
+}
+
+static bool nativeDirectory(const char* path)
+{
+    struct stat info {};
+    return path && ::stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+static bool nativeEnsure()
+{
+    if (!g_native_mounted) return false;
+    if (::mkdir(g_native_root, 0777) != 0 && errno != EEXIST) return false;
+    return nativeDirectory(g_native_root);
+}
+
+static bool nativeExists(const char* path)
+{
+    struct stat info {};
+    return path && ::stat(path, &info) == 0 && S_ISREG(info.st_mode);
+}
+
+static size_t nativeSize(const char* path)
+{
+    struct stat info {};
+    if (!path || ::stat(path, &info) != 0 || info.st_size < 0) return 0;
+    return static_cast<size_t>(info.st_size);
+}
+
+static bool nativeReadAt(const char* path, size_t offset,
+                         uint8_t* data, size_t len)
+{
+    if (!path || (len > 0 && !data) || offset > static_cast<size_t>(LONG_MAX)) {
+        return false;
+    }
+    if (len == 0) return true;
+    FILE* file = std::fopen(path, "rb");
+    if (!file) return false;
+    const bool ok = std::fseek(file, static_cast<long>(offset), SEEK_SET) == 0 &&
+        std::fread(data, 1, len, file) == len;
+    std::fclose(file);
+    return ok;
+}
+
+static bool nativeWriteAt(const char* path, size_t offset,
+                          const uint8_t* data, size_t len)
+{
+    if (!path || (len > 0 && !data) || offset > static_cast<size_t>(LONG_MAX) ||
+        !nativeEnsure()) return false;
+    if (len == 0) return true;
+    FILE* file = std::fopen(path, "r+b");
+    if (!file) file = std::fopen(path, "w+b");
+    if (!file) return false;
+    bool ok = std::fseek(file, static_cast<long>(offset), SEEK_SET) == 0 &&
+        std::fwrite(data, 1, len, file) == len;
+    if (ok) ok = std::fflush(file) == 0;
+    if (std::fclose(file) != 0) ok = false;
+    return ok;
+}
+
+static bool nativeAppend(const char* path, const uint8_t* data, size_t len)
+{
+    if (!path || (len > 0 && !data) || !nativeEnsure()) return false;
+    if (len == 0) return true;
+    FILE* file = std::fopen(path, "ab");
+    if (!file) return false;
+    size_t write_len = len;
+    if (g_native_append_write_limit >= 0 &&
+        static_cast<size_t>(g_native_append_write_limit) < write_len) {
+        write_len = static_cast<size_t>(g_native_append_write_limit);
+    }
+    bool ok = std::fwrite(data, 1, write_len, file) == len;
+    if (ok) ok = std::fflush(file) == 0;
+    if (std::fclose(file) != 0) ok = false;
+    return ok;
+}
+
+static bool nativeRemove(const char* path)
+{
+    return path && (std::remove(path) == 0 || errno == ENOENT);
+}
+
+static bool nativeRename(const char* from, const char* to)
+{
+    return from && to && std::rename(from, to) == 0;
+}
+#endif
+
+static bool appendPath(const char* path, const char* suffix,
+                       char* out, size_t out_size)
+{
+    if (!path || !suffix || !out || out_size == 0) return false;
+    const int written = std::snprintf(out, out_size, "%s%s", path, suffix);
+    return written > 0 && static_cast<size_t>(written) < out_size;
+}
+
+static bool validateStoreBytes(const uint8_t* data, size_t len, void*)
+{
+    if (!data || len < detail::MESSAGE_STORE_HEADER_SIZE) return false;
+    uint32_t magic = 0;
+    uint8_t version = 0;
+    uint32_t count = 0;
+    uint32_t next_id = 0;
+    std::memcpy(&magic, data, sizeof(magic));
+    std::memcpy(&version, data + 4, sizeof(version));
+    std::memcpy(&count, data + 5, sizeof(count));
+    std::memcpy(&next_id, data + 9, sizeof(next_id));
+    if (magic != detail::MESSAGE_STORE_MAGIC ||
+        version != detail::MESSAGE_STORE_VERSION || next_id == 0 ||
+        count > SD_MESSAGE_STORE_MAX_RECORDS + 1 ||
+        len != detail::MESSAGE_STORE_HEADER_SIZE +
+            static_cast<size_t>(count) * detail::MESSAGE_STORE_RECORD_SIZE) {
+        return false;
+    }
+
+    std::vector<uint32_t> ids;
+    ids.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t store_id = 0;
+        const size_t offset = detail::MESSAGE_STORE_HEADER_SIZE +
+            static_cast<size_t>(i) * detail::MESSAGE_STORE_RECORD_SIZE;
+        std::memcpy(&store_id, data + offset, sizeof(store_id));
+        if (store_id == 0 || store_id == next_id) return false;
+        ids.push_back(store_id);
+    }
+    std::sort(ids.begin(), ids.end());
+    for (size_t i = 1; i < ids.size(); ++i) {
+        if (ids[i - 1] == ids[i]) return false;
+    }
+    return true;
+}
+
+#if !defined(ESP32_PLATFORM)
+static bool nativeReadWhole(const char* path, std::vector<uint8_t>& data)
+{
+    const size_t size = nativeSize(path);
+    if (!nativeExists(path) || size == 0) return false;
+    data.resize(size);
+    return nativeReadAt(path, 0, data.data(), data.size());
+}
+
+static bool nativeRecoverPending(const char* path,
+                                 detail::MessageStoreValidateBytesFn validate,
+                                 void* validate_ctx)
+{
+    char temp_path[256];
+    char ready_path[256];
+    if (!appendPath(path, ".tmp", temp_path, sizeof(temp_path)) ||
+        !appendPath(path, ".ready", ready_path, sizeof(ready_path))) return false;
+
+    if (nativeExists(ready_path)) {
+        std::vector<uint8_t> ready;
+        const bool valid = nativeReadWhole(ready_path, ready) &&
+            validate && validate(ready.data(), ready.size(), validate_ctx);
+        if (!valid) {
+            if (!nativeRemove(ready_path)) return false;
+            if (!nativeExists(path)) return false;
+        } else {
+            if (nativeExists(path) && !nativeRemove(path)) return false;
+            if (!nativeRename(ready_path, path)) return false;
+        }
+    }
+    return !nativeExists(temp_path) || nativeRemove(temp_path);
+}
+
+static bool nativeReplace(const char* path, const uint8_t* data, size_t len)
+{
+    if (!path || (len > 0 && !data) || !nativeEnsure() ||
+        !nativeRecoverPending(path, validateStoreBytes, nullptr)) return false;
+    char temp_path[256];
+    char ready_path[256];
+    if (!appendPath(path, ".tmp", temp_path, sizeof(temp_path)) ||
+        !appendPath(path, ".ready", ready_path, sizeof(ready_path))) return false;
+    if (!nativeRemove(temp_path) || !nativeRemove(ready_path)) return false;
+
+    FILE* file = std::fopen(temp_path, "wb");
+    if (!file) return false;
+    bool ok = len == 0 || std::fwrite(data, 1, len, file) == len;
+    if (ok) ok = std::fflush(file) == 0 && ::fsync(::fileno(file)) == 0;
+    if (std::fclose(file) != 0) ok = false;
+    if (!ok) {
+        nativeRemove(temp_path);
+        return false;
+    }
+
+    std::vector<uint8_t> written;
+    if (!nativeReadWhole(temp_path, written) ||
+        !validateStoreBytes(written.data(), written.size(), nullptr) ||
+        !nativeRename(temp_path, ready_path)) {
+        nativeRemove(temp_path);
+        return false;
+    }
+    if (nativeExists(path) && !nativeRemove(path)) return false;
+    return nativeRename(ready_path, path);
+}
+#endif
+
+static const char* backendPath(void*)
+{
+#if defined(ESP32_PLATFORM)
+    return SD_MESSAGE_STORE_PATH;
+#else
+    return g_native_path;
+#endif
+}
+
+static bool backendEnsure(void*)
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos_sdcard_mounted();
+#else
+    return nativeEnsure();
+#endif
+}
+
+static bool backendExists(void*, const char* path)
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos_sdcard_exists(path);
+#else
+    return nativeExists(path);
+#endif
+}
+
+static size_t backendSize(void*, const char* path)
+{
+#if defined(ESP32_PLATFORM)
+    return static_cast<size_t>(sigurdos_sdcard_file_size(path));
+#else
+    return nativeSize(path);
+#endif
+}
+
+static bool backendReadAt(void*, const char* path, size_t offset,
+                          uint8_t* data, size_t len)
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos_sdcard_read_at(path, offset, data, len);
+#else
+    return nativeReadAt(path, offset, data, len);
+#endif
+}
+
+static bool backendWriteAt(void*, const char* path, size_t offset,
+                           const uint8_t* data, size_t len)
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos_sdcard_write_at(path, offset, data, len);
+#else
+    return nativeWriteAt(path, offset, data, len);
+#endif
+}
+
+static bool backendAppend(void*, const char* path, const uint8_t* data, size_t len)
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos_sdcard_append(path, data, len);
+#else
+    return nativeAppend(path, data, len);
+#endif
+}
+
+static bool backendRecover(void*, const char* path,
+                           detail::MessageStoreValidateBytesFn validate,
+                           void* validate_ctx);
+
+static bool backendReplace(void*, const char* path, const uint8_t* data, size_t len)
+{
+    if (!validateStoreBytes(data, len, nullptr)) return false;
+#if defined(ESP32_PLATFORM)
+    if (!backendRecover(nullptr, path, validateStoreBytes, nullptr)) return false;
+    return sigurdos_sdcard_write(path, data, len);
+#else
+    return nativeReplace(path, data, len);
+#endif
+}
+
+static bool backendRecover(void*, const char* path,
+                           detail::MessageStoreValidateBytesFn validate,
+                           void* validate_ctx)
+{
+#if defined(ESP32_PLATFORM)
+    if (!sigurdos_sdcard_mounted() || !path || !validate) return false;
+    char temp_path[256];
+    char ready_path[256];
+    if (!appendPath(path, ".tmp", temp_path, sizeof(temp_path)) ||
+        !appendPath(path, ".ready", ready_path, sizeof(ready_path))) return false;
+
+    if (sigurdos_sdcard_exists(ready_path)) {
+        const uint64_t ready_size = sigurdos_sdcard_file_size(ready_path);
+        std::vector<uint8_t> ready(static_cast<size_t>(ready_size));
+        const bool valid = ready_size > 0 &&
+            sigurdos_sdcard_read_at(ready_path, 0, ready.data(), ready.size()) &&
+            validate(ready.data(), ready.size(), validate_ctx);
+        if (!valid) {
+            if (!sigurdos_sdcard_remove_path(ready_path)) return false;
+            if (!sigurdos_sdcard_exists(path)) return false;
+        } else {
+            if (!sigurdos_sdcard_remove_path(path)) return false;
+            if (!sigurdos_sdcard_rename_path(ready_path, path)) return false;
+        }
+    }
+    if (sigurdos_sdcard_exists(temp_path) &&
+        !sigurdos_sdcard_remove_path(temp_path)) return false;
+    return true;
+#else
+    return path && nativeRecoverPending(path, validate, validate_ctx);
+#endif
+}
+
+static bool backendRemove(void*, const char* path)
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos_sdcard_remove_path(path);
+#else
+    return nativeRemove(path);
+#endif
+}
+
+static bool backendRename(void*, const char* from, const char* to)
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos_sdcard_rename_path(from, to);
+#else
+    return nativeRename(from, to);
+#endif
+}
+
+static const detail::MessageStoreBackend SD_MESSAGE_STORE_BACKEND = {
+    nullptr,
+    backendPath,
+    SD_MESSAGE_STORE_MAX_RECORDS,
+    SD_MESSAGE_STORE_COMPACT_TO_RECORDS,
+    backendEnsure,
+    backendExists,
+    backendSize,
+    backendReadAt,
+    backendWriteAt,
+    backendAppend,
+    backendReplace,
+    backendRecover,
+    backendRemove,
+    backendRename,
+};
+
+static bool selectDefaultStore(bool spiffs_available,
+                               std::vector<StoredMessage>& migration)
+{
+    detail::messageStoreSelectDefaultBackend();
+    if (!spiffs_available || !messageStoreBegin()) return false;
+    const int count = messageStoreCount();
+    if (count <= 0) return true;
+    migration.resize(static_cast<size_t>(count));
+    const int loaded = messageStoreLoadAll(migration.data(), count);
+    if (loaded != count) {
+        migration.clear();
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+bool sdMessageStoreSelect(bool spiffs_available)
+{
+    g_using_sd = false;
+    g_degraded = false;
+
+    std::vector<StoredMessage> migration;
+    const bool spiffs_ready = selectDefaultStore(spiffs_available, migration);
+#if defined(ESP32_PLATFORM)
+    const bool card_ready = sigurdos_sdcard_mounted();
+#else
+    const bool card_ready = g_native_mounted;
+#endif
+    if (!card_ready) {
+        g_degraded = true;
+        return spiffs_ready;
+    }
+
+    detail::messageStoreSelectBackend(&SD_MESSAGE_STORE_BACKEND);
+    if (!messageStoreBegin()) {
+        detail::messageStoreSelectDefaultBackend();
+        if (spiffs_ready) (void)messageStoreBegin();
+        g_degraded = true;
+        return spiffs_ready;
+    }
+
+    for (const StoredMessage& message : migration) {
+        if (!messageStoreAppend(message)) {
+            detail::messageStoreSelectDefaultBackend();
+            if (spiffs_ready) (void)messageStoreBegin();
+            g_degraded = true;
+            return spiffs_ready;
+        }
+    }
+
+    g_using_sd = true;
+    g_degraded = false;
+    return true;
+}
+
+bool sdMessageStoreUsingSd()
+{
+    return g_using_sd;
+}
+
+bool sdMessageStoreDegraded()
+{
+    return g_degraded;
+}
+
+uint32_t sdMessageStoreCapacity()
+{
+    return g_using_sd ? SD_MESSAGE_STORE_MAX_RECORDS : MESSAGE_STORE_MAX_RECORDS;
+}
+
+uint64_t sdMessageStoreFreeBytes()
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos_sdcard_mounted() ? sigurdos_sdcard_free_bytes() : 0;
+#else
+    if (!g_native_mounted) return 0;
+    struct statvfs info {};
+    if (::statvfs(g_native_root, &info) != 0) return 0;
+    return static_cast<uint64_t>(info.f_bavail) * info.f_frsize;
+#endif
+}
+
+#if !defined(ESP32_PLATFORM)
+void sdMessageStoreSetNativeRoot(const char* root)
+{
+    if (!root || !root[0]) return;
+    std::strncpy(g_native_root, root, sizeof(g_native_root) - 1);
+    g_native_root[sizeof(g_native_root) - 1] = '\0';
+    updateNativePath();
+}
+
+void sdMessageStoreSetNativeMounted(bool mounted)
+{
+    g_native_mounted = mounted;
+}
+
+void sdMessageStoreSetNativeAppendWriteLimit(int bytes)
+{
+    g_native_append_write_limit = bytes < -1 ? -1 : bytes;
+}
+
+void sdMessageStoreResetNative()
+{
+    std::strncpy(g_native_root, "/tmp/sigurdos_sd_store", sizeof(g_native_root) - 1);
+    g_native_root[sizeof(g_native_root) - 1] = '\0';
+    updateNativePath();
+    g_native_mounted = false;
+    g_native_append_write_limit = -1;
+    g_using_sd = false;
+    g_degraded = false;
+}
+
+const char* sdMessageStoreNativePath()
+{
+    return g_native_path;
+}
+#endif
+
+} // namespace sigurdos::mesh

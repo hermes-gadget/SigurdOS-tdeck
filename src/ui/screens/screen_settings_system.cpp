@@ -35,7 +35,9 @@
 #include "../../hal/launcher_env.h"
 #include "../../hal/wifi_ota.h"
 #include "../../hal/github_ota.h"
+#include "../../mesh/message_store.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../mesh/sd_message_store.h"
 #include "../../diagnostics/build_info.h"
 #include "../../fonts/emoji_font.h"
 #include <Arduino.h>
@@ -183,12 +185,36 @@ static void sd_diag_retry_worker(void* data)
     vTaskDelete(nullptr);
 }
 
+static void storage_row_text(char* buf, size_t buf_size);
+
 static void update_sd_row_label(lv_obj_t* row)
 {
     if (!row) return;
-    char buf[40];
-    snprintf(buf, sizeof(buf), "  SD Card: %s", sigurdos_sdcard_mounted() ? "Mounted" : "Not mounted");
+    char buf[128];
+    storage_row_text(buf, sizeof(buf));
     update_row_label(row, buf);
+}
+
+static void storage_row_text(char* buf, size_t buf_size)
+{
+    if (!buf || buf_size == 0) return;
+    const int depth = sigurdos::mesh::messageStoreCount();
+    if (sigurdos::mesh::sdMessageStoreUsingSd()) {
+        char free_buf[24];
+        sigurdos_sdcard_format_size(
+            sigurdos::mesh::sdMessageStoreFreeBytes(), free_buf, sizeof(free_buf));
+        snprintf(buf, buf_size, "  Storage: SD history %d/%lu | %s free",
+                 depth,
+                 static_cast<unsigned long>(sigurdos::mesh::sdMessageStoreCapacity()),
+                 free_buf);
+    } else {
+        const char* status = sigurdos::mesh::sdMessageStoreDegraded()
+            ? " | SD degraded" : "";
+        snprintf(buf, buf_size, "  Storage: SPIFFS history %d/%lu%s",
+                 depth,
+                 static_cast<unsigned long>(sigurdos::mesh::sdMessageStoreCapacity()),
+                 status);
+    }
 }
 
 static void sd_diag_update(SdDiagDialogCtx* ctx)
@@ -681,8 +707,8 @@ void settings_system_show()
     lv_obj_set_style_text_color(r0, lv_color_hex(TEXT_PRIMARY), 0);
     row++;
 
-    // SD Card
-    snprintf(buf, sizeof(buf), "  SD Card: %s", sigurdos_sdcard_mounted() ? "Mounted" : "Not mounted");
+    // Storage (active message-history backend and SD headroom)
+    storage_row_text(buf, sizeof(buf));
     lv_obj_t* r1 = lv_list_add_btn(list, LV_SYMBOL_SD_CARD, buf);
     lv_obj_set_style_bg_color(r1, lv_color_hex(row % 2 == 0 ? BG_TERTIARY : BG_INPUT), 0);
     lv_obj_set_style_bg_opa(r1, LV_OPA_COVER, 0);

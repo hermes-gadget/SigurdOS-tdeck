@@ -13,6 +13,8 @@ The Chat screen is SigurdOS's primary messaging interface — a Discord-inspired
 | `src/ui/channel_menu.*` | Named routing-scope validation and hardware-random key generation |
 | `src/hal/prefs.*` | Atomic NVS persistence for per-conversation scope names and keys |
 | `src/mesh/message_store.*` | Single durable message log shared by the UI and companion offline sync |
+| `src/mesh/sd_message_store.*` | SD-backed deep-history selector, migration, and SPIFFS fallback |
+| `src/hal/sdcard.*` | Offset, append, and recovery-safe SD file primitives |
 | `src/ui/chat_history_store.*` | Read-only one-time migration codec for the retired `/msgs` snapshot |
 | `src/ui/navigation.cpp` | Screen routing — `navigate_to(Screen::Chat)` dispatches to `chat_screen_show()` |
 
@@ -321,21 +323,30 @@ does not need to wait for another persistence reload.
 
 ---
 
-## Persistence (SPIFFS)
+## Persistence (SD with SPIFFS fallback)
 
 `src/mesh/message_store.*` is the single durable source of truth for both the
-LVGL chat UI and companion offline sync. The bounded log remains at the
-historical `/companion_msgs` path to preserve upgrades. Incoming RF messages,
-local sends, and app-initiated sends append immediately; the UI no longer
-periodically rewrites a second snapshot.
+LVGL chat UI and companion offline sync. Incoming RF messages, local sends, and
+app-initiated sends append immediately; the UI no longer periodically rewrites
+a second snapshot. The public message-store API does not change when the
+active filesystem changes.
 
 Each record carries the conversation, sender and public-key prefix, text,
 timestamp, RSSI/SNR, route provenance, send attempt (when known), companion
 text type, ACK state, and companion delivery state. Store format v6 migrates
 v5 records atomically, marking metadata that older callbacks did not expose as
-unknown. The log holds at most 512 records. Crossing that limit retains
-the newest 448 records in one atomic streaming compaction, leaving headroom so
-normal appends do not cause a full rewrite every time.
+unknown. When an SD card is mounted at boot, the versioned append-only log is
+stored at `/sdcard/msgs`, holds up to 5000 records, and compacts atomically to
+4480 records only after crossing capacity. The SD backend validates `.ready`
+replacements before promotion, removes torn `.tmp` tails, and repairs the
+header/count mismatch caused by a power cut between record append and header
+publication.
+
+If SD is absent or its log cannot be opened, the existing SPIFFS log at
+`/companion_msgs` remains active with its 512-record limit and 448-record
+compaction batch. `sdMessageStoreDegraded()` exposes this state; the Settings →
+System Storage row shows the active history depth, SD free space when active,
+and the degraded hint when the fallback is in use.
 
 ### Boot restore and legacy migration (`chat_load_messages()`)
 
@@ -348,6 +359,12 @@ Called from `ui::init()` after mesh storage has initialized:
    available for diagnosis instead of being silently discarded.
 4. Load the unified log's chronological RAM window, creating saved DM/channel
    conversations on demand and restoring ACK state.
+
+At boot, any records already in `/companion_msgs` are copied into an available
+SD log using the same conversation/sender/timestamp identity deduplication as
+normal appends. The SPIFFS copy is retained as the fallback source, so an SD
+mount failure or interrupted migration can be retried without losing chat
+history.
 
 The companion offline queue is a non-destructive view of unsent incoming rows.
 Draining it marks rows delivered but does not remove chat history.
@@ -501,8 +518,8 @@ Message Search Screen
 
 ### Indexing Strategy
 
-- On screen entry, the entire `message_store` is loaded into a PSRAM scratch
-  buffer (up to 512 records, `MESSAGE_STORE_MAX_RECORDS`)
+- On screen entry, the entire active `message_store` is loaded into a PSRAM
+  scratch buffer (up to 5000 records on SD, or 512 on the SPIFFS fallback)
 - If PSRAM is exhausted, the fallback uses internal DRAM
 - Search is a **linear scan** with case-insensitive substring matching against
   the message text field

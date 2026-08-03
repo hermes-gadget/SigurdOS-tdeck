@@ -28,6 +28,7 @@
 #include <cstring>
 #include <cerrno>
 #include <algorithm>
+#include <climits>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -151,6 +152,34 @@ bool sdcard_file_paths(const char* path, char* live_path, size_t live_size,
     return sdcard_vfs_path(path, live_path, live_size) &&
         sdcard_temp_path(live_path, temp_path, temp_size) &&
         sdcard_ready_path(live_path, ready_path, ready_size);
+}
+
+bool sdcard_ensure_parent_dir(const char* live_path)
+{
+    if (!live_path) return false;
+    char parent[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    const size_t length = std::strlen(live_path);
+    if (length == 0 || length >= sizeof(parent)) return false;
+    std::memcpy(parent, live_path, length + 1);
+    char* slash = std::strrchr(parent, '/');
+    if (!slash) return false;
+    *slash = '\0';
+    const size_t mount_length = sizeof(SIGURDOS_SD_MOUNTPOINT) - 1;
+    if (std::strncmp(parent, SIGURDOS_SD_MOUNTPOINT, mount_length) != 0) {
+        return false;
+    }
+
+    // The SD mountpoint already exists. Create any subdirectories one level
+    // at a time so `/sdcard/msgs` is available on a fresh card.
+    for (char* cursor = parent + mount_length; *cursor; ++cursor) {
+        if (*cursor != '/') continue;
+        *cursor = '\0';
+        if (::mkdir(parent, 0777) != 0 && errno != EEXIST) return false;
+        *cursor = '/';
+    }
+    if (::mkdir(parent, 0777) != 0 && errno != EEXIST) return false;
+    struct stat info {};
+    return ::stat(parent, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
 bool sdcard_recover_file(const char* path)
@@ -551,7 +580,106 @@ bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
                            ready_path, sizeof(ready_path))) {
         return false;
     }
+    if (!sdcard_ensure_parent_dir(live_path)) return false;
 
     return sigurdos::sdcard::detail::replaceFile(
         live_path, temp_path, ready_path, data, len, SDCARD_REPLACE_OPS);
+}
+
+uint64_t sigurdos_sdcard_file_size(const char* path)
+{
+    if (!mounted || !sigurdos_sdcard_path_valid(path) ||
+        !sdcard_recover_file(path)) return 0;
+    char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return 0;
+    struct stat info {};
+    if (::stat(live_path, &info) != 0 || info.st_size < 0) return 0;
+    return static_cast<uint64_t>(info.st_size);
+}
+
+bool sigurdos_sdcard_read_at(const char* path, uint64_t offset,
+                             uint8_t* data, size_t len)
+{
+    if (!mounted || !sigurdos_sdcard_path_valid(path) ||
+        (len > 0 && !data) || offset > static_cast<uint64_t>(LONG_MAX)) {
+        return false;
+    }
+    if (len == 0) return true;
+    if (!sdcard_recover_file(path)) return false;
+    char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return false;
+    FILE* file = std::fopen(live_path, "rb");
+    if (!file) return false;
+    const bool ok = std::fseek(file, static_cast<long>(offset), SEEK_SET) == 0 &&
+        std::fread(data, 1, len, file) == len;
+    std::fclose(file);
+    return ok;
+}
+
+bool sigurdos_sdcard_write_at(const char* path, uint64_t offset,
+                              const uint8_t* data, size_t len)
+{
+    if (!mounted || !sigurdos_sdcard_path_valid(path) ||
+        (len > 0 && !data) || offset > static_cast<uint64_t>(LONG_MAX)) {
+        return false;
+    }
+    if (len == 0) return true;
+    char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    if (!sdcard_vfs_path(path, live_path, sizeof(live_path)) ||
+        !sdcard_ensure_parent_dir(live_path) || !sdcard_recover_file(path)) {
+        return false;
+    }
+    FILE* file = std::fopen(live_path, "r+b");
+    if (!file) file = std::fopen(live_path, "w+b");
+    if (!file) return false;
+    bool ok = std::fseek(file, static_cast<long>(offset), SEEK_SET) == 0 &&
+        std::fwrite(data, 1, len, file) == len;
+    if (ok) ok = std::fflush(file) == 0 && ::fsync(::fileno(file)) == 0;
+    if (std::fclose(file) != 0) ok = false;
+    return ok;
+}
+
+bool sigurdos_sdcard_append(const char* path, const uint8_t* data, size_t len)
+{
+    if (!mounted || !sigurdos_sdcard_path_valid(path) ||
+        (len > 0 && !data)) return false;
+    if (len == 0) return true;
+    char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    if (!sdcard_vfs_path(path, live_path, sizeof(live_path)) ||
+        !sdcard_ensure_parent_dir(live_path) || !sdcard_recover_file(path)) {
+        return false;
+    }
+    FILE* file = std::fopen(live_path, "ab");
+    if (!file) return false;
+    bool ok = std::fwrite(data, 1, len, file) == len;
+    if (ok) ok = std::fflush(file) == 0 && ::fsync(::fileno(file)) == 0;
+    if (std::fclose(file) != 0) ok = false;
+    return ok;
+}
+
+bool sigurdos_sdcard_remove_path(const char* path)
+{
+    if (!mounted || !sigurdos_sdcard_path_valid(path) ||
+        std::strcmp(path, "/") == 0) return false;
+    char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    return sdcard_vfs_path(path, live_path, sizeof(live_path)) &&
+        (std::remove(live_path) == 0 || errno == ENOENT);
+}
+
+bool sigurdos_sdcard_rename_path(const char* from, const char* to)
+{
+    if (!mounted || !sigurdos_sdcard_path_valid(from) ||
+        !sigurdos_sdcard_path_valid(to)) return false;
+    char from_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
+    char to_path[sizeof(from_path)];
+    if (!sdcard_vfs_path(from, from_path, sizeof(from_path)) ||
+        !sdcard_vfs_path(to, to_path, sizeof(to_path)) ||
+        !sdcard_ensure_parent_dir(to_path)) return false;
+    return std::rename(from_path, to_path) == 0;
+}
+
+bool sigurdos_sdcard_recover_file(const char* path)
+{
+    if (!mounted || !sigurdos_sdcard_path_valid(path)) return false;
+    return sdcard_recover_file(path);
 }
