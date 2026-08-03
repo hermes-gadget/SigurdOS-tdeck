@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "mesh/message_store.h"
+#include "transport_iface.h"
 #include <helpers/BaseSerialInterface.h>
 
 namespace sigurdos {
@@ -451,6 +452,7 @@ private:
         uint8_t len;
         uint8_t buf[MAX_FRAME_SIZE];
     };
+    struct TransportSession;
 
     void writeOKFrame();
     void writeErrFrame(uint8_t err);
@@ -465,6 +467,11 @@ private:
     bool flushPendingResponse();
     void resetConnectionSession();
     bool offlineFrameExists(const uint8_t* frame, size_t len) const;
+    bool offlineFrameExistsIn(const Frame* queue, int queue_len,
+                              const uint8_t* frame, size_t len) const;
+    bool addToOfflineQueueBuffer(Frame* queue, int* queue_len,
+                                  uint32_t store_id, bool persistent,
+                                  const uint8_t* frame, size_t len) const;
     bool addToOfflineQueue(uint32_t store_id, bool persistent,
                            const uint8_t* frame, size_t len);
     bool refillOfflineQueueFromStore(bool notify_waiting);
@@ -481,10 +488,55 @@ private:
     void refreshConnectionSession();
     void clearInflightMessage();
     void clearSigningState();
+    bool writeFrameToCurrentTransport(const uint8_t* frame, size_t len);
+    bool currentTransportConnected() const;
+    void handleTransportFrame(const uint8_t* frame, size_t len,
+                              TransportId id, int client_index,
+                              uint32_t generation);
+    TransportSession* ensureTransportSession(TransportId id, int client_index,
+                                             uint32_t generation);
+    TransportSession* activateTransportSession(TransportId id, int client_index,
+                                                uint32_t generation);
+    void loadTransportSession(const TransportSession& session);
+    void saveTransportSession(TransportSession& session);
+    void serviceCurrentSession();
+    void serviceTransportSessions();
+    static void transportServiceHandler();
+    static void transportFrameHandler(const uint8_t* frame, size_t len,
+                                      TransportId from);
 
     struct PendingBinaryRequest {
         uint32_t tag = 0;
         uint32_t deadline_ms = 0;
+    };
+
+    // One protocol session per connected transport slot. The command
+    // dispatcher remains shared, but delivery claims and replay state are
+    // isolated so one TCP/WS client cannot acknowledge another client's
+    // history frame.
+    static constexpr int MAX_TRANSPORT_SESSIONS = 9; // BLE + TCP(4) + WS(4)
+    struct TransportSession {
+        bool used = false;
+        TransportId id = TransportId::BLE;
+        int client_index = -1;
+        uint32_t generation = 0;
+        uint8_t app_target_ver = 3;
+        bool version_negotiated = true;
+        uint32_t iter_filter_since = 0;
+        uint32_t most_recent_lastmod = 0;
+        int contact_iter = -1;
+        int offline_len = 0;
+        Frame offline[OFFLINE_QUEUE_SIZE]{};
+        PendingBinaryRequest pending_binary[MAX_PENDING_BINARY_REQUESTS]{};
+        uint8_t pending_response[MAX_FRAME_SIZE]{};
+        uint8_t pending_response_len = 0;
+        uint8_t sign_buf[SIGURDOS_COMPANION_MAX_SIGN_DATA]{};
+        size_t sign_len = 0;
+        bool sign_active = false;
+        bool was_connected = false;
+        uint32_t connection_generation = 0;
+        uint32_t inflight_store_id = 0;
+        uint32_t inflight_generation = 0;
     };
 
     static constexpr uint32_t BINARY_REQUEST_FALLBACK_TIMEOUT_MS = 30000;
@@ -515,6 +567,12 @@ private:
     uint32_t _connection_generation = 0;
     uint32_t _inflight_store_id = 0;
     uint32_t _inflight_generation = 0;
+    bool _transport_request_active = false;
+    TransportId _request_transport = TransportId::BLE;
+    int _request_client_index = -1;
+    uint32_t _request_generation = 0;
+    TransportSession* _active_session = nullptr;
+    TransportSession _transport_sessions[MAX_TRANSPORT_SESSIONS];
 
 };
 

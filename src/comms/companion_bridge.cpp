@@ -4,6 +4,7 @@
 #include "companion_bridge.h"
 #include "secure_wipe.h"
 #include "mesh/path_codec.h"
+#include "transports_internal.h"
 
 #include <cstring>
 
@@ -18,6 +19,7 @@ namespace {
 
 static constexpr const char* BUILD_DATE = __DATE__;
 static constexpr const char* MANUFACTURER = "SigurdOS";
+static CompanionBridge* g_transport_bridge = nullptr;
 #if defined(SIGURDOS_VERSION)
 static constexpr const char* FIRMWARE_VERSION = SIGURDOS_VERSION;
 #else
@@ -126,15 +128,224 @@ void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* ho
     _connection_generation = 0;
     clearInflightMessage();
     clearPendingBinary();
+    _transport_request_active = false;
+    _request_transport = TransportId::BLE;
+    _request_client_index = -1;
+    _request_generation = 0;
+    _active_session = nullptr;
+    for (TransportSession& session : _transport_sessions) session = TransportSession{};
+    g_transport_bridge = this;
+    transports_set_frame_handler(&CompanionBridge::transportFrameHandler);
+    transports_set_service_handler(&CompanionBridge::transportServiceHandler);
+}
+
+void CompanionBridge::transportFrameHandler(const uint8_t* frame, size_t len,
+                                            TransportId from)
+{
+    if (!g_transport_bridge) return;
+    TransportId id = from;
+    int client_index = -1;
+    uint32_t generation = 0;
+    (void)transports_current_request(&id, &client_index, &generation);
+    g_transport_bridge->handleTransportFrame(frame, len, id, client_index,
+                                              generation);
+}
+
+void CompanionBridge::handleTransportFrame(const uint8_t* frame, size_t len,
+                                           TransportId id, int client_index,
+                                           uint32_t generation)
+{
+    TransportSession* session = activateTransportSession(id, client_index, generation);
+    if (!session) return;
+    _transport_request_active = true;
+    _request_transport = id;
+    _request_client_index = client_index;
+    _request_generation = generation;
+    (void)handleFrame(frame, len);
+    saveTransportSession(*session);
+    _active_session = nullptr;
+    _transport_request_active = false;
+    _request_client_index = -1;
+    _request_generation = 0;
+}
+
+CompanionBridge::TransportSession*
+CompanionBridge::ensureTransportSession(TransportId id, int client_index,
+                                         uint32_t generation)
+{
+    TransportSession* free_slot = nullptr;
+    for (TransportSession& candidate : _transport_sessions) {
+        if (candidate.used && candidate.id == id &&
+            candidate.client_index == client_index) {
+            if (generation != 0 && candidate.generation != 0 &&
+                generation != candidate.generation) {
+                const TransportId old_id = candidate.id;
+                const int old_client_index = candidate.client_index;
+                candidate = TransportSession{};
+                candidate.used = true;
+                candidate.id = old_id;
+                candidate.client_index = old_client_index;
+                candidate.generation = generation;
+                candidate.connection_generation = generation;
+                candidate.was_connected = true;
+                if (_host) _host->cancelBinaryReqs();
+            }
+            return &candidate;
+        }
+        if (!candidate.used && !free_slot) free_slot = &candidate;
+    }
+    if (!free_slot) return nullptr;
+    *free_slot = TransportSession{};
+    free_slot->used = true;
+    free_slot->id = id;
+    free_slot->client_index = client_index;
+    free_slot->generation = generation;
+    free_slot->connection_generation = generation;
+    free_slot->was_connected = true;
+    return free_slot;
+}
+
+CompanionBridge::TransportSession*
+CompanionBridge::activateTransportSession(TransportId id, int client_index,
+                                           uint32_t generation)
+{
+    TransportSession* session = ensureTransportSession(id, client_index, generation);
+    if (!session) return nullptr;
+    loadTransportSession(*session);
+    _active_session = session;
+    return session;
+}
+
+void CompanionBridge::loadTransportSession(const TransportSession& session)
+{
+    _app_target_ver = session.app_target_ver;
+    _version_negotiated = session.version_negotiated;
+    _iter_filter_since = session.iter_filter_since;
+    _most_recent_lastmod = session.most_recent_lastmod;
+    _contact_iter = session.contact_iter;
+    _offline_len = session.offline_len;
+    std::memcpy(_offline, session.offline, sizeof(_offline));
+    std::memcpy(_pending_binary, session.pending_binary, sizeof(_pending_binary));
+    std::memcpy(_pending_response, session.pending_response, sizeof(_pending_response));
+    _pending_response_len = session.pending_response_len;
+    std::memcpy(_sign_buf, session.sign_buf, sizeof(_sign_buf));
+    _sign_len = session.sign_len;
+    _sign_active = session.sign_active;
+    _was_connected = session.was_connected;
+    _connection_generation = session.connection_generation;
+    _inflight_store_id = session.inflight_store_id;
+    _inflight_generation = session.inflight_generation;
+}
+
+void CompanionBridge::saveTransportSession(TransportSession& session)
+{
+    session.app_target_ver = _app_target_ver;
+    session.version_negotiated = _version_negotiated;
+    session.iter_filter_since = _iter_filter_since;
+    session.most_recent_lastmod = _most_recent_lastmod;
+    session.contact_iter = _contact_iter;
+    session.offline_len = _offline_len;
+    std::memcpy(session.offline, _offline, sizeof(_offline));
+    std::memcpy(session.pending_binary, _pending_binary, sizeof(_pending_binary));
+    std::memcpy(session.pending_response, _pending_response, sizeof(_pending_response));
+    session.pending_response_len = _pending_response_len;
+    std::memcpy(session.sign_buf, _sign_buf, sizeof(_sign_buf));
+    session.sign_len = _sign_len;
+    session.sign_active = _sign_active;
+    session.was_connected = _was_connected;
+    session.connection_generation = _connection_generation;
+    session.inflight_store_id = _inflight_store_id;
+    session.inflight_generation = _inflight_generation;
+}
+
+void CompanionBridge::serviceCurrentSession()
+{
+    expirePendingBinary();
+    if (!flushPendingResponse()) return;
+    const bool write_busy = _serial && _serial->isWriteBusy() &&
+        (!_transport_request_active || _request_transport == TransportId::BLE);
+    if (_contact_iter < 0 || write_busy || !_host) return;
+
+    CompanionContact contact{};
+    while (_contact_iter < _host->contactCount()) {
+        const int index = _contact_iter++;
+        if (!_host->getContact(index, contact)) continue;
+        if (_iter_filter_since != 0 && contact.lastmod <= _iter_filter_since) continue;
+        if (contact.lastmod > _most_recent_lastmod) {
+            _most_recent_lastmod = contact.lastmod;
+        }
+        (void)writeContactFrame(RESP_CODE_CONTACT, contact);
+        return;
+    }
+
+    int i = 0;
+    _out_frame[i++] = RESP_CODE_END_OF_CONTACTS;
+    std::memcpy(&_out_frame[i], &_most_recent_lastmod, 4);
+    i += 4;
+    (void)sendResponseFrame(_out_frame, i);
+    _contact_iter = -1;
+}
+
+void CompanionBridge::transportServiceHandler()
+{
+    if (g_transport_bridge) g_transport_bridge->serviceTransportSessions();
+}
+
+void CompanionBridge::serviceTransportSessions()
+{
+    // Materialize a session for every currently connected slot before mesh
+    // callbacks can enqueue a message. This gives each active client an
+    // independent history queue even if it has not sent its first command yet.
+    const TransportId ids[] = {TransportId::BLE, TransportId::TCP, TransportId::WS};
+    const int limits[] = {1, 4, 4};
+    for (size_t transport = 0; transport < sizeof(ids) / sizeof(ids[0]); ++transport) {
+        for (int client = 0; client < limits[transport]; ++client) {
+            if (!transports_client_connected(ids[transport], client)) continue;
+            (void)ensureTransportSession(
+                ids[transport], client,
+                transports_client_generation(ids[transport], client));
+        }
+    }
+
+    for (TransportSession& session : _transport_sessions) {
+        if (!session.used || !transports_client_connected(
+                session.id, session.client_index)) continue;
+        const uint32_t generation = transports_client_generation(
+            session.id, session.client_index);
+        (void)ensureTransportSession(session.id, session.client_index, generation);
+        _active_session = &session;
+        _transport_request_active = true;
+        _request_transport = session.id;
+        _request_client_index = session.client_index;
+        _request_generation = generation;
+        loadTransportSession(session);
+        refreshConnectionSession();
+        serviceCurrentSession();
+        saveTransportSession(session);
+        _active_session = nullptr;
+        _transport_request_active = false;
+        _request_client_index = -1;
+        _request_generation = 0;
+    }
 }
 
 bool CompanionBridge::isEnabled() const
 {
+    if (transports_attached()) {
+        return transport_enabled(TransportId::BLE) ||
+               transport_enabled(TransportId::TCP) ||
+               transport_enabled(TransportId::WS);
+    }
     return _serial && _serial->isEnabled();
 }
 
 bool CompanionBridge::isConnected() const
 {
+    if (transports_attached()) {
+        return transport_status(TransportId::BLE).connected ||
+               transport_status(TransportId::TCP).connected ||
+               transport_status(TransportId::WS).connected;
+    }
     return _serial && _serial->isConnected();
 }
 
@@ -184,7 +395,7 @@ void CompanionBridge::expirePendingBinary()
 
 void CompanionBridge::clearPendingBinary()
 {
-    std::memset(_pending_binary, 0, sizeof(_pending_binary));
+    for (PendingBinaryRequest& request : _pending_binary) request = {};
 }
 
 void CompanionBridge::clearSigningState()
@@ -218,11 +429,12 @@ void CompanionBridge::resetConnectionSession()
 
 bool CompanionBridge::sendResponseFrame(const uint8_t* frame, size_t len)
 {
-    if (!_serial || !frame || len == 0 || len > MAX_FRAME_SIZE ||
+    if ((!_serial && !_transport_request_active) || !frame ||
+        len == 0 || len > MAX_FRAME_SIZE ||
         _pending_response_len != 0) {
         return false;
     }
-    if (_serial->writeFrame(frame, len) == len) return true;
+    if (writeFrameToCurrentTransport(frame, len)) return true;
     std::memcpy(_pending_response, frame, len);
     _pending_response_len = static_cast<uint8_t>(len);
     return true;
@@ -231,9 +443,9 @@ bool CompanionBridge::sendResponseFrame(const uint8_t* frame, size_t len)
 bool CompanionBridge::flushPendingResponse()
 {
     if (_pending_response_len == 0) return true;
-    if (!_serial || !_serial->isConnected()) return false;
+    if (!currentTransportConnected()) return false;
     const size_t len = _pending_response_len;
-    if (_serial->writeFrame(_pending_response, len) != len) return false;
+    if (!writeFrameToCurrentTransport(_pending_response, len)) return false;
     secureWipe(_pending_response, sizeof(_pending_response));
     _pending_response_len = 0;
     return true;
@@ -241,12 +453,39 @@ bool CompanionBridge::flushPendingResponse()
 
 bool CompanionBridge::sendPushFrame(const uint8_t* frame, size_t len)
 {
-    if (!_serial || !frame || len == 0 || len > MAX_FRAME_SIZE ||
-        _serial->writeFrame(frame, len) != len) {
+    if (!frame || len == 0 || len > MAX_FRAME_SIZE) {
         ++_push_drop_count;
         return false;
     }
-    return true;
+    if (transports_attached()) {
+        bool sent = false;
+        sent = transports_broadcast_result(TransportId::BLE, frame, len) || sent;
+        sent = transports_broadcast_result(TransportId::TCP, frame, len) || sent;
+        sent = transports_broadcast_result(TransportId::WS, frame, len) || sent;
+        if (sent) return true;
+    } else if (writeFrameToCurrentTransport(frame, len)) {
+        return true;
+    }
+    ++_push_drop_count;
+    return false;
+}
+
+bool CompanionBridge::writeFrameToCurrentTransport(const uint8_t* frame, size_t len)
+{
+    if (!frame || len == 0 || len > MAX_FRAME_SIZE) return false;
+    if (_transport_request_active) {
+        return transports_send_to_result(_request_transport, _request_client_index,
+                                         frame, len);
+    }
+    return _serial && _serial->writeFrame(frame, len) == len;
+}
+
+bool CompanionBridge::currentTransportConnected() const
+{
+    if (_transport_request_active) {
+        return transports_client_connected(_request_transport, _request_client_index);
+    }
+    return _serial && _serial->isConnected();
 }
 
 void CompanionBridge::clearInflightMessage()
@@ -257,9 +496,11 @@ void CompanionBridge::clearInflightMessage()
 
 void CompanionBridge::refreshConnectionSession()
 {
-    if (!_serial) return;
-    const bool connected = _serial->isConnected();
-    const uint32_t generation = connected ? _serial->connectionGeneration() : 0;
+    if (!_serial && !_transport_request_active) return;
+    const bool connected = currentTransportConnected();
+    const uint32_t generation = _transport_request_active
+        ? transports_client_generation(_request_transport, _request_client_index)
+        : (connected ? _serial->connectionGeneration() : 0);
     const bool session_changed =
         _connection_generation != 0 &&
         (!connected || generation != _connection_generation);
@@ -288,25 +529,7 @@ void CompanionBridge::loop()
     if (len > 0) {
         handleFrame(_cmd_frame, len);
     }
-
-    if (_contact_iter >= 0 && !_serial->isWriteBusy()) {
-        CompanionContact c{};
-        while (_contact_iter < _host->contactCount()) {
-            int idx = _contact_iter++;
-            if (!_host->getContact(idx, c)) continue;
-            if (_iter_filter_since != 0 && c.lastmod <= _iter_filter_since) continue;
-            if (c.lastmod > _most_recent_lastmod) _most_recent_lastmod = c.lastmod;
-            writeContactFrame(RESP_CODE_CONTACT, c);
-            return;
-        }
-
-        int i = 0;
-        _out_frame[i++] = RESP_CODE_END_OF_CONTACTS;
-        std::memcpy(&_out_frame[i], &_most_recent_lastmod, 4);
-        i += 4;
-        sendResponseFrame(_out_frame, i);
-        _contact_iter = -1;
-    }
+    serviceCurrentSession();
 }
 
 void CompanionBridge::writeOKFrame()
@@ -361,45 +584,67 @@ void CompanionBridge::writeNoMoreMessages()
 
 bool CompanionBridge::offlineFrameExists(const uint8_t* frame, size_t len) const
 {
+    return offlineFrameExistsIn(_offline, _offline_len, frame, len);
+}
+
+bool CompanionBridge::offlineFrameExistsIn(const Frame* queue, int queue_len,
+                                           const uint8_t* frame, size_t len) const
+{
     if (!frame || len == 0 || len > MAX_FRAME_SIZE) return false;
-    for (int i = 0; i < _offline_len; i++) {
-        if (_offline[i].len == len &&
-            std::memcmp(_offline[i].buf, frame, len) == 0) {
+    if (!queue || queue_len < 0 || queue_len > OFFLINE_QUEUE_SIZE) return false;
+    for (int i = 0; i < queue_len; i++) {
+        if (queue[i].len == len &&
+            std::memcmp(queue[i].buf, frame, len) == 0) {
             return true;
         }
     }
     return false;
 }
 
-bool CompanionBridge::addToOfflineQueue(uint32_t store_id, bool persistent,
-                                        const uint8_t* frame, size_t len)
+bool CompanionBridge::addToOfflineQueueBuffer(Frame* queue, int* queue_len,
+                                              uint32_t store_id, bool persistent,
+                                              const uint8_t* frame, size_t len) const
 {
-    if (!frame || len == 0 || len > MAX_FRAME_SIZE) return false;
+    if (!queue || !queue_len || !frame || len == 0 || len > MAX_FRAME_SIZE ||
+        *queue_len < 0 || *queue_len > OFFLINE_QUEUE_SIZE) return false;
     if (persistent && store_id == 0) return false;
-    if (offlineFrameExists(frame, len)) return false;
-    if (_offline_len >= OFFLINE_QUEUE_SIZE) {
+    if (persistent) {
+        for (int i = 0; i < *queue_len; ++i) {
+            if (queue[i].persistent && queue[i].store_id == store_id) return false;
+        }
+    }
+    if (offlineFrameExistsIn(queue, *queue_len, frame, len)) return false;
+    if (*queue_len >= OFFLINE_QUEUE_SIZE) {
         // Durable text retains strict oldest-first order. A volatile channel
         // frame may replace only an older volatile frame.
         if (persistent) return false;
         int volatile_index = -1;
-        for (int i = 0; i < _offline_len; ++i) {
-            if (!_offline[i].persistent) {
+        for (int i = 0; i < *queue_len; ++i) {
+            if (!queue[i].persistent) {
                 volatile_index = i;
                 break;
             }
         }
         if (volatile_index < 0) return false;
-        for (int i = volatile_index + 1; i < _offline_len; ++i) {
-            _offline[i - 1] = _offline[i];
+        for (int i = volatile_index + 1; i < *queue_len; ++i) {
+            queue[i - 1] = queue[i];
         }
-        _offline_len--;
+        --(*queue_len);
     }
-    _offline[_offline_len].store_id = store_id;
-    _offline[_offline_len].persistent = persistent;
-    _offline[_offline_len].len = (uint8_t)len;
-    std::memcpy(_offline[_offline_len].buf, frame, len);
-    _offline_len++;
+    Frame& entry = queue[*queue_len];
+    entry.store_id = store_id;
+    entry.persistent = persistent;
+    entry.len = (uint8_t)len;
+    std::memcpy(entry.buf, frame, len);
+    ++(*queue_len);
     return true;
+}
+
+bool CompanionBridge::addToOfflineQueue(uint32_t store_id, bool persistent,
+                                        const uint8_t* frame, size_t len)
+{
+    return addToOfflineQueueBuffer(_offline, &_offline_len, store_id,
+                                   persistent, frame, len);
 }
 
 int CompanionBridge::peekOfflineQueue(uint8_t* frame, uint32_t* store_id,
@@ -504,6 +749,31 @@ bool CompanionBridge::refillOfflineQueueFromStore(bool notify_waiting)
             addToOfflineQueue(_offline_snapshot[idx].store_id, true, frame, len)) {
             added_any = true;
         }
+
+        // A store record is globally marked only after the requesting session
+        // asks for its successor. Keep a V2/V3-shaped copy in every other live
+        // session so one client cannot consume the shared store bit before its
+        // peers have replayed their own queue head.
+        if (_transport_request_active && transports_attached()) {
+            for (TransportSession& session : _transport_sessions) {
+                if (&session == _active_session || !session.used ||
+                    !transports_client_connected(session.id,
+                                                 session.client_index)) continue;
+                const uint8_t saved_version = _app_target_ver;
+                _app_target_ver = session.app_target_ver;
+                uint8_t session_frame[MAX_FRAME_SIZE];
+                size_t session_len = 0;
+                const bool built = buildMessageFrame(
+                    _offline_snapshot[idx], session_frame, &session_len);
+                _app_target_ver = saved_version;
+                if (built && addToOfflineQueueBuffer(
+                        session.offline, &session.offline_len,
+                        _offline_snapshot[idx].store_id, true,
+                        session_frame, session_len)) {
+                    added_any = true;
+                }
+            }
+        }
     }
     // Do NOT mark any records as sent here. A record is marked only when the
     // same authenticated session asks for the message after it (see the
@@ -520,10 +790,44 @@ bool CompanionBridge::enqueueMessage(const sigurdos::mesh::StoredMessage& msg)
     // Only incoming messages are mirrored to the app (see
     // refillOfflineQueueFromStore).
     if (msg.is_self) return false;
-    uint8_t frame[MAX_FRAME_SIZE];
-    size_t len = 0;
-    if (!buildMessageFrame(msg, frame, &len)) return false;
-    bool added = addToOfflineQueue(msg.store_id, msg.store_id != 0, frame, len);
+    const bool persistent = msg.store_id != 0;
+    bool added = false;
+
+    if (transports_attached() && !_active_session) {
+        // Build the message once per live client because V2/V3 companions use
+        // different wire headers. The registry pre-pass creates these session
+        // slots before mesh callbacks run, so durable history is not claimed
+        // by whichever client happens to issue SYNC first.
+        bool live_session = false;
+        for (TransportSession& session : _transport_sessions) {
+            if (!session.used || !transports_client_connected(
+                    session.id, session.client_index)) continue;
+            live_session = true;
+            const uint8_t saved_version = _app_target_ver;
+            _app_target_ver = session.app_target_ver;
+            uint8_t frame[MAX_FRAME_SIZE];
+            size_t len = 0;
+            const bool built = buildMessageFrame(msg, frame, &len);
+            _app_target_ver = saved_version;
+            if (built && addToOfflineQueueBuffer(
+                    session.offline, &session.offline_len, msg.store_id,
+                    persistent, frame, len)) {
+                added = true;
+            }
+        }
+        if (!live_session) {
+            uint8_t frame[MAX_FRAME_SIZE];
+            size_t len = 0;
+            if (!buildMessageFrame(msg, frame, &len)) return false;
+            added = addToOfflineQueue(msg.store_id, persistent, frame, len);
+        }
+    } else {
+        uint8_t frame[MAX_FRAME_SIZE];
+        size_t len = 0;
+        if (!buildMessageFrame(msg, frame, &len)) return false;
+        added = addToOfflineQueue(msg.store_id, persistent, frame, len);
+    }
+
     if (added) {
         // The record is NOT marked companion_sent here. The same authenticated
         // session must ask for its successor after the frame is written.
@@ -563,7 +867,24 @@ bool CompanionBridge::enqueueChannelData(uint8_t channel_index,
         i += (int)payload_len;
     }
 
-    bool added = addToOfflineQueue(0, false, _out_frame, (size_t)i);
+    bool added = false;
+    if (transports_attached() && !_active_session) {
+        bool live_session = false;
+        for (TransportSession& session : _transport_sessions) {
+            if (!session.used || !transports_client_connected(
+                    session.id, session.client_index)) continue;
+            live_session = true;
+            if (addToOfflineQueueBuffer(session.offline, &session.offline_len,
+                                         0, false, _out_frame, (size_t)i)) {
+                added = true;
+            }
+        }
+        if (!live_session) {
+            added = addToOfflineQueue(0, false, _out_frame, (size_t)i);
+        }
+    } else {
+        added = addToOfflineQueue(0, false, _out_frame, (size_t)i);
+    }
     if (added && isConnected()) {
         uint8_t tickle = PUSH_CODE_MSG_WAITING;
         sendPushFrame(&tickle, 1);
@@ -573,7 +894,7 @@ bool CompanionBridge::enqueueChannelData(uint8_t channel_index,
 
 bool CompanionBridge::notifySendConfirmed(uint32_t ack, uint32_t trip_time_ms)
 {
-    if (!_serial) return false;
+    if (!isConnected()) return false;
     uint8_t frame[9];
     int i = 0;
     frame[i++] = PUSH_CODE_SEND_CONFIRMED;
@@ -596,6 +917,19 @@ void CompanionBridge::onIdentityChanged()
     _offline_len = 0;
     clearSigningState();
     clearPendingBinary();
+    for (TransportSession& session : _transport_sessions) {
+        if (!session.used) continue;
+        const TransportId id = session.id;
+        const int client_index = session.client_index;
+        const uint32_t generation = session.generation;
+        session = TransportSession{};
+        session.used = true;
+        session.id = id;
+        session.client_index = client_index;
+        session.generation = generation;
+        session.connection_generation = generation;
+        session.was_connected = transports_client_connected(id, client_index);
+    }
 }
 
 void CompanionBridge::writeSentOrErr(const CompanionSendResult& r)
@@ -691,7 +1025,7 @@ bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success
                                       uint8_t acl_permissions, uint8_t firmware_level,
                                       bool legacy_success)
 {
-    if (!_serial || !pubkey_prefix) return false;
+    if (!isConnected() || !pubkey_prefix) return false;
     int i = 0;
     _out_frame[i++] = success ? PUSH_CODE_LOGIN_SUCCESS : PUSH_CODE_LOGIN_FAIL;
     _out_frame[i++] = success ? permission : 0;
@@ -711,7 +1045,7 @@ bool CompanionBridge::pushLoginResult(const uint8_t* pubkey_prefix, bool success
 bool CompanionBridge::pushStatusResponse(const uint8_t* pubkey_prefix,
                                          const uint8_t* blob, size_t blob_len)
 {
-    if (!_serial || !pubkey_prefix || (blob_len > 0 && !blob) ||
+    if (!isConnected() || !pubkey_prefix || (blob_len > 0 && !blob) ||
         blob_len > SIGURDOS_COMPANION_PUSH_BLOB_MAX_PAYLOAD) return false;
     int i = 0;
     _out_frame[i++] = PUSH_CODE_STATUS_RESPONSE;
@@ -728,7 +1062,7 @@ bool CompanionBridge::pushStatusResponse(const uint8_t* pubkey_prefix,
 bool CompanionBridge::pushTelemetryResponse(const uint8_t* pubkey_prefix,
                                             const uint8_t* blob, size_t blob_len)
 {
-    if (!_serial || !pubkey_prefix || (blob_len > 0 && !blob) ||
+    if (!isConnected() || !pubkey_prefix || (blob_len > 0 && !blob) ||
         blob_len > SIGURDOS_COMPANION_PUSH_BLOB_MAX_PAYLOAD) return false;
     int i = 0;
     _out_frame[i++] = PUSH_CODE_TELEMETRY_RESPONSE;
@@ -746,8 +1080,22 @@ bool CompanionBridge::pushBinaryResponse(uint32_t tag,
                                          const uint8_t* blob, size_t blob_len)
 {
     expirePendingBinary();
-    const int pending = findPendingBinary(tag);
-    if (!_serial || pending < 0 || (blob_len > 0 && !blob) ||
+    int pending = findPendingBinary(tag);
+    bool pending_in_live_session = tag != 0 && pending >= 0;
+    if (tag != 0 && transports_attached() && !_active_session && pending < 0) {
+        for (const TransportSession& session : _transport_sessions) {
+            if (!session.used || !transports_client_connected(
+                    session.id, session.client_index)) continue;
+            for (const PendingBinaryRequest& request : session.pending_binary) {
+                if (request.tag == tag) {
+                    pending_in_live_session = true;
+                    break;
+                }
+            }
+            if (pending_in_live_session) break;
+        }
+    }
+    if (!isConnected() || !pending_in_live_session || (blob_len > 0 && !blob) ||
         6 + blob_len > MAX_FRAME_SIZE) {
         return false;
     }
@@ -761,7 +1109,17 @@ bool CompanionBridge::pushBinaryResponse(uint32_t tag,
         i += (int)blob_len;
     }
     const bool written = sendPushFrame(_out_frame, i);
-    if (written) _pending_binary[pending] = {};
+    if (written) {
+        if (pending >= 0) _pending_binary[pending] = {};
+        if (transports_attached() && !_active_session) {
+            for (TransportSession& session : _transport_sessions) {
+                if (!session.used) continue;
+                for (PendingBinaryRequest& request : session.pending_binary) {
+                    if (request.tag == tag) request = {};
+                }
+            }
+        }
+    }
     return written;
 }
 
@@ -829,7 +1187,8 @@ bool CompanionBridge::pushTraceData(uint32_t tag, uint32_t auth, uint8_t flags,
 
 bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
 {
-    if (!_serial || !_host || !frame || len == 0 || len > MAX_FRAME_SIZE) return false;
+    if ((!_serial && !_transport_request_active) || !_host || !frame ||
+        len == 0 || len > MAX_FRAME_SIZE) return false;
     refreshConnectionSession();
     // One slot is reserved exclusively for the current command response. If
     // it is occupied, do not execute another command (especially a
@@ -961,8 +1320,7 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
             // Volatile frames can leave after queue admission. Durable records
             // remain at the queue head until the same authenticated session's
             // next SYNC request implicitly acknowledges receipt.
-            size_t written = _serial->writeFrame(_out_frame, out_len);
-            if (written == (size_t)out_len) {
+            if (writeFrameToCurrentTransport(_out_frame, out_len)) {
                 if (persistent) {
                     _inflight_store_id = store_id;
                     _inflight_generation = _connection_generation;
@@ -1386,7 +1744,11 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
     }
 
     if (cmd == CMD_FACTORY_RESET && len >= 6 && std::memcmp(&_cmd_frame[1], "reset", 5) == 0) {
-        if (_serial) _serial->disable();  // phone disconnects; prevents reconnect mid-wipe
+        if (_transport_request_active) {
+            (void)transport_set_enabled(_request_transport, false);
+        } else if (_serial) {
+            _serial->disable();  // phone disconnects; prevents reconnect mid-wipe
+        }
         if (_host->factoryReset()) {       // reboots on device; returns on native
             writeOKFrame();
         } else {
@@ -1704,7 +2066,8 @@ bool CompanionBridge::handleFrame(const uint8_t* frame, size_t len)
         uint8_t path_len = (uint8_t)(len - 10);
         uint8_t flags = _cmd_frame[9];
         uint8_t path_sz = flags & 0x03;
-        if ((path_len >> path_sz) > SIGURDOS_COMPANION_PATH_SIZE ||
+        if (static_cast<size_t>(path_len >> path_sz) >
+                SIGURDOS_COMPANION_PATH_SIZE ||
             (path_len % (1 << path_sz)) != 0) {
             writeErrFrame(ERR_CODE_ILLEGAL_ARG);
             return true;

@@ -22,6 +22,7 @@
 #include "app/gps_track_log.h"
 #include "app/gps_clock_handoff.h"
 #include "mesh/mesh_wrapper.h"
+#include "comms/transport_iface.h"
 #include "ui/ui.h"
 #include "ui/screens_common.h"
 #include "ui/theme.h"
@@ -252,6 +253,9 @@ void setup()
         }
     }
 
+    // ── Phase 1 companion transports (TCP + WebSocket registry) ───────
+    sigurdos::comms::transports_init();
+
 #if SIGURDOS_TELEMETRY
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Telemetry);
     sigurdos::telemetry::init();
@@ -284,6 +288,8 @@ void loop()
     sigurdos::ota::loop();         // WiFi OTA web server
     sigurdos::github_ota::loop();  // GitHub OTA downloader
     sigurdos::wifi_sta::loop();    // WiFi STA maintenance
+    // ── Phase 1 companion transports (TCP + WebSocket registry) ───────
+    sigurdos::comms::transports_loop();
     {   // WiFi icon refresh — 1 Hz is plenty for an RSSI readout
         static uint32_t last_wifi_ui = 0;
         if (millis() - last_wifi_ui >= 1000) {

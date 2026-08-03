@@ -65,6 +65,10 @@ struct NodePrefs {
     bool     ota_allow_prerelease;      // include pre-release tags when searching for OTA updates
     char     radio_profile[16];          // radio profile id (e.g. "us_902_928"), or empty/"custom" for manual
 
+    // ── Phase 1 companion transports (additive; off by default) ──
+    bool     transport_tcp_enabled;     // companion TCP listener on port 5000
+    bool     transport_ws_enabled;      // companion WebSocket listener on port 8765
+
     // Sentinel defaults — radio will NOT transmit until user configures
     void set_defaults() {
         strncpy(node_name, "SigurdOS T-Deck", sizeof(node_name) - 1);
@@ -119,6 +123,8 @@ struct NodePrefs {
         ota_branch[sizeof(ota_branch) - 1] = '\0';
         ota_allow_prerelease = false;
         radio_profile[0] = '\0';        // empty = not set / custom
+        transport_tcp_enabled = false;
+        transport_ws_enabled = false;
     }
 
     // Factory reset is intentionally stricter than first-boot defaults: no

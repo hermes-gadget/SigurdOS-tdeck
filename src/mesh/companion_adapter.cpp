@@ -25,6 +25,7 @@
 #include "airtime_policy.h"
 #include "telemetry_response_policy.h"
 #include "comms/companion_bridge.h"
+#include "comms/transports_internal.h"
 #include "comms/observed_ble_interface.h"
 #include "comms/ble_bond_rotation.h"
 #include "hal/tdeck_pins.h"
@@ -1294,6 +1295,7 @@ void sigurdos::mesh::companionAdapterInit()
     g_ble_serial.configure("MeshCore-", ble_name, g_companion_host.blePin());
     if (CompanionBridge* b = companionBridge()) {
         b->begin(&g_ble_serial, &g_companion_host);
+        sigurdos::comms::transports_attach_serial(&g_ble_serial);
         const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
         if (prefs.ble_bond_reset_pending) {
             // Crash-safe resume: only the purge path initializes BLE, and it
@@ -1324,6 +1326,7 @@ void sigurdos::mesh::companionAdapterInit()
     g_usb_serial.begin(sigurdos::diagnostics::companionUsbDataStream());
     if (CompanionBridge* b = companionBridge()) {
         b->begin(&g_usb_serial, &g_companion_host);
+        sigurdos::comms::transports_attach_serial(&g_usb_serial);
         b->setEnabled(true);
     }
 #endif
@@ -1331,7 +1334,6 @@ void sigurdos::mesh::companionAdapterInit()
 
 void sigurdos::mesh::companionAdapterLoop()
 {
-    if (g_companion_bridge_ptr) g_companion_bridge_ptr->loop();
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
     serviceBleBondRotation();
 #endif
@@ -1355,7 +1357,8 @@ bool companionBleSetEnabled(bool enabled) {
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
     CompanionBridge* b = companionBridge();
     if (!b) return false;
-    const bool previous = b->isEnabled();
+    const bool previous = sigurdos::comms::transport_enabled(
+        sigurdos::comms::TransportId::BLE);
     if (!b->setEnabled(enabled)) return false;
     sigurdos::NodePrefs p = sigurdos::prefs_get();
     p.ble_enabled = enabled;
@@ -1382,8 +1385,21 @@ bool companionBleOpenPairingWindow() {
 #endif
 }
 
-bool companionBleEnabled() { CompanionBridge* b = companionBridge(); return b && b->isEnabled(); }
-bool companionBleConnected() { CompanionBridge* b = companionBridge(); return b && b->isConnected(); }
+bool companionBleEnabled() {
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    return sigurdos::comms::transport_enabled(sigurdos::comms::TransportId::BLE);
+#else
+    return false;
+#endif
+}
+bool companionBleConnected() {
+#if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
+    return sigurdos::comms::transport_status(
+        sigurdos::comms::TransportId::BLE).connected;
+#else
+    return false;
+#endif
+}
 uint32_t companionBleLastSyncTime() { CompanionBridge* b = companionBridge(); return b ? b->lastSyncTime() : 0; }
 uint32_t companionBlePin() { return g_companion_host.blePin(); }
 
