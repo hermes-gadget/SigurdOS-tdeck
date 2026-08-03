@@ -1,6 +1,6 @@
 # Autonomous MeshCore BLE Companion Test Environment
 
-**Goal:** Let Hermes Agent repeatedly validate that SigurdOS-TDeck speaks the companion protocol used by **Liam Cottle’s official MeshCore app**, without requiring a human to drive the phone UI for every change.
+**Goal:** Let Hermes Agent repeatedly validate that SigurdOS-TDeck speaks the companion protocol used by **Liam Cottle’s official MeshCore app**, without requiring a human to drive the phone UI for every change. The same dispatcher is also reachable through optional TCP and plain WebSocket transports.
 
 ## Honest scope
 
@@ -31,6 +31,20 @@ Hermes VM ──USB /dev/ttyUSB0──▶ Heltec V3 stock companion_usb
     │ meshcore.create_serial        │ full opcode matrix (proven)
     └───────────────────────────────┘
 ```
+
+When WiFi is available and the runtime toggles are enabled, the T-Deck also
+listens on TCP port 5000 and WebSocket port 8765. Both network transports are
+off by default and persist their enable state in NVS. TCP accepts up to four
+simultaneous companion clients; WebSocket accepts up to four plain ws://
+clients.
+
+Network framing is deliberately the same as the USB stream: a client sends
+the less-than marker, a little-endian uint16 payload length, and the companion
+payload; it receives the greater-than marker, length, and payload. WebSocket
+payloads are binary and may be fragmented; the firmware reassembles boundaries
+independently for each client. A command response is returned to its requesting
+client, while live pushes and message-waiting notifications are fanned out to
+all connected clients.
 
 ## Firmware
 
@@ -96,6 +110,31 @@ ssh hermes-pi '~/meshcore-ble-venv/bin/python /tmp/meshcore_ble_companion_test.p
 ```
 
 **Current lab observation (2026-07-12):** T-Deck connects briefly (`@ble_hw` shows `connect`/`mtu=176`) then disconnects; BlueZ reports pairing failure (`authok=0`). Production MITM (`ESP_LE_AUTH_REQ_SC_MITM_BOND` + ENC_MITM char perms) is intentional for the official app. BlueZ agent registration on hermes-pi needs more work before this path is green.
+
+### D) TCP / WebSocket smoke checks
+
+Use the device's WiFi address after enabling the corresponding runtime
+transport. A raw TCP probe can send a device query with standard shell tools:
+
+```bash
+python3 - <<'PY'
+import socket
+
+host = '192.168.1.50'  # replace with the T-Deck address
+payload = bytes([22, 3])  # CMD_DEVICE_QUERY, app target version 3
+frame = b'<' + len(payload).to_bytes(2, 'little') + payload
+with socket.create_connection((host, 5000), timeout=5) as sock:
+    sock.sendall(frame)
+    print(sock.recv(256).hex())
+PY
+```
+
+For WebSocket framing, use a client that can send binary messages (for
+example websocat -b ws://192.168.1.50:8765) or the official MeshCore client
+matrix. The binary message contents still begin with the companion less-than
+frame marker; the server's reply is a binary message containing the greater-
+than marker. Keep both checks on a trusted LAN: Phase 1 intentionally provides
+no TCP/WS password or TLS layer.
 
 ## Verified on 2026-07-12
 

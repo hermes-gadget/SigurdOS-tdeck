@@ -105,6 +105,29 @@ bool writePrefsToNvs(const NodePrefs& prefs, detail::BlePrefsWriteMode ble_mode,
     return saved;
 }
 
+// ── Phase 1 companion transports (additive NVS keys) ────────────────
+// These keys intentionally live beside, rather than inside, the shared
+// preference writer so another agent can extend the existing preference schema
+// without changing this transport-owned section.
+bool writeTransportPrefsToNvs(const NodePrefs& prefs)
+{
+    nvs_handle_t handle = 0;
+    esp_err_t error = nvs_open(NVS_NS, NVS_READWRITE, &handle);
+    if (error == ESP_OK) {
+        error = nvs_set_u8(handle, "tr_tcp", prefs.transport_tcp_enabled ? 1 : 0);
+    }
+    if (error == ESP_OK) {
+        error = nvs_set_u8(handle, "tr_ws", prefs.transport_ws_enabled ? 1 : 0);
+    }
+    if (error == ESP_OK) error = nvs_commit(handle);
+    if (handle != 0) nvs_close(handle);
+    if (error != ESP_OK) {
+        SIG_LOGE("[prefs] companion transport NVS write failed: %s",
+                 esp_err_to_name(error));
+    }
+    return error == ESP_OK;
+}
+
 } // namespace
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
@@ -233,6 +256,10 @@ bool prefs_load(NodePrefs& p) {
     if (rf_prof_len == 0 || rf_prof_len > sizeof(p.radio_profile)) { p.radio_profile[0] = '\0'; }
     else { p.radio_profile[sizeof(p.radio_profile) - 1] = '\0'; }
 
+    // ── Phase 1 companion transports (additive; absent means disabled) ──
+    p.transport_tcp_enabled = nvs.getBool("tr_tcp", false);
+    p.transport_ws_enabled = nvs.getBool("tr_ws", false);
+
     nvs.end();
     if (!detail::normalizeAndValidate(p)) {
         SIG_LOGE("[prefs] stored radio configuration invalid; radio disabled");
@@ -252,7 +279,8 @@ bool prefs_save(const NodePrefs& p) {
 #else
     constexpr detail::BlePrefsWriteMode ble_mode = detail::BlePrefsWriteMode::Preserve;
 #endif
-    return writePrefsToNvs(p, ble_mode, false);
+    if (!writePrefsToNvs(p, ble_mode, false)) return false;
+    return writeTransportPrefsToNvs(p);
 }
 
 bool prefs_exists() {
@@ -298,6 +326,7 @@ bool prefs_commit_factory_reset()
     reset.set_factory_reset_defaults();
     if (!writePrefsToNvs(
             reset, detail::BlePrefsWriteMode::Write, true)) return false;
+    if (!writeTransportPrefsToNvs(reset)) return false;
     g_prefs = reset;
     return true;
 }

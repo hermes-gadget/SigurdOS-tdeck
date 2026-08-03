@@ -137,6 +137,7 @@ test/
 |-- test_trace_poll/             Trace path poll lifecycle and timeouts
 |-- test_trackball/              Trackball debounce, direction, and click events
 |-- test_transport_key_store/    Private-region transport key persistence and bounds
+|-- test_transports/             TCP/WS framing, client registry, and replay routing
 |-- test_ui_contract/            UI screen show APIs and screen function stability
 |-- test_ui_generation/          UI generation counters and dirty-mark contracts
 |-- test_ui_lifecycle/           LVGL timer ownership and display timeout normalization

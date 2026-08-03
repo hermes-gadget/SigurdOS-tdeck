@@ -6,7 +6,9 @@
 #include <vector>
 
 #include "comms/companion_bridge.h"
+#include "comms/transports_internal.h"
 #include "mesh/companion_ble_pin.h"
+#include "mocks/mock_state.h"
 
 namespace {
 
@@ -513,6 +515,14 @@ TEST(CompanionProtocolConstants, AsyncPushCodesMatchPinnedStockProtocol)
     EXPECT_EQ(cc::PUSH_CODE_BINARY_RESPONSE, 0x8C);
     EXPECT_EQ(cc::PUSH_CODE_PATH_DISCOVERY_RESPONSE, 0x8D);
     EXPECT_EQ(cc::PUSH_CODE_CONTROL_DATA, 0x8E);
+}
+
+TEST(CompanionProtocolConstants, TransportIdsRemainStable)
+{
+    namespace cc = sigurdos::comms;
+    EXPECT_EQ(static_cast<uint8_t>(cc::TransportId::BLE), 0);
+    EXPECT_EQ(static_cast<uint8_t>(cc::TransportId::TCP), 1);
+    EXPECT_EQ(static_cast<uint8_t>(cc::TransportId::WS), 2);
 }
 
 TEST_F(CompanionProtocolTest, ResponseAndPushCodesMatchPinnedMeshCore) {
@@ -1033,6 +1043,74 @@ TEST_F(CompanionProtocolTest, EnqueuedMessageTicklesAndDrains) {
     ASSERT_EQ(serial.writes.size(), 2u);
     EXPECT_EQ(serial.writes[1][0], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
     EXPECT_EQ(bridge.lastSyncTime(), 4343u);
+}
+
+TEST_F(CompanionProtocolTest, TransportHistoryReplayIsIndependentPerClient) {
+    struct RegistryReset {
+        ~RegistryReset() { sigurdos::comms::transports_test_reset(); }
+    } reset_registry;
+
+    sigurdos::comms::transports_test_reset();
+    bridge.begin(&serial, &host);
+    serial.writes.clear();
+    sigurdos::prefs_mock_reset();
+    sigurdos::NodePrefs prefs = sigurdos::prefs_get();
+    prefs.transport_tcp_enabled = true;
+    ASSERT_TRUE(sigurdos::prefs_set(prefs));
+    sigurdos::comms::transports_attach_serial(&serial);
+    sigurdos::comms::transports_init();
+    ASSERT_TRUE(sigurdos::comms::transports_test_connect(
+        sigurdos::comms::TransportId::TCP, 0));
+    ASSERT_TRUE(sigurdos::comms::transports_test_connect(
+        sigurdos::comms::TransportId::TCP, 1));
+    // The service pass provisions both sessions before mesh callbacks enqueue
+    // a message, even though neither client has sent a command yet.
+    sigurdos::comms::transports_loop();
+
+    sigurdos::mesh::StoredMessage msg{};
+    std::strncpy(msg.conversation, "DM: Alice", sizeof(msg.conversation) - 1);
+    std::strncpy(msg.sender, "Alice", sizeof(msg.sender) - 1);
+    std::strncpy(msg.text, "one copy per client", sizeof(msg.text) - 1);
+    msg.timestamp = 123;
+    for (int i = 0; i < 6; ++i) msg.sender_prefix[i] = (uint8_t)(0xB0 + i);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(msg, &msg.store_id));
+    ASSERT_TRUE(bridge.enqueueMessage(msg));
+
+    uint8_t encoded[MAX_FRAME_SIZE + 3]{};
+    ASSERT_EQ(sigurdos::comms::transports_test_read_tx(
+                  sigurdos::comms::TransportId::TCP, 0, encoded, sizeof(encoded)),
+              4u);
+    ASSERT_EQ(sigurdos::comms::transports_test_read_tx(
+                  sigurdos::comms::TransportId::TCP, 1, encoded, sizeof(encoded)),
+              4u);
+
+    const uint8_t sync[] = {sigurdos::comms::CMD_SYNC_NEXT_MESSAGE};
+    const uint8_t request[] = {'<', 1, 0, sync[0]};
+    ASSERT_TRUE(sigurdos::comms::transports_test_feed(
+        sigurdos::comms::TransportId::TCP, 0, request, sizeof(request)));
+    sigurdos::comms::transports_loop();
+    ASSERT_GT(sigurdos::comms::transports_test_read_tx(
+                  sigurdos::comms::TransportId::TCP, 0, encoded, sizeof(encoded)),
+              3u);
+    EXPECT_EQ(encoded[3], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
+
+    // Client 0 acknowledges its own replay before client 1 asks. Client 1
+    // must still receive its independently queued copy from the same store ID.
+    ASSERT_TRUE(sigurdos::comms::transports_test_feed(
+        sigurdos::comms::TransportId::TCP, 0, request, sizeof(request)));
+    sigurdos::comms::transports_loop();
+    ASSERT_GT(sigurdos::comms::transports_test_read_tx(
+                  sigurdos::comms::TransportId::TCP, 0, encoded, sizeof(encoded)),
+              3u);
+    EXPECT_EQ(encoded[3], sigurdos::comms::RESP_CODE_NO_MORE_MESSAGES);
+
+    ASSERT_TRUE(sigurdos::comms::transports_test_feed(
+        sigurdos::comms::TransportId::TCP, 1, request, sizeof(request)));
+    sigurdos::comms::transports_loop();
+    ASSERT_GT(sigurdos::comms::transports_test_read_tx(
+                  sigurdos::comms::TransportId::TCP, 1, encoded, sizeof(encoded)),
+              3u);
+    EXPECT_EQ(encoded[3], sigurdos::comms::RESP_CODE_CONTACT_MSG_RECV_V3);
 }
 
 TEST_F(CompanionProtocolTest, FailedWriteKeepsOfflineFrameForRetry) {
