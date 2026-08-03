@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Ben
 
 #include <Arduino.h>
+#include <cstring>
 #include "hal/storage.h"
 #include "hal/tdeck_board.h"
 #include "hal/tdeck_pins.h"
@@ -18,6 +19,9 @@
 #include "hal/boot_watchdog.h"
 #include "hal/display_retry_state.h"
 #include "hal/ota_boot_health.h"
+#include "hal/keyboard.h"
+#include "hal/touch.h"
+#include "hal/trackball.h"
 #include "app/map_renderer.h"
 #include "app/gps_track_log.h"
 #include "app/gps_clock_handoff.h"
@@ -27,6 +31,7 @@
 #include "ui/ui.h"
 #include "ui/screens_common.h"
 #include "ui/theme.h"
+#include "power/screen_sleep.h"
 #include "diagnostics/debug_cfg.h"
 #include "diagnostics/diagnostic_io.h"
 #if SIGURDOS_DEBUG_DIAG
@@ -38,6 +43,12 @@
 #if defined(SIGURDOS_REMOTE_TEST) && SIGURDOS_REMOTE_TEST
 #include "test/test_controller.h"
 #endif
+
+// The production source filter intentionally enumerates src subdirectories
+// and cannot be changed for this phase. Keep the policy implementation in its
+// own source file while compiling it once through the root main translation
+// unit; native tests include the same implementation directly.
+#include "power/screen_sleep.cpp"
 
 static sigurdos::TDeckBoard board;
 
@@ -57,6 +68,143 @@ static void boot_status(const char* status)
 
 #include "esp_log.h"
 static const char* BOOT_TAG = "boot";
+
+static bool power_screen_off()
+{
+    return !sigurdos_display_is_on();
+}
+
+static bool power_no_companion_clients()
+{
+    return !sigurdos::mesh::companionBleConnected();
+}
+
+static bool power_wifi_off()
+{
+    return sigurdos::wifi::currentOwner() == sigurdos::wifi::Owner::None &&
+           !sigurdos::ota::isActive() &&
+           !sigurdos::github_ota::isActive() &&
+           !sigurdos::wifi_sta::isConnected();
+}
+
+static bool power_ble_off()
+{
+    // An enabled BLE companion keeps the 2.4 GHz radio advertising even when
+    // no phone is connected, so it is intentionally a separate gate from
+    // no_companion_clients.
+    return !sigurdos::mesh::companionBleAvailable() ||
+           !sigurdos::mesh::companionBleEnabled();
+}
+
+static bool power_on_battery()
+{
+    return !sigurdos_battery_charging();
+}
+
+static bool power_mesh_idle()
+{
+    return sigurdos::mesh::pendingMessageCount() == 0 &&
+           !sigurdos::mesh::pingIsActive() &&
+           !sigurdos::mesh::statusRequestPending();
+}
+
+static uint32_t power_next_wake_forcing_in_ms(uint32_t)
+{
+    return sigurdos::power::NO_WAKE_DEADLINE_MS;
+}
+
+static uint32_t power_epoch_now()
+{
+    return sigurdos::mesh::getCurrentTime();
+}
+
+static bool power_packet_entry_is_rx(const sigurdos::mesh::PacketLogEntry& entry)
+{
+    return entry.type[0] != '\0' &&
+           std::strncmp(entry.type, "TX_", 3) != 0 &&
+           std::strcmp(entry.type, "BOOT") != 0;
+}
+
+static sigurdos::power::WakeReason power_poll_wake_reason()
+{
+    static bool initialized = false;
+    static uint32_t last_touch_press_count = 0;
+    static uint32_t last_keyboard_event_count = 0;
+    static uint32_t last_trackball_event_count = 0;
+    static uint32_t last_packet_generation = 0;
+
+    SigurdOSTouchDiag touch{};
+    SigurdOSKeyboardDiag keyboard{};
+    SigurdOSTrackballDiag trackball{};
+    const bool have_touch = sigurdos_touch_get_diag(&touch);
+    const bool have_keyboard = sigurdos_keyboard_get_diag(&keyboard);
+    const bool have_trackball = sigurdos_trackball_get_diag(&trackball);
+    const uint32_t packet_generation =
+        sigurdos::mesh::getPacketLogGeneration();
+
+    if (!initialized) {
+        initialized = true;
+        if (have_touch) last_touch_press_count = touch.press_count;
+        if (have_keyboard) last_keyboard_event_count = keyboard.event_count;
+        if (have_trackball) last_trackball_event_count = trackball.event_count;
+        last_packet_generation = packet_generation;
+        return sigurdos::power::WakeReason::None;
+    }
+
+    sigurdos::power::WakeReason reason = sigurdos::power::WakeReason::None;
+
+    if (have_touch) {
+        if (touch.press_count != last_touch_press_count) {
+            reason = sigurdos::power::WakeReason::Touch;
+        }
+        last_touch_press_count = touch.press_count;
+    }
+
+    if (have_keyboard) {
+        if (keyboard.event_count != last_keyboard_event_count &&
+            reason == sigurdos::power::WakeReason::None) {
+            reason = sigurdos::power::WakeReason::Button;
+        }
+        last_keyboard_event_count = keyboard.event_count;
+    }
+
+    if (have_trackball) {
+        if (trackball.event_count != last_trackball_event_count &&
+            reason == sigurdos::power::WakeReason::None) {
+            reason = sigurdos::power::WakeReason::Button;
+        }
+        last_trackball_event_count = trackball.event_count;
+    }
+
+    if (packet_generation != last_packet_generation) {
+        const int count = sigurdos::mesh::getPacketLogCount();
+        sigurdos::mesh::PacketLogEntry entry{};
+        if (count > 0 &&
+            sigurdos::mesh::getPacketLogEntry(count - 1, &entry) &&
+            power_packet_entry_is_rx(entry)) {
+            reason = sigurdos::power::WakeReason::Packet;
+        }
+        last_packet_generation = packet_generation;
+    }
+
+    return reason;
+}
+
+static void power_wake_display()
+{
+    sigurdos_display_wake();
+}
+
+static void power_transition(uint32_t, bool entering)
+{
+    if (entering) sigurdos::ui::lock_screen_enter();
+}
+
+static void power_wake_notification(
+    const sigurdos::power::WakeEvent& event)
+{
+    sigurdos::ui::lock_screen_note_wake(event.reason);
+}
 
 [[noreturn]] static void enter_orderly_sleep()
 {
@@ -164,6 +312,27 @@ void setup()
     sigurdos::theme::theme_apply(p.theme_id);
     sigurdos_display_set_brightness(p.display_brightness);
     sigurdos_display_reset_auto_off();
+
+    // ── Phase 3 screen sleep / lock integration ───────────────
+    // Existing display auto-off remains responsible for turning off the
+    // backlights. This policy only gates the main loop after that transition.
+    {
+        sigurdos::power::Hooks power_hooks;
+        power_hooks.screenOff = power_screen_off;
+        power_hooks.noClient = power_no_companion_clients;
+        power_hooks.wifiOff = power_wifi_off;
+        power_hooks.bleOff = power_ble_off;
+        power_hooks.onBattery = power_on_battery;
+        power_hooks.meshIdle = power_mesh_idle;
+        power_hooks.nextWakeForcingInMs = power_next_wake_forcing_in_ms;
+        power_hooks.epochNow = power_epoch_now;
+        power_hooks.pollWakeReason = power_poll_wake_reason;
+        power_hooks.wakeDisplay = power_wake_display;
+        sigurdos::power::begin(power_hooks);
+        sigurdos::power::onTransition(power_transition);
+        sigurdos::power::onWake(power_wake_notification);
+        sigurdos::power::setEnabled(true);
+    }
     boot_log("settings loaded");
 
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Input);
@@ -350,4 +519,9 @@ void loop()
     sigurdos::ota_boot_health::loop();
     sigurdos::diagnostics::drain_diagnostic_output();
     sigurdos::hal::boot_watchdog_runtime_progress();
+
+    // ── Phase 3 screen sleep / lock integration ───────────────
+    // This is deliberately the last loop hook: radio RX and all existing
+    // service work run before the bounded vTaskDelay.
+    sigurdos::power::loopEnd(millis());
 }

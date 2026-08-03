@@ -132,11 +132,18 @@ void NonBlockingWriter::drain_locked(std::size_t byte_budget) {
         }
 
         // Serial I/O MUST NOT run inside the critical section on ESP32:
-        // the USB-CDC driver depends on interrupts/FreeRTOS primitives.
+        // the USB-CDC driver depends on interrupts/FreeRTOS primitives. The
+        // native HardwareSerial test double is a plain std::string, however,
+        // so keep the host mutex held to serialize its writes.
+#if defined(ESP32_PLATFORM)
         unlock();
         const std::size_t written =
             Serial.write(reinterpret_cast<const uint8_t*>(drain_buf), count);
         lock();
+#else
+        const std::size_t written =
+            Serial.write(reinterpret_cast<const uint8_t*>(drain_buf), count);
+#endif
 
         if (written == 0) return;
         queue_tail_ = (queue_tail_ + written) % QUEUE_CAPACITY;

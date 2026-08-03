@@ -42,6 +42,7 @@ inline const char* screen_name(sigurdos::ui::Screen screen) {
         case Screen::MeshDashboard: return "MeshDashboard";
         case Screen::FileBrowser: return "FileBrowser";
         case Screen::Transports: return "Transports";
+        case Screen::Lock: return "Lock";
         case Screen::COUNT: break;
     }
     return "?";

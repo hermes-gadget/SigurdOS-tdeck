@@ -85,6 +85,7 @@ constexpr std::array<Screen, 32> kScreens = {
     Screen::MeshDashboard,
     Screen::FileBrowser,
     Screen::Transports,
+    Screen::Lock,
 };
 
 TEST(NavigationContractTest, ScreenEnumCountMatchesInventory) {
@@ -143,6 +144,7 @@ TEST(NavigationContractTest, NestedRoutesRemainInInventory) {
     EXPECT_EQ(static_cast<int>(Screen::MeshDashboard), 29);
     EXPECT_EQ(static_cast<int>(Screen::FileBrowser), 30);
     EXPECT_EQ(static_cast<int>(Screen::Transports), 31);
+    EXPECT_EQ(static_cast<int>(Screen::Lock), 32);
 }
 
 TEST(NavigationContractTest, ParameterizedRouteAPIsExist) {

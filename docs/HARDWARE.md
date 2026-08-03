@@ -167,6 +167,45 @@ initialization result, avoiding repeated probes after a confirmed failure.
 - **Disabled** in `SIGURDOS_DEBUG_DISPLAY` builds (screen must stay on for
   observation).
 
+### Idle Loop Power-Save Regime (Phase 3)
+
+The existing 30-second backlight auto-off remains the first power-saving
+transition. Once the backlight is off, the main loop may enter the additional
+screen-sleep regime only when all of these predicates are true:
+
+- the display is off and no companion client is connected;
+- WiFi and BLE are both inactive (BLE advertising counts as active);
+- the battery is reported as not charging; and
+- MeshCore has no queued UI messages, active nearby-ping window, or pending
+  status request.
+
+In that state the loop calls `vTaskDelay()` for at most 50 ms per pass. The
+SX1262 remains powered and its normal RX processing still runs before the
+delay, so a newly logged RX packet wakes the loop within the next throttle
+quantum. Touch, keyboard/trackball button, and forcing-timer events are also
+recorded in the small wake-reason log. Transition callbacks enter the lock
+screen; unlocking restores the screen that was visible before the lock.
+
+The lock screen shows battery percentage and the current 24-hour clock. With
+no `NodePrefs.device_pin`, a swipe or key unlocks it. When a device PIN is
+configured, a swipe focuses the numeric field and the existing PIN is required.
+The wake hint identifies the observed source (packet, touch, button, or timer).
+
+This regime intentionally does **not** use ESP32 light sleep. On the ESP32-S3
+dual-core build, the Wadamesh light-sleep RX experiment tripped the Interrupt
+Watchdog, so this firmware uses loop throttling and backlight-off only. Deep
+sleep remains a separate orderly-shutdown path; it cannot wake on LoRa because
+the SX1262 DIO1 line is GPIO45, which is not RTC-capable on this chip.
+
+The T-Deck has no dedicated charge-detect pin. Until hardware-specific USB
+charging detection is added, `sigurdos_battery_charging()` conservatively
+returns `false`, so USB-powered units can still qualify as on-battery for this
+regime. This is an open power-policy risk to validate on hardware.
+
+Expected behavior while all gates pass: the main-loop polling interval is
+bounded to 50 ms, packet wake latency is normally no more than one such
+interval, and the display/keyboard backlights remain off until a wake event.
+
 ### Pixel Format
 
 Each pixel is 2 bytes in RGB565 format:
@@ -617,6 +656,12 @@ failure restores the previous hardware configuration and reports failure.
 - DIO1 is GPIO45 and is not RTC-capable on ESP32-S3, so LoRa packets cannot wake deep sleep
 - `rtc_gpio_pulldown_en` configured and `ESP_EXT1_WAKEUP_ANY_HIGH` enabled
 - LoRa NSS pin held via `rtc_gpio_hold_en` during sleep
+
+The Phase 3 screen-sleep regime above is not deep sleep and does not configure
+RTC wake sources. It keeps the radio RX path alive specifically because DIO1
+cannot be registered as an ESP32-S3 deep-sleep wake source. No `esp_light_sleep`
+call is used: light sleep is excluded because the dual-core no-PM build has
+previously tripped the Interrupt Watchdog during RX.
 
 ---
 
