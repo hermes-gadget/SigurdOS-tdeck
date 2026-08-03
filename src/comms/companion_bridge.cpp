@@ -133,7 +133,7 @@ void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* ho
     _request_client_index = -1;
     _request_generation = 0;
     _active_session = nullptr;
-    for (TransportSession& session : _transport_sessions) session = TransportSession{};
+    for (TransportSession& session : _transport_sessions) session.reset();
     g_transport_bridge = this;
     transports_set_frame_handler(&CompanionBridge::transportFrameHandler);
     transports_set_service_handler(&CompanionBridge::transportServiceHandler);
@@ -181,7 +181,7 @@ CompanionBridge::ensureTransportSession(TransportId id, int client_index,
                 generation != candidate.generation) {
                 const TransportId old_id = candidate.id;
                 const int old_client_index = candidate.client_index;
-                candidate = TransportSession{};
+                candidate.reset();
                 candidate.used = true;
                 candidate.id = old_id;
                 candidate.client_index = old_client_index;
@@ -195,7 +195,7 @@ CompanionBridge::ensureTransportSession(TransportId id, int client_index,
         if (!candidate.used && !free_slot) free_slot = &candidate;
     }
     if (!free_slot) return nullptr;
-    *free_slot = TransportSession{};
+    free_slot->reset();
     free_slot->used = true;
     free_slot->id = id;
     free_slot->client_index = client_index;
@@ -922,7 +922,7 @@ void CompanionBridge::onIdentityChanged()
         const TransportId id = session.id;
         const int client_index = session.client_index;
         const uint32_t generation = session.generation;
-        session = TransportSession{};
+        session.reset();
         session.used = true;
         session.id = id;
         session.client_index = client_index;

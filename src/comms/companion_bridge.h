@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 #include "mesh/message_store.h"
 #include "transport_iface.h"
@@ -537,6 +538,17 @@ private:
         uint32_t connection_generation = 0;
         uint32_t inflight_store_id = 0;
         uint32_t inflight_generation = 0;
+        // NOTE: do NOT reset with `*this = TransportSession{}` — the struct
+        // carries ~12KB of buffers and the temporary blows the 8KB loopTask
+        // stack (stack-canary panic observed on hardware 2026-08-03).
+        void reset()
+        {
+            memset(this, 0, sizeof(*this));
+            client_index = -1;
+            contact_iter = -1;
+            app_target_ver = 3;
+            version_negotiated = true;
+        }
     };
 
     static constexpr uint32_t BINARY_REQUEST_FALLBACK_TIMEOUT_MS = 30000;
