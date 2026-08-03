@@ -12,6 +12,22 @@ bool isConnected() { return connected; }
 int getRSSI() { return rssi; }
 }
 
+// wifi_status_icon.cpp is included directly by this mock-only lifetime suite,
+// while the native source filter intentionally does not compile the LVGL
+// adapter. Keep this test focused on icon ownership and update the calls with
+// the same transparent forwarding used by the mock LVGL labels.
+namespace sigurdos::ui {
+lv_obj_t* text_fit_label_create(lv_obj_t* parent)
+{
+    return lv_label_create(parent);
+}
+
+void text_fit_set_text(lv_obj_t* label, const char* text)
+{
+    lv_label_set_text(label, text);
+}
+}
+
 #include "../../src/ui/wifi_status_icon.cpp"
 
 namespace {

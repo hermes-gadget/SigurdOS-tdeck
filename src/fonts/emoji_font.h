@@ -14,6 +14,7 @@ extern const lv_font_t emoji_font;
 
 // Writable wrappers around Montserrat fonts with emoji fallback set.
 // Use these instead of lv_font_montserrat_XX where emoji support is needed.
+extern const lv_font_t* emoji_wrapped_montserrat_8;
 extern const lv_font_t* emoji_wrapped_montserrat_10;
 extern const lv_font_t* emoji_wrapped_montserrat_12;
 extern const lv_font_t* emoji_wrapped_montserrat_14;

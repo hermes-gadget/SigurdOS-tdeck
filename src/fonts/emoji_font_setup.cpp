@@ -19,6 +19,7 @@
 #include "emoji_font.h"
 #include "latin_ext_font.h"
 #include "keyboard_layout_font.h"
+#include "montserrat_8.h"
 #include <lvgl.h>
 #include <cstring>
 
@@ -33,6 +34,7 @@
 //   keyboard layout: Greek, Cyrillic, Arabic, and Arabic presentation forms
 //   emoji_font:     Emoji pictographs
 
+static lv_font_t wrapped_8;
 static lv_font_t wrapped_10;
 static lv_font_t wrapped_12;
 static lv_font_t wrapped_14;
@@ -45,6 +47,7 @@ static lv_font_t wrapped_latin_ext;
 static lv_font_t wrapped_keyboard_layout;
 
 // Expose wrapped fonts for use in UI code
+const lv_font_t* emoji_wrapped_montserrat_8 = &wrapped_8;
 const lv_font_t* emoji_wrapped_montserrat_10 = &wrapped_10;
 const lv_font_t* emoji_wrapped_montserrat_12 = &wrapped_12;
 const lv_font_t* emoji_wrapped_montserrat_14 = &wrapped_14;
@@ -60,9 +63,16 @@ extern "C" void emoji_font_register_fallback()
     memcpy(&wrapped_latin_ext, &latin_ext_font, sizeof(lv_font_t));
     wrapped_latin_ext.fallback = &wrapped_keyboard_layout;
 
+    // Copy the compact Latin font into a writable wrapper. It falls back to the
+    // 10px wrapper for FontAwesome symbols and emoji absent from the compact
+    // Latin glyph set.
+    memcpy(&wrapped_8, &sigurdos_montserrat_8, sizeof(lv_font_t));
+
     // Copy const Montserrat fonts into writable wrappers and set latin_ext fallback
     memcpy(&wrapped_10, &lv_font_montserrat_10, sizeof(lv_font_t));
     wrapped_10.fallback = &wrapped_latin_ext;
+
+    wrapped_8.fallback = &wrapped_10;
 
     memcpy(&wrapped_12, &lv_font_montserrat_12, sizeof(lv_font_t));
     wrapped_12.fallback = &wrapped_latin_ext;

@@ -21,6 +21,7 @@
 #include <lvgl.h>
 #include "navigation.h"
 #include "../hal/trackball.h"
+#include "text_fit_lvgl.h"
 
 namespace sigurdos::ui {
 
