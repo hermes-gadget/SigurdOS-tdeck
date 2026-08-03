@@ -13,6 +13,41 @@
 namespace sigurdos {
 namespace ota {
 
+// The companion transports share the STA network, but an OTA AP owns the
+// radio and must be exclusive.  The transport implementation registers this
+// callback to park/unpark its listeners without changing the user's persisted
+// enabled state.  The callback must be non-blocking and safe to invoke from
+// the OTA worker cleanup task.
+using CompanionTransportParkHook = void (*)(bool parked);
+
+enum class NetworkMode : uint8_t {
+    Off,
+    Station,
+    AccessPoint,
+};
+
+inline NetworkMode modeForOtaSession(bool station_connected) {
+    return station_connected ? NetworkMode::Station : NetworkMode::AccessPoint;
+}
+
+// Pure policy helper kept in the public contract so the host test suite and
+// the companion transport implementation make the same AP exclusivity
+// decision.
+inline bool companionTransportsAllowed(bool ota_ap_active) {
+    return !ota_ap_active;
+}
+
+// Register a runtime-only park hook. Passing nullptr unregisters it.
+void setCompanionTransportParkHook(CompanionTransportParkHook hook);
+
+// False while an OTA access point is active or being brought up. Companion
+// servers must check this before enabling and while servicing listeners.
+bool companionTransportsAllowed();
+
+// True for an active or starting OTA session that owns an access point (as
+// opposed to an OTA upload bound to an already-connected STA).
+bool isAccessPointActive();
+
 // Authentication predicate for the OTA upload endpoint. The endpoint is only
 // reachable when a device PIN is configured; an upload is accepted only when a
 // non-zero device PIN is set and the submitted PIN matches it. A zero/unset PIN
@@ -267,6 +302,32 @@ enum class Status {
     Failed
 };
 
+enum class LinkMode : uint8_t {
+    Off,
+    Station,
+    AccessPoint,
+};
+
+static constexpr size_t WIFI_STA_SSID_CAPACITY = 33;
+static constexpr size_t WIFI_STA_IP_CAPACITY = 16;
+static constexpr size_t WIFI_STA_ERROR_CAPACITY = 96;
+
+// A copied, side-effect-free view for UI/diagnostics. The fixed buffers keep
+// callers independent from Arduino String lifetimes and make rendering
+// bounded even when an AP advertises a long name.
+struct StatusInfo {
+    Status status = Status::Idle;
+    LinkMode mode = LinkMode::Off;
+    bool connected = false;
+    int rssi = 0;
+    uint32_t reconnect_attempts = 0;
+    uint32_t last_attempt_ms = 0;
+    uint32_t next_reconnect_ms = 0;
+    char ssid[WIFI_STA_SSID_CAPACITY] = {};
+    char ip[WIFI_STA_IP_CAPACITY] = {};
+    char error[WIFI_STA_ERROR_CAPACITY] = {};
+};
+
 static constexpr uint32_t CONNECT_TIMEOUT_MS = 15000;
 
 inline Status advanceConnectingStatus(Status current, bool hardware_connected,
@@ -284,6 +345,14 @@ bool beginConnect(const char* ssid, const char* password);
 
 // Returns the current connection status without changing hardware state.
 Status getStatus();
+
+// Returns a bounded snapshot of the current STA/AP-facing status. Callers
+// should treat an empty error as no active failure detail.
+StatusInfo getStatusInfo();
+
+// Retry the saved WiFi credentials. Returns false when no credentials exist or
+// another WiFi owner currently holds the radio.
+bool reconnect();
 
 // Disconnect and turn WiFi off.
 void disconnect();
