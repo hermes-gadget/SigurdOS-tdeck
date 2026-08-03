@@ -17,6 +17,9 @@ namespace sigurdos {
 static constexpr const char* NVS_NS = hal::factory_reset::PREFS_NAMESPACE;
 static NodePrefs g_prefs;
 
+// ── Phase 4 i18n additive preference (owned by i18n wave) ────────────────
+static constexpr uint8_t I18N_LANGUAGE_COUNT = 4;
+
 namespace {
 
 struct NvsWriterContext {
@@ -105,6 +108,22 @@ bool writePrefsToNvs(const NodePrefs& prefs, detail::BlePrefsWriteMode ble_mode,
     return saved;
 }
 
+// The bulk preference writer is intentionally shared with sibling preference
+// work and remains unchanged. Persist the additive language byte separately so
+// this wave does not alter that writer's schema or any unrelated keys.
+bool persistLanguagePreference(uint8_t language)
+{
+    Preferences nvs;
+    if (!nvs.begin(NVS_NS, false)) {
+        SIG_LOGE("[prefs] language preference open failed");
+        return false;
+    }
+    const bool saved = nvs.putUChar("lang", language) == sizeof(language);
+    nvs.end();
+    if (!saved) SIG_LOGE("[prefs] language preference write failed");
+    return saved;
+}
+
 } // namespace
 
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
@@ -171,6 +190,11 @@ bool prefs_load(NodePrefs& p) {
     p.advert_interval_h = nvs.getUShort("adv_dur", 0);
     p.advert_type = nvs.getUChar("adv_type", 1);
     p.theme_id = nvs.getUChar("theme", 0);
+
+    // ── Phase 4 i18n additive preference (owned by i18n wave) ────────────
+    p.language = nvs.getUChar("lang", 0);
+    if (p.language >= I18N_LANGUAGE_COUNT) p.language = 0;
+
     p.path_hash_mode = detail::normalizePathHashMode(
         nvs.getUChar("phash_mode", 0));
     p.multi_acks = nvs.getUChar("multi_ack", 0);
@@ -247,12 +271,17 @@ bool prefs_load(NodePrefs& p) {
 }
 
 bool prefs_save(const NodePrefs& p) {
+    NodePrefs candidate = p;
+    // ── Phase 4 i18n additive preference (owned by i18n wave) ────────────
+    if (candidate.language >= I18N_LANGUAGE_COUNT) candidate.language = 0;
+
 #if defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
     constexpr detail::BlePrefsWriteMode ble_mode = detail::BlePrefsWriteMode::Write;
 #else
     constexpr detail::BlePrefsWriteMode ble_mode = detail::BlePrefsWriteMode::Preserve;
 #endif
-    return writePrefsToNvs(p, ble_mode, false);
+    if (!writePrefsToNvs(candidate, ble_mode, false)) return false;
+    return persistLanguagePreference(candidate.language);
 }
 
 bool prefs_exists() {
@@ -315,6 +344,8 @@ const NodePrefs& prefs_get() {
 bool prefs_set(const NodePrefs& p) {
     NodePrefs candidate = p;
     detail::normalizeAndValidate(candidate);
+    // ── Phase 4 i18n additive preference (owned by i18n wave) ────────────
+    if (candidate.language >= I18N_LANGUAGE_COUNT) candidate.language = 0;
     if (!prefs_save(candidate)) return false;
     g_prefs = candidate;
     return true;

@@ -46,6 +46,12 @@ struct NodePrefs {
     uint8_t  autoadd_config;         // bitmask: bit1=chat, bit2=repeater, bit3=room, bit4=sensor
     uint8_t  autoadd_max_hops;       // 0=no limit, max flood hops for auto-add
     uint8_t  theme_id;                // 0=Default, 1-5 preset themes
+
+    // ── Phase 4 i18n additive preference (owned by i18n wave) ────────────
+    // 0=English, 1=German, 2=French, 3=Spanish. Keep this field additive so
+    // sibling preference work can merge without changing existing semantics.
+    uint8_t  language;
+
     uint8_t  path_hash_mode;          // 0=1-byte, 1=2-byte, 2=3-byte path hash for originated adverts/messages
     uint8_t  multi_acks;              // extra redundant ACK transmissions for lossy links
     bool     buzzer_quiet;            // mute message-arrival buzzer
@@ -100,6 +106,10 @@ struct NodePrefs {
         autoadd_config = 0x1E;        // auto-add: chat|repeater|room|sensor (bits 1-4), no overwrite (bit 0)
         autoadd_max_hops = 0;         // 0 = no limit
         theme_id = 0;                 // default theme
+
+        // ── Phase 4 i18n additive preference (owned by i18n wave) ────────
+        language = 0;                 // English by default
+
         path_hash_mode = 0;           // default: 1-byte path hash (backward compatible with pre-1.14 repeaters)
         multi_acks = 0;               // default: send minimum ACKs
         buzzer_quiet = false;         // default: buzzer enabled
