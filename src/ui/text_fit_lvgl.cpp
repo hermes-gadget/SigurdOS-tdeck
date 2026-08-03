@@ -176,7 +176,14 @@ int measure_label(const char* text, const void* font, void* context)
 
 void on_label_draw(lv_event_t* event)
 {
-    text_fit_apply(static_cast<lv_obj_t*>(lv_event_get_target(event)));
+    // Fitting during a draw event is forbidden: a font change invalidates the
+    // display while rendering is in progress, which LVGL asserts on
+    // (lv_refr.c: "Invalidate area is not allowed during rendering").
+    // Defer the re-fit to the next timer tick instead.
+    lv_obj_t* label = static_cast<lv_obj_t*>(lv_event_get_target(event));
+    lv_async_call([](void* user_data) {
+        text_fit_apply(static_cast<lv_obj_t*>(user_data));
+    }, label);
 }
 
 } // namespace

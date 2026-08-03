@@ -318,6 +318,11 @@ static lv_obj_t* create_icon_tile(lv_obj_t* parent, const HomeRoute& route,
     lv_label_set_text(label, sigurdos::i18n::tr(ICON_LABEL_IDS[idx]));
     lv_obj_set_style_text_color(label, lv_color_hex(TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(label, emoji_wrapped_montserrat_10, 0);
+    // Give the fitter the full tile width instead of the 64px padded inner
+    // area, so long translations (e.g. DE "EINSTELLUNGEN") fit without
+    // clipping; keep the text centered inside the wider label box.
+    lv_obj_set_width(label, tile_w[idx] - 2);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 12);
 
     if (route.badge) {
