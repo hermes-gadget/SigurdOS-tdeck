@@ -131,7 +131,14 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 - **Exit: ✅ B1 complete 2026-08-04 (commit pending final suite).**
 
 ### B2 — Italian (IT) + Portuguese (PT)
-- [ ] Same procedure as B1 for both locales (toward Wadamesh's 12-locale parity).
+- [x] `Language::Italian` (5) + `Language::Portuguese` (6), complete 52-string
+      tables each; picker/names auto-extend; i18n drop-in tests + text-fit
+      coverage (IMPOSTAZIONI/REPETIDORES worst-cases at the 8px floor).
+- [x] On-device: both locales selected via the keyboard path (tab/tb/enter —
+      the lower picker rows sit under the modal cancel zone, taps can't reach
+      them; documented in HARDWARE_TESTING.md). Home grid captures: **12/12
+      tiles zero clipping** for IT and PT; **both persist across reboot**.
+- **Exit: ✅ B2 complete 2026-08-04 (commit d10749ce).**
 
 ### B3 — SETUP-tile residuals
 - [ ] FR `Configurer la radio` / ES `CONFIGURACIÓN` / `Configura la radio` exceed
