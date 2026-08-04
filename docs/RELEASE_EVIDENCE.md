@@ -221,3 +221,28 @@ before promotion. Confirm those results in the release PR. The first-party
 warning gate parses only compiler warnings whose paths start with `src/`;
 third-party warnings do not spend this budget. When a warning is fixed, reduce
 `ci/first_party_warnings.json` in the same PR so the debt cannot return.
+
+## A4 — 12h soak evidence
+
+> ⚠️ **INCOMPLETE WINDOW** — Soak still running at report time (21:01 UTC). Last sample 20:50 UTC. Target window end 21:49 UTC not yet reached. Re-run this check after 21:50 UTC for final PASS/FAIL verdict.
+
+| Field | Value |
+|-------|-------|
+| Window start | 2026-08-04 09:49 UTC |
+| Window end (target) | 2026-08-04 21:49 UTC |
+| First sample | 2026-08-04 09:55:18 UTC |
+| Last sample | 2026-08-04 20:50:36 UTC |
+| Coverage | 11.03 h of 12 h (91.9%) |
+| Total samples | 42 |
+| Failed samples (ok=False) | 0 |
+| Crash markers (Guru Meditation, panic, assert, Backtrace, rst:0x, ESP-ROM) | **None** |
+| Reboot markers ([boot] +, ESP-ROM:) | **None** |
+| Dead streak (state.json) | 0 |
+| Battery (21 reports) | min 100%, avg 100% |
+| Stat bytes (stable, sample 7+): min / avg / max / range | 2933 / 3006 / 3145 / 212 |
+| Sample cadence (stable) | avg 16.0 min |
+| Device alive at report time | ✅ soak-watch.py: exit 0 (silent/healthy) |
+
+**Anomalies:** None. All 42 samples returned `ok=True`. No crashes, no reboots, no dead samples. Battery consistently 100% when reported. Stat bytes stable (range 212 B) from sample 7 onward — initial low values (samples 1–5) are normal boot/init warmup. Heap/PSRAM breakdown not available in soak-watch format (stats field is a count, not memory detail).
+
+**WARNING:** Window is 11.03 h / 12 h. Last sample (20:50) is 11 min before report time — next expected ~21:06 UTC. Three more samples expected (~21:06, ~21:22, ~21:38) before window closes at 21:49. **Not a PASS yet — partial evidence only.**
