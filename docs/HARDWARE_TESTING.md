@@ -13,10 +13,18 @@ radio, BLE, or power behavior works on a T-Deck.
 
 ### Non-negotiable rules
 
-1. Flash `.pio/build/<env>/firmware-merged.bin` at `0x0`. Never flash
-   `firmware.bin` at `0x0`; it is app-only and causes `Invalid image block`.
+1. Fresh/blank devices: flash `.pio/build/<env>/firmware-merged.bin` at `0x0`.
+   **Upgrading or re-flashing a device with settings: never use the merged
+   image at `0x0`** — it contains 0xFF padding over the NVS span (0x9000–0xE000)
+   and erases all settings every flash (issue #1492, fixed in procedure
+   2026-08-04). Use the component flash instead (NVS untouched):
+   `write-flash 0x0 bootloader.bin 0x8000 partitions.bin 0x10000 firmware.bin`.
+   Never flash app-only `firmware.bin` at `0x0`; it causes `Invalid image block`.
 2. Use one persistent serial connection for a test sequence. Opening and
    closing the port per command can reset the ESP32-S3 and invalidates soak data.
+   (A `socat TCP-LISTEN` bridge is the persistent connection; restart it after
+   every esptool run — the USB CDC re-enumeration leaves socat with a stale fd
+   and commands silently go nowhere.)
 3. Never call `setDTR()`, set `dsrdtr`, or manipulate DTR in a monitor. Default
    pySerial behavior plus one boot wait is the supported pattern.
 4. Remote-test builds use lowercase commands such as `help`, `nav`, and

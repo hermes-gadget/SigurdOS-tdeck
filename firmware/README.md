@@ -24,7 +24,29 @@ Pre-built firmware for the LilyGo T-Deck (ESP32-S3, 16 MB flash).
 | **Update firmware only** (keep settings + bootloader) | `firmware.bin` from the same tagged release | 0x10000 |
 | **Web flasher** (e.g. flasher.sigurdos.dev) | `sigurdos-tdeck-full.bin` from `webflasher/` | auto |
 
-**Use `firmware-merged.bin` for ESP32 flash tools (esptool, ESP Flash Download Tool, etc.) — it contains everything needed to boot in a single image.**
+> **⚠️ NVS wipe warning (issue #1492, fixed in procedure 2026-08-04):**
+> `firmware-merged.bin` contains **erased-flash padding (0xFF) over the NVS + nvs_keys
+> partition span** (0x9000–0xE000 in `partitions_sigurdos_16MB.csv`). Flashing it at
+> `0x0` therefore **physically erases NVS** — all settings (language, node name,
+> identity, saved WiFi credentials) are lost on every merged-image flash. It is the
+> **fresh-install image only**; it must never be used to update an existing device.
+>
+> **Upgrade a running device with one of these instead:**
+> - **OTA** (Settings → OTA / GitHub OTA) — preferred; app-only, NVS untouched.
+> - **Component flash** (bootloader + partition table + app; NVS untouched):
+>   ```bash
+>   esptool.py --chip esp32s3 -p /dev/ttyACM0 --baud 460800 \
+>     write-flash --flash-mode keep --flash-freq keep --flash-size keep \
+>     0x0 bootloader.bin 0x8000 partitions.bin 0x10000 firmware.bin
+>   ```
+>   (Partitions at `0x8000` are safe to rewrite — NVS lives at `0x9000` and is not
+>   covered. Verify your ptable is unchanged before flashing it.)
+>
+> On-device evidence (T-Deck `44:1b:f6:91:4f:0c`, 2026-08-04): German language setting
+> survived a clean reboot and a component-style reflash, and was wiped by a
+> merged-image flash — both directions reproduced under test.
+
+**Use `firmware-merged.bin` only for fresh installs / factory flashing** — it contains everything needed to boot in a single image, but it erases NVS (see warning above). For updates use `firmware.bin` at 0x10000, the component command above, or OTA.
 
 ## How the merged binary is built — the `merge_bin` process
 

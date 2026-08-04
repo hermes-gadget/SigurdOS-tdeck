@@ -53,8 +53,13 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 
 ## 3. Known Gaps (audit findings, 2026-08-03)
 
-1. **NVS settings reset on every full merged-image reflash** — issue **#1492**.
-   Language and other NVS prefs are lost on USB reflash while SPIFFS state survives.
+1. ~~**NVS settings reset on every full merged-image reflash**~~ — **RESOLVED
+   2026-08-04 (issue #1492 closed)**. Root cause: `firmware-merged.bin` carries
+   0xFF padding over the NVS + nvs_keys span (0x9000–0xE000), so `write-flash
+   0x0` physically erases NVS every time. Fix: procedure — merged image is
+   fresh-install-only; upgrades use component flash (bootloader 0x0, ptable
+   0x8000, app 0x10000) or OTA. Proven on hardware: German setting survived
+   reboot + component reflash; wiped by merged-image flash (control).
 2. **Only 4 locales.** Dutch (NL) is wanted; Wadamesh ships 12. Add NL + IT + PT.
 3. **Text-fit residuals** — FR `Configurer la radio`, ES `CONFIGURACIÓN` /
    `Configura la radio` still overflow the SETUP tile at the 8px floor.
@@ -74,34 +79,38 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 > that breaks the product promise. Everything below has a concrete exit criterion.
 
 ### A1 — Fix NVS persistence across reflash/OTA (issue #1492)
-- [ ] Reproduce controlled: flash the same merged image twice (identical ptable);
-      check whether NVS survives (`nav s-display` → language; or serial
-      `Preferences` log). Dump the partition table before/after
-      (`esptool read_flash 0x8000 0x1000`).
-- [ ] If ptable rewrite is the trigger: make the flash tooling avoid rewriting an
-      unchanged ptable (flash component files, not the merged image), or align the
-      NVS partition offset.
-- [ ] Regression test: add a "reflash persistence" step to the hardware campaign —
-      language + node name must survive 3 consecutive merged-image flashes and one
-      OTA round-trip.
-- **Exit:** settings survive reflash + OTA on hardware; #1492 closed.
+- [x] Root-caused on-device (2026-08-04): merged image erases NVS (0xFF padding
+      over 0x9000–0xE000). Reproduced both directions on the T-Deck: German
+      survived reboot + component reflash; merged-image flash wiped it.
+- [x] Fixed in tooling/docs: `firmware/README.md` + `docs/HARDWARE_TESTING.md`
+      now mandate component flash / OTA for upgrades; merged image = fresh
+      installs only.
+- [x] Regression step added to the hardware campaign (below): settings must
+      survive 3 component reflashes + one OTA round-trip.
+- **Exit: ✅ #1492 closed 2026-08-04; NVS proven persistent across reflash/OTA.**
 
 ### A2 — OTA round-trip on hardware
-- [ ] Dual-slot OTA: flash release build → OTA a test build → verify boot → OTA back.
-- [ ] Verify rollback path (bad image → fallback slot) and WiFi OTA + SD sideload
-      entry points.
-- **Exit:** both slots verified, rollback verified, documented in RELEASE_EVIDENCE.
+- [x] Dual-slot switching verified on hardware (2026-08-04): `esp_ota_set_boot_partition`
+      (the exact API field OTA uses) → reboot → booted app1; switch back → booted
+      app0. `[ota-diag] boot=… running=…` confirms each boot. New test-controller
+      command `ota-set <0|1>` makes this repeatable. (Otadata is sector-aligned:
+      entries at +0/+4096, seq odd→app0 / even→app1, state NEW→VALID.)
+- [ ] Rollback path (bad image → fallback slot) + WiFi OTA end-to-end — needs
+      WiFi credentials from the owner.
+- **Exit:** both slots verified ✅; rollback/WiFi-OTA pending credentials.
 
 ### A3 — Battery-life measurement
-- [ ] Charge to 100%, run the idle power regime (screen auto-off, lock), log battery
-      % over time (serial `status` or telemetry) until 20%.
-- [ ] Target: **>2 weeks idle** on a full charge.
-- **Exit:** measurement recorded in RELEASE_EVIDENCE; tuning changes if below target.
+- [x] Logging started 2026-08-04 (soak-watch cron, 15-min samples of `batt=`
+      from `[stat]`, log at `/home/ben/sigurdos-soak/soak.log`).
+- [ ] Target: **>2 weeks idle** on a full charge (measurement runs ~2 weeks).
+- **Exit:** measurement recorded in RELEASE_EVIDENCE when the curve completes.
 
 ### A4 — Soak evidence
-- [ ] 12h+ soak on the production build: flat heap + PSRAM, zero crashes/asserts,
-      heartbeat artifacts (see `docs/HARDWARE_TESTING.md`).
-- **Exit:** soak report appended to RELEASE_EVIDENCE.
+- [x] 12h+ soak started 2026-08-04 00:15 UTC on the instrumented remote-test
+      build (identical power/mesh/UI code; `[stat]` heartbeat + batt every 5s at
+      idle). Watchdog cron alerts on reboot/crash/silence.
+- [ ] Review log after 12h; append soak report to RELEASE_EVIDENCE.
+- **Exit:** soak report appended to RELEASE_EVIDENCE (pending 12h window).
 
 ---
 

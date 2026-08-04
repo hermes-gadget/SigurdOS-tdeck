@@ -20,6 +20,7 @@
 //   simulateack <to> <timestamp> Simulate an ACK (no-radio profile only)
 //   screen                        Show current screen name
 //   status                        Show device info (heap, psram, batt)
+//   ota-set <0|1>                 Select boot slot (dual-OTA verification)
 //   stresschat [cycles]           Stress Chat/Home lifecycle (default 50)
 
 #include "test_controller.h"
@@ -52,6 +53,7 @@
 #include <others/snapshot/lv_snapshot.h>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
+#include <esp_ota_ops.h>
 
 // ── Forward declarations ─────────────────────────────────
 static void dump_focused_widget();
@@ -693,6 +695,46 @@ static void cmd_inject(const char* args) {
 static void cmd_screen() {
     Serial.printf("[test] current screen: %s\n",
                   screen_name(sigurdos::ui::current_screen()));
+}
+
+// ── OTA slot switching (hardware dual-slot verification) ──
+// ota-set <0|1>  Select boot slot via esp_ota_set_boot_partition (the same
+//                path field OTA uses after a download), then report the
+//                partition view + raw otadata. Reboot required to take effect.
+static void cmd_ota_set(const char* arg) {
+    if (!arg || (strcmp(arg, "0") != 0 && strcmp(arg, "1") != 0)) {
+        Serial.println("[ota] usage: ota-set <0|1>");
+        return;
+    }
+    const int slot = atoi(arg);
+    const esp_partition_t* target = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP,
+        static_cast<esp_partition_subtype_t>(ESP_PARTITION_SUBTYPE_APP_OTA_MIN + slot),
+        nullptr);
+    if (!target) {
+        Serial.printf("[ota] slot %d app partition not found\n", slot);
+        return;
+    }
+    const esp_err_t err = esp_ota_set_boot_partition(target);
+    Serial.printf("[ota] set_boot(slot=%d label=%s addr=0x%lx) -> %s\n",
+                  slot, target->label, (unsigned long)target->address,
+                  esp_err_to_name(err));
+    const esp_partition_t* boot = esp_ota_get_boot_partition();
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
+    Serial.printf("[ota] view: boot=%s running=%s next=%s\n",
+                  boot ? boot->label : "?", running ? running->label : "?",
+                  next ? next->label : "?");
+    const esp_partition_t* ota =
+        esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr);
+    if (ota) {
+        uint8_t raw[64];
+        if (esp_partition_read(ota, 0, raw, sizeof(raw)) == ESP_OK) {
+            Serial.printf("[ota] otadata[0:64]=");
+            for (size_t i = 0; i < sizeof(raw); ++i) Serial.printf("%02x", raw[i]);
+            Serial.println();
+        }
+    }
 }
 
 static void cmd_status() {
@@ -2241,6 +2283,8 @@ static bool dispatch(const char* line) {
         cmd_screen();
     } else if (strcmp(cmd, "status") == 0) {
         cmd_status();
+    } else if (strcmp(cmd, "ota-set") == 0 || strcmp(cmd, "otaset") == 0) {
+        cmd_ota_set(arg);
     } else if (strcmp(cmd, "stresschat") == 0) {
         cmd_stresschat(arg);
     } else if (strcmp(cmd, "keydiag") == 0 || strcmp(cmd, "kbddiag") == 0) {

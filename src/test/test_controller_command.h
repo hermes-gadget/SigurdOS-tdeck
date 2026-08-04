@@ -27,7 +27,7 @@ inline bool sigurdos_test_controller_command_known_for_profile(const char* comma
       "picker", "press", "inject", "msg", "sendchannel", "sendmessage", "senddm",
       "opendm", "addchannel", "addchan", "removechannel", "rmchannel", "removechan",
       "rmchan", "addrepeater", "addroomserver", "login", "setlogin", "setloginguest",
-      "screen", "status", "stresschat", "keydiag", "kbddiag", "inputdiag",
+      "screen", "status", "ota-set", "otaset", "stresschat", "keydiag", "kbddiag", "inputdiag",
       "touchdiag", "trackballdiag", "tbdiag", "gpsdiag", "contactstats", "ble",
       "debug", "emoji", "emoji-ac", "capture", "acmd", "loginstat", "tree",
       "widgets", "telemetry", "query", "crash", "drift", "scrolllist", "tap",

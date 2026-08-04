@@ -2,6 +2,7 @@
 // Copyright (C) 2025 Ben
 
 #include <Arduino.h>
+#include <esp_ota_ops.h>
 #include <cstring>
 #include "hal/storage.h"
 #include "hal/tdeck_board.h"
@@ -392,6 +393,16 @@ void setup()
     sigurdos::mesh::init(spiffs_ok);
 #endif
     sigurdos_test_controller_init();
+    // OTA partition view — dual-slot verification aid (remote-test builds only)
+    {
+        const esp_partition_t* boot = esp_ota_get_boot_partition();
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
+        Serial.printf("[ota-diag] boot=%s running=%s next=%s\n",
+                      boot ? boot->label : "?",
+                      running ? running->label : "?",
+                      next ? next->label : "?");
+    }
 #else
     if (!sigurdos::mesh::init(spiffs_ok)) {
         Serial.println("[boot] WARNING: Radio init failed");
