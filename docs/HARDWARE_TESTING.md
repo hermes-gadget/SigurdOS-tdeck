@@ -31,7 +31,10 @@ radio, BLE, or power behavior works on a T-Deck.
    `capture`. The optional display handler uses uppercase `NAV`, `SCREENSHOT`,
    and `SEND`.
 5. Read screenshots with repeated bulk `read()` calls until `[capture] END`.
-   Do not use `readline()` for the framebuffer stream.
+   Do not use `readline()` for the framebuffer stream. If the client drains
+   slowly, the device's USB TX blocks and the 10s loopTask watchdog can reset
+   the device mid-capture (observed 2026-08-04 after a 180s capture) — keep
+   capture windows ≤ ~90s and drain continuously.
 6. Production builds normally emit no periodic serial output. Silence after a
    clean boot is not proof of a hang.
 7. Do not transmit until the frequency, power, antenna, and legal authority for
