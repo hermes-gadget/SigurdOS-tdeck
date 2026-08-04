@@ -106,9 +106,12 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 - **Exit:** measurement recorded in RELEASE_EVIDENCE when the curve completes.
 
 ### A4 — Soak evidence
-- [x] 12h+ soak started 2026-08-04 00:15 UTC on the instrumented remote-test
-      build (identical power/mesh/UI code; `[stat]` heartbeat + batt every 5s at
-      idle). Watchdog cron alerts on reboot/crash/silence.
+- [x] 12h+ soak windows on the instrumented remote-test build (identical
+      power/mesh/UI code; `[stat]` heartbeat + batt every 5s at idle). First
+      window started 2026-08-04 00:15 UTC (interrupted by B2/B3 device work);
+      **clean 12h window restarted 2026-08-04 09:49 UTC** after B3 landed —
+      log/state reset, soak-watch cron (15-min watchdog, silent) + 12h review
+      one-shot at 22:00 UTC (appends report to RELEASE_EVIDENCE).
 - [ ] Review log after 12h; append soak report to RELEASE_EVIDENCE.
 - **Exit:** soak report appended to RELEASE_EVIDENCE (pending 12h window).
 
