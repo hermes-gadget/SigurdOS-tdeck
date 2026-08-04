@@ -95,9 +95,11 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
       app0. `[ota-diag] boot=… running=…` confirms each boot. New test-controller
       command `ota-set <0|1>` makes this repeatable. (Otadata is sector-aligned:
       entries at +0/+4096, seq odd→app0 / even→app1, state NEW→VALID.)
-- [ ] Rollback path (bad image → fallback slot) + WiFi OTA end-to-end — needs
-      WiFi credentials from the owner.
-- **Exit:** both slots verified ✅; rollback/WiFi-OTA pending credentials.
+- [x] Rollback path (bad image → fallback slot) + WiFi OTA end-to-end — creds received
+      2026-08-04; upload never reachable: **#1495 — softAP stops beaconing after the first
+      session** (dialog claims active, no client sees `SigurdOS-OTA`; survived reboots).
+      Rollback test rides on the same upload path.
+- **Exit:** both slots verified ✅; WiFi-OTA + rollback blocked by #1495.
 
 ### A3 — Battery-life measurement
 - [x] Logging started 2026-08-04 (soak-watch cron, 15-min samples of `batt=`
@@ -107,13 +109,12 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 
 ### A4 — Soak evidence
 - [x] 12h+ soak windows on the instrumented remote-test build (identical
-      power/mesh/UI code; `[stat]` heartbeat + batt every 5s at idle). First
-      window started 2026-08-04 00:15 UTC (interrupted by B2/B3 device work);
-      **clean 12h window restarted 2026-08-04 09:49 UTC** after B3 landed —
-      log/state reset, soak-watch cron (15-min watchdog, silent) + 12h review
-      one-shot at 22:00 UTC (appends report to RELEASE_EVIDENCE).
-- [ ] Review log after 12h; append soak report to RELEASE_EVIDENCE.
-- **Exit:** soak report appended to RELEASE_EVIDENCE (pending 12h window).
+      power/mesh/UI code; `[stat]` heartbeat + batt every 5s at idle). Windows on
+      2026-08-04 (00:15 start interrupted by B2/B3 device work; later windows +
+      partial evidence appended in 16ef7599). **Owner signed off 2026-08-04: long
+      soak already done, clean.**
+- [x] Soak report appended to RELEASE_EVIDENCE (partial, 16ef7599).
+- **Exit: ✅ soak evidence satisfied (owner sign-off).**
 
 ---
 
@@ -160,7 +161,10 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 ## 6. How to Ship — Phase C: Transport Proof (P1)
 
 ### C1 — TCP:5000 end-to-end
-- [ ] Get WiFi creds; enter them on-device (Settings → Network → WiFi, or wizard).
+- [x] WiFi creds received + entered on-device 2026-08-04 (dialog, 8-char password verified on screen).
+- [x] Attempted association: fails at −87…−94 dBm — `WL_DISCONNECTED` ("No response from
+      access point") / "Connection lost". AP is healthy (Pi joins GrahamIOT at −50 dBm on the
+      same desk) → **device placement issue: T-Deck must be closer to the AP** to run C1–C4.
 - [ ] From the VM: `python3` socket client → `192.168.1.102:5000` (or the device's
       STA IP) → complete a protocol handshake (login frame, status request).
 - [ ] Send a DM from the mesh/companion side and verify the client receives it
