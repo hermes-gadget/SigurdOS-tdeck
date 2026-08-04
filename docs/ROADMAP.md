@@ -141,11 +141,16 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 - **Exit: ✅ B2 complete 2026-08-04 (commit d10749ce).**
 
 ### B3 — SETUP-tile residuals
-- [ ] FR `Configurer la radio` / ES `CONFIGURACIÓN` / `Configura la radio` exceed
-      the 8px floor in the 74px tile. Fix by shortening the translations (e.g.
-      `Configurer la radio` → `Configurer radio`) or adding an ellipsis policy in
-      the fitter (`text_fit_lvgl.cpp`) for the last-resort case.
-- **Exit:** zero clipped labels across EN/DE/FR/ES/NL/IT/PT on hardware.
+- [x] FR `Configurer la radio` / ES `CONFIGURACIÓN` / `Configura la radio` exceeded
+      the 8px floor; shortened translations: FR `Régler radio`, ES `CONFIGURAR` +
+      `Configura radio`, IT `Configura radio`, PT `Ajustar rádio`. Text-fit test
+      extended: HomeSetupWarning measured at the 76px floor for all 7 languages.
+- [x] On-device (remote-test build, 2026-08-04): FR + ES + IT + PT home grid
+      captures via the language picker — **12/12 tiles zero clipping each**;
+      ES `CONFIGURAR` and PT `CONFIGURAR` complete and centered (vision + 3×
+      pixel zoom verified); FR `CONFIGURATION` fits at the floor with margins.
+- **Exit: ✅ B3 complete 2026-08-04 — zero clipped labels across
+      EN/DE/FR/ES/NL/IT/PT on hardware (NL from B1, IT/PT from B2, FR/ES here).**
 
 ---
 

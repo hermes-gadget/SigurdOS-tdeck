@@ -55,19 +55,19 @@ TEST_F(I18nTest, EnglishIsTheDefaultAndTablesLookup)
     EXPECT_STREQ("CHATS", TR(HomeChats));
     EXPECT_STREQ("Funk einrichten",
                  sigurdos::i18n::tr_for(Language::German, StringId::HomeSetupWarning));
-    EXPECT_STREQ("Configurer la radio",
+    EXPECT_STREQ("Régler radio",
                  sigurdos::i18n::tr_for(Language::French, StringId::HomeSetupWarning));
-    EXPECT_STREQ("Configura la radio",
+    EXPECT_STREQ("Configura radio",
                  sigurdos::i18n::tr_for(Language::Spanish, StringId::HomeSetupWarning));
     EXPECT_STREQ("Radio instellen",
                  sigurdos::i18n::tr_for(Language::Dutch, StringId::HomeSetupWarning));
     EXPECT_STREQ("INSTELLINGEN",
                  sigurdos::i18n::tr_for(Language::Dutch, StringId::HomeSettings));
-    EXPECT_STREQ("Configura la radio",
+    EXPECT_STREQ("Configura radio",
                  sigurdos::i18n::tr_for(Language::Italian, StringId::HomeSetupWarning));
     EXPECT_STREQ("IMPOSTAZIONI",
                  sigurdos::i18n::tr_for(Language::Italian, StringId::HomeSettings));
-    EXPECT_STREQ("Configurar o rádio",
+    EXPECT_STREQ("Ajustar rádio",
                  sigurdos::i18n::tr_for(Language::Portuguese, StringId::HomeSetupWarning));
     EXPECT_STREQ("AJUSTES",
                  sigurdos::i18n::tr_for(Language::Portuguese, StringId::HomeSettings));

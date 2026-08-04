@@ -124,12 +124,14 @@ TEST(TextFitCore, RepresentativeTranslationsFitTypicalBoxes)
         {StringId::HomeAdvertise, 76},
         {StringId::HomeSettings, 76},
         {StringId::HomeSetup, 76},
+        {StringId::HomeSetupWarning, 76},
         {StringId::ChatRemovalNotSaved, 294},
         {StringId::ChatAddChannelRibbon, 120},
     };
 
     const Language languages[] = {
         Language::German, Language::French, Language::Spanish, Language::Dutch,
+        Language::Italian, Language::Portuguese,
     };
     for (const auto language : languages) {
         for (const auto& test_case : cases) {

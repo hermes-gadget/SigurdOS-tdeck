@@ -159,7 +159,7 @@ constexpr const char* kFrench[string_count] = {
     "RÉGLAGES",
     "CONFIGURATION",
     "SIGNAL",
-    "Configurer la radio",
+    "Régler radio",
 
     "Langue",
 
@@ -219,9 +219,9 @@ constexpr const char* kSpanish[string_count] = {
     "TERMINAL",
     "PAQUETES",
     "AJUSTES",
-    "CONFIGURACIÓN",
+    "CONFIGURAR",
     "SEÑAL",
-    "Configura la radio",
+    "Configura radio",
 
     "Idioma",
 
@@ -347,7 +347,7 @@ constexpr const char* kItalian[string_count] = {
     "IMPOSTAZIONI",
     "CONFIGURA",
     "SEGNALE",
-    "Configura la radio",
+    "Configura radio",
 
     "Lingua",
 
@@ -410,7 +410,7 @@ constexpr const char* kPortuguese[string_count] = {
     "AJUSTES",
     "CONFIGURAR",
     "SINAL",
-    "Configurar o rádio",
+    "Ajustar rádio",
 
     "Idioma",
 
