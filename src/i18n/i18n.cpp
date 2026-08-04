@@ -16,7 +16,7 @@ namespace {
 constexpr const char* kMissingTranslation = "[missing translation]";
 
 constexpr const char* kLanguageNames[language_count] = {
-    "English", "Deutsch", "Français", "Español",
+    "English", "Deutsch", "Français", "Español", "Nederlands",
 };
 
 // Keep the English table complete. Other tables may contain nullptr for a
@@ -269,6 +269,69 @@ constexpr const char* kSpanish[string_count] = {
     nullptr,
 };
 
+constexpr const char* kDutch[string_count] = {
+    // Home tiles (uppercase, 8px floor via the text-fit ladder)
+    "CHATS",
+    "DMs",
+    "KAMERS",
+    "CONTACTEN",
+    "REPEATERS",
+    "AANKONDIGEN",
+    "KAART",
+    "TERMINAL",
+    "PAKKETTEN",
+    "INSTELLINGEN",
+    "INSTALLATIE",
+    "SIGNAAL",
+    "Radio instellen",
+
+    "Taal",
+
+    "OPENBAAR",
+    "Nog geen berichten",
+    "Kanaal verwijderen?",
+    "Kanaal #%s verwijderen?",
+    "Annuleren",
+    "Verwijderen",
+    "Kanaalverwijdering is niet opgeslagen",
+    "Chat",
+    "#-kanaal toevoegen",
+    "Berichten zoeken...",
+    "Oudere berichten laden",
+    "Terug naar nieuwste",
+    "Geen overeenkomende berichten",
+    "Emoji",
+    "Sluiten",
+    " [MISLUKT]",
+    "Bericht",
+    "Verzenden",
+    "Kanaal toevoegen",
+    "Naam:",
+    "bijv. #algemeen",
+    "PSK (optioneel):",
+    "base64-sleutel (leeg = openbaar)",
+    "Toevoegen",
+    "Voer kanaalnaam in",
+    "Ongeldig, vol, of opslaan mislukt",
+    "Alles als gelezen gemarkeerd",
+    "Verlaten mislukt",
+    "Genoemd: %s (willekeurige sleutel)",
+    "Genoemd: geen (openbaar)",
+    "Deze chat: %s",
+    "Deze chat: geen",
+    "Ongeldig bereik",
+    "Bereik is niet opgeslagen",
+    "Wissen mislukt; bereik blijft actief",
+    "Genoemd routeringsbereik",
+    "lokale naam (willekeurige sleutel)",
+    "Instellen",
+    "Wissen",
+    "Kan DM niet openen: naam te lang",
+    "Kan DM niet openen: gesprekslijst vol",
+
+    nullptr,  // ReservedFallbackExample — falls back to English
+};
+
 const char* const* table_for(Language language)
 {
     switch (language) {
@@ -276,6 +339,7 @@ const char* const* table_for(Language language)
     case Language::German: return kGerman;
     case Language::French: return kFrench;
     case Language::Spanish: return kSpanish;
+    case Language::Dutch: return kDutch;
     default: return nullptr;
     }
 }

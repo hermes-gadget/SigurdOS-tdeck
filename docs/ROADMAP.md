@@ -117,11 +117,18 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 ## 5. How to Ship — Phase B: i18n Completion (P1)
 
 ### B1 — Dutch (NL), first
-- [ ] Add `Language::Dutch` to `src/i18n/i18n.h`; translate all strings in
-      `src/i18n/i18n.cpp` (fallback to English for gaps); extend the i18n tests.
-- [ ] On-device: flash `SigurdOS_TDeck_remote_test_radio`, `nav s-display` → pick
-      Dutch, `tree` + `capture` every screen; **no clipped text anywhere**
-      (pixel-check labels like the German sweep: max brightness ≈244, box ≥ text).
+- [x] `Language::Dutch` added (enum value 4); full 52-string table in
+      `src/i18n/i18n.cpp`; picker auto-extends (`language_count` loop); i18n +
+      text-fit tests extended; docs/I18N.md updated.
+- [x] **Latent bug found by on-device testing:** `prefs.cpp` clamped
+      `language >= I18N_LANGUAGE_COUNT` to 0 with the count **hardcoded to 4** —
+      Dutch (4) was silently reverted to English on save AND on boot. Fixed by
+      deriving the clamp from `i18n::Language::Count`; regression test
+      `EveryLanguageRoundTripsThroughTheNvsLoadPath` added (fails on old code).
+- [x] On-device: Dutch selected via the picker; home grid sweep capture —
+      **all 12 tiles fit, zero clipping** (incl. INSTELLINGEN + AANKONDIGEN at
+      the 8px floor); **Dutch persists across reboot** (NVS round-trip proven).
+- **Exit: ✅ B1 complete 2026-08-04 (commit pending final suite).**
 
 ### B2 — Italian (IT) + Portuguese (PT)
 - [ ] Same procedure as B1 for both locales (toward Wadamesh's 12-locale parity).

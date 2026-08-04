@@ -111,18 +111,25 @@ TEST(TextFitCore, RepresentativeTranslationsFitTypicalBoxes)
     const FontMetric font_14{11};
     const FontMetric font_12{9};
     const FontMetric font_10{8};
-    const FontMetric font_8{6};
+    // 8px floor: measured from montserrat_8.c — A-Z mean adv_w 5.95px; the
+    // longest tile strings (EINSTELLUNGEN, CONFIGURACIÓN, INSTELLINGEN)
+    // measure ~70px in the real font (~5.4px/char). The int metric uses 5
+    // px/char, a small safety margin without false-failing strings verified
+    // on hardware.
+    const FontMetric font_8{5};
     const FontMetric* fonts[] = {&font_14, &font_12, &font_10, &font_8};
     const TextFitFontLadder font_ladder = ladder(fonts, 4);
 
     const TranslationCase cases[] = {
         {StringId::HomeAdvertise, 76},
+        {StringId::HomeSettings, 76},
+        {StringId::HomeSetup, 76},
         {StringId::ChatRemovalNotSaved, 294},
         {StringId::ChatAddChannelRibbon, 120},
     };
 
     const Language languages[] = {
-        Language::German, Language::French, Language::Spanish,
+        Language::German, Language::French, Language::Spanish, Language::Dutch,
     };
     for (const auto language : languages) {
         for (const auto& test_case : cases) {

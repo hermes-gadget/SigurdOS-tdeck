@@ -7,6 +7,7 @@
 #include "prefs_write_policy.h"
 #include "mesh/airtime_policy.h"
 #include "diagnostics/log.h"
+#include "../i18n/i18n.h"
 #include <Preferences.h>
 #include <nvs.h>
 #include <cmath>
@@ -18,7 +19,11 @@ static constexpr const char* NVS_NS = hal::factory_reset::PREFS_NAMESPACE;
 static NodePrefs g_prefs;
 
 // ── Phase 4 i18n additive preference (owned by i18n wave) ────────────────
-static constexpr uint8_t I18N_LANGUAGE_COUNT = 4;
+// Derived from the i18n enum so adding a language can never desync this clamp
+// (this was hardcoded to 4; adding Dutch silently reverted it to English on
+// boot because language=4 >= 4 was clamped to 0).
+static constexpr uint8_t I18N_LANGUAGE_COUNT =
+    static_cast<uint8_t>(i18n::Language::Count);
 
 namespace {
 

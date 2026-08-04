@@ -59,6 +59,10 @@ TEST_F(I18nTest, EnglishIsTheDefaultAndTablesLookup)
                  sigurdos::i18n::tr_for(Language::French, StringId::HomeSetupWarning));
     EXPECT_STREQ("Configura la radio",
                  sigurdos::i18n::tr_for(Language::Spanish, StringId::HomeSetupWarning));
+    EXPECT_STREQ("Radio instellen",
+                 sigurdos::i18n::tr_for(Language::Dutch, StringId::HomeSetupWarning));
+    EXPECT_STREQ("INSTELLINGEN",
+                 sigurdos::i18n::tr_for(Language::Dutch, StringId::HomeSettings));
 }
 
 TEST_F(I18nTest, MissingCurrentLanguageFallsBackToEnglish)
@@ -114,6 +118,28 @@ TEST_F(I18nTest, InvalidLanguageIsRejectedWithoutChangingCurrentChoice)
     const auto invalid = static_cast<Language>(0xFFu);
     EXPECT_FALSE(sigurdos::i18n::set_language(invalid));
     EXPECT_EQ(Language::English, sigurdos::i18n::current_language());
+}
+
+// Regression: every enum language must round-trip through the NVS load path
+// unclamped. prefs.cpp clamps language >= I18N_LANGUAGE_COUNT to 0; when that
+// count was hardcoded to 4, Dutch (4) silently reverted to English on boot.
+TEST_F(I18nTest, EveryLanguageRoundTripsThroughTheNvsLoadPath)
+{
+    for (size_t i = 0; i < static_cast<size_t>(Language::Count); ++i) {
+        const auto language = static_cast<Language>(i);
+        ASSERT_TRUE(sigurdos::i18n::set_language(language))
+            << "set_language failed for enum value " << i;
+        EXPECT_EQ(static_cast<uint8_t>(language),
+                  sigurdos::prefs_get().language)
+            << "in-memory pref mismatch for enum value " << i;
+
+        sigurdos::NodePrefs loaded;
+        loaded.set_defaults();
+        ASSERT_TRUE(sigurdos::prefs_load(loaded))
+            << "prefs_load failed after setting enum value " << i;
+        EXPECT_EQ(static_cast<uint8_t>(language), loaded.language)
+            << "load-path clamp regression for enum value " << i;
+    }
 }
 
 } // namespace
