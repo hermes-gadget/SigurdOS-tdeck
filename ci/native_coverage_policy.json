@@ -33,7 +33,8 @@
       "sources": [
         "src/fonts/emoji_font.c",
         "src/fonts/keyboard_layout_font.c",
-        "src/fonts/latin_ext_font.c"
+        "src/fonts/latin_ext_font.c",
+        "src/fonts/montserrat_8.c"
       ]
     },
     {
@@ -88,7 +89,10 @@
         "src/ui/screens/screen_wifi_networks.cpp",
         "src/ui/screens_common.cpp",
         "src/ui/ui.cpp",
-        "src/ui/wifi_status_icon.cpp"
+        "src/ui/wifi_status_icon.cpp",
+        "src/ui/screens/screen_lock.cpp",
+        "src/ui/screens/screen_transports.cpp",
+        "src/ui/text_fit_lvgl.cpp"
       ]
     },
     {
@@ -97,6 +101,15 @@
         "src/validation/esp32_component_compile.cpp",
         "src/validation/gps_validation.cpp",
         "src/validation/gps_validation_wifi.cpp"
+      ]
+    },
+    {
+      "reason": "Directly #included into dedicated native tests (test_i18n, test_power, test_sd_store, test_text_fit); exercised there instead of linked as its own translation unit.",
+      "sources": [
+        "src/i18n/i18n.cpp",
+        "src/mesh/sd_message_store.cpp",
+        "src/power/screen_sleep.cpp",
+        "src/ui/text_fit.cpp"
       ]
     }
   ]
