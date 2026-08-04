@@ -16,7 +16,8 @@ namespace {
 constexpr const char* kMissingTranslation = "[missing translation]";
 
 constexpr const char* kLanguageNames[language_count] = {
-    "English", "Deutsch", "Français", "Español", "Nederlands",
+    "English", "Deutsch", "Français", "Español", "Nederlands", "Italiano",
+    "Português",
 };
 
 // Keep the English table complete. Other tables may contain nullptr for a
@@ -332,6 +333,132 @@ constexpr const char* kDutch[string_count] = {
     nullptr,  // ReservedFallbackExample — falls back to English
 };
 
+constexpr const char* kItalian[string_count] = {
+    // Home tiles (uppercase, 8px floor via the text-fit ladder)
+    "CHAT",
+    "DM",
+    "STANZE",
+    "CONTATTI",
+    "RIPETITORI",
+    "ANNUNCIA",
+    "MAPPA",
+    "TERMINALE",
+    "PACCHETTI",
+    "IMPOSTAZIONI",
+    "CONFIGURA",
+    "SEGNALE",
+    "Configura la radio",
+
+    "Lingua",
+
+    "PUBBLICO",
+    "Ancora nessun messaggio",
+    "Eliminare il canale?",
+    "Eliminare il canale #%s?",
+    "Annulla",
+    "Elimina",
+    "La rimozione del canale non è stata salvata",
+    "Chat",
+    "Aggiungi canale #",
+    "Cerca nei messaggi...",
+    "Carica messaggi più vecchi",
+    "Torna ai più recenti",
+    "Nessun messaggio corrispondente",
+    "Emoji",
+    "Chiudi",
+    " [FALLITO]",
+    "Messaggio",
+    "Invia",
+    "Aggiungi canale",
+    "Nome:",
+    "es. #generale",
+    "PSK (facoltativo):",
+    "chiave base64 (vuoto = pubblico)",
+    "Aggiungi",
+    "Inserisci il nome del canale",
+    "Non valido, pieno o salvataggio non riuscito",
+    "Tutti segnati come letti",
+    "Uscita non riuscita",
+    "Nominato: %s (chiave casuale)",
+    "Nominato: nessuno (pubblico)",
+    "Questa chat: %s",
+    "Questa chat: nessuno",
+    "Ambito non valido",
+    "Ambito non salvato",
+    "Cancellazione fallita; ambito ancora attivo",
+    "Ambito di routing nominato",
+    "nome locale (chiave casuale)",
+    "Imposta",
+    "Cancella",
+    "Impossibile aprire DM: nome troppo lungo",
+    "Impossibile aprire DM: elenco chat pieno",
+
+    nullptr,  // ReservedFallbackExample — falls back to English
+};
+
+constexpr const char* kPortuguese[string_count] = {
+    // Home tiles (uppercase, 8px floor via the text-fit ladder)
+    "CHAT",
+    "DMs",
+    "SALAS",
+    "CONTATOS",
+    "REPETIDORES",
+    "ANUNCIAR",
+    "MAPA",
+    "TERMINAL",
+    "PACOTES",
+    "AJUSTES",
+    "CONFIGURAR",
+    "SINAL",
+    "Configurar o rádio",
+
+    "Idioma",
+
+    "PÚBLICO",
+    "Ainda sem mensagens",
+    "Excluir canal?",
+    "Excluir o canal #%s?",
+    "Cancelar",
+    "Excluir",
+    "A exclusão do canal não foi salva",
+    "Chat",
+    "Adicionar canal #",
+    "Pesquisar mensagens...",
+    "Carregar mensagens mais antigas",
+    "Voltar às mais recentes",
+    "Nenhuma mensagem correspondente",
+    "Emoji",
+    "Fechar",
+    " [FALHOU]",
+    "Mensagem",
+    "Enviar",
+    "Adicionar canal",
+    "Nome:",
+    "ex. #geral",
+    "PSK (opcional):",
+    "chave base64 (vazio = público)",
+    "Adicionar",
+    "Digite o nome do canal",
+    "Inválido, cheio ou falha ao salvar",
+    "Tudo marcado como lido",
+    "Falha ao sair",
+    "Nomeado: %s (chave aleatória)",
+    "Nomeado: nenhum (público)",
+    "Este chat: %s",
+    "Este chat: nenhum",
+    "Escopo inválido",
+    "Escopo não salvo",
+    "Falha ao limpar; escopo ainda ativo",
+    "Escopo de roteamento nomeado",
+    "nome local (chave aleatória)",
+    "Definir",
+    "Limpar",
+    "Não foi possível abrir DM: nome muito longo",
+    "Não foi possível abrir DM: lista de conversas cheia",
+
+    nullptr,  // ReservedFallbackExample — falls back to English
+};
+
 const char* const* table_for(Language language)
 {
     switch (language) {
@@ -340,6 +467,8 @@ const char* const* table_for(Language language)
     case Language::French: return kFrench;
     case Language::Spanish: return kSpanish;
     case Language::Dutch: return kDutch;
+    case Language::Italian: return kItalian;
+    case Language::Portuguese: return kPortuguese;
     default: return nullptr;
     }
 }

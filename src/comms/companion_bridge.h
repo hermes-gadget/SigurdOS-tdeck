@@ -541,13 +541,33 @@ private:
         // NOTE: do NOT reset with `*this = TransportSession{}` — the struct
         // carries ~12KB of buffers and the temporary blows the 8KB loopTask
         // stack (stack-canary panic observed on hardware 2026-08-03).
+        // Zero the buffers in place and assign the scalars explicitly:
+        // byte-identical to a full memset, but memset on the class type is
+        // -Wclass-memaccess (default member initializers make the type
+        // non-trivially default-constructible).
         void reset()
         {
-            memset(this, 0, sizeof(*this));
+            memset(offline, 0, sizeof(offline));
+            memset(pending_binary, 0, sizeof(pending_binary));
+            memset(pending_response, 0, sizeof(pending_response));
+            memset(sign_buf, 0, sizeof(sign_buf));
+            used = false;
+            id = TransportId::BLE;
             client_index = -1;
-            contact_iter = -1;
+            generation = 0;
             app_target_ver = 3;
             version_negotiated = true;
+            iter_filter_since = 0;
+            most_recent_lastmod = 0;
+            contact_iter = -1;
+            offline_len = 0;
+            pending_response_len = 0;
+            sign_len = 0;
+            sign_active = false;
+            was_connected = false;
+            connection_generation = 0;
+            inflight_store_id = 0;
+            inflight_generation = 0;
         }
     };
 

@@ -18,6 +18,8 @@ enum class Language : uint8_t {
     French = 2,
     Spanish = 3,
     Dutch = 4,
+    Italian = 5,
+    Portuguese = 6,
     Count,
 };
 

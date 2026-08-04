@@ -63,6 +63,18 @@ TEST_F(I18nTest, EnglishIsTheDefaultAndTablesLookup)
                  sigurdos::i18n::tr_for(Language::Dutch, StringId::HomeSetupWarning));
     EXPECT_STREQ("INSTELLINGEN",
                  sigurdos::i18n::tr_for(Language::Dutch, StringId::HomeSettings));
+    EXPECT_STREQ("Configura la radio",
+                 sigurdos::i18n::tr_for(Language::Italian, StringId::HomeSetupWarning));
+    EXPECT_STREQ("IMPOSTAZIONI",
+                 sigurdos::i18n::tr_for(Language::Italian, StringId::HomeSettings));
+    EXPECT_STREQ("Configurar o rádio",
+                 sigurdos::i18n::tr_for(Language::Portuguese, StringId::HomeSetupWarning));
+    EXPECT_STREQ("AJUSTES",
+                 sigurdos::i18n::tr_for(Language::Portuguese, StringId::HomeSettings));
+    EXPECT_STREQ("Lingua",
+                 sigurdos::i18n::tr_for(Language::Italian, StringId::SettingsLanguage));
+    EXPECT_STREQ("Idioma",
+                 sigurdos::i18n::tr_for(Language::Portuguese, StringId::SettingsLanguage));
 }
 
 TEST_F(I18nTest, MissingCurrentLanguageFallsBackToEnglish)

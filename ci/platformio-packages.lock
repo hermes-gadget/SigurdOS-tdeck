@@ -6,6 +6,9 @@ Resolving SigurdOS_TDeck dependencies...
 Platform espressif32 @ 7.0.1 (required: platformio/espressif32 @ 7.0.1)
 ├── framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b (required: platformio/framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b)
 ├── tool-esptoolpy @ 2.41100.0 (required: platformio/tool-esptoolpy @ 2.41100.0)
+├── tool-mkfatfs @ 2.0.1 (required: platformio/tool-mkfatfs @ ~2.0.0)
+├── tool-mklittlefs @ 1.203.210628 (required: platformio/tool-mklittlefs @ ~1.203.0)
+├── tool-mkspiffs @ 2.230.0 (required: platformio/tool-mkspiffs @ ~2.230.0)
 ├── toolchain-riscv32-esp @ 8.4.0+2021r2-patch5 (required: espressif/toolchain-riscv32-esp @ 8.4.0+2021r2-patch5)
 └── toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5 (required: espressif/toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5)
 
@@ -21,4 +24,5 @@ Libraries
 │   ├── RTClib @ 2.1.4 (required: adafruit/RTClib @ ^2.1.3)
 │   └── RadioLib @ 7.7.1 (required: jgromes/RadioLib @ ^7.6.0)
 ├── WebServer @ 2.0.0 (required: file://lib/WebServer)
+├── WebSockets @ 2.7.3 (required: links2004/WebSockets @ 2.7.3)
 └── lvgl @ 9.3.0 (required: https://github.com/lvgl/lvgl/archive/c033a98afddd65aaafeebea625382a94020fe4a7.zip)
