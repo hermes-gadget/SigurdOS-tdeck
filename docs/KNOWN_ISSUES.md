@@ -25,10 +25,13 @@ This document tracks currently open known issues, bugs, and missing features in 
   Code 13 will not be advertised until its path-discovery, scope, login, and
   contact behaviours have complete interoperability evidence against a current
   stock companion.
-The MeshCore submodule remains pinned. It contains local anonymous-contact
-fixes that are not a fast-forward match for current upstream; any future update
-must reconcile contact allocation/persistence indices and revalidate room
-connection keepalives.
+The MeshCore submodule remains pinned (c5787ee4) — it carries local fixes that
+are not a fast-forward match for current upstream. The 2026-08-01 re-pin
+(PR #1461) landed packet-shape validation, MTU-safe BLE notifications
+(#932/#934), decrypt/anonymous-request buffer bounds (#1174/#1175), and
+transient-contact indexing fixes, resolving the contact
+allocation/persistence-index concerns this entry previously flagged.
+Outstanding for the next pin: revalidate room connection keepalives.
 
 ---
 
