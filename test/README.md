@@ -73,6 +73,7 @@ test/
 |-- test_hal_oom/                HAL allocation-failure and recovery behavior
 |-- test_hardware_rng/           Hardware RNG entropy and fallback policy
 |-- test_home_screen/            Home tile routing contract
+|-- test_i18n/                   i18n translation lookup, language fallback, and TR() macro behavior
 |-- test_i2c_bus/                Shared I2C probing, configuration, and bus recovery
 |-- test_identity_store/         Atomic, checksummed identity persistence
 |-- test_input_contract/         Trackball, keyboard, and input event encoding stability
@@ -108,6 +109,7 @@ test/
 |-- test_path_codec/             Path byte encoding and decoding boundaries
 |-- test_pin_gate/               Device PIN gate lockout and session policy
 |-- test_pins/                   GPIO ranges, conflicts, and board pin sanity
+|-- test_power/                  Screen-sleep policy state machine transitions
 |-- test_prefs/                  Preferences defaults and native mock persistence
 |-- test_prefs_defaults/         Radio, identity, and UI preference default values
 |-- test_qr_show/                QR code version sizing, buffer sizing, and scale fitting
@@ -115,12 +117,15 @@ test/
 |-- test_regions/                Region structs, binary layout, key derivation
 |-- test_repeater_command_policy/ Repeater command success/failure feedback
 |-- test_responsive/             Responsive layout column offset distribution
+|-- test_room_fetch_policy/      Room fetch UI policy gating and limits
 |-- test_screen_lifetime/        Screen delete guard: tracked pointer nulling, timer teardown
 |-- test_sdcard/                 SD card state, path checks, size formatting
+|-- test_sd_store/               SD message store persistence, chunking, and recovery
 |-- test_storage/                SPIFFS mount, erased-partition recovery, and failure policy
 |-- test_system_action/          System action confirmation and destructive op guards
 |-- test_tdeck_board/            Board power thresholds and shutdown logic
 |-- test_tdeck_sleep/            Production-linked T-Deck sleep ordering and failures
+|-- test_text_fit/               Text fit core: shrink, ellipsis, and measurement bounds
 |-- test_telemetry_collectors/   Telemetry task watermark and buffer null-safety
 |-- test_telemetry_crash/        Crash backtrace capacity and bounded count
 |-- test_telemetry_drift/        Telemetry timing drift and rollover handling
@@ -146,6 +151,7 @@ test/
 |-- test_wifi_credentials/       Wi-Fi credential staging and persistence policy
 |-- test_wifi_icon_lifetime/     Production WiFi status ownership and pointer reuse
 |-- test_wifi_scan/              Wi-Fi scan AP count, sorting, and input validation
+|-- test_wifi_runtime/           Wi-Fi runtime/OTA policy and reconnect behavior
 |-- test_wifi_sta/               Wi-Fi validation upload and reconnect state machines
 ```
 

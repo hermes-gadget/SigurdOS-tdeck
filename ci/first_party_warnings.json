@@ -3,6 +3,6 @@
   "environment": "SigurdOS_TDeck",
   "budgets": {
     "src/app/map_renderer.cpp|-Wunused-function": 2,
-    "src/ui/chat_screen.cpp|-Wformat-truncation=": 2
+    "src/ui/chat_screen.cpp|-Wformat-truncation=": 0
   }
 }

@@ -58,7 +58,7 @@ class SecurityWorkflowTests(unittest.TestCase):
             self.assertNotIn("raw/main", script)
 
     def test_codeql_runs_extended_cpp_queries(self) -> None:
-        self.assertIn("github/codeql-action/init@e0647621c2984b5ed2f768cb892365bf2a616ad1", self.workflow)
+        self.assertIn("github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81", self.workflow)
         self.assertIn("languages: c-cpp", self.workflow)
         self.assertIn("build-mode: none", self.workflow)
         self.assertIn("queries: security-extended", self.workflow)
