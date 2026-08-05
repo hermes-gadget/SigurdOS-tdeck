@@ -15,6 +15,7 @@
 #include "wifi_coordinator.h"
 #include "../mesh/mesh_wrapper.h"
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <WebServer.h>
 #include <Update.h>
 #include <SPIFFS.h>
@@ -37,6 +38,8 @@ static char server_ip[16] = "";
 static char ap_password[64] = "";
 static char last_error[96] = "";
 static uint32_t session_started_at = 0;
+static std::atomic<uint32_t> worker_tick_ms{0};
+static constexpr uint32_t OTA_WORKER_STALE_LIMIT_MS = 3000U;
 static std::atomic<bool> using_access_point{false};
 static std::atomic<bool> companion_transport_parked{false};
 static std::atomic<CompanionTransportParkHook> companion_transport_park_hook{nullptr};
@@ -86,6 +89,11 @@ static void cleanupServer() {
     wifi::requestRelease(wifi::Owner::ApOta);
     session_started_at = 0;
     upload_state = {};
+    // #1495: startAccessPoint() runs a full driver deinit/init cycle; re-init
+    // the driver here (no-op if already inited) so the Arduino WiFi library
+    // keeps working for scans and STA reconnects after an OTA session.
+    wifi_init_config_t icfg = WIFI_INIT_CONFIG_DEFAULT();
+    (void)esp_wifi_init(&icfg);
 }
 
 void setCompanionTransportParkHook(CompanionTransportParkHook hook)
@@ -112,6 +120,7 @@ bool isAccessPointActive()
 
 static void otaServerWorker(void*) {
     while (!stop_requested.load(std::memory_order_acquire)) {
+        worker_tick_ms.store(millis(), std::memory_order_release);
         if (otaSessionExpired(session_started_at, millis())) {
             SIG_LOGW("[ota] session expired");
             break;
@@ -123,6 +132,11 @@ static void otaServerWorker(void*) {
     cleanupServer();
     active.store(false, std::memory_order_release);
     vTaskDelete(nullptr);
+}
+
+static uint32_t workerStaleMs() {
+    const uint32_t tick = worker_tick_ms.load(std::memory_order_acquire);
+    return tick == 0 ? UINT32_MAX : static_cast<uint32_t>(millis() - tick);
 }
 
 
@@ -139,8 +153,115 @@ static bool verifyPendingOtaImage() {
     return true;
 }
 
+// #1495: start the OTA softAP deterministically. The ESP32 WiFi driver keeps
+// interface state across esp_wifi_stop(), and an AP that goes through a
+// stop→start cycle can fail to re-transmit beacons while still reporting
+// success (observed on hardware: session 1 beacons, every restart does not).
+// Use a full driver deinit/init cycle for a guaranteed clean radio, configure
+// and start the AP explicitly, then verify mode + config readback so a dead AP
+// can never masquerade as a live session. cleanupServer() re-inits the driver
+// afterwards so the Arduino WiFi library keeps working for scan/STA.
+static bool startAccessPoint(const char* ssid, const char* password) {
+    WiFi.disconnect(true, true);   // clear any STA association/profile
+    WiFi.mode(WIFI_OFF);           // full driver stop
+    delay(100);
+    esp_wifi_stop();
+    esp_wifi_deinit();
+    delay(100);
+
+    wifi_init_config_t icfg = WIFI_INIT_CONFIG_DEFAULT();
+    if (esp_wifi_init(&icfg) != ESP_OK) {
+        strncpy(last_error, "AP driver init failed", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        SIG_LOGE("[ota] esp_wifi_init failed");
+        return false;
+    }
+    if (esp_wifi_set_mode(WIFI_MODE_AP) != ESP_OK) {
+        strncpy(last_error, "AP mode failed", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        SIG_LOGE("[ota] esp_wifi_set_mode(AP) failed");
+        return false;
+    }
+
+    wifi_config_t apcfg{};
+    strlcpy(reinterpret_cast<char*>(apcfg.ap.ssid), ssid, sizeof(apcfg.ap.ssid));
+    strlcpy(reinterpret_cast<char*>(apcfg.ap.password), password,
+            sizeof(apcfg.ap.password));
+    apcfg.ap.ssid_len = static_cast<uint8_t>(strlen(ssid));
+    apcfg.ap.channel = 1;
+    apcfg.ap.max_connection = 4;
+    apcfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
+
+    if (esp_wifi_set_config(WIFI_IF_AP, &apcfg) != ESP_OK) {
+        strncpy(last_error, "AP config failed", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        SIG_LOGE("[ota] esp_wifi_set_config(AP) failed");
+        return false;
+    }
+    if (esp_wifi_start() != ESP_OK) {
+        strncpy(last_error, "AP start failed", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        SIG_LOGE("[ota] esp_wifi_start failed");
+        return false;
+    }
+    delay(250);  // let the AP settle
+
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) != ESP_OK || mode != WIFI_MODE_AP) {
+        strncpy(last_error, "AP verify: mode != AP", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        SIG_LOGE("[ota] AP verify: mode != AP (%d)", static_cast<int>(mode));
+        return false;
+    }
+    wifi_config_t check{};
+    if (esp_wifi_get_config(WIFI_IF_AP, &check) != ESP_OK ||
+        strcmp(reinterpret_cast<const char*>(check.ap.ssid), ssid) != 0 ||
+        strcmp(reinterpret_cast<const char*>(check.ap.password), password) != 0) {
+        snprintf(last_error, sizeof(last_error), "AP verify: cfg mismatch (%s)",
+                 reinterpret_cast<const char*>(check.ap.ssid));
+        SIG_LOGE("[ota] AP verify: config mismatch (ssid=%s)",
+                 reinterpret_cast<const char*>(check.ap.ssid));
+        return false;
+    }
+    // The dialog displays the AP IP. WiFi.softAPIP() can read 0.0.0.0 after a
+    // driver deinit/init cycle even though the AP's DHCP server is live, so
+    // read the netif directly with the known AP-subnet fallback.
+    server_ip[0] = '\0';
+    esp_netif_t* ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    esp_netif_ip_info_t ip_info{};
+    if (ap_netif && esp_netif_get_ip_info(ap_netif, &ip_info) == ESP_OK &&
+        ip_info.ip.addr != 0) {
+        snprintf(server_ip, sizeof(server_ip), IPSTR, IP2STR(&ip_info.ip));
+    } else {
+        strncpy(server_ip, "192.168.4.1", sizeof(server_ip) - 1);
+    }
+    SIG_LOGW("[ota] AP verified: %s @ %s", ssid, server_ip);
+    return true;
+}
+
 bool start(const char* ssid, const char* password) {
-    if (active.load(std::memory_order_acquire)) return true;
+    if (active.load(std::memory_order_acquire)) {
+        // Idempotent re-entry while a live session is running. A session whose
+        // worker stalled past its window must be torn down first, or the next
+        // start would silently reuse a dead AP (#1495).
+        if (!otaSessionExpired(session_started_at, millis())) {
+            SIG_LOGW("[ota] OTA session already active — duplicate start ignored");
+            return true;
+        }
+        SIG_LOGW("[ota] stale OTA session — stopping worker before restart");
+        stop_requested.store(true, std::memory_order_release);
+        const uint32_t wait_deadline = millis() + 1500U;
+        while (active.load(std::memory_order_acquire) && millis() < wait_deadline) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+        if (active.load(std::memory_order_acquire)) {
+            strncpy(last_error, "OTA session is shutting down — retry in a few seconds",
+                    sizeof(last_error) - 1);
+            last_error[sizeof(last_error) - 1] = '\0';
+            SIG_LOGW("[ota] REFUSED: stale worker did not exit; loop watchdog will clear it");
+            return false;
+        }
+    }
 
     if (reboot_pending.load(std::memory_order_acquire)) {
         strncpy(last_error, "OTA reboot pending", sizeof(last_error) - 1);
@@ -206,8 +327,9 @@ bool start(const char* ssid, const char* password) {
         snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
         SIG_LOGW("[ota] Using STA IP: %s", server_ip);
     } else {
-        // Not connected — start AP mode
-        WiFi.mode(WIFI_AP);
+        // Not connected — start AP mode. Uses the deterministic reset +
+        // verification path (startAccessPoint) so a session can never appear
+        // active while the beacon is absent (#1495).
         if (password && password[0]) {
             strncpy(ap_password, password, sizeof(ap_password) - 1);
             ap_password[sizeof(ap_password) - 1] = '\0';
@@ -219,16 +341,20 @@ bool start(const char* ssid, const char* password) {
             }
             ap_password[12] = '\0';
         }
-        if (!WiFi.softAP(ssid, ap_password)) {
-            strncpy(last_error, "WiFi AP startup failed", sizeof(last_error) - 1);
-            last_error[sizeof(last_error) - 1] = '\0';
+        if (!startAccessPoint(ssid, ap_password)) {
+            if (!last_error[0]) {
+                strncpy(last_error, "WiFi AP startup failed", sizeof(last_error) - 1);
+                last_error[sizeof(last_error) - 1] = '\0';
+            }
             SIG_LOGE("[ota] WiFi AP startup failed");
             cleanupServer();
             return false;
         }
 
         ip = WiFi.softAPIP();
-        snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        if (ip != IPAddress(0U, 0U, 0U, 0U)) {
+            snprintf(server_ip, sizeof(server_ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        }
         SIG_LOGW("[ota] WiFi AP started: %s @ %s", ssid, server_ip);
     }
 
@@ -382,7 +508,12 @@ bool start(const char* ssid, const char* password) {
                 static_assert(OTA_UPDATE_SIZE_UNKNOWN == UPDATE_SIZE_UNKNOWN,
                               "Arduino Update unknown-size sentinel changed");
                 const size_t update_size = otaUpdateBeginSize(upload.totalSize);
-                if (!Update.begin(update_size)) {
+                const bool begin_ok = Update.begin(update_size);
+                SIG_LOGD("[ota] begin(%u) ok=%d size=%u running=%d err=%s",
+                         static_cast<unsigned>(update_size), begin_ok ? 1 : 0,
+                         static_cast<unsigned>(Update.size()), Update.isRunning() ? 1 : 0,
+                         Update.errorString());
+                if (!begin_ok) {
                     upload_state.failed = true;
                     SIG_LOGW("[ota] Update.begin failed: %s", Update.errorString());
                     Update.printError(Serial);
@@ -410,9 +541,15 @@ bool start(const char* ssid, const char* password) {
                 }
                 const size_t written = Update.write(upload.buf, upload.currentSize);
                 size_t next_received = upload_state.received;
+                // #1495: the WebServer's HTTPUpload::totalSize is a per-chunk
+                // accumulator — zero at START, growing by each delivered chunk —
+                // never the advertised file size. It cannot bound individual
+                // writes; the real full-size check runs at END via
+                // otaUploadCanFinish(). Pass unknown (0) so the write path only
+                // guards against short writes and counter overflow.
                 const hal::OtaWriteResult write_result = hal::otaRecordExactWrite(
                     upload_state.received, upload.currentSize, written,
-                    upload.totalSize, &next_received);
+                    0, &next_received);
                 if (!hal::otaWriteAccepted(write_result)) {
                     upload_state.failed = true;
                     upload_state.started = false;
@@ -486,6 +623,26 @@ bool start(const char* ssid, const char* password) {
 }
 
 void loop() {
+    // #1495 watchdog: if the worker stalls (crash/wedge) while a session is
+    // marked active and past its window, the session would otherwise stick
+    // forever, blocking reboots and every later OTA start. The loop owns the
+    // WiFi driver, so force the cleanup here once the worker has been given a
+    // grace period to exit on its own. In-flight uploads are left to finish
+    // (upload_state.started guards the force path).
+    if (active.load(std::memory_order_acquire) && session_started_at != 0 &&
+        !reboot_pending.load(std::memory_order_acquire) &&
+        otaSessionExpired(session_started_at, millis())) {
+        if (!stop_requested.load(std::memory_order_acquire)) {
+            SIG_LOGW("[ota] session expired — requesting worker exit");
+            stop_requested.store(true, std::memory_order_release);
+        } else if (!upload_state.started &&
+                   workerStaleMs() > OTA_WORKER_STALE_LIMIT_MS) {
+            SIG_LOGW("[ota] worker stalled past expiry — forcing session cleanup");
+            cleanupServer();
+            active.store(false, std::memory_order_release);
+        }
+    }
+
     // WebServer multipart parsing and Update writes are worker-owned so a slow
     // or body-less client cannot hold Arduino's loopTask. Once that worker has
     // released its resources, the loop task owns the normal reboot path.

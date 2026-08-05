@@ -95,11 +95,12 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
       app0. `[ota-diag] boot=… running=…` confirms each boot. New test-controller
       command `ota-set <0|1>` makes this repeatable. (Otadata is sector-aligned:
       entries at +0/+4096, seq odd→app0 / even→app1, state NEW→VALID.)
-- [x] Rollback path (bad image → fallback slot) + WiFi OTA end-to-end — creds received
-      2026-08-04; upload never reachable: **#1495 — softAP stops beaconing after the first
-      session** (dialog claims active, no client sees `SigurdOS-OTA`; survived reboots).
-      Rollback test rides on the same upload path.
-- **Exit:** both slots verified ✅; WiFi-OTA + rollback blocked by #1495.
+- [x] Rollback path (bad image → fallback slot) + WiFi OTA end-to-end — **verified on
+      hardware 2026-08-05** (fix #1495): corrupt image → clean HTTP 500 rejection;
+      real 3 MB upload → HTTP 200 → reboot into new image; NVS survived the OTA
+      flash (PIN + settings intact); second OTA session after the round-trip
+      broadcast and accepted clients again.
+- **Exit: ✅ both slots verified; WiFi-OTA + rollback verified end-to-end (#1495 closed).**
 
 ### A3 — Battery-life measurement
 - [x] Logging started 2026-08-04 (soak-watch cron, 15-min samples of `batt=`
