@@ -1164,6 +1164,9 @@ void show_fetch_msgs_dialog(const char* contact_name)
                 sigurdos::mesh::mesh_v2_queue_push("System", "", confirm, 0, 0.0f);
                 // Navigate to Chat screen so user sees incoming messages
                 sigurdos::ui::navigate_to(sigurdos::ui::Screen::Chat);
+                // Screen replacement synchronously deletes this dialog and
+                // its button. Do not touch the event target after navigation.
+                return;
             }
         }
         lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le));
