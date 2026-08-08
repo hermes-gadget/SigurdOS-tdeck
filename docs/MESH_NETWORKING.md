@@ -142,10 +142,10 @@ The LoRa radio, display (ST7789), and microSD card all share the **same SPI bus*
 SPI is **not** initialised globally with a single `SPI.begin()`. Each driver initialises the bus independently from its own entry point:
 
 1. **Display init** (`sigurdos_display_init`) — configures SPI for the ST7789 via LovyanGFX
-2. **Mesh init** (`sigurdos::mesh::init`) — calls `sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI)` for the SX1262
-3. **SD card init** (`sigurdos_sdcard_init`) — SPI is already configured from step 1 or 2
+2. **SD card init** (`sigurdos_sdcard_init`) — initialises the shared SPI singleton and probes/mounts the card *before* the radio starts listening (the CMD0 handshake may reset SPI2, which would invalidate an already-started SX1262)
+3. **Mesh init** (`sigurdos::mesh::init`) — calls `sigurdos_shared_spi_begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI)` for the SX1262, reusing the bus
 
-The mesh init **must happen after display init** (display init is at step 5 in main.cpp, mesh at step 7). In remote test mode (`SIGURDOS_REMOTE_TEST`), `mesh::init()` still calls `sigurdos_shared_spi_begin()` so the SPI bus is available for SD card, even though the radio is not used.
+The mesh init **must happen after display init and after the pre-radio SD probe** (display init is at step 5 in main.cpp, SD probe at step 8, mesh at step 9). Once the radio is started, `sigurdos_sdcard_lock_bus_reset()` locks later SD retries out of SPI2 peripheral resets. In remote test mode (`SIGURDOS_REMOTE_TEST`), `mesh::init()` still calls `sigurdos_shared_spi_begin()` so the bus is configured even though the radio is not used.
 
 > **`wifi_sta::connect()` removed.** The blocking `wifi_sta::connect()` method
 > has been deprecated and removed. Only **`beginConnect()`** (non-blocking start)

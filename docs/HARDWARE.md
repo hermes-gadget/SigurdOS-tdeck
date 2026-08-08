@@ -547,10 +547,12 @@ with the shared pins; the other drivers manage their own bus configuration.
 
 ### Init Order
 
-SD card must be initialised **after** the LoRa radio, because the LoRa/SPI init
-(`mesh::init()`) sets up the shared bus pins and calls `sigurdos_shared_spi_begin()`.
-If the SD card is initialised first with unconfigured pins, FATFS returns
-`FR_NOT_READY`.
+The SD card is probed/mounted **before** the LoRa radio starts listening. The
+SD handshake (CMD0) may reset SPI2, so doing it after radio init can invalidate
+RadioLib/SX1262 state. `sigurdos_sdcard_init()` initialises the shared SPI
+singleton itself; `mesh::init()` later reuses the same bus and, once the radio
+is up, `sigurdos_sdcard_lock_bus_reset()` locks later SD retries out of SPI2
+peripheral resets (see the boot-sequence appendix below).
 
 `sigurdos_sdcard_init()` makes only a **single attempt** at boot for fast startup.
 Consumers (e.g., the map renderer) call **`sigurdos_sdcard_retry()`** lazily when

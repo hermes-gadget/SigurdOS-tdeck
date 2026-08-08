@@ -219,8 +219,8 @@ Dialog features:
 
 Channels are pulled from the MeshCore mesh layer via `mesh::exportChannels()`.
 
-- **Mesh channel capacity**: 16 exported group channels
-- **Conversation registry**: 32 canonical entries — 16 mesh channels plus 16 synthetic DMs
+- **Mesh channel capacity**: 8 exported group channels (matches `MAX_GROUP_CHANNELS` in `platformio.ini`; a ninth group channel cannot be added)
+- **Conversation registry**: up to 24 canonical entries — 8 mesh channels plus 16 synthetic DMs (the mesh layer can only ever produce `MAX_GROUP_CHANNELS` group channels; DM capacity is defined independently)
 - **Filtered views**: CHATS and DMs store non-owning indices into the registry, so switching views never removes hidden histories or unread counts
 - **Sorting**: MRU (most recently used) — `active_channel` tracks the current selection
 - **Auto-join**: On first load, if no channels exist, `mesh::joinPublicChannel()` is called
@@ -276,7 +276,7 @@ struct ChannelMessage {
 
 ### Per-Channel Storage
 
-Each conversation (up to 32: 16 mesh channels and 16 DMs) gets a circular buffer allocated on first use:
+Each conversation (up to 24: 8 mesh channels and 16 DMs) gets a circular buffer allocated on first use:
 
 - **PSRAM path**: `heap_caps_malloc(CHAT_MSGS_MAX * sizeof(ChannelMessage), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` → capacity = 200
 - **DRAM fallback**: If PSRAM is exhausted, falls back to internal DRAM at reduced capacity (`CHAT_MSGS_MIN_CAP` = 8)

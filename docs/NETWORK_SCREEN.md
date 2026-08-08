@@ -185,7 +185,7 @@ This signals that the radio is active and awaiting incoming adverts or a manual 
    - Ping results: iterates `getPingResult(i)` for each responder
    - Fallback contacts: bubble-sorts by `last_seen` descending, filters to ≤120s old
    - Empty: adds a single "Listening..." placeholder
-6. Calls `show_screen(scr)` with slide-in animation.
+6. Calls `show_screen(scr)`, which loads the screen immediately (no transition animation — the shared loader forces `LV_SCR_LOAD_ANIM_NONE`).
 
 ### Message Handling (`onControlDataRecv` in `sigurd_mesh_v2.h`)
 
