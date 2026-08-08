@@ -1450,7 +1450,7 @@ uint32_t sendMessage(const char* dest, const char* text) {
     uint32_t ts = meshRtcTimeUnique();
     if (ts == 0) ts = 1;  // 0 means failure; use 1 as fallback so ACK matching still works
     // sendTextTo now takes a fixed timestamp so the UI and mesh layer agree
-    // (see slop_mesh_v2.h sendTextTo overload)
+    // (see sigurd_mesh_v2.h sendTextTo overload)
     bool ok = g_mesh->sendTextTo(*contact, text, ts);
     if (ok) {
         sigurdos::telemetry::push_packet_log(

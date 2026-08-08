@@ -20,6 +20,7 @@ These are the reference documents you should load before starting work. Which on
 | **`docs/CONTACT_STORE.md`** | When working on contact management | Contact store API, persistence, and data model |
 | **`docs/LAUNCHER.md`** | When working on Launcher compatibility | Launcher detection, OTA gating, partition layout |
 | **`docs/ROADMAP.md`** | Understanding project direction | Development roadmap and planned features |
+| **`docs/PROJECT_HISTORY.md`** | Understanding project history | Full-arc history and direction — companion to ROADMAP.md |
 | **`docs/LOGGING.md`** | Before debugging serial output | Logging subsystem API, verbosity levels, and configuration |
 | **`firmware/README.md`** | Releasing or CI work | Release artifact structure, web flasher manifest format |
 | **`test/README.md`** | Writing new tests | Test framework, mock structure, naming conventions |
@@ -28,6 +29,7 @@ These are the reference documents you should load before starting work. Which on
 | **`docs/CHAT_SCREEN.md`** | When working on chat UI | Chat screen architecture, data model, input routing, persistence |
 | **`docs/FEATURES_OVERVIEW.md`** | Getting oriented on features | Top-level index of all features with source cross-references |
 | **`docs/HOME_SCREEN.md`** | When working on home screen | Home screen layout, tile grid, icon mapping |
+| **`docs/I18N.md`** | When working on translations/i18n | i18n framework, language IDs, TR() macro, NVS storage |
 | **`docs/TERMINAL.md`** | When working on terminal | Terminal screen commands, serial protocol, debug levels |
 | **`docs/MAP_SCREEN.md`** | When working on the map | Map screen rendering, tile cache, PSRAM usage |
 | **`docs/NETWORK_SCREEN.md`** | When working on network/finder | Node discovery, Ping Nearby, network neighbourhood view |
@@ -139,6 +141,7 @@ src/
 │   ├── persistence_store.cpp/h  # On-disk state persistence (contacts, channels via SPIFFS)
 │   ├── contact_store.cpp/h     # Contact management (add, remove, lookup, favourites)
 │   ├── message_store.cpp/h     # Per-channel message storage + unread tracking
+│   ├── sd_message_store.cpp/h  # SD-backed message store (auto-selected when SPIFFS degraded)
 │   ├── channel_validation.cpp/h # Channel name/PSK input validation
 │   ├── regions.cpp/h       # Flood-scope region management
 │   ├── region_policy.cpp/h # Region sync/activation policy
@@ -171,9 +174,13 @@ src/
 │                           #   mesh_safety, radio_config, radio_timing, airtime, scope_activation,
 │                           #   anonymous_message, client_repeat, channel_slot, ping_result,
 │                           #   telemetry_response, pending_operation, flood_scope_state, ...)
+├── power/
+│   └── screen_sleep.cpp/h  # Screen sleep policy (loop throttling, wake reasons; radio stays awake)
 ├── ui/
 │   ├── theme.h            # Colors, pixel helpers (apply_pixel_*), runtime theme system
 │   ├── theme.cpp          # Theme apply from NVS + refresh all screens
+│   ├── text_fit.cpp/h      # Text-fit font ladder helpers
+│   ├── text_fit_lvgl.cpp/h # LVGL text-fit integration
 │   ├── responsive.h       # Display-size-agnostic layout helpers
 │   ├── home_screen.cpp/h  # 4x3 icon grid, top/bottom bars
 │   ├── home_routes.cpp/h  # Home tile → screen route table
@@ -209,7 +216,7 @@ src/
 │   ├── terminal_line_cap.h  # Terminal 64-line cap policy
 │   ├── *policy.h           # UI safety/capacity policies (pin_gate, system_action, repeater_command,
 │                           #   identity_command_guard, wifi_credentials, trace_poll, finder_contact,
-│                           #   terminal_var)
+│                           #   room_fetch, terminal_var)
 │   ├── ui.cpp/h           # Splash→Home transition
 │   └── screens/           # Individual screen implementations
 │       ├── screen_advertise.cpp
@@ -218,6 +225,7 @@ src/
 │       ├── screen_contacts.cpp
 │       ├── screen_file_browser.cpp
 │       ├── screen_finder.cpp
+│       ├── screen_lock.cpp/h
 │       ├── screen_map.cpp
 │       ├── screen_mesh_dashboard.cpp
 │       ├── screen_message_search.cpp
@@ -236,6 +244,7 @@ src/
 │       ├── screen_telemetry.cpp
 │       ├── screen_terminal.cpp
 │       ├── screen_trace.cpp
+│       ├── screen_transports.cpp/h
 │       └── screen_wifi_networks.cpp
 ├── app/
 │   ├── map_renderer.cpp/h # Offline map (PNG tiles via lodepng, PSRAM cache)
@@ -247,6 +256,9 @@ src/
 ├── comms/
 │   ├── companion_bridge.cpp/h     # BLE companion protocol bridge (phone app)
 │   ├── observed_ble_interface.cpp/h  # BLE transport for companion protocol
+│   ├── transport_iface.h / transport_frame_parser.h  # Companion transport abstraction + frame codec
+│   ├── transports.cpp / transports_internal.h  # Transport registry (runtime transport selection)
+│   ├── transport_tcp.cpp/h / transport_ws.cpp/h  # TCP + WebSocket companion servers
 │   ├── ble_frame_queue.h          # BLE frame queue for outbound data
 │   ├── ble_init_gate.h / ble_bond_rotation.h / ble_auth_throttle.h / ble_auth_watchdog.h / ble_task_mutex.h  # BLE safety/security policies
 │   └── secure_wipe.h     # Secure erase of sensitive BLE state
@@ -272,7 +284,10 @@ src/
 │   ├── emoji_data.cpp/h     # Emoji codepoint→glyph mapping
 │   ├── emoji_font.c/h       # Emoji glyph bitmap data + declarations
 │   ├── latin_ext_font.c/h   # Latin Extended font data
-│   └── keyboard_layout_font.c/h  # Keyboard layout indicator font data
+│   ├── keyboard_layout_font.c/h  # Keyboard layout indicator font data
+│   └── montserrat_8.c/h     # Montserrat 8px font data (OFL-1.1)
+├── i18n/
+│   └── i18n.cpp/h          # Allocation-free UI translation framework (TR() macro, 7 languages, NVS 'lang')
 ├── validation/
 │   ├── gps_validation.cpp          # GPS NMEA validation + coordinate tests
 │   ├── gps_validation_wifi.cpp/h   # GPS + WiFi co-location validation
@@ -313,10 +328,11 @@ The boot order is documented in detail in [`docs/HARDWARE.md`](docs/HARDWARE.md#
 11. SD card init                  ← before radio (SD handshake resets SPI2)
 12. Mesh init (identity, radio)   (radio skipped in non-radio remote-test builds)
 13. UI state restore (chats)
-14. Map init
-15. WiFi STA auto-connect         (if credentials saved)
-16. Telemetry init                (telemetry builds)
-17. OTA boot health markCoreReady + watchdog runtime heartbeat
+14. Diagnostics init              (debug builds only, SIGURDOS_DEBUG_DIAG)
+15. Map init
+16. WiFi STA auto-connect         (if credentials saved)
+17. Telemetry init                (telemetry builds)
+18. OTA boot health markCoreReady + watchdog runtime heartbeat
 ```
 
 ---
@@ -445,6 +461,8 @@ The home screen tiles use `LV_SYMBOL_*` (FontAwesome bundle built into LVGL v9):
 | 29 | Message Search (filter history across all chats) | `screens/screen_message_search.cpp` | ✅ |
 | 30 | Mesh Dashboard (network metric cards) | `screens/screen_mesh_dashboard.cpp` | ✅ |
 | 31 | File Browser (SD card files) | `screens/screen_file_browser.cpp` | ✅ |
+| 32 | Transports (companion transport status: BLE/TCP/WS) | `screens/screen_transports.cpp` | ✅ |
+| 33 | Lock (screen lock, wake-aware) | `screens/screen_lock.cpp` | ✅ |
 
 ---
 
@@ -575,7 +593,7 @@ sigurdos::mesh::getGroupDataRecvCount/Entry() / clearGroupDataRecv()
 ## Testing
 
 ```bash
-pio test -e native_test -v       # All tests (no hardware, 111 test modules)
+pio test -e native_test -v       # All tests (no hardware, 118 test modules)
 pio test -e native_test -f test_touch -v     # One module
 ```
 
@@ -718,13 +736,14 @@ Once connected, the T-Deck shows a test controller banner. Type commands directl
 | Command | Example | Description |
 |---------|---------|-------------|
 | `help` | `help` | Show command list |
-| `nav chat` | `nav chat` | Navigate to screen (home/chat/contacts/channels/network/heard/map/settings/terminal/radio/trace/signal/advertise/repeaters/bluetooth/onboarding/regions/nodestats/nodestatus/telemetry/wifinetworks/s-display/s-radio/s-gps/system/contactdetail) |
+| `nav chat` | `nav chat` | Navigate to screen (home/chat/contacts/channels/network/heard/map/settings/terminal/radio/trace/signal/advertise/repeaters/bluetooth/onboarding/regions/nodestats/nodestatus/telemetry/wifinetworks/transports/lock/s-display/s-radio/s-gps/system/contactdetail) |
 | `back` | `back` | Go back in nav stack |
 | `tb up` | `tb click` | Simulate trackball (up/down/left/right/click, or u/d/l/r/c) |
 | `type hello` | `type Hello World` | Type text — queued and injected one char per loop cycle |
 | `press enter` | `press backspace` | Press special key (enter/backspace/esc/tab) |
 | `inject Alice Hello!` | `inject Bob channel=general hi` | Simulate incoming mesh message (no radio!) |
 | `screen` | `screen` | Show current screen name |
+| `capture [cancel]` | `capture` | Stream framebuffer (screenshot capture) |
 | `status` | `status` | Show heap and PSRAM |
 | `debug <1\|2\|3>` | `debug 1` | Set debug verbosity (1=quiet, 2=normal, 3=verbose) |
 
@@ -766,7 +785,7 @@ Dev-only branch model:
 - Tags: `beta-0.1.XX` (zero-padded for correct sort: `beta-0.1.09` not `beta-0.1.9`)
 
 **Release flow (maintainer only):**
-1. Update `SIGURDOS_VERSION` in `tdeck_pins.h` (current: `beta-0.1.46-RC8`) — CI fails if the release tag doesn't match it
+1. Update `SIGURDOS_VERSION` in `tdeck_pins.h` (current: `beta-0.1.47-RC9`) — CI fails if the release tag doesn't match it
 2. `pio run -e SigurdOS_TDeck` (and `SigurdOS_TDeck_debug` for `firmware-debug.bin`)
 3. Commit, tag, push — `build-release.yml` builds the artifact set (`firmware-merged.bin`, `SigurdOS-tdeck-launcher.bin`, `firmware.bin`, `firmware-debug.bin`, `manifest.json`, `build-metadata.json`) and creates the GitHub release
 4. Evidence requirements from `docs/RELEASE_EVIDENCE.md` are enforced by `scripts/verify_release_evidence.py`; pre-built binaries are published only as immutable release assets (see `firmware/README.md`)
