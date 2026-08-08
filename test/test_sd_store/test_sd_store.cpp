@@ -44,10 +44,36 @@ std::vector<uint8_t> readFile(const std::string& path)
 void removeStoreFiles(const std::string& path)
 {
     std::remove(path.c_str());
-    std::remove((path + ".tmp").c_str());
-    std::remove((path + ".ready").c_str());
-    std::remove((path + ".corrupt").c_str());
+    std::remove((path + sigurdos::mesh::SD_MESSAGE_STORE_TEMP_SUFFIX).c_str());
+    std::remove((path + sigurdos::mesh::SD_MESSAGE_STORE_READY_SUFFIX).c_str());
+    std::remove((path + sigurdos::mesh::SD_MESSAGE_STORE_CORRUPT_SUFFIX).c_str());
 }
+
+bool fileExists(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    return in.good();
+}
+
+// Test double for companionAdapterPrepareFactoryReset(): the callback must
+// observe the live selected backend before the SD reset deletes anything.
+struct ResetPreflightRecorder {
+    std::string live_path;
+    bool result = true;
+    bool called = false;
+    bool backend_selected = false;
+    bool live_file_present = false;
+
+    static bool run(void* raw)
+    {
+        auto* self = static_cast<ResetPreflightRecorder*>(raw);
+        self->called = true;
+        self->backend_selected =
+            sigurdos::mesh::detail::messageStoreBackendSelected();
+        self->live_file_present = fileExists(self->live_path);
+        return self->result;
+    }
+};
 
 class SdMessageStoreTest : public ::testing::Test {
 protected:
@@ -75,6 +101,7 @@ protected:
         sigurdos::mesh::sdMessageStoreSetNativeRoot(root.c_str());
         sigurdos::mesh::sdMessageStoreSetNativeMounted(true);
         sigurdos::mesh::sdMessageStoreSetNativeAppendWriteLimit(-1);
+        sigurdos::mesh::sdMessageStoreSetNativeRemoveFailure(false);
         sigurdos::mesh::messageStoreSetNativePath(spiffs_path.c_str());
         sigurdos::mesh::detail::messageStoreSelectDefaultBackend();
         ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
@@ -84,6 +111,7 @@ protected:
     void TearDown() override
     {
         sigurdos::mesh::sdMessageStoreSetNativeAppendWriteLimit(-1);
+        sigurdos::mesh::sdMessageStoreSetNativeRemoveFailure(false);
         sigurdos::mesh::sdMessageStoreSetNativeMounted(false);
         sigurdos::mesh::detail::messageStoreSelectDefaultBackend();
         removeStoreFiles(spiffs_path);
@@ -229,6 +257,116 @@ TEST_F(SdMessageStoreTest, PartialRuntimeAppendIsRecoveredOnNextSelection)
                     sigurdos::mesh::MessageStoreRecoveryResult::Salvaged);
     ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(3)));
     EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 2);
+}
+
+TEST_F(SdMessageStoreTest, FactoryResetCompanionInterlockRunsBeforeHistoryDeletion)
+{
+    selectSd();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(21, "before-reset")));
+
+    const std::string keep_path = root + "/keep.txt";
+    {
+        std::ofstream keep(keep_path, std::ios::binary | std::ios::trunc);
+        keep << "user file";
+    }
+
+    ResetPreflightRecorder preflight;
+    preflight.live_path = sigurdos::mesh::sdMessageStoreNativePath();
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreReset(
+        ResetPreflightRecorder::run, &preflight));
+    EXPECT_TRUE(preflight.called);
+    EXPECT_TRUE(preflight.backend_selected);
+    EXPECT_TRUE(preflight.live_file_present);
+    EXPECT_FALSE(fileExists(preflight.live_path));
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_FALSE(sigurdos::mesh::detail::messageStoreBackendSelected());
+    EXPECT_TRUE(fileExists(keep_path));
+
+    // Model the next boot: the same mounted card is selected again, but the
+    // reset store is empty rather than replaying the old conversation.
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(true));
+    EXPECT_TRUE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 0);
+}
+
+TEST_F(SdMessageStoreTest, FactoryResetRemovesAllRecoveryArtifacts)
+{
+    selectSd();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(25, "artifacts")));
+    const std::string live = sigurdos::mesh::sdMessageStoreNativePath();
+    const std::string temp = live + sigurdos::mesh::SD_MESSAGE_STORE_TEMP_SUFFIX;
+    const std::string ready = live + sigurdos::mesh::SD_MESSAGE_STORE_READY_SUFFIX;
+    const std::string corrupt = live + sigurdos::mesh::SD_MESSAGE_STORE_CORRUPT_SUFFIX;
+    {
+        std::ofstream(temp, std::ios::binary) << "partial";
+        std::ofstream(ready, std::ios::binary) << "candidate";
+        std::ofstream(corrupt, std::ios::binary) << "quarantined";
+    }
+
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreReset());
+    EXPECT_FALSE(fileExists(live));
+    EXPECT_FALSE(fileExists(temp));
+    EXPECT_FALSE(fileExists(ready));
+    EXPECT_FALSE(fileExists(corrupt));
+}
+
+TEST_F(SdMessageStoreTest, FactoryResetWithoutActiveSdBackendIsSafeNoOp)
+{
+    sigurdos::mesh::sdMessageStoreSetNativeMounted(false);
+
+    EXPECT_TRUE(sigurdos::mesh::sdMessageStoreReset());
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_FALSE(sigurdos::mesh::detail::messageStoreBackendSelected());
+}
+
+TEST_F(SdMessageStoreTest, FactoryResetFailsClosedWhenSelectedSdIsUnmounted)
+{
+    selectSd();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(22, "must-survive")));
+    sigurdos::mesh::sdMessageStoreSetNativeMounted(false);
+
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreReset());
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_FALSE(sigurdos::mesh::detail::messageStoreBackendSelected());
+
+    // The reset did not claim success, so the store remains recoverable once
+    // the card is available again.
+    sigurdos::mesh::sdMessageStoreSetNativeMounted(true);
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(true));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+}
+
+TEST_F(SdMessageStoreTest, FactoryResetReportsDeletionFailureAndKeepsHistory)
+{
+    selectSd();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(23, "retry-me")));
+    sigurdos::mesh::sdMessageStoreSetNativeRemoveFailure(true);
+
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreReset());
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_FALSE(sigurdos::mesh::detail::messageStoreBackendSelected());
+
+    sigurdos::mesh::sdMessageStoreSetNativeRemoveFailure(false);
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(true));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+}
+
+TEST_F(SdMessageStoreTest, FactoryResetCompanionInterlockFailurePreventsHistoryDeletion)
+{
+    selectSd();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(24, "quiesce")));
+    ResetPreflightRecorder preflight;
+    preflight.live_path = sigurdos::mesh::sdMessageStoreNativePath();
+    preflight.result = false;
+
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreReset(
+        ResetPreflightRecorder::run, &preflight));
+    EXPECT_TRUE(preflight.called);
+    EXPECT_TRUE(preflight.backend_selected);
+    EXPECT_TRUE(preflight.live_file_present);
+    EXPECT_TRUE(fileExists(preflight.live_path));
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_FALSE(sigurdos::mesh::detail::messageStoreBackendSelected());
 }
 
 } // namespace

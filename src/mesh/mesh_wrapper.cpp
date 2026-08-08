@@ -13,6 +13,7 @@
 #include "public_channel.h"
 #include "advert_blob.h"
 #include "message_store.h"
+#include "sd_message_store.h"
 #include "companion_message_policy.h"
 #include "cmd_response_queue.h"
 #include "durable_fanout.h"
@@ -40,6 +41,7 @@
 #include "hal/radio_profiles.h"
 #include "hal/github_ota.h"
 #include "hal/wifi_ota.h"
+#include "comms/transport_iface.h"
 #include "sigurd_mesh_v2.h"
 #include "regions.h"
 #include "utils/utf8_util.h"
@@ -2180,12 +2182,44 @@ void shutdown(uint32_t wake_secs)
         });
 }
 
+static bool prepareCompanionTransportsForFactoryReset(void*)
+{
+    if (!sigurdos::mesh::companionAdapterPrepareFactoryReset()) {
+        Serial.println("[mesh] factory reset failed: companion BLE quiesce failed");
+        return false;
+    }
+
+    const sigurdos::comms::TransportId transports[] = {
+        sigurdos::comms::TransportId::TCP,
+        sigurdos::comms::TransportId::WS,
+    };
+    for (const sigurdos::comms::TransportId transport : transports) {
+        if (!sigurdos::comms::transport_enabled(transport)) continue;
+        if (!sigurdos::comms::transport_set_enabled(transport, false)) {
+            Serial.println("[mesh] factory reset failed: companion transport "
+                           "quiesce failed");
+            return false;
+        }
+    }
+    return true;
+}
+
 bool factoryReset()
 {
     // Commit the safe BLE interlock before any destructive operation. If this
     // fails, do not erase anything and do not claim that reset succeeded.
     if (!sigurdos::prefs_arm_factory_reset()) {
         Serial.println("[mesh] factory reset failed: could not arm BLE interlock");
+        return false;
+    }
+
+    // Quiesce every enabled companion transport before touching any reset
+    // storage. The SD reset invokes this callback before deselecting or
+    // deleting its backend, and the NVS/SPIFFS sequence below follows it.
+    if (!sigurdos::mesh::sdMessageStoreReset(
+            prepareCompanionTransportsForFactoryReset, nullptr)) {
+        Serial.println("[mesh] factory reset aborted: companion or SD history "
+                       "quiesce failed");
         return false;
     }
 

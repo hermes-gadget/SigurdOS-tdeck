@@ -13,6 +13,11 @@ namespace sigurdos::mesh {
 static constexpr uint32_t SD_MESSAGE_STORE_MAX_RECORDS = 5000;
 static constexpr uint32_t SD_MESSAGE_STORE_COMPACT_TO_RECORDS = 4480;
 static constexpr const char* SD_MESSAGE_STORE_PATH = "/sdcard/msgs";
+static constexpr const char* SD_MESSAGE_STORE_TEMP_SUFFIX = ".tmp";
+static constexpr const char* SD_MESSAGE_STORE_READY_SUFFIX = ".ready";
+static constexpr const char* SD_MESSAGE_STORE_CORRUPT_SUFFIX = ".corrupt";
+
+using SdMessageStoreResetPreflightFn = bool (*)(void* context);
 
 // Select the durable message backend after storage and SD probing. If SD is
 // unavailable or cannot be opened, the existing SPIFFS store remains active
@@ -20,6 +25,12 @@ static constexpr const char* SD_MESSAGE_STORE_PATH = "/sdcard/msgs";
 // records found in the bounded SPIFFS store into SD using the normal dedup
 // identity rules.
 bool sdMessageStoreSelect(bool spiffs_available);
+// Quiesce the selected backend, delete the SD history and every recovery
+// artifact owned by this store, and reset backend selection. A preflight is
+// invoked before the backend is touched; factory reset uses it for companion
+// transport quiescing and native tests use it to verify ordering.
+bool sdMessageStoreReset(SdMessageStoreResetPreflightFn preflight = nullptr,
+                         void* preflight_context = nullptr);
 bool sdMessageStoreUsingSd();
 bool sdMessageStoreDegraded();
 uint32_t sdMessageStoreCapacity();
@@ -31,6 +42,7 @@ uint64_t sdMessageStoreFreeBytes();
 void sdMessageStoreSetNativeRoot(const char* root);
 void sdMessageStoreSetNativeMounted(bool mounted);
 void sdMessageStoreSetNativeAppendWriteLimit(int bytes);
+void sdMessageStoreSetNativeRemoveFailure(bool fail);
 void sdMessageStoreResetNative();
 const char* sdMessageStoreNativePath();
 #endif
