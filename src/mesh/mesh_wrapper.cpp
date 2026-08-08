@@ -2209,11 +2209,14 @@ static bool prepareCompanionTransportsForFactoryReset(void*)
 
 bool factoryReset()
 {
-    // Feed the runtime task watchdog at every phase boundary: loopTask is the
-    // sole runtime-watchdog owner and the NVS/SPIFFS erase below can block it
-    // for many seconds on real hardware, aborting the reset mid-wipe.
+    // The reset is terminal (reboots on success), but loopTask is the sole
+    // runtime-watchdog owner and SPIFFS.format() alone can block it for more
+    // than the 10 s runtime timeout on real hardware, aborting the wipe
+    // mid-format with a task_wdt panic. Extend the timeout to the setup
+    // length for the duration of the reset and restore it on the failure
+    // path below (the device continues running after a failed reset).
 #if defined(ESP32_PLATFORM)
-    esp_task_wdt_reset();
+    esp_task_wdt_init(SIGURDOS_SETUP_WATCHDOG_TIMEOUT_SEC, true);
 #endif
 
     // Commit the safe BLE interlock before any destructive operation. If this
@@ -2273,16 +2276,7 @@ bool factoryReset()
         }
         return cleared;
     };
-    const auto format_spiffs = [](void*) -> bool {
-#if defined(ESP32_PLATFORM)
-        esp_task_wdt_reset();
-#endif
-        const bool formatted = SPIFFS.format();
-#if defined(ESP32_PLATFORM)
-        esp_task_wdt_reset();
-#endif
-        return formatted;
-    };
+    const auto format_spiffs = [](void*) -> bool { return SPIFFS.format(); };
 
     const hal::factory_reset::NvsTarget* failed_target = nullptr;
     hal::factory_reset::FailureStage failed_stage = hal::factory_reset::FailureStage::None;
@@ -2301,6 +2295,9 @@ bool factoryReset()
             Serial.println("[mesh] SPIFFS remount after factory-reset failure also "
                            "failed; reboot required");
         }
+#if defined(ESP32_PLATFORM)
+        esp_task_wdt_init(SIGURDOS_RUNTIME_WATCHDOG_TIMEOUT_SEC, true);
+#endif
         return false;
     }
 
