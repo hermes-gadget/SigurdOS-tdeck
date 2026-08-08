@@ -42,6 +42,9 @@
 #include "hal/github_ota.h"
 #include "hal/wifi_ota.h"
 #include "comms/transport_iface.h"
+#if defined(ESP32_PLATFORM)
+#include <esp_task_wdt.h>
+#endif
 #include "sigurd_mesh_v2.h"
 #include "regions.h"
 #include "utils/utf8_util.h"
@@ -2206,12 +2209,22 @@ static bool prepareCompanionTransportsForFactoryReset(void*)
 
 bool factoryReset()
 {
+    // Feed the runtime task watchdog at every phase boundary: loopTask is the
+    // sole runtime-watchdog owner and the NVS/SPIFFS erase below can block it
+    // for many seconds on real hardware, aborting the reset mid-wipe.
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+#endif
+
     // Commit the safe BLE interlock before any destructive operation. If this
     // fails, do not erase anything and do not claim that reset succeeded.
     if (!sigurdos::prefs_arm_factory_reset()) {
         Serial.println("[mesh] factory reset failed: could not arm BLE interlock");
         return false;
     }
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+#endif
 
     // Quiesce every enabled companion transport before touching any reset
     // storage. The SD reset invokes this callback before deselecting or
@@ -2222,11 +2235,17 @@ bool factoryReset()
                        "quiesce failed");
         return false;
     }
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+#endif
 
     // Save identity in case we need it for rollback, then wipe everything
     if (g_mesh) saveIdentity(g_mesh->self_id);
     saveChannels();
     saveContacts();
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+#endif
 
     // Close SPIFFS before reformatting
     SPIFFS.end();
@@ -2245,6 +2264,9 @@ bool factoryReset()
         }
         const bool cleared = nvs.clear();
         nvs.end();
+#if defined(ESP32_PLATFORM)
+        esp_task_wdt_reset();
+#endif
         if (!cleared) {
             Serial.printf("[mesh] factory reset failed: could not clear NVS namespace %s\n",
                           target.name);
@@ -2252,7 +2274,14 @@ bool factoryReset()
         return cleared;
     };
     const auto format_spiffs = [](void*) -> bool {
-        return SPIFFS.format();
+#if defined(ESP32_PLATFORM)
+        esp_task_wdt_reset();
+#endif
+        const bool formatted = SPIFFS.format();
+#if defined(ESP32_PLATFORM)
+        esp_task_wdt_reset();
+#endif
+        return formatted;
     };
 
     const hal::factory_reset::NvsTarget* failed_target = nullptr;
@@ -2288,6 +2317,9 @@ bool factoryReset()
 
     // Reboot — on next boot, init() will find no prefs and no identity,
     // so it will use defaults and generate a fresh identity
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+#endif
     ESP.restart();
     return true;  // unreachable but satisfies bool return type
 }
