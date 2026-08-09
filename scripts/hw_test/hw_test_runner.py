@@ -28,6 +28,7 @@ if __package__ in (None, ""):
         boot_wait_for,
         capabilities_for,
         first_existing_local_port,
+        nav_silence_grace_for,
         nav_timeout_for,
     )
     from hw_test.hw_flash import (  # type: ignore[import-not-found]
@@ -69,6 +70,7 @@ else:
         boot_wait_for,
         capabilities_for,
         first_existing_local_port,
+        nav_silence_grace_for,
         nav_timeout_for,
     )
     from .hw_flash import (
@@ -413,6 +415,7 @@ def _nav_check(connection: PersistentSerial, screen: str) -> tuple[bool, str, di
         f"nav {screen}",
         timeout_s=nav_timeout_for(screen),
         expected=expected,
+        silence_grace_s=nav_silence_grace_for(screen),
     )
     marker = contains_crash(response.output)
     if marker:

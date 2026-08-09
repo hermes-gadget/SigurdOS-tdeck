@@ -22,6 +22,7 @@ from hw_test.hw_constants import (
     SCREENSHOT_TIMEOUT_S,
     CommandProtocol,
     boot_wait_for,
+    nav_silence_grace_for,
     nav_timeout_for,
 )
 from hw_test.hw_flash import (
@@ -548,6 +549,72 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(nav_timeout_for("map"), 15.0)
         self.assertEqual(nav_timeout_for("home"), 5.0)
         self.assertEqual(nav_timeout_for("s-system"), 5.0)
+        self.assertEqual(nav_silence_grace_for("map"), 3.0)
+        self.assertEqual(nav_silence_grace_for("home"), 0.45)
+
+    def test_silence_grace_cuts_late_marker_with_default_grace(self) -> None:
+        class RenderThenSilence:
+            def __init__(self) -> None:
+                self.chunks = [
+                    b"[test] > nav map\n[map] render: zoom=10 center=51.5,-0.1\n"
+                ]
+
+            def read_available(self, **_kwargs):
+                if self.chunks:
+                    return self.chunks.pop(0)
+                return b""
+
+            def drain(self, _seconds):
+                return None
+
+            def write(self, _data):
+                return 1
+
+        connection = PersistentSerial("/dev/null")
+        connection.read_available = RenderThenSilence().read_available
+        connection.drain = lambda _seconds: None
+        connection.write = lambda _data: 1
+        response = connection.send_command(
+            "nav map",
+            timeout_s=15.0,
+            expected=("nav -> map",),
+            recover_on_silence=False,
+        )
+        self.assertNotIn("nav -> map", response.output)
+
+    def test_extended_silence_grace_captures_late_marker(self) -> None:
+        class RenderThenLateMarker:
+            def __init__(self) -> None:
+                self.chunks = [
+                    b"[test] > nav map\n[map] render: zoom=10 center=51.5,-0.1\n",
+                    b"",
+                    b"",
+                    b"[test] nav -> map\n",
+                ]
+
+            def read_available(self, **_kwargs):
+                if self.chunks:
+                    return self.chunks.pop(0)
+                return b""
+
+            def drain(self, _seconds):
+                return None
+
+            def write(self, _data):
+                return 1
+
+        connection = PersistentSerial("/dev/null")
+        connection.read_available = RenderThenLateMarker().read_available
+        connection.drain = lambda _seconds: None
+        connection.write = lambda _data: 1
+        response = connection.send_command(
+            "nav map",
+            timeout_s=15.0,
+            expected=("nav -> map",),
+            recover_on_silence=False,
+            silence_grace_s=3.0,
+        )
+        self.assertIn("nav -> map", response.output)
 
     def test_wait_for_mesh_ready_polls_until_ready(self) -> None:
         class FakeConnection:

@@ -441,7 +441,12 @@ class PersistentSerial:
             return "SCREENSHOT" if self.protocol == CommandProtocol.RELEASE else "capture"
         return stripped
 
-    def _read_response(self, timeout_s: float, expected: tuple[bytes, ...]) -> bytes:
+    def _read_response(
+        self,
+        timeout_s: float,
+        expected: tuple[bytes, ...],
+        silence_grace_s: float = 0.45,
+    ) -> bytes:
         output = bytearray()
         deadline = time.monotonic() + timeout_s
         last_data: float | None = None
@@ -452,7 +457,7 @@ class PersistentSerial:
                 last_data = time.monotonic()
                 if expected and any(marker in output for marker in expected):
                     break
-            elif output and last_data is not None and time.monotonic() - last_data >= 0.45:
+            elif output and last_data is not None and time.monotonic() - last_data >= silence_grace_s:
                 break
             else:
                 time.sleep(0.01)
@@ -466,8 +471,15 @@ class PersistentSerial:
         expected: tuple[str, ...] = (),
         parser: ResponseParser[ParsedT] | None = None,
         recover_on_silence: bool = True,
+        silence_grace_s: float = 0.45,
     ) -> CommandResponse[ParsedT]:
-        """Send a command, parse its response, and recover once if silent."""
+        """Send a command, parse its response, and recover once if silent.
+
+        ``silence_grace_s`` is how long the reader waits after the last
+        received byte before treating the response as complete. Commands whose
+        confirmation marker prints after a quiet render gap (e.g. nav map)
+        need a grace longer than the default 0.45s.
+        """
 
         started_iso = utc_now()
         started = time.monotonic()
@@ -482,6 +494,7 @@ class PersistentSerial:
             output = self._read_response(
                 timeout_s,
                 tuple(marker.encode("utf-8") for marker in expected),
+                silence_grace_s=silence_grace_s,
             )
             if output or attempts == max_attempts:
                 break
