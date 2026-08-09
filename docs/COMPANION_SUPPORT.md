@@ -87,11 +87,13 @@ is reassembled per client, and malformed/oversized frames do not desynchronize
 the following frame.
 
 Command responses, including history sync, are sent only to the client that
-issued the command. Unsolicited events—received-message notifications, RX/raw
-logs, adverts, path updates, acknowledgements, and async responses—are pushed
-to every connected client on every enabled transport. Pushes remain
-best-effort under congestion; durable message history is replayed per client
-and is acknowledged only by that client's next sync request.
+issued the command. Request-correlated binary responses are likewise sent only
+to the live client session that owns the matching request tag. Unsolicited
+events—received-message notifications, RX/raw logs, adverts, path updates, and
+acknowledgements—are pushed to every connected client on every enabled
+transport. Pushes remain best-effort under congestion; durable message history
+is replayed per client and is acknowledged only by that client's next sync
+request.
 
 BLE re-advertises after disconnect. Clients should use write-with-response.
 Because the installed Arduino callback runs after the ATT acknowledgement, an

@@ -1080,25 +1080,44 @@ bool CompanionBridge::pushBinaryResponse(uint32_t tag,
                                          const uint8_t* blob, size_t blob_len)
 {
     expirePendingBinary();
-    int pending = findPendingBinary(tag);
-    bool pending_in_live_session = tag != 0 && pending >= 0;
-    if (tag != 0 && transports_attached() && !_active_session && pending < 0) {
-        for (const TransportSession& session : _transport_sessions) {
-            if (!session.used || !transports_client_connected(
-                    session.id, session.client_index)) continue;
-            for (const PendingBinaryRequest& request : session.pending_binary) {
-                if (request.tag == tag) {
-                    pending_in_live_session = true;
-                    break;
-                }
-            }
-            if (pending_in_live_session) break;
-        }
-    }
-    if (!isConnected() || !pending_in_live_session || (blob_len > 0 && !blob) ||
-        6 + blob_len > MAX_FRAME_SIZE) {
+    if (tag == 0 || (blob_len > 0 && !blob) || 6 + blob_len > MAX_FRAME_SIZE) {
         return false;
     }
+
+    int pending = -1;
+    TransportSession* owner = nullptr;
+    int owner_pending = -1;
+    TransportId owner_id = TransportId::BLE;
+    int owner_client_index = -1;
+    uint32_t owner_generation = 0;
+    if (transports_attached()) {
+        for (TransportSession& session : _transport_sessions) {
+            if (!session.used || !transports_client_connected(
+                    session.id, session.client_index)) continue;
+            const uint32_t generation = transports_client_generation(
+                session.id, session.client_index);
+            if (generation == 0 || generation != session.generation) continue;
+
+            const PendingBinaryRequest* requests = &session == _active_session
+                ? _pending_binary : session.pending_binary;
+            for (int index = 0; index < MAX_PENDING_BINARY_REQUESTS; ++index) {
+                if (requests[index].tag != tag) continue;
+                // A tag owned by more than one live session is ambiguous and
+                // must not disclose the response to either client.
+                if (owner) return false;
+                owner = &session;
+                owner_pending = index;
+                owner_id = session.id;
+                owner_client_index = session.client_index;
+                owner_generation = generation;
+            }
+        }
+        if (!owner) return false;
+    } else {
+        pending = findPendingBinary(tag);
+        if (!isConnected() || pending < 0) return false;
+    }
+
     int i = 0;
     _out_frame[i++] = PUSH_CODE_BINARY_RESPONSE;
     _out_frame[i++] = 0;  // reserved
@@ -1108,19 +1127,33 @@ bool CompanionBridge::pushBinaryResponse(uint32_t tag,
         std::memcpy(&_out_frame[i], blob, blob_len);
         i += (int)blob_len;
     }
-    const bool written = sendPushFrame(_out_frame, i);
-    if (written) {
-        if (pending >= 0) _pending_binary[pending] = {};
-        if (transports_attached() && !_active_session) {
-            for (TransportSession& session : _transport_sessions) {
-                if (!session.used) continue;
-                for (PendingBinaryRequest& request : session.pending_binary) {
-                    if (request.tag == tag) request = {};
-                }
-            }
+
+    bool written = false;
+    if (owner) {
+        // The slot may have disconnected and been reused after ownership was
+        // resolved. Re-check its connection generation immediately before
+        // targeting the request-specific response.
+        if (!transports_client_connected(owner_id, owner_client_index) ||
+            transports_client_generation(owner_id, owner_client_index) !=
+                owner_generation) {
+            return false;
         }
+        written = transports_send_to_result(owner_id, owner_client_index,
+                                            _out_frame, i);
+        if (!written) ++_push_drop_count;
+    } else {
+        written = sendPushFrame(_out_frame, i);
     }
-    return written;
+    if (!written) return false;
+
+    if (owner) {
+        PendingBinaryRequest* requests = owner == _active_session
+            ? _pending_binary : owner->pending_binary;
+        requests[owner_pending] = {};
+    } else {
+        _pending_binary[pending] = {};
+    }
+    return true;
 }
 
 bool CompanionBridge::pushRawData(int8_t snr_quarters, int8_t rssi,

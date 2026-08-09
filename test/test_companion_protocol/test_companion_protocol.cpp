@@ -19,6 +19,7 @@ public:
     bool busy = false;
     uint32_t generation = 1;
     int fail_writes = 0;
+    std::vector<uint8_t> next_read;
     std::vector<std::vector<uint8_t>> writes;
 
     void enable() override { enabled = true; }
@@ -38,8 +39,11 @@ public:
         return len;
     }
     size_t checkRecvFrame(uint8_t dest[]) override {
-        (void)dest;
-        return 0;
+        if (next_read.empty()) return 0;
+        const size_t len = next_read.size();
+        std::memcpy(dest, next_read.data(), len);
+        next_read.clear();
+        return len;
     }
 };
 
@@ -501,6 +505,13 @@ std::vector<uint8_t> anonRequestFrame(std::initializer_list<uint8_t> payload)
 {
     std::vector<uint8_t> frame{sigurdos::comms::CMD_SEND_ANON_REQ};
     for (int i = 0; i < 32; ++i) frame.push_back((uint8_t)(0xC0 + i));
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    return frame;
+}
+
+std::vector<uint8_t> encodedTransportFrame(const std::vector<uint8_t>& payload)
+{
+    std::vector<uint8_t> frame{'<', static_cast<uint8_t>(payload.size()), 0};
     frame.insert(frame.end(), payload.begin(), payload.end());
     return frame;
 }
@@ -2179,6 +2190,185 @@ TEST_F(CompanionProtocolTest, BinaryResponsePushCarriesTagAndPayload)
     EXPECT_FALSE(bridge.pushBinaryResponse(
         0x10203040U, response, sizeof(response)));
     EXPECT_EQ(serial.writes.size(), 1U);
+}
+
+TEST_F(CompanionProtocolTest, BinaryResponseRoutesOnlyToRequestingClient)
+{
+    struct RegistryReset {
+        ~RegistryReset() { sigurdos::comms::transports_test_reset(); }
+    } reset_registry;
+    struct RouteCase {
+        const char* name;
+        sigurdos::comms::TransportId owner;
+        int owner_index;
+        sigurdos::comms::TransportId observer;
+        int observer_index;
+    };
+    const RouteCase cases[] = {
+        {"TCP/TCP", sigurdos::comms::TransportId::TCP, 0,
+                    sigurdos::comms::TransportId::TCP, 1},
+        {"TCP/WS", sigurdos::comms::TransportId::TCP, 0,
+                   sigurdos::comms::TransportId::WS, 0},
+        {"BLE/TCP", sigurdos::comms::TransportId::BLE, 0,
+                    sigurdos::comms::TransportId::TCP, 0},
+    };
+
+    for (const RouteCase& route : cases) {
+        SCOPED_TRACE(route.name);
+        sigurdos::comms::transports_test_reset();
+        sigurdos::prefs_mock_reset();
+        sigurdos::NodePrefs prefs = sigurdos::prefs_get();
+        prefs.transport_tcp_enabled = true;
+        prefs.transport_ws_enabled = true;
+        ASSERT_TRUE(sigurdos::prefs_set(prefs));
+
+        serial.enabled = route.owner == sigurdos::comms::TransportId::BLE;
+        serial.connected = true;
+        serial.generation = 1;
+        serial.next_read.clear();
+        serial.writes.clear();
+        host.next_binary_tag = 0x10203040U;
+        bridge.begin(&serial, &host);
+        sigurdos::comms::transports_attach_serial(&serial);
+        sigurdos::comms::transports_init();
+        if (route.owner != sigurdos::comms::TransportId::BLE) {
+            ASSERT_TRUE(sigurdos::comms::transports_test_connect(
+                route.owner, route.owner_index));
+        }
+        ASSERT_TRUE(sigurdos::comms::transports_test_connect(
+            route.observer, route.observer_index));
+        sigurdos::comms::transports_loop();
+
+        const std::vector<uint8_t> request = binaryRequestFrame({0x03});
+        if (route.owner == sigurdos::comms::TransportId::BLE) {
+            serial.next_read = request;
+        } else {
+            const std::vector<uint8_t> encoded = encodedTransportFrame(request);
+            ASSERT_TRUE(sigurdos::comms::transports_test_feed(
+                route.owner, route.owner_index, encoded.data(), encoded.size()));
+        }
+        sigurdos::comms::transports_loop();
+
+        uint8_t encoded[MAX_FRAME_SIZE + 3]{};
+        if (route.owner == sigurdos::comms::TransportId::BLE) {
+            ASSERT_EQ(serial.writes.size(), 1U);
+            EXPECT_EQ(serial.writes[0][0], sigurdos::comms::RESP_CODE_SENT);
+            serial.writes.clear();
+        } else {
+            const size_t len = sigurdos::comms::transports_test_read_tx(
+                route.owner, route.owner_index, encoded, sizeof(encoded));
+            ASSERT_GT(len, 3U);
+            EXPECT_EQ(encoded[3], sigurdos::comms::RESP_CODE_SENT);
+        }
+        EXPECT_EQ(sigurdos::comms::transports_test_read_tx(
+                      route.observer, route.observer_index,
+                      encoded, sizeof(encoded)),
+                  0U);
+
+        const uint8_t response[] = {0xDE, 0xAD};
+        if (route.owner == sigurdos::comms::TransportId::BLE) {
+            serial.fail_writes = 1;
+            EXPECT_FALSE(bridge.pushBinaryResponse(
+                0x10203040U, response, sizeof(response)));
+            EXPECT_TRUE(serial.writes.empty());
+            EXPECT_EQ(sigurdos::comms::transports_test_read_tx(
+                          route.observer, route.observer_index,
+                          encoded, sizeof(encoded)),
+                      0U);
+        }
+        ASSERT_TRUE(bridge.pushBinaryResponse(
+            0x10203040U, response, sizeof(response)));
+        if (route.owner == sigurdos::comms::TransportId::BLE) {
+            ASSERT_EQ(serial.writes.size(), 1U);
+            EXPECT_EQ(serial.writes[0][0],
+                      sigurdos::comms::PUSH_CODE_BINARY_RESPONSE);
+        } else {
+            const size_t len = sigurdos::comms::transports_test_read_tx(
+                route.owner, route.owner_index, encoded, sizeof(encoded));
+            ASSERT_GT(len, 3U);
+            EXPECT_EQ(encoded[3], sigurdos::comms::PUSH_CODE_BINARY_RESPONSE);
+        }
+        EXPECT_EQ(sigurdos::comms::transports_test_read_tx(
+                      route.observer, route.observer_index,
+                      encoded, sizeof(encoded)),
+                  0U);
+        EXPECT_FALSE(bridge.pushBinaryResponse(
+            0x10203040U, response, sizeof(response)));
+    }
+}
+
+TEST_F(CompanionProtocolTest, BinaryResponseRejectsStaleOwnerGeneration)
+{
+    struct RegistryReset {
+        ~RegistryReset() { sigurdos::comms::transports_test_reset(); }
+    } reset_registry;
+
+    sigurdos::comms::transports_test_reset();
+    sigurdos::prefs_mock_reset();
+    serial.enabled = true;
+    bridge.begin(&serial, &host);
+    sigurdos::comms::transports_attach_serial(&serial);
+    sigurdos::comms::transports_init();
+    sigurdos::comms::transports_loop();
+
+    serial.next_read = binaryRequestFrame({0x03});
+    sigurdos::comms::transports_loop();
+    ASSERT_EQ(serial.writes.size(), 1U);
+    serial.writes.clear();
+    ++serial.generation;
+
+    const uint8_t response[] = {0x01};
+    EXPECT_FALSE(bridge.pushBinaryResponse(
+        0x10203040U, response, sizeof(response)));
+    EXPECT_TRUE(serial.writes.empty());
+}
+
+TEST_F(CompanionProtocolTest, BinaryResponseRejectsAmbiguousSessionOwners)
+{
+    struct RegistryReset {
+        ~RegistryReset() { sigurdos::comms::transports_test_reset(); }
+    } reset_registry;
+
+    sigurdos::comms::transports_test_reset();
+    sigurdos::prefs_mock_reset();
+    sigurdos::NodePrefs prefs = sigurdos::prefs_get();
+    prefs.transport_tcp_enabled = true;
+    ASSERT_TRUE(sigurdos::prefs_set(prefs));
+    bridge.begin(&serial, &host);
+    sigurdos::comms::transports_attach_serial(&serial);
+    sigurdos::comms::transports_init();
+    ASSERT_TRUE(sigurdos::comms::transports_test_connect(
+        sigurdos::comms::TransportId::TCP, 0));
+    ASSERT_TRUE(sigurdos::comms::transports_test_connect(
+        sigurdos::comms::TransportId::TCP, 1));
+    sigurdos::comms::transports_loop();
+
+    const std::vector<uint8_t> request = binaryRequestFrame({0x03});
+    const std::vector<uint8_t> encoded_request = encodedTransportFrame(request);
+    uint8_t encoded_response[MAX_FRAME_SIZE + 3]{};
+    for (int client = 0; client < 2; ++client) {
+        host.next_binary_tag = 0x10203040U;
+        ASSERT_TRUE(sigurdos::comms::transports_test_feed(
+            sigurdos::comms::TransportId::TCP, client,
+            encoded_request.data(), encoded_request.size()));
+        sigurdos::comms::transports_loop();
+        ASSERT_GT(sigurdos::comms::transports_test_read_tx(
+                      sigurdos::comms::TransportId::TCP, client,
+                      encoded_response, sizeof(encoded_response)),
+                  3U);
+    }
+
+    const uint8_t response[] = {0x01};
+    EXPECT_FALSE(bridge.pushBinaryResponse(
+        0x10203040U, response, sizeof(response)));
+    EXPECT_EQ(sigurdos::comms::transports_test_read_tx(
+                  sigurdos::comms::TransportId::TCP, 0,
+                  encoded_response, sizeof(encoded_response)),
+              0U);
+    EXPECT_EQ(sigurdos::comms::transports_test_read_tx(
+                  sigurdos::comms::TransportId::TCP, 1,
+                  encoded_response, sizeof(encoded_response)),
+              0U);
 }
 
 TEST_F(CompanionProtocolTest, BinaryResponseRejectsUnmatchedTag)
