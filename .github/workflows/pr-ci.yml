@@ -115,7 +115,7 @@ jobs:
         run: pio run -e SigurdOS_TDeck_ble_agent
 
       - name: Verify resolved PlatformIO graph
-        run: python scripts/platformio_lock.py --check
+        run: python scripts/platformio_lock.py --check --environment SigurdOS_TDeck
 
       - name: Report firmware size
         if: always()

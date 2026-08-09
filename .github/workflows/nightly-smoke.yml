@@ -39,7 +39,7 @@ jobs:
         run: pio pkg install -e SigurdOS_TDeck
 
       - name: Verify resolved PlatformIO graph
-        run: python scripts/platformio_lock.py --check
+        run: python scripts/platformio_lock.py --check --environment SigurdOS_TDeck
 
       - name: Run smoke build matrix
         run: python scripts/smoke_build_matrix.py --profile roadmap
