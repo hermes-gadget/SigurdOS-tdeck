@@ -6,6 +6,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from pathlib import Path
@@ -27,7 +28,9 @@ from hw_test.hw_flash import (
 from hw_test.hw_report import HardwareReport, TestResult, TestStatus, utc_now, write_report_bundle
 from hw_test.hw_serial import (
     DeviceInfo,
+    PersistentSerial,
     ScreenshotError,
+    ScreenshotCrashError,
     decode_capture_text,
     infer_radio_availability,
     parse_stat_line,
@@ -43,7 +46,7 @@ from hw_test.hw_test_runner import (
     run_radio,
     validate_args,
 )
-from hw_test.hw_soak import SoakConfig
+from hw_test.hw_soak import SoakConfig, SoakExit, SoakRunner
 
 
 def _partition_entry(partition_type, subtype, offset, size, label):
@@ -153,6 +156,68 @@ class SerialParsingTests(unittest.TestCase):
                     Path(directory) / "bad.png",
                 )
 
+    def test_capture_transcript_with_panic_and_rom_reset_is_rejected(self) -> None:
+        transcript = (
+            "[capture] W=2 H=1 S=4\n"
+            "[cdata] 00FF\n"
+            "[D] panic text follows: Guru Meditation\n"
+            "ESP-ROM:esp32s3\n"
+            "rst:0x3 (SW_RESET)\n"
+            "[capture] END\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ScreenshotCrashError) as raised:
+                decode_capture_text(transcript, Path(directory) / "crash.png")
+
+        self.assertEqual(raised.exception.marker, "Guru Meditation")
+        self.assertIn("ESP-ROM:esp32s3", raised.exception.evidence)
+        self.assertLessEqual(len(raised.exception.evidence), 1000)
+
+    def test_capture_screenshot_scans_stream_before_decoding(self) -> None:
+        transcript = (
+            "[capture] W=2 H=1 S=4\n"
+            "[cdata] 00FF\n"
+            "ESP-ROM:esp32s3\n"
+            "rst:0x3 (SW_RESET)\n"
+            + "x" * 300
+        ).encode()
+
+        class FakeSerial:
+            is_open = True
+
+            def __init__(self) -> None:
+                self.pending = bytearray()
+
+            @property
+            def in_waiting(self) -> int:
+                return len(self.pending)
+
+            def read(self, size: int = 1) -> bytes:
+                chunk = bytes(self.pending[:size])
+                del self.pending[:size]
+                return chunk
+
+            def write(self, _data: bytes) -> None:
+                self.pending.extend(transcript)
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                self.is_open = False
+
+        connection = PersistentSerial("fake")
+        connection.protocol = CommandProtocol.REMOTE_TEST
+        connection._serial = FakeSerial()
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(connection, "drain"):
+                with self.assertRaises(ScreenshotCrashError) as raised:
+                    connection.capture_screenshot(Path(directory) / "crash.png")
+
+        self.assertEqual(raised.exception.marker, "ESP-ROM:esp32s3")
+        self.assertIn("ESP-ROM:esp32s3", raised.exception.evidence)
+
+
     def test_capture_recovers_hex_after_interleaved_log_line(self) -> None:
         raw = bytes(range(32))
         encoded = raw.hex().upper()
@@ -181,6 +246,91 @@ class SerialParsingTests(unittest.TestCase):
             ),
             (869.525, 10, 250.0, 5, 7, True),
         )
+
+
+class SoakRunnerTests(unittest.TestCase):
+    class _FakeRemoteConnection:
+        protocol = CommandProtocol.REMOTE_TEST
+
+        def drain(self, _duration_s: float) -> None:
+            return None
+
+        def read(self, _size: int = 1) -> bytes:
+            time.sleep(0.001)
+            return b""
+
+        def capture_screenshot(self, *_args, **_kwargs):
+            raise ScreenshotCrashError(
+                "Guru Meditation",
+                "[cdata] 00FF\nGuru Meditation\nESP-ROM:esp32s3\nrst:0x3",
+            )
+
+    class _FakeReleaseConnection:
+        protocol = CommandProtocol.RELEASE
+
+        def __init__(self, response: str) -> None:
+            self.response = response
+            self.probe_kwargs: dict[str, object] | None = None
+
+        def drain(self, _duration_s: float) -> None:
+            return None
+
+        def read(self, _size: int = 1) -> bytes:
+            time.sleep(0.001)
+            return b""
+
+        def send_command(self, _command: str, **kwargs):
+            self.probe_kwargs = kwargs
+            return SimpleNamespace(output=self.response, wire_command="NAV home")
+
+    def _run_soak(
+        self,
+        connection,
+        *,
+        duration_s: float = 0.02,
+        screenshot_interval_s: float = 0.0,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            result = SoakRunner(
+                connection,
+                Path(directory),
+                SoakConfig(
+                    duration_s=duration_s,
+                    screenshot_interval_s=screenshot_interval_s,
+                    progress_interval_s=60.0,
+                ),
+                protocol=connection.protocol,
+            ).run()
+            return result.to_dict()
+
+    def test_capture_crash_becomes_soak_failure(self) -> None:
+        result = self._run_soak(
+            self._FakeRemoteConnection(),
+            screenshot_interval_s=0.001,
+        )
+
+        self.assertEqual(result["exit_code"], int(SoakExit.CRASH))
+        self.assertEqual(result["status"], "CRASH")
+        self.assertEqual(result["crashes"][0]["marker"], "Guru Meditation")
+
+    def test_silent_release_requires_final_liveness_probe(self) -> None:
+        connection = self._FakeReleaseConnection("")
+        result = self._run_soak(connection)
+
+        self.assertEqual(result["exit_code"], int(SoakExit.CRASH))
+        self.assertFalse(result["liveness_probe"]["ok"])
+        self.assertEqual(result["crashes"][0]["marker"], "release liveness probe failed")
+        self.assertEqual(connection.probe_kwargs["recover_on_silence"], False)
+
+    def test_release_final_liveness_probe_records_acknowledgement(self) -> None:
+        connection = self._FakeReleaseConnection("[serial] NAV home\n")
+        result = self._run_soak(connection)
+
+        self.assertEqual(result["exit_code"], int(SoakExit.PASS))
+        self.assertTrue(result["liveness_probe"]["ok"])
+        self.assertEqual(result["liveness_probe"]["command"], "NAV home")
+        self.assertTrue(result["liveness_probe"]["response_timestamp"])
+        self.assertEqual(connection.probe_kwargs["expected"], ("[serial] NAV",))
 
 
 class ReportTests(unittest.TestCase):

@@ -21,6 +21,7 @@ if __package__ in (None, ""):
         CRASH_MARKERS,
         ESP_CHIP,
         LOCAL_ESPTOOL_CANDIDATES,
+        ROM_BOOT_MARKERS,
         SCREENSHOT_TIMEOUT_S,
         SERIAL_BAUD,
         SERIAL_RECOVERY_WAIT_S,
@@ -32,6 +33,7 @@ else:
         CRASH_MARKERS,
         ESP_CHIP,
         LOCAL_ESPTOOL_CANDIDATES,
+        ROM_BOOT_MARKERS,
         SCREENSHOT_TIMEOUT_S,
         SERIAL_BAUD,
         SERIAL_RECOVERY_WAIT_S,
@@ -63,6 +65,15 @@ class FirmwareDetectionError(HardwareSerialError):
 
 class ScreenshotError(HardwareSerialError):
     """Raised when framebuffer capture is absent, truncated, or invalid."""
+
+
+class ScreenshotCrashError(ScreenshotError):
+    """Raised when a capture stream contains panic or reboot evidence."""
+
+    def __init__(self, marker: str, evidence: str) -> None:
+        self.marker = marker
+        self.evidence = evidence
+        super().__init__(f"capture observed {marker}: {evidence}")
 
 
 @dataclass(slots=True)
@@ -115,6 +126,31 @@ def contains_crash(text: str) -> str | None:
         if marker.casefold() in folded:
             return marker
     return None
+
+
+def contains_crash_or_reset(text: str) -> str | None:
+    """Return the first panic or ROM reboot marker present in text."""
+
+    marker = contains_crash(text)
+    if marker:
+        return marker
+    folded = text.casefold()
+    return next(
+        (candidate for candidate in ROM_BOOT_MARKERS if candidate.casefold() in folded),
+        None,
+    )
+
+
+def _bounded_crash_evidence(text: str, marker: str, limit: int = 1000) -> str:
+    """Keep crash evidence small while retaining context around the marker."""
+
+    if len(text) <= limit:
+        return text
+    index = text.casefold().find(marker.casefold())
+    if index < 0:
+        return text[-limit:]
+    start = max(0, index - limit // 2)
+    return text[start : start + limit]
 
 
 def infer_radio_availability(getrf_output: str, boot_output: str = "") -> bool | None:
@@ -230,6 +266,9 @@ def _extract_cdata_hex(text: str, start: int, expected_bytes: int) -> str:
 def decode_capture_text(text: str, output: Path, *, screen: str | None = None) -> ScreenshotArtifact:
     """Decode a complete capture transcript into PNG with strict hex filtering."""
 
+    marker = contains_crash_or_reset(text)
+    if marker:
+        raise ScreenshotCrashError(marker, _bounded_crash_evidence(text, marker))
     header = CAPTURE_HEADER_RE.search(text)
     if not header:
         abort = re.search(r"\[capture\]\s+ABORT:\s*(.+)", text)
@@ -613,11 +652,24 @@ class PersistentSerial:
         command = "SCREENSHOT" if self.protocol == CommandProtocol.RELEASE else "capture"
         self.write((command + "\r\n").encode("ascii"))
         payload = bytearray()
+        scan_tail = bytearray()
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             chunk = self.read_available(read_one=True)
             if chunk:
                 payload.extend(chunk)
+                scan_tail.extend(chunk)
+                marker = contains_crash_or_reset(
+                    bytes(scan_tail).decode("utf-8", errors="replace")
+                )
+                if marker:
+                    transcript = payload.decode("utf-8", errors="replace")
+                    raise ScreenshotCrashError(
+                        marker,
+                        _bounded_crash_evidence(transcript, marker),
+                    )
+                if len(scan_tail) > 256:
+                    del scan_tail[:-256]
                 if any(
                     marker in payload
                     for marker in (b"[capture] END", b"[capture] ABORT:", b"[capture] ERROR:")

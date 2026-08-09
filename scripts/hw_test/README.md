@@ -198,10 +198,11 @@ The radio-enabled debug firmware deliberately streams screenshots without
 starving mesh/UI work. A complete 320×240 capture can therefore take about two
 minutes; the standardized capture budget is 165 seconds.
 
-Production firmware may emit no periodic serial output. That is normal: a soak
-against a detected release protocol becomes crash-only monitoring. Remote-test
-firmware is expected to emit `[stat]`; losing it for longer than the configured
-timeout is a critical soak failure.
+Production firmware may emit no periodic serial output. That is normal, but a
+release soak is not crash-only pass-by-silence: the runner performs a final
+non-recovering `NAV home` liveness probe and requires the `[serial] NAV`
+acknowledgement. Remote-test firmware is expected to emit `[stat]`; losing it
+for longer than the configured timeout is a critical soak failure.
 
 ## Standalone soak
 

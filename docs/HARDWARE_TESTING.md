@@ -912,8 +912,10 @@ transition.
 That is expected. Production builds have no periodic debug output. Use
 `SigurdOS_TDeck_debug`, `SigurdOS_TDeck_remote_test`, or
 `SigurdOS_TDeck_remote_test_radio` for `[stat]`-based runtime measurements. A
-production soak must use external liveness evidence and a final interaction; it
-cannot use absence of serial text as a failure condition.
+production soak must still prove liveness: the runner records a final,
+non-recovering `NAV home` interaction and requires the `[serial] NAV`
+acknowledgement. Complete silence or a missing acknowledgement fails the soak;
+the final probe is recorded in `results.json` as `liveness_probe`.
 
 ### `SPIFFS Already Mounted` floods the log
 
