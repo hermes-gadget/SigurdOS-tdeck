@@ -713,6 +713,78 @@ class ReportTests(unittest.TestCase):
         verify = next(item for item in report.results if item.name == "radio.verify_restore")
         self.assertEqual(verify.status, TestStatus.PASS)
 
+    def test_radio_channel_retries_addchannel_until_ack(self) -> None:
+        class FakeChannelConnection:
+            protocol = CommandProtocol.REMOTE_TEST
+            device_info = DeviceInfo(
+                protocol=CommandProtocol.REMOTE_TEST,
+                radio_available=True,
+            )
+
+            def __init__(self) -> None:
+                self.addchannel_attempts = 0
+
+            def send_command(self, command, **_kwargs):
+                def response(output):
+                    return SimpleNamespace(
+                        output=output,
+                        attempts=1,
+                        recovered=False,
+                        wire_command=command,
+                    )
+
+                if command.startswith("addchannel "):
+                    self.addchannel_attempts += 1
+                    if self.addchannel_attempts < 3:
+                        # First store commit blocks (SPIFFS GC): echo only.
+                        return response(f"[test] > {command}")
+                    return response(
+                        f"[test] > {command}\n[test] addchannel OK: hashtag #sigurd-hwtest-12345"
+                    )
+                if command.startswith("setrf "):
+                    return response("radio params saved to NVS")
+                if command == "getrf":
+                    return response(
+                        "[test] getrf: freq=868.100 SF=10 BW=250.0 CR=5 TX=2 dBm RX_BOOST=0"
+                    )
+                if command == "reboot":
+                    return response("device restarting")
+                if command == "status":
+                    return response(
+                        "[test] heap=100 psram=100 lvmem_used_pct=10 lvmem_free=10 "
+                        "lvmem_total=100 lvmem_frag=0 stack_hwm_words=10 "
+                        "stress_lvgl_min_free=10 stress_lvgl_max_used_pct=1 mesh=1"
+                    )
+                if command.startswith("removechannel "):
+                    return response("OK")
+                return response("OK")
+
+            def close(self):
+                return None
+
+            def connect(self):
+                return self
+
+            def detect_firmware(self):
+                return DeviceInfo(protocol=CommandProtocol.REMOTE_TEST, radio_available=True)
+
+        connection = FakeChannelConnection()
+        report = HardwareReport(mode="radio", transport="local")
+        with mock.patch("hw_test.hw_test_runner.time.sleep"):
+            run_radio(
+                connection,
+                report,
+                frequency_mhz=868.1,
+                spreading_factor=10,
+                bandwidth_khz=250.0,
+                coding_rate=5,
+                tx_power_dbm=2,
+            )
+        self.assertEqual(connection.addchannel_attempts, 3)
+        channel = next(item for item in report.results if item.name == "radio.channel")
+        self.assertEqual(channel.status, TestStatus.PASS)
+        self.assertEqual(channel.data.get("attempts"), 3)
+
     def test_crash_recovery_refuses_non_telemetry_firmware(self) -> None:
         report = HardwareReport(mode="crash_recovery", transport="local")
         info = DeviceInfo(

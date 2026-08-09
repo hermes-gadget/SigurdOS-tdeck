@@ -826,18 +826,26 @@ def run_radio(
         channel = f"{TEST_CHANNEL_PREFIX}-{int(time.time()) % 100000:05d}"
 
         def add_channel() -> tuple[bool, str, dict[str, Any]]:
-            response = connection.send_command(
-                f"addchannel {channel}",
-                timeout_s=7,
-                expected=("addchannel",),
-                # The response marker is frequently delayed behind the
-                # post-boot serial flood; tolerate a longer idle gap.
-                silence_grace_s=2.0,
-            )
-            passed = "addchannel OK" in response.output
-            return passed, f"created #{channel}" if passed else "channel creation failed", {
-                "output": response.output[-1600:]
-            }
+            # The first channel-store commit after a reboot can block in a
+            # SPIFFS GC pass (>7s, response lost) and the acknowledgement can
+            # be swallowed by the post-boot serial flood. Retry with a fresh
+            # read window each time; a duplicate entry from a lost first
+            # response is cleaned up by radio.cleanup.
+            last_output = ""
+            for attempt in range(1, 4):
+                response = connection.send_command(
+                    f"addchannel {channel}",
+                    timeout_s=7,
+                    expected=("addchannel",),
+                    # The response marker is frequently delayed behind the
+                    # post-boot serial flood; tolerate a longer idle gap.
+                    silence_grace_s=2.0,
+                )
+                last_output = response.output
+                if "addchannel OK" in last_output:
+                    return True, f"created #{channel}", {"attempts": attempt}
+                time.sleep(3)
+            return False, "channel creation failed", {"output": last_output[-1600:]}
 
         if not _run_check(report, "radio.channel", add_channel):
             return
