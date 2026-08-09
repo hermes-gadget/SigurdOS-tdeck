@@ -228,11 +228,11 @@ constexpr int CONTENT_W  = DISPLAY_W;
 
 ### `home_screen_create()`
 
-Creates the Home screen with a **fade-in** animation (`LV_SCR_LOAD_ANIM_FADE_ON`, 300ms). Called during boot in `ui::init()` to establish the initial screen after the splash.
+Creates the Home screen and loads it immediately. Called during boot in `ui::init()` to establish the initial screen after the splash. (Screen loads are intentionally instant — the shared loader forces `LV_SCR_LOAD_ANIM_NONE`.)
 
 ### `home_screen_show()`
 
-Brings the Home screen to the foreground with a **slide-in from right** animation (`LV_SCR_LOAD_ANIM_MOVE_RIGHT`, 200ms). Called from `navigate_to(Screen::Home)` in `navigation.cpp`.
+Brings the Home screen to the foreground immediately (no transition animation — the shared loader forces `LV_SCR_LOAD_ANIM_NONE`). Called from `navigate_to(Screen::Home)` in `navigation.cpp`.
 
 ### Construction details (`build_home_screen()`)
 
@@ -244,7 +244,7 @@ Both `create()` and `show()` call the internal `build_home_screen()` function, w
 4. Disables all scroll flags on the screen object
 5. Registers a `LV_EVENT_DELETE` callback that nulls all static pointers when the screen is replaced (automatic cleanup since Home uses `auto_del = true`)
 6. Creates top bar, bottom bar, and icon grid
-7. Loads the screen with the requested animation
+7. Loads the screen immediately (transitions are intentionally instant; the shared `show_screen()` loader forces `LV_SCR_LOAD_ANIM_NONE` to support manual outgoing-root deletion and predictable lifecycle cleanup)
 
 ### `home_screen_handle_trackball(SigurdOSTrackballEvent event)`
 

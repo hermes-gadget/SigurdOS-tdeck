@@ -81,7 +81,7 @@ TEST(ChatConversationViewTest, FullMeshTableStillHasRoomForMaximumSyntheticDms)
         std::snprintf(name, sizeof(name), "DM: Contact-%02d", i);
         set_name(names, MESH_CAPACITY + i, name);
     }
-    append(buffers[31], "Contact-15", "newest private message", 99);
+    append(buffers[CAPACITY - 1], "Contact-15", "newest private message", 99);
 
     ChatConversationView<CAPACITY> view;
     view.rebuild(names, CAPACITY, 0);
@@ -95,8 +95,8 @@ TEST(ChatConversationViewTest, FullMeshTableStillHasRoomForMaximumSyntheticDms)
     ASSERT_EQ(view.count(), DM_CAPACITY);
     EXPECT_EQ(view.canonicalIndex(0), MESH_CAPACITY);
     EXPECT_EQ(view.canonicalIndex(DM_CAPACITY - 1), CAPACITY - 1);
-    ASSERT_EQ(buffers[31].count(), 1);
-    EXPECT_STREQ(buffers[31].at(0).text, "newest private message");
+    ASSERT_EQ(buffers[CAPACITY - 1].count(), 1);
+    EXPECT_STREQ(buffers[CAPACITY - 1].at(0).text, "newest private message");
 }
 
 TEST(ChatConversationViewTest, IncomingDmWhileHiddenAppearsWhenDmViewReturns)

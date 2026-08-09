@@ -125,7 +125,13 @@ TEST(ChatUnreadStore, TracksAllCanonicalMeshAndDmConversations) {
 
     EXPECT_EQ(store.total(), capacity);
     EXPECT_TRUE(store.has_mentions());
-    EXPECT_EQ(store.count("DM: Contact-31"), 1);
+    char last_name[sigurdos::ui::ChatUnreadStore::NAME_CAPACITY]{};
+    if (capacity - 1 < static_cast<int>(sigurdos::ui::CHAT_MESH_CONVERSATION_CAPACITY)) {
+        std::snprintf(last_name, sizeof(last_name), "#mesh-%02d", capacity - 1);
+    } else {
+        std::snprintf(last_name, sizeof(last_name), "DM: Contact-%02d", capacity - 1);
+    }
+    EXPECT_EQ(store.count(last_name), 1);
     EXPECT_FALSE(store.increment("overflow", false));
     EXPECT_EQ(store.total(), capacity);
 }

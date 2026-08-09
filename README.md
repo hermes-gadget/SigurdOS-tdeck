@@ -114,7 +114,7 @@ Before flashing or running on-device validation, follow the standardized
 
 ```
 SigurdOS-tdeck/
-├── firmware/               ← Pre-built merged binaries (flash at 0x0)
+├── firmware/               ← Release/flashing documentation (binaries on GitHub Releases)
 ├── lib/meshcore/           ← Git submodule: MeshCore protocol (routing, radio, encryption)
 ├── src/
 │   ├── main.cpp            ← Boot sequence (board → peripheries + display → splash/prefs → mesh → UI)
@@ -278,13 +278,16 @@ After cloning, these files must exist or the build will fail:
 
 ## Pre-built Firmware
 
-Pre-built merged binaries are in [`firmware/`](firmware/). Flash directly with esptool — no PlatformIO needed:
+Pre-built merged binaries are published as immutable GitHub Release assets —
+they are not checked into the repository. Download `firmware-merged.bin` from
+the [latest release](https://github.com/hermes-gadget/SigurdOS-tdeck/releases),
+then flash directly with esptool — no PlatformIO needed:
 
 ```bash
 pip install esptool
 esptool.py --chip esp32s3 --port COM21 --baud 921600 \
   --before default_reset --after hard_reset write_flash \
-  0x0 firmware/sigurdos-tdeck-merged.bin
+  0x0 firmware-merged.bin
 ```
 
 Do not add a `--flash_mode qio` override. The merged image contains a DIO

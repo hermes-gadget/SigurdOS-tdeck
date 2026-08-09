@@ -98,7 +98,7 @@ The user must navigate to **Settings > Radio** (`radio_setup_screen_show()`) to 
 6. Conditional formatting:
    - **Configured** (`p.configured == true`): displays all stats, chart, and radio parameters.
    - **Unconfigured** (`p.configured == false`): shows packet counts and a notice directing the user to the Radio setup screen.
-7. Displays the screen via `show_screen(scr)` (slide-in animation).
+7. Displays the screen via `show_screen(scr)` (instant load, no transition animation — the shared loader forces `LV_SCR_LOAD_ANIM_NONE`).
 
 ### Update Behaviour
 

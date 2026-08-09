@@ -8,10 +8,18 @@
 
 namespace sigurdos::ui {
 
-constexpr std::size_t CHAT_MESH_CONVERSATION_CAPACITY = 16;
+constexpr std::size_t CHAT_MESH_CONVERSATION_CAPACITY = 8;
 constexpr std::size_t CHAT_DM_CONVERSATION_CAPACITY = 16;
 constexpr std::size_t CHAT_CONVERSATION_CAPACITY =
     CHAT_MESH_CONVERSATION_CAPACITY + CHAT_DM_CONVERSATION_CAPACITY;
+
+// The UI mesh-conversation ceiling must match the firmware's mesh channel
+// capacity (platformio.ini: -D MAX_GROUP_CHANNELS=8). The mesh layer can never
+// produce more group channels than that, so the UI must not reserve more.
+#ifdef MAX_GROUP_CHANNELS
+static_assert(CHAT_MESH_CONVERSATION_CAPACITY == MAX_GROUP_CHANNELS,
+              "UI mesh conversation capacity must match firmware MAX_GROUP_CHANNELS");
+#endif
 
 // Non-owning presentation index over the canonical conversation registry.
 // Rebuilding a view never moves names, metadata, unread counts, or message
