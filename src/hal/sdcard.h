@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <cerrno>
 #include <ctime>
 
 // VFS mountpoint — use this prefix for POSIX file I/O on the SD card
@@ -51,15 +52,92 @@ enum SigurdosSdMountError : uint8_t {
     SIGURDOS_SD_MOUNT_ERROR_NONE = 0,
     SIGURDOS_SD_MOUNT_ERROR_BEGIN_FAILED,
     SIGURDOS_SD_MOUNT_ERROR_RETRIES_EXHAUSTED,
+    SIGURDOS_SD_MOUNT_ERROR_MEDIA_LOST,
+    SIGURDOS_SD_MOUNT_ERROR_CAPACITY_QUERY_FAILED,
 };
 
 struct SigurdosSdMountDiagnostic {
     bool mounted;
+    bool capacity_valid;
     uint8_t attempt_count;  // Total SD.begin() calls since the last boot init reset.
     SigurdosSdMountSource last_source;
     SigurdosSdMountError last_error;
     uint32_t last_backoff_ms;
 };
+
+namespace sigurdos::sdcard::detail {
+
+// POSIX/VFS uses these errors when a mounted block device disappears. ENOENT
+// is intentionally excluded: missing files and directories are ordinary,
+// non-media errors and must not force a remount.
+inline bool isMediaLossError(int error)
+{
+    if (error == EIO || error == ENODEV || error == ENXIO) return true;
+#ifdef ENOMEDIUM
+    if (error == ENOMEDIUM) return true;
+#endif
+#ifdef EREMOTEIO
+    if (error == EREMOTEIO) return true;
+#endif
+#ifdef ESHUTDOWN
+    if (error == ESHUTDOWN) return true;
+#endif
+    return false;
+}
+
+inline void markMediaLost(bool& mounted, int& retry_count,
+                          bool& capacity_valid)
+{
+    mounted = false;
+    retry_count = 0;
+    capacity_valid = false;
+}
+
+inline void markMountSuccess(bool& mounted, int& retry_count,
+                             bool& capacity_valid)
+{
+    mounted = true;
+    retry_count = 0;
+    capacity_valid = false;
+}
+
+struct CapacityCache {
+    uint64_t total_bytes = 0;
+    uint64_t free_bytes = 0;
+    bool valid = false;
+    bool dirty = true;
+
+    void clear()
+    {
+        total_bytes = 0;
+        free_bytes = 0;
+        valid = false;
+        dirty = true;
+    }
+
+    void invalidate()
+    {
+        // Preserve the last known values for diagnostics; validity determines
+        // whether consumers may treat them as a current filesystem reading.
+        valid = false;
+        dirty = true;
+    }
+
+    bool update(uint64_t total, uint64_t used)
+    {
+        if (total == 0 || used > total) {
+            invalidate();
+            return false;
+        }
+        total_bytes = total;
+        free_bytes = total - used;
+        valid = true;
+        dirty = false;
+        return true;
+    }
+};
+
+} // namespace sigurdos::sdcard::detail
 
 inline bool sigurdos_sdcard_path_valid(const char* path)
 {
@@ -93,6 +171,9 @@ const char* sigurdos_sdcard_mount_source_name(SigurdosSdMountSource source);
 const char* sigurdos_sdcard_mount_error_name(SigurdosSdMountError error);
 
 // Filesystem info
+// Refreshes total/used bytes while mounted. On a query failure, the last
+// known values remain available but the diagnostic validity bit is cleared.
+bool sigurdos_sdcard_refresh_capacity();
 uint64_t sigurdos_sdcard_capacity_bytes();
 uint64_t sigurdos_sdcard_free_bytes();
 

@@ -35,6 +35,8 @@ struct RepeatFrequencyRange {
 #define ALLOWED_REPEAT_FREQ_RANGE \
     { 433000, 433000 },          \
     { 869495, 869495 },          \
+    { 869525, 869525 },          \
+    { 869618, 869618 },          \
     { 918000, 918000 }
 #endif
 static constexpr RepeatFrequencyRange REPEAT_FREQUENCY_RANGES[] = {

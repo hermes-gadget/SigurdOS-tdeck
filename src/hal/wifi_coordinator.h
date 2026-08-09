@@ -25,8 +25,10 @@ enum class RadioMode : uint8_t {
 
 struct ReleasePlan {
     bool released = false;
+    Owner released_owner = Owner::None;
     Owner restored_owner = Owner::None;
     RadioMode restored_mode = RadioMode::Off;
+    uint8_t depth = 0;
 };
 
 // A worker task may request cleanup, but ownership transitions and WiFi driver
@@ -75,17 +77,46 @@ public:
         return true;
     }
 
-    ReleasePlan release(Owner owner) {
+    // Prepare is deliberately non-mutating. The production wrapper applies
+    // the hardware mode in between this step and commitRelease().
+    ReleasePlan prepareRelease(Owner owner) const {
         ReleasePlan plan{};
         if (depth_ == 0 || frames_[depth_ - 1].owner != owner) return plan;
 
-        const Frame released = frames_[--depth_];
         plan.released = true;
-        plan.restored_owner = currentOwner();
-        plan.restored_mode = depth_ == 0 ? released.observed_mode
-                                         : frames_[depth_ - 1].requested_mode;
-        idle_mode_ = plan.restored_mode;
+        plan.released_owner = owner;
+        plan.depth = depth_;
+        plan.restored_owner = depth_ == 1 ? Owner::None
+                                          : frames_[depth_ - 2].owner;
+        plan.restored_mode = depth_ == 1 ? frames_[depth_ - 1].observed_mode
+                                         : frames_[depth_ - 2].requested_mode;
         return plan;
+    }
+
+    bool commitRelease(const ReleasePlan& plan) {
+        if (!plan.released || depth_ == 0 || plan.depth != depth_ ||
+            frames_[depth_ - 1].owner != plan.released_owner) {
+            return false;
+        }
+
+        --depth_;
+        idle_mode_ = plan.restored_mode;
+        return true;
+    }
+
+    // Compatibility helper for pure state-machine callers. Production code
+    // uses releaseWith() so a driver failure cannot discard the lease.
+    ReleasePlan release(Owner owner) {
+        const ReleasePlan plan = prepareRelease(owner);
+        if (plan.released) (void)commitRelease(plan);
+        return plan;
+    }
+
+    template <typename ApplyMode>
+    bool releaseWith(Owner owner, ApplyMode apply_mode) {
+        const ReleasePlan plan = prepareRelease(owner);
+        if (!plan.released || !apply_mode(plan.restored_mode)) return false;
+        return commitRelease(plan);
     }
 
     Owner currentOwner() const {
@@ -94,6 +125,13 @@ public:
 
     RadioMode currentMode() const {
         return depth_ == 0 ? idle_mode_ : frames_[depth_ - 1].requested_mode;
+    }
+
+    bool hasOwner(Owner owner) const {
+        for (uint8_t i = 0; i < depth_; ++i) {
+            if (frames_[i].owner == owner) return true;
+        }
+        return false;
     }
 
     uint8_t depth() const { return depth_; }
@@ -116,6 +154,7 @@ bool acquire(Owner owner, RadioMode requested_mode);
 bool release(Owner owner);
 bool canAcquire(Owner owner);
 Owner currentOwner();
+bool hasOwner(Owner owner);
 const char* ownerName(Owner owner);
 
 // Worker-safe release request API. Only servicePendingReleases() invokes the

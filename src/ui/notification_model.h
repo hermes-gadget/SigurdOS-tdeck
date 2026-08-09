@@ -92,6 +92,19 @@ inline bool notification_storage_low(uint64_t free_bytes, uint64_t total_bytes)
     return free_bytes <= ONE_MIB || free_bytes <= total_bytes / 50ULL;
 }
 
+inline bool notification_storage_latch_next(bool latched, bool mounted,
+                                             bool capacity_valid,
+                                             uint64_t free_bytes,
+                                             uint64_t total_bytes)
+{
+    if (!mounted) return false;
+    // A failed refresh must not turn an unknown reading into either a new
+    // alert or an apparent recovery. Keep the previous state until a valid
+    // capacity sample arrives.
+    if (!capacity_valid) return latched;
+    return notification_storage_low(free_bytes, total_bytes);
+}
+
 inline bool notification_contains_mention(const char* text, const char* own_name)
 {
     if (!text || !own_name || own_name[0] == '\0') return false;

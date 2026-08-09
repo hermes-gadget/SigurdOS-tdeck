@@ -41,6 +41,28 @@ TEST(NotificationPolicyTest, LowResourceThresholdsAreBounded)
     EXPECT_FALSE(notification_storage_low(0, 0));
 }
 
+TEST(NotificationPolicyTest, StorageLowLatchSetsAndClearsOnlyOnValidSamples)
+{
+    bool latched = false;
+    constexpr uint64_t total = 64ULL * 1024 * 1024;
+
+    latched = notification_storage_latch_next(
+        latched, true, true, 1ULL * 1024 * 1024, total);
+    EXPECT_TRUE(latched);
+
+    // Unknown capacity must preserve the last alert rather than treating a
+    // failed query as zero free bytes or as a recovery.
+    EXPECT_TRUE(notification_storage_latch_next(
+        latched, true, false, 0, 0));
+
+    latched = notification_storage_latch_next(
+        latched, true, true, 8ULL * 1024 * 1024, total);
+    EXPECT_FALSE(latched);
+
+    EXPECT_FALSE(notification_storage_latch_next(
+        latched, false, false, 0, 0));
+}
+
 TEST(NotificationPolicyTest, LoginFailuresExposeSpecificSessionReason)
 {
     char text[96];

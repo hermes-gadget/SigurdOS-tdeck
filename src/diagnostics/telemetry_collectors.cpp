@@ -64,6 +64,10 @@ SdCardSnapshot collect_sd() {
     SdCardSnapshot snap = {};
     snap.mounted = sigurdos_sdcard_mounted();
     if (snap.mounted) {
+        sigurdos_sdcard_refresh_capacity();
+        snap.mounted = sigurdos_sdcard_mounted();
+    }
+    if (snap.mounted) {
         snap.capacity_bytes = sigurdos_sdcard_capacity_bytes();
         snap.free_bytes     = sigurdos_sdcard_free_bytes();
     }

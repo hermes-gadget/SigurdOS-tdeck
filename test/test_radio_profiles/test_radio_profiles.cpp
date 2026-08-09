@@ -130,19 +130,55 @@ TEST(RadioProfilesTest, CompanionRepeatRangesMatchCompileTimePolicy) {
     uint32_t pairs[16]{};
     const size_t count = sigurdos::radio_profile_repeat_frequency_ranges(pairs, 8);
 
-    ASSERT_EQ(count, 3u);
+    ASSERT_EQ(count, 5u);
     EXPECT_EQ(pairs[0], 433000u);
     EXPECT_EQ(pairs[1], 433000u);
     EXPECT_EQ(pairs[2], 869495u);
     EXPECT_EQ(pairs[3], 869495u);
-    EXPECT_EQ(pairs[4], 918000u);
-    EXPECT_EQ(pairs[5], 918000u);
+    EXPECT_EQ(pairs[4], 869525u);
+    EXPECT_EQ(pairs[5], 869525u);
+    EXPECT_EQ(pairs[6], 869618u);
+    EXPECT_EQ(pairs[7], 869618u);
+    EXPECT_EQ(pairs[8], 918000u);
+    EXPECT_EQ(pairs[9], 918000u);
+}
+
+TEST(RadioProfilesTest, EveryRepeatCapableUkProfileIsAcceptedByPolicy) {
+    constexpr const char* repeat_capable_profiles[] = {
+        "uk_869_525",
+        "uk_869_618",
+    };
+
+    for (const char* id : repeat_capable_profiles) {
+        sigurdos::NodePrefs prefs;
+        prefs.set_defaults();
+        const auto* profile = sigurdos::radio_profile_find(id);
+        ASSERT_NE(nullptr, profile);
+        sigurdos::radio_profile_apply(*profile, prefs);
+
+        uint32_t frequency_khz = 0;
+        ASSERT_TRUE(sigurdos::radio_profile_repeat_frequency_khz(
+            prefs, &frequency_khz));
+        EXPECT_TRUE(sigurdos::radio_profile_repeat_frequency_allowed(
+            frequency_khz));
+    }
 }
 
 TEST(RadioProfilesTest, CompanionRepeatAcceptanceUsesAdvertisedFrequencyUnion) {
     EXPECT_TRUE(sigurdos::radio_profile_repeat_frequency_allowed(433000));
     EXPECT_TRUE(sigurdos::radio_profile_repeat_frequency_allowed(918000));
-    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(869500));
+    EXPECT_TRUE(sigurdos::radio_profile_repeat_frequency_allowed(869525));
+    EXPECT_TRUE(sigurdos::radio_profile_repeat_frequency_allowed(869618));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(432999));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(433001));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(869494));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(869496));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(869524));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(869526));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(869617));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(869619));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(917999));
+    EXPECT_FALSE(sigurdos::radio_profile_repeat_frequency_allowed(918001));
 }
 
 TEST(RadioProfilesTest, RegulatoryProfileFrequencyBoundariesAreInclusive) {

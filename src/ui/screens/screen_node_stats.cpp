@@ -174,7 +174,12 @@ void node_stats_screen_show()
         row++;
 
         // SD Card
-        if (sigurdos_sdcard_mounted()) {
+        SigurdosSdMountDiagnostic sd_diag = sigurdos_sdcard_diagnostics();
+        if (sd_diag.mounted) {
+            sigurdos_sdcard_refresh_capacity();
+            sd_diag = sigurdos_sdcard_diagnostics();
+        }
+        if (sd_diag.mounted && sd_diag.capacity_valid) {
             uint64_t sd_total = sigurdos_sdcard_capacity_bytes();
             uint64_t sd_free  = sigurdos_sdcard_free_bytes();
             char total_str[16], free_str[16];

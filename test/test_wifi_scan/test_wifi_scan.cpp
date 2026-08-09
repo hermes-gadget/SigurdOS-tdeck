@@ -230,6 +230,41 @@ TEST(WifiCoordinatorTest, ScanAndOtaCleanupRestoreSuspendedStaLease) {
     }
 }
 
+TEST(WifiCoordinatorTest, FailedApOtaRestoreRetainsLeaseForRetry) {
+    using sigurdos::wifi::Coordinator;
+    using sigurdos::wifi::Owner;
+    using sigurdos::wifi::RadioMode;
+
+    Coordinator coordinator;
+    ASSERT_TRUE(coordinator.acquire(Owner::Sta, RadioMode::Sta,
+                                    RadioMode::Off));
+    ASSERT_TRUE(coordinator.acquire(Owner::ApOta, RadioMode::Ap,
+                                    RadioMode::Sta));
+
+    RadioMode hardware_mode = RadioMode::Ap;
+    bool fail_restore_once = true;
+    const auto apply_mode = [&](RadioMode requested) {
+        if (fail_restore_once) {
+            fail_restore_once = false;
+            return false;
+        }
+        hardware_mode = requested;
+        return true;
+    };
+
+    EXPECT_FALSE(coordinator.releaseWith(Owner::ApOta, apply_mode));
+    EXPECT_EQ(coordinator.currentOwner(), Owner::ApOta);
+    EXPECT_EQ(coordinator.currentMode(), RadioMode::Ap);
+    EXPECT_TRUE(coordinator.hasOwner(Owner::ApOta));
+    EXPECT_EQ(hardware_mode, RadioMode::Ap);
+
+    EXPECT_TRUE(coordinator.releaseWith(Owner::ApOta, apply_mode));
+    EXPECT_EQ(coordinator.currentOwner(), Owner::Sta);
+    EXPECT_EQ(coordinator.currentMode(), RadioMode::Sta);
+    EXPECT_FALSE(coordinator.hasOwner(Owner::ApOta));
+    EXPECT_EQ(hardware_mode, RadioMode::Sta);
+}
+
 TEST(WifiCoordinatorTest, TimeoutOrErrorCleanupRestoresPreexistingMode) {
     using sigurdos::wifi::Coordinator;
     using sigurdos::wifi::Owner;

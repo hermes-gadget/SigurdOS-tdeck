@@ -225,6 +225,10 @@ static void sd_diag_update(SdDiagDialogCtx* ctx)
     char total_buf[24] = "n/a";
     char free_buf[24] = "n/a";
     if (diag.mounted) {
+        sigurdos_sdcard_refresh_capacity();
+        diag = sigurdos_sdcard_diagnostics();
+    }
+    if (diag.mounted && diag.capacity_valid) {
         sigurdos_sdcard_format_size(sigurdos_sdcard_capacity_bytes(), total_buf, sizeof(total_buf));
         sigurdos_sdcard_format_size(sigurdos_sdcard_free_bytes(), free_buf, sizeof(free_buf));
     }
