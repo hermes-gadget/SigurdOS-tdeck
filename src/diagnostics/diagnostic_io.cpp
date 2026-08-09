@@ -109,8 +109,21 @@ void NonBlockingWriter::printf(const char* format, ...) {
 }
 
 void NonBlockingWriter::drain_locked(std::size_t byte_budget) {
+    if (drain_active_) return;
+    drain_active_ = true;
+    struct DrainOwnership {
+        explicit DrainOwnership(bool& active) : active_(active) {}
+        ~DrainOwnership() { active_ = false; }
+        bool& active_;
+    } ownership(drain_active_);
+
     while (queue_size_ > 0 && byte_budget > 0) {
+        // Driver queries and writes must stay outside the ESP32 critical
+        // section. drain_active_ remains protected by the queue lock and keeps
+        // the selected tail range exclusively owned while the lock is open.
+        unlock();
         const int available = Serial.availableForWrite();
+        lock();
         if (available <= 0) return;
 
         std::size_t to_write = queue_size_;
@@ -131,24 +144,24 @@ void NonBlockingWriter::drain_locked(std::size_t byte_budget) {
             idx = (idx + 1) % QUEUE_CAPACITY;
         }
 
-        // Serial I/O MUST NOT run inside the critical section on ESP32:
-        // the USB-CDC driver depends on interrupts/FreeRTOS primitives. The
-        // native HardwareSerial test double is a plain std::string, however,
-        // so keep the host mutex held to serialize its writes.
-#if defined(ESP32_PLATFORM)
+#if !defined(ESP32_PLATFORM)
+        const DrainUnlockedHookForTest hook = drain_unlocked_hook_;
+        void* const hook_context = drain_unlocked_hook_context_;
+#endif
         unlock();
+#if !defined(ESP32_PLATFORM)
+        if (hook) hook(hook_context);
+#endif
         const std::size_t written =
             Serial.write(reinterpret_cast<const uint8_t*>(drain_buf), count);
         lock();
-#else
-        const std::size_t written =
-            Serial.write(reinterpret_cast<const uint8_t*>(drain_buf), count);
-#endif
 
-        if (written == 0) return;
-        queue_tail_ = (queue_tail_ + written) % QUEUE_CAPACITY;
-        queue_size_ -= written;
-        byte_budget -= written;
+        std::size_t consumed = written < count ? written : count;
+        if (consumed > queue_size_) consumed = queue_size_;
+        if (consumed == 0) return;
+        queue_tail_ = (queue_tail_ + consumed) % QUEUE_CAPACITY;
+        queue_size_ -= consumed;
+        byte_budget -= consumed;
     }
 
     // Report losses only after the queued diagnostics have drained. The report is
@@ -180,6 +193,20 @@ uint32_t NonBlockingWriter::dropped_records() const {
     LockGuard guard(*this);
     return dropped_records_;
 }
+
+#if !defined(ESP32_PLATFORM)
+void NonBlockingWriter::setDrainUnlockedHookForTest(
+    DrainUnlockedHookForTest hook, void* context) {
+    LockGuard guard(*this);
+    drain_unlocked_hook_ = hook;
+    drain_unlocked_hook_context_ = context;
+}
+
+std::size_t NonBlockingWriter::queuedBytesForTest() const {
+    LockGuard guard(*this);
+    return queue_size_;
+}
+#endif
 
 void NonBlockingWriter::reset() {
     LockGuard guard(*this);

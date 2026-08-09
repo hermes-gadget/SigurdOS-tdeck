@@ -15,6 +15,7 @@ static constexpr std::size_t GPS_TRACK_MAP_POINTS = 256;
 static constexpr uint32_t GPS_TRACK_DEFAULT_INTERVAL_S = 15;
 static constexpr uint32_t GPS_TRACK_MIN_INTERVAL_S = 1;
 static constexpr uint32_t GPS_TRACK_MAX_INTERVAL_S = 3600;
+static constexpr uint32_t GPS_TRACK_FAILURE_RETRY_MS = 1000;
 
 struct GpsTrackPoint {
     int32_t latitude_e7;

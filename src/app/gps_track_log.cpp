@@ -38,6 +38,8 @@ static char g_track_path[192] = "/tmp/sigurdos_gps_track.bin";
 
 bool g_service_started = false;
 uint32_t g_last_record_ms = 0;
+bool g_failure_backoff_active = false;
+uint32_t g_last_failure_ms = 0;
 
 bool headerValid(const TrackHeader& header)
 {
@@ -312,20 +314,32 @@ bool gpsTrackService(bool enabled, uint32_t interval_s, bool has_fix,
 {
     if (!enabled) {
         g_service_started = false;
+        g_failure_backoff_active = false;
         return false;
     }
     if (!has_fix || !gpsTrackCoordinateValid(latitude, longitude)) return false;
+    if (g_failure_backoff_active &&
+        static_cast<uint32_t>(now_ms - g_last_failure_ms) <
+            GPS_TRACK_FAILURE_RETRY_MS) {
+        return false;
+    }
     const uint32_t interval_ms = gpsTrackClampInterval(interval_s) * 1000UL;
     if (g_service_started &&
         static_cast<uint32_t>(now_ms - g_last_record_ms) < interval_ms) {
         return false;
     }
-    g_service_started = true;
-    g_last_record_ms = now_ms;
     const uint32_t recorded_at = timestamp != 0
         ? timestamp
         : (0x80000000UL | ((now_ms / 1000UL) & 0x7FFFFFFFUL));
-    return gpsTrackAppend(latitude, longitude, recorded_at);
+    if (!gpsTrackAppend(latitude, longitude, recorded_at)) {
+        g_failure_backoff_active = true;
+        g_last_failure_ms = now_ms;
+        return false;
+    }
+    g_failure_backoff_active = false;
+    g_service_started = true;
+    g_last_record_ms = now_ms;
+    return true;
 }
 
 std::size_t gpsTrackLoadRecent(GpsTrackPoint* out, std::size_t max_points)
@@ -404,6 +418,7 @@ bool gpsTrackClear()
 #endif
     if (!removeFile()) return false;
     g_service_started = false;
+    g_failure_backoff_active = false;
     return createEmpty();
 }
 
@@ -419,6 +434,8 @@ void gpsTrackResetServiceForTest()
 {
     g_service_started = false;
     g_last_record_ms = 0;
+    g_failure_backoff_active = false;
+    g_last_failure_ms = 0;
 }
 #endif
 

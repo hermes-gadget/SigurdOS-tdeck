@@ -76,6 +76,32 @@ TEST_F(GpsTrackLogTest, DisablingServiceAllowsImmediateRestart)
         true, 60, true, 51.5, -0.12, 1002, 1200));
 }
 
+TEST_F(GpsTrackLogTest, FailedAppendRetriesWithoutConsumingSamplingInterval)
+{
+    const std::string unavailable_path =
+        path + ".unavailable/gps_track.bin";
+    sigurdos::app::gpsTrackSetPathForTest(unavailable_path.c_str());
+
+    EXPECT_FALSE(sigurdos::app::gpsTrackService(
+        true, 3600, true, 51.5, -0.12, 1000, 100));
+
+    sigurdos::app::gpsTrackSetPathForTest(path.c_str());
+    EXPECT_FALSE(sigurdos::app::gpsTrackService(
+        true, 3600, true, 51.5, -0.12, 1001,
+        100 + sigurdos::app::GPS_TRACK_FAILURE_RETRY_MS - 1));
+    EXPECT_TRUE(sigurdos::app::gpsTrackService(
+        true, 3600, true, 51.5, -0.12, 1002,
+        100 + sigurdos::app::GPS_TRACK_FAILURE_RETRY_MS));
+    EXPECT_FALSE(sigurdos::app::gpsTrackService(
+        true, 3600, true, 51.6, -0.12, 1003,
+        101 + sigurdos::app::GPS_TRACK_FAILURE_RETRY_MS));
+
+    sigurdos::app::GpsTrackStats stats{};
+    ASSERT_TRUE(sigurdos::app::gpsTrackGetStats(&stats));
+    EXPECT_EQ(1u, stats.waypoint_count);
+    EXPECT_EQ(1002u, stats.started_at);
+}
+
 TEST_F(GpsTrackLogTest, ServiceUsesMarkedUptimeWhenWallClockIsUnavailable)
 {
     ASSERT_TRUE(sigurdos::app::gpsTrackService(
