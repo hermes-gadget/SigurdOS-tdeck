@@ -126,6 +126,7 @@ test/
 |-- test_tdeck_board/            Board power thresholds and shutdown logic
 |-- test_tdeck_sleep/            Production-linked T-Deck sleep ordering and failures
 |-- test_text_fit/               Text fit core: shrink, ellipsis, and measurement bounds
+|-- test_text_fit_lvgl_lifetime/ Deferred text-fit cancellation and pointer-reuse guards
 |-- test_telemetry_collectors/   Telemetry task watermark and buffer null-safety
 |-- test_telemetry_crash/        Crash backtrace capacity and bounded count
 |-- test_telemetry_drift/        Telemetry timing drift and rollover handling

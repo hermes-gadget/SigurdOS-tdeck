@@ -37,6 +37,19 @@
 typedef uint32_t lv_color_t;
 typedef int      lv_coord_t;
 typedef uint32_t lv_opa_t;
+typedef enum {
+    LV_RESULT_OK = 0,
+    LV_RESULT_INVALID = 1,
+} lv_result_t;
+
+struct lv_font_t;
+
+typedef struct {
+    lv_coord_t x;
+    lv_coord_t y;
+} lv_point_t;
+
+typedef void (*lv_async_cb_t)(void* user_data);
 
 // ── Color helpers ────────────────────────────────────────
 inline lv_color_t lv_color_hex(uint32_t hex) { return hex; }
@@ -48,6 +61,10 @@ struct _lv_obj_t {
     bool valid;
     uint32_t flags;
     lv_color_t text_color;
+    _lv_obj_t* parent;
+    const lv_font_t* text_font;
+    lv_coord_t width;
+    lv_coord_t style_width;
     char text[64];
 };
 typedef _lv_obj_t lv_obj_t;
@@ -126,6 +143,10 @@ typedef void (*lv_event_cb_t)(lv_event_t* e);
 #define LV_EVENT_CLICKED    0x07
 #define LV_EVENT_PRESSED    0x01
 #define LV_EVENT_DELETE     0x21
+#define LV_EVENT_DRAW_MAIN  0x2A
+
+#define LV_COORD_MAX        0x3FFFFFFF
+#define LV_TEXT_FLAG_NONE   0
 
 // ── Input device types ───────────────────────────────────
 #define LV_INDEV_TYPE_POINTER  0
@@ -212,6 +233,12 @@ struct lv_mock_event_slot_t {
     void* user_data = nullptr;
 };
 
+struct lv_mock_async_slot_t {
+    lv_async_cb_t cb = nullptr;
+    void* user_data = nullptr;
+    bool active = false;
+};
+
 namespace lvgl_mock {
 inline lv_obj_t* active_screen = nullptr;
 inline lv_obj_t* last_loaded_screen = nullptr;
@@ -223,10 +250,18 @@ inline int last_load_duration = -1;
 inline int last_load_delay = -1;
 inline bool last_load_auto_delete = true;
 inline int label_set_text_calls = 0;
+inline int label_get_text_calls = 0;
+inline int style_text_font_set_calls = 0;
+inline int invalid_object_access_count = 0;
 inline lv_obj_t obj_pool[256] = {};
 inline int obj_pool_next = 0;
 inline lv_mock_event_slot_t event_slots[64];
 inline int event_slot_count = 0;
+inline lv_mock_async_slot_t async_slots[64];
+inline int async_call_count = 0;
+inline int async_cancel_count = 0;
+inline int async_execute_count = 0;
+inline bool force_async_cancel_failure = false;
 
 inline void reset_screen_tracking()
 {
@@ -245,11 +280,23 @@ inline void reset()
 {
     reset_screen_tracking();
     label_set_text_calls = 0;
+    label_get_text_calls = 0;
+    style_text_font_set_calls = 0;
+    invalid_object_access_count = 0;
     event_slot_count = 0;
     for (auto& slot : event_slots) slot = {};
+    for (auto& slot : async_slots) slot = {};
+    async_call_count = 0;
+    async_cancel_count = 0;
+    async_execute_count = 0;
+    force_async_cancel_failure = false;
     for (int i = 0; i < 256; ++i) {
         obj_pool[i].valid = false;
         obj_pool[i].flags = 0;
+        obj_pool[i].parent = nullptr;
+        obj_pool[i].text_font = nullptr;
+        obj_pool[i].width = 100;
+        obj_pool[i].style_width = LV_SIZE_CONTENT;
         obj_pool[i].text[0] = '\0';
         obj_pool[i].text_color = 0;
     }
@@ -276,8 +323,70 @@ inline void dispatch(const lv_mock_event_slot_t& slot, lv_obj_t* target)
     event.user_data = slot.user_data;
     slot.cb(&event);
 }
+
+inline int async_pending_count()
+{
+    int count = 0;
+    for (const auto& slot : async_slots) {
+        if (slot.active) ++count;
+    }
+    return count;
+}
+
+inline void drain_async()
+{
+    for (;;) {
+        lv_mock_async_slot_t work{};
+        bool found = false;
+        for (auto& slot : async_slots) {
+            if (!slot.active) continue;
+            work = slot;
+            slot = {};
+            found = true;
+            break;
+        }
+        if (!found) return;
+        ++async_execute_count;
+        work.cb(work.user_data);
+    }
+}
+
+inline bool object_access_valid(const lv_obj_t* obj)
+{
+    if (obj && obj->valid) return true;
+    ++invalid_object_access_count;
+    return false;
+}
 } // namespace lvgl_mock
 #endif
+
+inline lv_result_t lv_async_call(lv_async_cb_t cb, void* user_data)
+{
+    if (!cb) return LV_RESULT_INVALID;
+    for (auto& slot : lvgl_mock::async_slots) {
+        if (slot.active) continue;
+        slot.cb = cb;
+        slot.user_data = user_data;
+        slot.active = true;
+        ++lvgl_mock::async_call_count;
+        return LV_RESULT_OK;
+    }
+    return LV_RESULT_INVALID;
+}
+
+inline lv_result_t lv_async_call_cancel(lv_async_cb_t cb, void* user_data)
+{
+    ++lvgl_mock::async_cancel_count;
+    if (lvgl_mock::force_async_cancel_failure) return LV_RESULT_INVALID;
+
+    lv_result_t result = LV_RESULT_INVALID;
+    for (auto& slot : lvgl_mock::async_slots) {
+        if (!slot.active || slot.cb != cb || slot.user_data != user_data) continue;
+        slot = {};
+        result = LV_RESULT_OK;
+    }
+    return result;
+}
 
 // ── Screen ───────────────────────────────────────────────
 inline lv_obj_t* lv_scr_act() {
@@ -303,7 +412,6 @@ inline int32_t lv_display_get_vertical_resolution(const lv_display_t*) { return 
 // ── Object creation ──────────────────────────────────────
 
 inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
-    (void)parent;
     // Reuse first free slot so deleted addresses can be recycled after reset.
     for (int i = 0; i < 256; ++i) {
         if (!lvgl_mock::obj_pool[i].valid) {
@@ -312,6 +420,10 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
             obj->valid = true;
             obj->flags = 0;
             obj->text_color = 0;
+            obj->parent = parent;
+            obj->text_font = nullptr;
+            obj->width = 100;
+            obj->style_width = LV_SIZE_CONTENT;
             obj->text[0] = '\0';
             if (i >= lvgl_mock::obj_pool_next) lvgl_mock::obj_pool_next = i + 1;
             return obj;
@@ -323,6 +435,10 @@ inline lv_obj_t* lv_obj_create(lv_obj_t* parent) {
     obj->valid = true;
     obj->flags = 0;
     obj->text_color = 0;
+    obj->parent = parent;
+    obj->text_font = nullptr;
+    obj->width = 100;
+    obj->style_width = LV_SIZE_CONTENT;
     obj->text[0] = '\0';
     return obj;
 }
@@ -335,6 +451,15 @@ inline void lv_obj_delete(lv_obj_t* obj) {
             lvgl_mock::dispatch(slot, obj);
         }
     }
+    int write_index = 0;
+    for (int i = 0; i < lvgl_mock::event_slot_count; ++i) {
+        if (lvgl_mock::event_slots[i].obj == obj) continue;
+        lvgl_mock::event_slots[write_index++] = lvgl_mock::event_slots[i];
+    }
+    for (int i = write_index; i < lvgl_mock::event_slot_count; ++i) {
+        lvgl_mock::event_slots[i] = {};
+    }
+    lvgl_mock::event_slot_count = write_index;
     obj->valid = false;
     lvgl_mock::last_deleted_screen = obj;
     lvgl_mock::screen_delete_count++;
@@ -343,8 +468,18 @@ inline void lv_obj_del(lv_obj_t* obj) { lv_obj_delete(obj); }
 inline void lv_obj_del_async(lv_obj_t* obj) { lv_obj_delete(obj); }
 
 // ── Object properties ────────────────────────────────────
-inline void lv_obj_set_size(lv_obj_t*, lv_coord_t, lv_coord_t) {}
-inline void lv_obj_set_width(lv_obj_t*, lv_coord_t) {}
+inline void lv_obj_set_size(lv_obj_t* obj, lv_coord_t width, lv_coord_t) {
+    if (obj) {
+        obj->width = width;
+        obj->style_width = width;
+    }
+}
+inline void lv_obj_set_width(lv_obj_t* obj, lv_coord_t width) {
+    if (obj) {
+        obj->width = width;
+        obj->style_width = width;
+    }
+}
 inline void lv_obj_set_height(lv_obj_t*, lv_coord_t) {}
 inline void lv_obj_set_pos(lv_obj_t*, lv_coord_t, lv_coord_t) {}
 inline void lv_obj_align(lv_obj_t*, int, lv_coord_t, lv_coord_t) {}
@@ -367,8 +502,13 @@ inline bool lv_obj_is_valid(const lv_obj_t* obj) {
 inline void lv_obj_scroll_to_view(lv_obj_t*, int) {}
 inline void lv_obj_invalidate(lv_obj_t*) {}
 inline void lv_obj_set_scrollbar_mode(lv_obj_t*, int) {}
-inline lv_coord_t lv_obj_get_width(lv_obj_t*) { return 100; }
+inline lv_coord_t lv_obj_get_width(lv_obj_t* obj) {
+    return lvgl_mock::object_access_valid(obj) ? obj->width : 0;
+}
 inline lv_coord_t lv_obj_get_height(lv_obj_t*) { return 100; }
+inline lv_obj_t* lv_obj_get_parent(lv_obj_t* obj) {
+    return lvgl_mock::object_access_valid(obj) ? obj->parent : nullptr;
+}
 inline lv_obj_t* lv_obj_get_child(lv_obj_t*, int) { return nullptr; }
 inline int lv_obj_get_child_cnt(lv_obj_t*) { return 0; }
 
@@ -378,7 +518,29 @@ inline void lv_obj_set_style_bg_opa(lv_obj_t*, lv_opa_t, int) {}
 inline void lv_obj_set_style_text_color(lv_obj_t* obj, lv_color_t color, int) {
     if (obj) obj->text_color = color;
 }
-inline void lv_obj_set_style_text_font(lv_obj_t*, const void*, int) {}
+inline void lv_obj_set_style_text_font(lv_obj_t* obj, const lv_font_t* font, int) {
+    if (!lvgl_mock::object_access_valid(obj)) return;
+    obj->text_font = font;
+    ++lvgl_mock::style_text_font_set_calls;
+}
+inline const lv_font_t* lv_obj_get_style_text_font(lv_obj_t* obj, int) {
+    return lvgl_mock::object_access_valid(obj) ? obj->text_font : nullptr;
+}
+inline lv_coord_t lv_obj_get_style_pad_left(lv_obj_t* obj, int) {
+    return lvgl_mock::object_access_valid(obj) ? 0 : 0;
+}
+inline lv_coord_t lv_obj_get_style_pad_right(lv_obj_t* obj, int) {
+    return lvgl_mock::object_access_valid(obj) ? 0 : 0;
+}
+inline lv_coord_t lv_obj_get_style_border_width(lv_obj_t* obj, int) {
+    return lvgl_mock::object_access_valid(obj) ? 0 : 0;
+}
+inline int32_t lv_obj_get_style_width(lv_obj_t* obj, int) {
+    return lvgl_mock::object_access_valid(obj) ? obj->style_width : 0;
+}
+inline int32_t lv_obj_get_style_text_letter_space(const lv_obj_t* obj, int) {
+    return lvgl_mock::object_access_valid(obj) ? 0 : 0;
+}
 inline void lv_obj_set_style_radius(lv_obj_t*, lv_coord_t, int) {}
 inline void lv_obj_set_style_border_width(lv_obj_t*, lv_coord_t, int) {}
 inline void lv_obj_set_style_border_color(lv_obj_t*, lv_color_t, int) {}
@@ -414,11 +576,31 @@ inline void lv_label_set_text(lv_obj_t* obj, const char* text) {
     for (; text[i] && i + 1 < sizeof(obj->text); ++i) obj->text[i] = text[i];
     obj->text[i] = '\0';
 }
+inline const char* lv_label_get_text(lv_obj_t* obj) {
+    if (!lvgl_mock::object_access_valid(obj)) return "";
+    ++lvgl_mock::label_get_text_calls;
+    return obj->text;
+}
 inline void lv_label_set_text_static(lv_obj_t* obj, const char* text) {
     lv_label_set_text(obj, text);
 }
 inline void lv_label_set_long_mode(lv_obj_t*, int) {}
 inline void lv_label_set_align(lv_obj_t*, int) {}
+
+inline void lv_text_get_size(lv_point_t* size,
+                             const char* text,
+                             const lv_font_t*,
+                             int32_t letter_space,
+                             int32_t,
+                             lv_coord_t,
+                             int)
+{
+    if (!size) return;
+    int32_t length = 0;
+    while (text && text[length]) ++length;
+    size->x = length > 0 ? length * 8 + (length - 1) * letter_space : 0;
+    size->y = 12;
+}
 
 // ── Button ───────────────────────────────────────────────
 inline lv_obj_t* lv_btn_create(lv_obj_t* parent) { return lv_obj_create(parent); }

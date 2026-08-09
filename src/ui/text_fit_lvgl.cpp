@@ -15,14 +15,34 @@ namespace {
 struct LabelFontState {
     lv_obj_t* label = nullptr;
     const lv_font_t* largest_font = nullptr;
+    std::uint32_t generation = 0;
+    std::uint32_t pending_generation = 0;
+    bool fit_pending = false;
+    bool retired = false;
 };
 
 // A screen can contain many labels (especially the contact and settings
 // screens). Keep this bounded like the rest of the UI's widget collections;
-// labels beyond the table still receive a one-shot fit using their current
-// font, but normal screen sizes retain their requested-font state.
+// labels beyond the table still receive synchronous updates, but never queue
+// deferred work without a tracked lifetime.
+#ifndef SIGURDOS_TEXT_FIT_LABEL_STATE_CAPACITY
 constexpr std::size_t LABEL_STATE_CAPACITY = 512;
+#else
+constexpr std::size_t LABEL_STATE_CAPACITY =
+    SIGURDOS_TEXT_FIT_LABEL_STATE_CAPACITY;
+#endif
 LabelFontState g_label_states[LABEL_STATE_CAPACITY] = {};
+std::uint32_t g_next_label_generation = 1;
+
+void apply_deferred_fit(void* user_data);
+
+std::uint32_t next_label_generation()
+{
+    // Keep zero reserved for empty state records. Matching also includes the
+    // state slot, so wrap does not make a retired pending slot reusable.
+    if (g_next_label_generation == 0) g_next_label_generation = 1;
+    return g_next_label_generation++;
+}
 
 LabelFontState* find_label_state(lv_obj_t* label)
 {
@@ -38,8 +58,11 @@ LabelFontState* register_label(lv_obj_t* label)
     if (auto* existing = find_label_state(label)) return existing;
 
     for (auto& state : g_label_states) {
-        if (!state.label) {
+        // A retired slot with a callback that could not be cancelled remains
+        // reserved until that callback drains.
+        if (!state.label && !state.fit_pending) {
             state.label = label;
+            state.generation = next_label_generation();
             return &state;
         }
     }
@@ -48,7 +71,18 @@ LabelFontState* register_label(lv_obj_t* label)
 
 void unregister_label(lv_obj_t* label)
 {
-    if (auto* state = find_label_state(label)) *state = {};
+    auto* state = find_label_state(label);
+    if (!state) return;
+
+    state->label = nullptr;
+    state->largest_font = nullptr;
+    state->retired = true;
+    state->generation = next_label_generation();
+
+    if (!state->fit_pending ||
+        lv_async_call_cancel(apply_deferred_fit, state) == LV_RESULT_OK) {
+        *state = {};
+    }
 }
 
 void on_label_delete(lv_event_t* event)
@@ -174,6 +208,48 @@ int measure_label(const char* text, const void* font, void* context)
     return static_cast<int>(size.x);
 }
 
+void apply_registered_label(LabelFontState* state,
+                            std::uint32_t expected_generation)
+{
+    if (!state || state->retired || !state->label ||
+        state->generation != expected_generation) {
+        return;
+    }
+
+    lv_obj_t* label = state->label;
+    const lv_font_t* largest = state->largest_font
+        ? state->largest_font
+        : lv_obj_get_style_text_font(label, 0);
+    const TextFitFontLadder ladder = ladder_for_font(largest);
+    if (ladder.count == 0) return;
+
+    const char* text = lv_label_get_text(label);
+    const TextFitChoice choice = text_fit_choose_font(
+        text, label_max_width(label), ladder, measure_label, label);
+    const lv_font_t* selected = static_cast<const lv_font_t*>(choice.font);
+    if (selected && lv_obj_get_style_text_font(label, 0) != selected) {
+        lv_obj_set_style_text_font(label, selected, 0);
+    }
+}
+
+void apply_deferred_fit(void* user_data)
+{
+    auto* state = static_cast<LabelFontState*>(user_data);
+    if (!state || !state->fit_pending) return;
+
+    const std::uint32_t pending_generation = state->pending_generation;
+    state->fit_pending = false;
+    state->pending_generation = 0;
+
+    if (state->retired || !state->label ||
+        state->generation != pending_generation) {
+        if (state->retired) *state = {};
+        return;
+    }
+
+    apply_registered_label(state, pending_generation);
+}
+
 void on_label_draw(lv_event_t* event)
 {
     // Fitting during a draw event is forbidden: a font change invalidates the
@@ -181,9 +257,15 @@ void on_label_draw(lv_event_t* event)
     // (lv_refr.c: "Invalidate area is not allowed during rendering").
     // Defer the re-fit to the next timer tick instead.
     lv_obj_t* label = static_cast<lv_obj_t*>(lv_event_get_target(event));
-    lv_async_call([](void* user_data) {
-        text_fit_apply(static_cast<lv_obj_t*>(user_data));
-    }, label);
+    LabelFontState* state = find_label_state(label);
+    if (!state || state->retired || state->fit_pending) return;
+
+    state->fit_pending = true;
+    state->pending_generation = state->generation;
+    if (lv_async_call(apply_deferred_fit, state) != LV_RESULT_OK) {
+        state->fit_pending = false;
+        state->pending_generation = 0;
+    }
 }
 
 } // namespace
@@ -213,7 +295,7 @@ lv_obj_t* text_fit_label_create(lv_obj_t* parent)
     lv_obj_t* label = lv_label_create(parent);
     if (!label) return nullptr;
 
-    register_label(label);
+    if (!register_label(label)) return label;
     lv_obj_add_event_cb(label, on_label_draw, LV_EVENT_DRAW_MAIN, nullptr);
     lv_obj_add_event_cb(label, on_label_delete, LV_EVENT_DELETE, nullptr);
     return label;
@@ -222,9 +304,9 @@ lv_obj_t* text_fit_label_create(lv_obj_t* parent)
 void text_fit_set_text(lv_obj_t* label, const char* text)
 {
     if (!label) return;
-    register_label(label);
+    LabelFontState* state = register_label(label);
     lv_label_set_text(label, text ? text : "");
-    text_fit_apply(label);
+    if (state) apply_registered_label(state, state->generation);
 }
 
 void text_fit_set_font(lv_obj_t* object, const lv_font_t* font, int selector)
@@ -238,20 +320,9 @@ void text_fit_set_font(lv_obj_t* object, const lv_font_t* font, int selector)
 void text_fit_apply(lv_obj_t* label)
 {
     if (!label) return;
-    const LabelFontState* state = find_label_state(label);
-    const lv_font_t* largest = state && state->largest_font
-        ? state->largest_font
-        : lv_obj_get_style_text_font(label, 0);
-    const TextFitFontLadder ladder = ladder_for_font(largest);
-    if (ladder.count == 0) return;
-
-    const char* text = lv_label_get_text(label);
-    const TextFitChoice choice = text_fit_choose_font(
-        text, label_max_width(label), ladder, measure_label, label);
-    const lv_font_t* selected = static_cast<const lv_font_t*>(choice.font);
-    if (selected && lv_obj_get_style_text_font(label, 0) != selected) {
-        lv_obj_set_style_text_font(label, selected, 0);
-    }
+    LabelFontState* state = find_label_state(label);
+    if (!state) return;
+    apply_registered_label(state, state->generation);
 }
 
 } // namespace sigurdos::ui
