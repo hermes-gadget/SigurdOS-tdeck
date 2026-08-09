@@ -65,6 +65,7 @@ test/
 |-- test_emoji/                  Emoji font, lookup, fallback, and data checks
 |-- test_emoji_fallback/         Emoji font fallback wrapper registration and writable copies
 |-- test_emoji_integrity/        Emoji font index coverage and uniqueness
+|-- test_evidence_diagnostics/   BLE evidence allowlisting and NVS boot-marker integrity
 |-- test_file_browser/           SD file browser listing, navigation, and path bounds
 |-- test_flood_scope_state/      Flood-scope key and route selection state
 |-- test_github_ota_contract/    GitHub OTA state enum, buffer capacities, and plan fallback
