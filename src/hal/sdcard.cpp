@@ -32,6 +32,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 // T-Deck SD card uses SPI on the shared LoRa/display bus (GPIO40/38/41).
 // FSPI (SPI2_HOST) is used here; the display also uses SPI2_HOST (via
@@ -99,8 +100,17 @@ bool posix_remove(void*, const char* path)
 
 void* posix_open(void*, const char* path)
 {
-    FILE* file = std::fopen(path, "wb");
-    if (!file) sdcard_note_io_failure(errno);
+    const int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        sdcard_note_io_failure(errno);
+        return nullptr;
+    }
+    FILE* file = fdopen(fd, "wb");
+    if (!file) {
+        ::close(fd);
+        sdcard_note_io_failure(errno);
+        return nullptr;
+    }
     return file;
 }
 
