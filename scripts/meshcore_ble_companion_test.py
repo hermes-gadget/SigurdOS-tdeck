@@ -39,6 +39,24 @@ from typing import Any, Optional
 
 LOG = logging.getLogger("meshcore_ble_test")
 NUS_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+PIN_ASSIGNMENT_RE = re.compile(r"(\bpin\s*=\s*)\d+\b", re.IGNORECASE)
+NAME_ASSIGNMENT_RE = re.compile(
+    r"(\bname\s*=\s*).*?(?=\s+(?:last_sync|available|enabled|connected|pin)\s*=|$)",
+    re.IGNORECASE,
+)
+ADDRESS_ASSIGNMENT_RE = re.compile(
+    r"(\b(?:address|addr)\s*=\s*)[0-9a-f:.-]+", re.IGNORECASE
+)
+UUID_ASSIGNMENT_RE = re.compile(
+    r"(\buuid(?:s)?\s*=\s*)[^|\n]+", re.IGNORECASE
+)
+MAC_ADDRESS_RE = re.compile(
+    r"\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b", re.IGNORECASE
+)
+UUID_VALUE_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
 
 
 def _open_serial(port: str, baud: int = 115200, boot_wait: float = 10.0):
@@ -90,12 +108,53 @@ def parse_ble_status(text: str) -> dict[str, Any]:
     return out
 
 
+def redact_ble_text(text: str) -> str:
+    """Redact credentials and stable BLE identifiers from diagnostic text."""
+
+    redacted = PIN_ASSIGNMENT_RE.sub(r"\1******", text)
+    redacted = NAME_ASSIGNMENT_RE.sub(r"\1******", redacted)
+    redacted = ADDRESS_ASSIGNMENT_RE.sub(r"\1******", redacted)
+    redacted = UUID_ASSIGNMENT_RE.sub(r"\1******", redacted)
+    redacted = MAC_ADDRESS_RE.sub("******", redacted)
+    return UUID_VALUE_RE.sub("******", redacted)
+
+
+def ble_scan_evidence(devices: list[dict[str, str]]) -> dict[str, Any]:
+    """Return the publishable BLE scan fields without device identities."""
+
+    nus_present = any(
+        NUS_UUID in {uuid.strip().lower() for uuid in device.get("uuids", "").split(",")}
+        for device in devices
+    )
+    return {
+        "advertiser_count": len(devices),
+        "nus_present": nus_present,
+        "passed": bool(devices),
+    }
+
+
+def public_ble_status(status: dict[str, Any], include_device_identifiers: bool) -> dict[str, Any]:
+    """Allowlist serial status fields; identifiers require an explicit opt-in."""
+
+    fields = ("available", "enabled", "connected", "last_sync")
+    public = {key: status[key] for key in fields if key in status}
+    if include_device_identifiers and "name" in status:
+        public["name"] = status["name"]
+    return public
+
+
 def ensure_ble_ready(ser) -> dict[str, Any]:
     on_txt = serial_cmd(ser, "ble on", wait=3.0)
-    LOG.info("ble on => %s", on_txt.strip().replace("\n", " | ")[:240])
+    on_status = parse_ble_status(on_txt)
+    LOG.info("ble on => %s", redact_ble_text(on_txt.strip().replace("\n", " | "))[:240])
     st_txt = serial_cmd(ser, "ble status", wait=2.0)
-    LOG.info("ble status => %s", st_txt.strip().replace("\n", " | ")[:240])
-    status = parse_ble_status(st_txt + "\n" + on_txt)
+    st_status = parse_ble_status(st_txt)
+    LOG.info(
+        "ble status => %s",
+        redact_ble_text(st_txt.strip().replace("\n", " | "))[:240],
+    )
+    status = dict(on_status)
+    status.update(st_status)
     if not status.get("pin"):
         pin_txt = serial_cmd(ser, "ble pin", wait=1.5)
         status.update(parse_ble_status(pin_txt))
@@ -256,18 +315,22 @@ async def run_protocol_invocation(
     timeout: float,
     scan_seconds: float,
     debug: bool,
+    include_device_identifiers: bool = False,
 ) -> tuple[Optional[str], list[dict[str, str]], list[CaseResult]]:
     """Run scan, connection, matrix, and disconnect on one asyncio event loop."""
 
     devices: list[dict[str, str]] = []
     if transport == "ble-health":
         devices = await scan_meshcore(scan_seconds)
+        scan_data = ble_scan_evidence(devices)
+        if include_device_identifiers:
+            scan_data["devices"] = devices
         return address, devices, [
             CaseResult(
                 name="ble_advertise",
                 ok=bool(devices),
                 detail=f"found={len(devices)}",
-                data={"devices": devices},
+                data=scan_data,
             )
         ]
 
@@ -282,7 +345,13 @@ async def run_protocol_invocation(
             raise RuntimeError("No MeshCore BLE advertiser found")
         if not pin:
             raise RuntimeError("BLE PIN required (use --auto or --pin)")
-        LOG.info("Connecting BLE address=%s pin=******", resolved_address)
+        if include_device_identifiers:
+            LOG.info(
+                "Connecting BLE address=%s [NON-PUBLISHABLE] pin=******",
+                resolved_address,
+            )
+        else:
+            LOG.info("Connecting BLE advertiser pin=******")
         mc = await connect_ble(resolved_address, pin, timeout, debug)
 
     if mc is None:
@@ -347,6 +416,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     p.add_argument("--no-serial", action="store_true")
     p.add_argument("--json-out", default=None)
+    p.add_argument(
+        "--include-device-identifiers",
+        action="store_true",
+        help=(
+            "Include raw BLE addresses and names in local diagnostics; output is "
+            "NON-PUBLISHABLE and pairing PINs remain redacted"
+        ),
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args(argv)
 
@@ -358,7 +435,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     pin = args.pin
     address = args.address
     ser = None
-    payload: dict[str, Any] = {"transport": args.transport}
+    payload: dict[str, Any] = {
+        "transport": args.transport,
+        "privacy": {
+            "publishable": not args.include_device_identifiers,
+            "device_identifiers_included": args.include_device_identifiers,
+        },
+    }
 
     try:
         if args.transport in ("ble-health", "ble") and (args.auto or not args.no_serial):
@@ -366,7 +449,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             ser = _open_serial(args.serial, baud=args.baud, boot_wait=args.boot_wait)
             status = ensure_ble_ready(ser)
             pin = pin or status.get("pin")
-            payload["device_status"] = {k: status[k] for k in status if k != "pin"}
+            payload["device_status"] = public_ble_status(
+                status, args.include_device_identifiers
+            )
             payload["pin_present"] = bool(pin)
             if args.transport == "ble":
                 ser.close()
@@ -385,11 +470,15 @@ def main(argv: Optional[list[str]] = None) -> int:
                 args.timeout,
                 args.scan_seconds,
                 args.verbose,
+                args.include_device_identifiers,
             )
         )
 
+        payload["ble_scan"] = ble_scan_evidence(devices)
+        if args.include_device_identifiers:
+            payload["ble_scan"]["devices"] = devices
+
         if args.transport == "ble-health":
-            payload["devices"] = devices
             payload["summary"] = {
                 "total": 1,
                 "passed": 1 if devices else 0,
@@ -410,8 +499,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             "passed": sum(1 for r in results if r.ok),
             "failed": sum(1 for r in results if not r.ok),
         }
-        payload["devices"] = devices
-        payload["address"] = address
+        if args.include_device_identifiers:
+            payload["devices"] = devices
+            payload["address"] = address
         payload["pin_present"] = bool(pin)
         print(json.dumps(payload, indent=2))
         if args.json_out:
@@ -434,8 +524,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1 if failed else 0
 
     except Exception as e:
-        LOG.exception("Setup failed: %s", e)
-        payload["error"] = str(e)
+        safe_error = redact_ble_text(str(e))
+        # Do not use LOG.exception here: its traceback would re-emit the raw
+        # exception message (including a PIN or BLE identifiers).
+        LOG.error("Setup failed: %s", safe_error)
+        payload["error"] = safe_error
         print(json.dumps(payload, indent=2))
         if args.json_out:
             with open(args.json_out, "w", encoding="utf-8") as f:
