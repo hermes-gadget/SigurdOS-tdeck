@@ -15,7 +15,6 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from hw_test.hw_constants import (  # type: ignore[import-not-found]
         BOOT_WAIT_REMOTE_TEST_S,
-        ROM_BOOT_MARKERS,
         SCREENSHOT_TIMEOUT_S,
         SERIAL_BAUD,
         CommandProtocol,
@@ -25,20 +24,26 @@ if __package__ in (None, ""):
     from hw_test.hw_serial import (  # type: ignore[import-not-found]
         HardwareSerialError,
         PersistentSerial,
-        contains_crash,
+        ScreenshotCrashError,
+        contains_crash_or_reset,
         parse_stat_line,
     )
 else:
     from .hw_constants import (
         BOOT_WAIT_REMOTE_TEST_S,
-        ROM_BOOT_MARKERS,
         SCREENSHOT_TIMEOUT_S,
         SERIAL_BAUD,
         CommandProtocol,
         first_existing_local_port,
     )
     from .hw_report import HeapSample, ScreenshotArtifact, utc_now
-    from .hw_serial import HardwareSerialError, PersistentSerial, contains_crash, parse_stat_line
+    from .hw_serial import (
+        HardwareSerialError,
+        PersistentSerial,
+        ScreenshotCrashError,
+        contains_crash_or_reset,
+        parse_stat_line,
+    )
 
 
 class SoakExit(IntEnum):
@@ -71,6 +76,7 @@ class SoakResult:
     crashes: list[dict[str, object]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     heap_delta_bytes: int | None = None
+    liveness_probe: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -90,6 +96,7 @@ class SoakResult:
             "crashes": self.crashes,
             "screenshots": [item.to_dict() for item in self.screenshots],
             "notes": self.notes,
+            "liveness_probe": self.liveness_probe,
         }
 
 
@@ -120,6 +127,46 @@ class SoakRunner:
         self.output_dir = output_dir
         self.config = config
         self.protocol = protocol
+
+    def _run_release_liveness_probe(self) -> dict[str, object]:
+        """Probe a release build without allowing silence recovery to reset it."""
+
+        requested_command = "nav home"
+        started_at = utc_now()
+        try:
+            response = self.connection.send_command(
+                requested_command,
+                timeout_s=3.0,
+                expected=("[serial] NAV",),
+                recover_on_silence=False,
+            )
+            response_text = str(getattr(response, "output", ""))
+            response_timestamp = utc_now()
+            marker = contains_crash_or_reset(response_text)
+            acknowledged = "[serial] NAV" in response_text
+            probe: dict[str, object] = {
+                "command": str(getattr(response, "wire_command", "NAV home")),
+                "requested_command": requested_command,
+                "started_at": started_at,
+                "response_timestamp": response_timestamp,
+                "acknowledged": acknowledged,
+                "ok": acknowledged and marker is None,
+                "response": response_text[-1000:],
+            }
+            if marker:
+                probe["marker"] = marker
+            return probe
+        except Exception as exc:
+            return {
+                "command": "NAV home",
+                "requested_command": requested_command,
+                "started_at": started_at,
+                "response_timestamp": utc_now(),
+                "acknowledged": False,
+                "ok": False,
+                "response": "",
+                "error": str(exc),
+            }
 
     def run(self) -> SoakResult:
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -173,9 +220,7 @@ class SoakRunner:
                         line = line_buffer.decode("utf-8", errors="replace").rstrip("\r")
                         line_buffer.clear()
                         serial_file.write(line + "\n")
-                        marker = contains_crash(line)
-                        if not marker:
-                            marker = next((item for item in ROM_BOOT_MARKERS if item in line), None)
+                        marker = contains_crash_or_reset(line)
                         if marker:
                             crashes.append(
                                 {
@@ -209,6 +254,7 @@ class SoakRunner:
 
                 if now >= next_screenshot:
                     shot_path = screenshots_dir / f"soak-{int(now-started):06d}s.png"
+                    capture_succeeded = False
                     try:
                         screenshot = self.connection.capture_screenshot(
                             shot_path,
@@ -216,15 +262,30 @@ class SoakRunner:
                             timeout_s=self.config.capture_timeout_s,
                         )
                         screenshots.append(screenshot)
+                        capture_succeeded = True
                         print(f"[{utc_now()}] screenshot {shot_path}", flush=True)
+                    except ScreenshotCrashError as exc:
+                        crashes.append(
+                            {
+                                "timestamp": utc_now(),
+                                "elapsed_s": round(time.monotonic() - started, 3),
+                                "marker": exc.marker,
+                                "detail": exc.evidence,
+                            }
+                        )
+                        print(f"[{utc_now()}] CRASH: {exc.marker}", flush=True)
+                        break
                     except HardwareSerialError as exc:
                         notes.append(f"screenshot at {now-started:.0f}s failed: {exc}")
                     # Capture consumes the serial stream, including any [stat]
-                    # records emitted during a long framebuffer transfer. Reset
-                    # the telemetry watchdog and schedule from completion.
-                    now = time.monotonic()
-                    last_sample = now
-                    next_screenshot = now + self.config.screenshot_interval_s
+                    # records emitted during a long framebuffer transfer. Only a
+                    # successful, verified capture grants a fresh telemetry
+                    # window; a failed capture must not mask a dead device.
+                    capture_finished = time.monotonic()
+                    now = capture_finished
+                    if capture_succeeded:
+                        last_sample = capture_finished
+                    next_screenshot = capture_finished + self.config.screenshot_interval_s
 
                 if (
                     self.protocol == CommandProtocol.REMOTE_TEST
@@ -243,6 +304,25 @@ class SoakRunner:
                     )
                     break
 
+        liveness_probe: dict[str, object] | None = None
+        if self.protocol == CommandProtocol.RELEASE and not crashes:
+            liveness_probe = self._run_release_liveness_probe()
+            if not bool(liveness_probe.get("ok")):
+                marker = str(liveness_probe.get("marker", "release liveness probe failed"))
+                detail = str(
+                    liveness_probe.get("error")
+                    or liveness_probe.get("response")
+                    or "expected [serial] NAV acknowledgement was not received"
+                )
+                crashes.append(
+                    {
+                        "timestamp": str(liveness_probe["response_timestamp"]),
+                        "elapsed_s": round(time.monotonic() - started, 3),
+                        "marker": marker,
+                        "detail": detail[-1000:],
+                    }
+                )
+
         elapsed = time.monotonic() - started
         heap_delta = _stable_heap_delta(samples, self.config.warmup_s)
         if crashes:
@@ -258,7 +338,10 @@ class SoakRunner:
         else:
             status, exit_code = "PASS", SoakExit.PASS
             if not samples and self.protocol == CommandProtocol.RELEASE:
-                notes.append("release firmware emits no periodic [stat] output; crash-only soak passed")
+                notes.append(
+                    "release firmware emits no periodic [stat] output; "
+                    "final liveness probe passed"
+                )
             elif not samples:
                 status, exit_code = "CRASH", SoakExit.CRASH
                 notes.append("no heap samples were collected")
@@ -275,6 +358,7 @@ class SoakRunner:
             crashes=crashes,
             notes=notes,
             heap_delta_bytes=heap_delta,
+            liveness_probe=liveness_probe,
         )
         (self.output_dir / "results.json").write_text(
             json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n",
