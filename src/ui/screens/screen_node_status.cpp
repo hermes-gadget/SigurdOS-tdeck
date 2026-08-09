@@ -119,7 +119,6 @@ void node_status_screen_show()
                  st.n_direct_dups, st.n_flood_dups, st.err_events);
         add_row("Dup/Err", buf);
 
-        sigurdos::mesh::clearResponses();
     } else {
         lv_obj_t* waiting = lv_label_create(list);
         lv_obj_set_style_text_color(

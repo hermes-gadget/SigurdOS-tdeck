@@ -39,6 +39,12 @@ bool channelStoreSaveTransactional(ChannelStoreKv& kv, int count,
 int channelStoreLoadTransactional(ChannelStoreKv& kv,
                                   ChannelLoadFn load, void* ctx);
 
+// True when a previously committed transactional channel store was present
+// but neither bank could be validated. Legacy keys are deliberately ignored
+// in this state so callers can surface recovery failure instead of silently
+// reviving stale channel secrets.
+bool channelStoreLoadHadCorruption();
+
 enum class RegionStoreFormat {
     Invalid,
     Legacy,

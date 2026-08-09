@@ -584,6 +584,23 @@ static uint8_t _last_status_key[PUB_KEY_SIZE]{};
 static sigurdos::mesh::NodeStatus _cached_status;
 static bool _has_cached_status = false;
 
+void clearContactResponseCaches(const uint8_t* pub_key)
+{
+    if (!pub_key) return;
+    if (_last_status_tag != 0 &&
+        memcmp(_last_status_key, pub_key, PUB_KEY_SIZE) == 0) {
+        _last_status_tag = 0;
+        _has_cached_status = false;
+        memset(_last_status_key, 0, sizeof(_last_status_key));
+    }
+    if (_last_telemetry_tag != 0 &&
+        memcmp(_last_telemetry_key, pub_key, PUB_KEY_SIZE) == 0) {
+        _last_telemetry_tag = 0;
+        _has_cached_telemetry = false;
+        memset(_last_telemetry_key, 0, sizeof(_last_telemetry_key));
+    }
+}
+
 // ════════════════════════════════════════════════════
 // Public API
 // ════════════════════════════════════════════════════
@@ -955,6 +972,7 @@ bool hasStatusResponse() {
                 return false;
             }
             _has_cached_status = true;
+            g_mesh->consumeResponse(i);
             return true;
         }
     }
@@ -1013,6 +1031,7 @@ bool hasTelemetryResponse() {
             }
             _cached_telemetry = result;
             _has_cached_telemetry = true;
+            g_mesh->consumeResponse(i);
             return true;
         }
     }
@@ -1986,6 +2005,10 @@ void loadChannels() {
     };
 
     sigurdos::mesh::channelStoreLoad(load_fn, g_mesh);
+    if (sigurdos::mesh::detail::channelStoreLoadHadCorruption()) {
+        Serial.println(
+            "[mesh] WARNING: channel store recovery failed; legacy channels ignored");
+    }
 }
 
 bool saveState() {
@@ -2122,6 +2145,8 @@ bool meshRemoveContactByPubKeyDurable(const uint8_t* pub_key)
         }
         return false;
     }
+    g_mesh->teardownContactRuntime(context.pub_key);
+    clearContactResponseCaches(context.pub_key);
     deleteBlobByKey(SPIFFS, context.pub_key, sizeof(context.pub_key));
     return true;
 }
@@ -2801,9 +2826,9 @@ bool addChannelByUri(const char* uri) {
     ChannelUriFields fields{};
     if (!parseChannelAddUri(uri, fields)) return false;
 
-    uint8_t raw_secret[16];
-    if (SigurdMeshV2::hexToBytes(fields.secret_hex, raw_secret,
-                                 sizeof(raw_secret)) != 16) return false;
+    uint8_t raw_secret[CHANNEL_SECRET_BYTES];
+    if (!channelSecretHexDecode(fields.secret_hex, raw_secret,
+                                sizeof(raw_secret))) return false;
     char b64[25];
     encodeBase64(raw_secret, sizeof(raw_secret), b64);
 
@@ -2824,11 +2849,10 @@ bool getContactPubkeyHex(const char* name, char* hex_out, size_t hex_sz)
 bool getChannelSecretHex(int channel_idx, char* hex_out, size_t hex_sz)
 {
     if (!g_mesh || !hex_out) return false;
-    if (hex_sz < (size_t)(PUB_KEY_SIZE * 2 + 1)) return false;
+    if (hex_sz < CHANNEL_SECRET_HEX_CAPACITY) return false;
     const ChannelDetails* ch = g_mesh->getChannel(channel_idx);
     if (!ch) return false;
-    ::mesh::Utils::toHex(hex_out, ch->channel.secret, PUB_KEY_SIZE);
-    return true;
+    return channelSecretHexEncode(ch->channel.secret, hex_out, hex_sz);
 }
 
 // ── Regions (flood scope) ──────────────────────────

@@ -14,6 +14,8 @@
 #include <helpers/TransportKeyStore.h>
 #include <SPIFFS.h>
 #include "mesh_wrapper.h"
+#include "bounded_response_queue.h"
+#include "contact_runtime_cleanup.h"
 #include "pending_ack_policy.h"
 #include "pending_operation_policy.h"
 #include "mesh_safety_policy.h"
@@ -152,6 +154,11 @@ public:
 
     void companionStopConnection(const uint8_t* pub_key);
 
+    // Stop the connection and remove every in-memory operation/cache entry
+    // keyed to a contact. Call only after the durable contact deletion has
+    // committed and the live contact table has been updated.
+    void teardownContactRuntime(const uint8_t* pub_key);
+
 
     // Companion CMD_EXPORT_CONTACT (self): serialise this node's advert into out.
     // Returns bytes written (0 on failure).
@@ -250,11 +257,10 @@ public:
         uint8_t  len = 0;
         bool     valid = false;
     };
-    ResponseEntry _responses[MAX_RESPONSES];
-    int _n_responses = 0;
+    detail::BoundedResponseQueue<ResponseEntry, MAX_RESPONSES> _responses;
 
     // Send a typed REQ to a contact by name. Returns true if sent.
-    // The response arrives via onContactResponse() and is stored in _responses[].
+    // The response arrives via onContactResponse() and is stored in _responses.
     bool sendRequest(const char* name, uint8_t req_type,
                      uint32_t* tag_out = nullptr,
                      uint32_t* timeout_out = nullptr);
@@ -285,21 +291,27 @@ public:
 
 
     // Polling API for received responses
-    int getResponseCount() const { return _n_responses; }
-    const ResponseEntry* getResponse(int idx) const {
-        if (idx < 0 || idx >= _n_responses) return nullptr;
-        return &_responses[idx];
+    int getResponseCount() const {
+        return static_cast<int>(_responses.size());
     }
-    void clearResponses() { _n_responses = 0; }
+    const ResponseEntry* getResponse(int idx) const {
+        if (idx < 0) return nullptr;
+        return _responses.at(static_cast<size_t>(idx));
+    }
+    bool consumeResponse(int idx) {
+        return idx >= 0 && _responses.consume(static_cast<size_t>(idx));
+    }
+    void clearResponses() { _responses.clear(); }
 
     // ── Room message fetch (Phase 4.6) ─────────────────
     static constexpr int MAX_ROOM_MSG_FETCH = 16;
     struct RoomMsgFetchEntry {
-        char sender[32];
-        char text[160];
-        uint32_t timestamp;
-        char channel[32];
-        bool valid;
+        char sender[32] = {};
+        char text[160] = {};
+        uint32_t timestamp = 0;
+        char channel[32] = {};
+        uint8_t contact_key[PUB_KEY_SIZE] = {};
+        bool valid = false;
     };
     RoomMsgFetchEntry _room_fetch_buf[MAX_ROOM_MSG_FETCH];
     int _n_room_fetched = 0;

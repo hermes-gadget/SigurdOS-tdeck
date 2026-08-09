@@ -23,6 +23,7 @@
 #include "../generation_owner.h"
 #include "../notifications.h"
 #include "../../mesh/mesh_wrapper.h"
+#include "../../mesh/channel_key.h"
 #include "../../mesh/channel_validation.h"
 #include "../../mesh/public_channel.h"
 #include "../../app/qr_show.h"
@@ -308,7 +309,7 @@ void channels_screen_show()
                         const char* ch_name = lv_label_get_text(name_l);
                         if (!ch_name || !ch_name[0]) return;
 
-                        char secret_hex[65] = {0};
+                        char secret_hex[sigurdos::mesh::CHANNEL_SECRET_HEX_CAPACITY] = {0};
                         if (!sigurdos::mesh::getChannelSecretHex(idx, secret_hex, sizeof(secret_hex))) {
                             SIG_LOGW("QR: failed to get channel secret");
                             lv_obj_t* label = lv_obj_get_child(btn, 0);

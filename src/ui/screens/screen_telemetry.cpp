@@ -95,7 +95,6 @@ void telemetry_screen_show()
             }
         }
 
-        sigurdos::mesh::clearResponses();
     } else {
         lv_obj_t* waiting = lv_label_create(list);
         lv_obj_set_style_text_color(
