@@ -18,7 +18,12 @@ if str(PACKAGE_PARENT) not in sys.path:
 
 import audit_launcher_artifact as artifact_format
 
-from hw_test.hw_constants import SCREENSHOT_TIMEOUT_S, CommandProtocol, boot_wait_for
+from hw_test.hw_constants import (
+    SCREENSHOT_TIMEOUT_S,
+    CommandProtocol,
+    boot_wait_for,
+    nav_timeout_for,
+)
 from hw_test.hw_flash import (
     FlashError,
     HardwareFlasher,
@@ -40,7 +45,9 @@ from hw_test.hw_test_runner import (
     _check_variant,
     _merge_report_metadata,
     _parse_radio_profile,
+    _restore_radio_profile,
     _run_pi_worker,
+    _wait_for_mesh_ready,
     build_parser,
     run_crash_recovery,
     run_radio,
@@ -499,6 +506,12 @@ class ReportTests(unittest.TestCase):
                     return response("radio params saved to NVS")
                 if command == "reboot":
                     return response("device restarting")
+                if command == "status":
+                    return response(
+                        "[test] heap=100 psram=100 lvmem_used_pct=10 lvmem_free=10 "
+                        "lvmem_total=100 lvmem_frag=0 stack_hwm_words=10 "
+                        "stress_lvgl_min_free=10 stress_lvgl_max_used_pct=1 mesh=1"
+                    )
                 if command.startswith("addchannel "):
                     return response("addchannel ERROR")
                 return response("OK")
@@ -530,6 +543,108 @@ class ReportTests(unittest.TestCase):
             next(item for item in report.results if item.name == "radio.verify_restore").status,
             TestStatus.PASS,
         )
+
+    def test_nav_timeout_map_gets_extended_budget(self) -> None:
+        self.assertEqual(nav_timeout_for("map"), 15.0)
+        self.assertEqual(nav_timeout_for("home"), 5.0)
+        self.assertEqual(nav_timeout_for("s-system"), 5.0)
+
+    def test_wait_for_mesh_ready_polls_until_ready(self) -> None:
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.status_calls = 0
+
+            def send_command(self, command, **_kwargs):
+                self.status_calls += 1
+                mesh = "1" if self.status_calls >= 2 else "0"
+                return SimpleNamespace(
+                    output=(
+                        "[test] heap=100 psram=100 lvmem_used_pct=10 "
+                        f"lvmem_free=10 lvmem_total=100 lvmem_frag=0 "
+                        f"stack_hwm_words=10 stress_lvgl_min_free=10 "
+                        f"stress_lvgl_max_used_pct=1 mesh={mesh}"
+                    ),
+                    attempts=1,
+                    recovered=False,
+                    wire_command=command,
+                )
+
+        connection = FakeConnection()
+        report = HardwareReport(mode="radio", transport="local")
+        with mock.patch("hw_test.hw_test_runner.time.sleep"):
+            self.assertTrue(_wait_for_mesh_ready(connection, report, timeout_s=45.0))
+        self.assertEqual(connection.status_calls, 2)
+        result = next(item for item in report.results if item.name == "radio.mesh_ready")
+        self.assertEqual(result.status, TestStatus.PASS)
+
+    def test_wait_for_mesh_ready_times_out_as_critical(self) -> None:
+        class FakeConnection:
+            def send_command(self, command, **_kwargs):
+                return SimpleNamespace(
+                    output=(
+                        "[test] heap=100 psram=100 lvmem_used_pct=10 "
+                        "lvmem_free=10 lvmem_total=100 lvmem_frag=0 "
+                        "stack_hwm_words=10 stress_lvgl_min_free=10 "
+                        "stress_lvgl_max_used_pct=1 mesh=0"
+                    ),
+                    attempts=1,
+                    recovered=False,
+                    wire_command=command,
+                )
+
+        report = HardwareReport(mode="radio", transport="local")
+        with mock.patch("hw_test.hw_test_runner.time.sleep"):
+            self.assertFalse(_wait_for_mesh_ready(FakeConnection(), report, timeout_s=0.1))
+        result = next(item for item in report.results if item.name == "radio.mesh_ready")
+        self.assertEqual(result.status, TestStatus.FAIL)
+        self.assertTrue(result.critical)
+
+    def test_radio_restore_retries_setrf_until_marker_seen(self) -> None:
+        class FakeRestoreConnection:
+            def __init__(self) -> None:
+                self.setrf_attempts = 0
+
+            def send_command(self, command, **_kwargs):
+                def response(output):
+                    return SimpleNamespace(
+                        output=output,
+                        attempts=1,
+                        recovered=False,
+                        wire_command=command,
+                    )
+
+                if command.startswith("setrf "):
+                    self.setrf_attempts += 1
+                    if self.setrf_attempts < 3:
+                        return response("")  # marker lost in the serial flood
+                    return response("radio params saved to NVS")
+                if command == "getrf":
+                    return response(
+                        "[test] getrf: freq=869.525 SF=10 BW=250.0 CR=5 TX=7 dBm RX_BOOST=1"
+                    )
+                if command == "reboot":
+                    return response("device restarting")
+                return response("OK")
+
+            def close(self):
+                return None
+
+            def connect(self):
+                return self
+
+            def detect_firmware(self):
+                return DeviceInfo(protocol=CommandProtocol.REMOTE_TEST, radio_available=True)
+
+        connection = FakeRestoreConnection()
+        report = HardwareReport(mode="radio", transport="local")
+        with mock.patch("hw_test.hw_test_runner.time.sleep"):
+            _restore_radio_profile(connection, report, (869.525, 10, 250.0, 5, 7, True))
+        self.assertEqual(connection.setrf_attempts, 3)
+        restore = next(item for item in report.results if item.name == "radio.restore")
+        self.assertEqual(restore.status, TestStatus.PASS)
+        self.assertFalse(restore.critical)
+        verify = next(item for item in report.results if item.name == "radio.verify_restore")
+        self.assertEqual(verify.status, TestStatus.PASS)
 
     def test_crash_recovery_refuses_non_telemetry_firmware(self) -> None:
         report = HardwareReport(mode="crash_recovery", transport="local")

@@ -32,6 +32,18 @@ SERIAL_RECOVERY_WAIT_S = 10.0
 # radio-enabled debug build may need around two minutes for 4,800 CDATA lines.
 SCREENSHOT_TIMEOUT_S = 165.0
 
+# Navigation confirmation timeout. Heavy-init screens (map) render before the
+# confirmation marker prints, so they get a dedicated longer budget while the
+# 20+ quick screens keep the snappy default.
+NAV_TIMEOUT_S = 5.0
+NAV_TIMEOUTS: dict[str, float] = {"map": 15.0}
+
+# After a radio-profile reboot the mesh needs ~24s to reach Ready before
+# channel operations can succeed; poll `status` (mesh=1) instead of a blind
+# fixed settle so fast boots don't pay the full wait.
+MESH_READY_TIMEOUT_S = 45.0
+MESH_READY_POLL_S = 3.0
+
 DEFAULT_BUILD_ENV = "SigurdOS_TDeck_remote_test_radio"
 MERGED_FIRMWARE_NAME = "firmware-merged.bin"
 
@@ -219,6 +231,12 @@ def boot_wait_for(environment: str | None) -> float:
     if caps and caps.test_controller:
         return BOOT_WAIT_REMOTE_TEST_S
     return BOOT_WAIT_RELEASE_S
+
+
+def nav_timeout_for(screen: str) -> float:
+    """Return the nav confirmation timeout for a screen."""
+
+    return NAV_TIMEOUTS.get(screen, NAV_TIMEOUT_S)
 
 
 def first_existing_local_port() -> str:
