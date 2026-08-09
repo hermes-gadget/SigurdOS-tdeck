@@ -28,6 +28,7 @@ private:
 class SPIFFSClass {
 public:
     bool begin(bool formatIfMountFailed = false) {
+        ++_mock_begin_count;
         if (_mock_mount_succeeds) return true;
         if (formatIfMountFailed && _mock_format_succeeds) {
             _mock_formatted = true;
@@ -58,11 +59,13 @@ public:
         _mock_post_format_mount_succeeds = succeeds;
     }
     bool mock_was_formatted() const { return _mock_formatted; }
+    int mock_begin_count() const { return _mock_begin_count; }
     void mock_reset() {
         _mock_mount_succeeds = false;
         _mock_format_succeeds = true;
         _mock_post_format_mount_succeeds = true;
         _mock_formatted = false;
+        _mock_begin_count = 0;
     }
 
 private:
@@ -70,6 +73,7 @@ private:
     bool _mock_format_succeeds = true;
     bool _mock_post_format_mount_succeeds = true;
     bool _mock_formatted = false;
+    int _mock_begin_count = 0;
 };
 
 extern SPIFFSClass SPIFFS;

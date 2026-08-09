@@ -7,6 +7,7 @@
 #include "region_name.h"
 #include "region_policy.h"
 #include "../hal/prefs.h"
+#include "hal/storage.h"
 #include <SPIFFS.h>
 #include <cstring>
 
@@ -119,7 +120,7 @@ static bool loadPrivateRegionKey(uint16_t region_id, const uint8_t key[16],
 
 bool regionsLoad() {
     if (!g_region_map || !g_region_store) return false;
-    if (!SPIFFS.begin(false)) {
+    if (!sigurdos::storage_ensure_mounted()) {
         g_regions_dirty = true;
         return false;
     }
@@ -226,7 +227,7 @@ bool regionsLoad() {
 
 bool regionsSave() {
     if (!g_region_map) return false;
-    if (!SPIFFS.begin(false)) {
+    if (!sigurdos::storage_ensure_mounted()) {
         g_regions_dirty = true;
         return false;
     }

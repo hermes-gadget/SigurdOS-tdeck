@@ -143,4 +143,49 @@ TEST_F(StorageTest, GpsValidationUsesFailClosedProductionPolicy) {
     EXPECT_FALSE(sigurdos::storage_available());
 }
 
+// ── Shared mount guard (storage_ensure_mounted) ─────────
+
+TEST_F(StorageTest, EnsureMountedFalseBeforeInit) {
+    EXPECT_FALSE(sigurdos::storage_ensure_mounted());
+    EXPECT_EQ(SPIFFS.mock_begin_count(), 0);
+}
+
+TEST_F(StorageTest, EnsureMountedFalseWhenInitFailed) {
+    SPIFFS.mock_set_mount_result(false);
+
+    EXPECT_FALSE(sigurdos::storage_init());
+    EXPECT_FALSE(sigurdos::storage_ensure_mounted());
+    EXPECT_EQ(SPIFFS.mock_begin_count(), 1);  // only init's own attempt
+}
+
+TEST_F(StorageTest, EnsureMountedMountsAtMostOnce) {
+    SPIFFS.mock_set_mount_result(true);
+
+    EXPECT_TRUE(sigurdos::storage_init());
+    EXPECT_EQ(SPIFFS.mock_begin_count(), 1);
+
+    // Repeated ensure calls share the single mount — no extra SPIFFS.begin()
+    // (and therefore no "SPIFFS Already Mounted!" warnings).
+    EXPECT_TRUE(sigurdos::storage_ensure_mounted());
+    EXPECT_TRUE(sigurdos::storage_ensure_mounted());
+    EXPECT_TRUE(sigurdos::storage_ensure_mounted());
+    EXPECT_EQ(SPIFFS.mock_begin_count(), 1);
+}
+
+TEST_F(StorageTest, EnsureMountedReattemptsAfterReset) {
+    SPIFFS.mock_set_mount_result(true);
+    EXPECT_TRUE(sigurdos::storage_init());
+    EXPECT_TRUE(sigurdos::storage_ensure_mounted());
+    EXPECT_EQ(SPIFFS.mock_begin_count(), 1);
+
+    // storage_reset() (unit-test lifecycle) clears the shared mount state,
+    // so a subsequent boot can mount again.
+    sigurdos::storage_reset();
+    SPIFFS.mock_reset();
+    SPIFFS.mock_set_mount_result(true);
+    EXPECT_TRUE(sigurdos::storage_init());
+    EXPECT_TRUE(sigurdos::storage_ensure_mounted());
+    EXPECT_EQ(SPIFFS.mock_begin_count(), 1);
+}
+
 } // namespace

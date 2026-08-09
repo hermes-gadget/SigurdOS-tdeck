@@ -13,6 +13,7 @@ namespace sigurdos {
 
 static bool s_storage_available = false;
 static bool s_storage_init_called = false;
+static bool s_storage_mounted = false;
 
 enum class PartitionEraseState {
     Erased,
@@ -62,6 +63,7 @@ bool storage_init()
     // Attempt a safe mount first — don't format, respect existing data.
     if (SPIFFS.begin(false)) {
         s_storage_available = true;
+        s_storage_mounted = true;
         return true;
     }
 
@@ -93,6 +95,7 @@ bool storage_init()
         }
         Serial.println("[storage] SPIFFS formatted and mounted");
         s_storage_available = true;
+        s_storage_mounted = true;
         return true;
     }
 
@@ -114,10 +117,21 @@ bool storage_available()
     return s_storage_available;
 }
 
+bool storage_ensure_mounted()
+{
+    if (!s_storage_available) return false;
+    if (!s_storage_mounted) {
+        if (!SPIFFS.begin(false)) return false;
+        s_storage_mounted = true;
+    }
+    return true;
+}
+
 void storage_reset()
 {
     s_storage_init_called = false;
     s_storage_available = false;
+    s_storage_mounted = false;
 }
 
 } // namespace sigurdos

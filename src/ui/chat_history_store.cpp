@@ -4,6 +4,7 @@
 #include "chat_history_store.h"
 
 #include "hal/atomic_file.h"
+#include "hal/storage.h"
 
 #include <cstdio>
 #include <cstring>
@@ -44,13 +45,10 @@ const char* historyPath()
 bool ensureFs()
 {
 #if defined(ESP32_PLATFORM)
-    static bool mounted = false;
-    if (!mounted) {
-        if (!SPIFFS.begin(false)) return false;
-        mounted = true;
-    }
-#endif
+    return sigurdos::storage_ensure_mounted();
+#else
     return true;
+#endif
 }
 
 bool pathExists(const char* path)
