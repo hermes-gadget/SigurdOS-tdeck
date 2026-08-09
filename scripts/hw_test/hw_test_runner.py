@@ -830,6 +830,9 @@ def run_radio(
                 f"addchannel {channel}",
                 timeout_s=7,
                 expected=("addchannel",),
+                # The response marker is frequently delayed behind the
+                # post-boot serial flood; tolerate a longer idle gap.
+                silence_grace_s=2.0,
             )
             passed = "addchannel OK" in response.output
             return passed, f"created #{channel}" if passed else "channel creation failed", {
