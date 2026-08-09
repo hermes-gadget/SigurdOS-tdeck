@@ -31,6 +31,13 @@ public:
     uint32_t dropped_records() const;
     void reset();
 
+#if !defined(ESP32_PLATFORM)
+    using DrainUnlockedHookForTest = void (*)(void*);
+    void setDrainUnlockedHookForTest(DrainUnlockedHookForTest hook,
+                                     void* context);
+    std::size_t queuedBytesForTest() const;
+#endif
+
 private:
     void lock() const;
     void unlock() const;
@@ -52,6 +59,12 @@ private:
     uint32_t dropped_records_ = 0;
     uint32_t reported_drops_ = 0;
     bool record_overflow_ = false;
+    bool drain_active_ = false;
+
+#if !defined(ESP32_PLATFORM)
+    DrainUnlockedHookForTest drain_unlocked_hook_ = nullptr;
+    void* drain_unlocked_hook_context_ = nullptr;
+#endif
 
     void append(const char* data, std::size_t length);
     void commit();

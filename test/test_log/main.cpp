@@ -18,6 +18,8 @@
 
 #include <gtest/gtest.h>
 
+#include <condition_variable>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -28,6 +30,30 @@
 #define SIGURDOS_DEBUG 0
 #include "diagnostics/log.h"
 #include "diagnostics/diagnostic_io.h"
+
+namespace {
+
+struct DrainPause {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::size_t hook_calls = 0;
+    bool first_drainer_paused = false;
+    bool resume_first_drainer = false;
+};
+
+void pauseFirstUnlockedDrain(void* raw) {
+    auto* pause = static_cast<DrainPause*>(raw);
+    std::unique_lock<std::mutex> lock(pause->mutex);
+    ++pause->hook_calls;
+    if (pause->hook_calls != 1) return;
+    pause->first_drainer_paused = true;
+    pause->changed.notify_all();
+    pause->changed.wait(lock, [pause]() {
+        return pause->resume_first_drainer;
+    });
+}
+
+}  // namespace
 
 TEST(LogMacrosTest, ErrorAndWarningAddLevelPrefixAndNewline) {
     Serial.mock_reset();
@@ -93,6 +119,50 @@ TEST(DiagnosticWriterTest, ConcurrentProducersAndDrainerPreserveRecords) {
     }
     EXPECT_EQ(line_count, static_cast<std::size_t>(producer_count * records_per_producer));
     EXPECT_EQ(diagnostic_writer.dropped_records(), 0U);
+}
+
+TEST(DiagnosticWriterTest, ConcurrentDrainerCannotConsumeUnlockedTailTwice) {
+    auto& diagnostic_writer = sigurdos::diagnostics::writer();
+    diagnostic_writer.reset();
+    Serial.mock_reset();
+    Serial.mock_set_available_for_write(0);
+    diagnostic_writer.println("owned-once");
+
+    DrainPause pause;
+    diagnostic_writer.setDrainUnlockedHookForTest(
+        pauseFirstUnlockedDrain, &pause);
+    Serial.mock_set_available_for_write(4096);
+
+    std::thread first_drainer([&diagnostic_writer]() {
+        diagnostic_writer.drain();
+    });
+    {
+        std::unique_lock<std::mutex> lock(pause.mutex);
+        pause.changed.wait(lock, [&pause]() {
+            return pause.first_drainer_paused;
+        });
+    }
+
+    std::thread second_drainer([&diagnostic_writer]() {
+        diagnostic_writer.drain();
+    });
+    second_drainer.join();
+
+    {
+        std::lock_guard<std::mutex> lock(pause.mutex);
+        pause.resume_first_drainer = true;
+    }
+    pause.changed.notify_all();
+    first_drainer.join();
+    diagnostic_writer.setDrainUnlockedHookForTest(nullptr, nullptr);
+
+    EXPECT_EQ(1u, pause.hook_calls);
+    EXPECT_EQ("owned-once\n", Serial.mock_tx_output());
+    EXPECT_EQ(0u, diagnostic_writer.queuedBytesForTest());
+
+    diagnostic_writer.println("still-healthy");
+    EXPECT_EQ("owned-once\nstill-healthy\n", Serial.mock_tx_output());
+    EXPECT_EQ(0u, diagnostic_writer.queuedBytesForTest());
 }
 
 int main(int argc, char** argv) {
