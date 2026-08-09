@@ -10,7 +10,7 @@ import re
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from release_artifact_contract import (
     REQUIRED_RELEASE_ARTIFACTS,
@@ -25,6 +25,7 @@ TEMPLATE = ROOT / ".github/PULL_REQUEST_TEMPLATE/release.md"
 DOC = ROOT / "docs/RELEASE_EVIDENCE.md"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+GITHUB_RELEASE_REPOSITORY = ("hermes-gadget", "SigurdOS-tdeck")
 
 
 def load_requirements(path: Path = REQUIREMENTS) -> list[dict]:
@@ -70,6 +71,29 @@ def _https_url(value: object, field: str) -> str:
     if parsed.scheme != "https" or not parsed.netloc:
         raise ValueError(f"{field} must be a non-empty HTTPS URL")
     return value
+
+
+def _verify_requirement_evidence_url(
+    requirement_id: str, evidence_url: str, expected_tag: str
+) -> None:
+    """Bind release evidence links to this repository's expected release tag."""
+    if requirement_id != "REL-ARTIFACTS":
+        return
+
+    parsed = urlparse(evidence_url)
+    if parsed.hostname != "github.com":
+        return
+
+    path_parts = [unquote(part) for part in parsed.path.split("/") if part]
+    release_prefix = [*GITHUB_RELEASE_REPOSITORY, "releases", "tag"]
+    if path_parts[: len(release_prefix)] != release_prefix:
+        return
+
+    actual_tag = path_parts[len(release_prefix)] if len(path_parts) == 5 else None
+    if actual_tag != expected_tag:
+        raise ValueError(
+            f"{requirement_id}: evidence_url must point to release tag {expected_tag}"
+        )
 
 
 def _iso_date(value: object, field: str) -> date:
@@ -125,7 +149,8 @@ def _verify_requirements(document: dict, expected_tag: str, max_age_days: int) -
         record = by_id[requirement_id]
         if record.get("outcome") != "pass":
             raise ValueError(f"{requirement_id}: outcome must be pass")
-        _https_url(record.get("evidence_url"), f"{requirement_id}.evidence_url")
+        evidence_url = _https_url(record.get("evidence_url"), f"{requirement_id}.evidence_url")
+        _verify_requirement_evidence_url(requirement_id, evidence_url, expected_tag)
         tested_at = _iso_date(record.get("tested_at"), f"{requirement_id}.tested_at")
         age = (today - tested_at).days
         if age < 0 or age > max_age_days:

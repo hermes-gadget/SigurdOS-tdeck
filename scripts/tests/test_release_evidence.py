@@ -128,6 +128,38 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("completed release evidence OK", result.stdout)
 
+    def test_rel_artifacts_github_release_url_is_bound_to_expected_tag(self):
+        commit = "a" * 40
+        tag = "beta-test"
+        evidence = self.make_completed_evidence(commit, tag)
+        rel_artifacts = next(
+            record for record in evidence["requirements"] if record["id"] == "REL-ARTIFACTS"
+        )
+        rel_artifacts["evidence_url"] = (
+            "https://github.com/hermes-gadget/SigurdOS-tdeck/releases/tag/beta-old"
+        )
+        result = self.run_evidence(evidence, commit, tag)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("release tag", result.stderr)
+
+        rel_artifacts["evidence_url"] = (
+            "https://github.com/hermes-gadget/SigurdOS-tdeck/releases/tag/beta-test"
+        )
+        result = self.run_evidence(evidence, commit, tag)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_checked_in_rc9_release_evidence_points_to_rc9(self):
+        evidence = json.loads(
+            (ROOT / "release-evidence/beta-0.1.47-RC9.json").read_text()
+        )
+        rel_artifacts = next(
+            record for record in evidence["requirements"] if record["id"] == "REL-ARTIFACTS"
+        )
+        self.assertEqual(
+            rel_artifacts["evidence_url"],
+            "https://github.com/hermes-gadget/SigurdOS-tdeck/releases/tag/beta-0.1.47-RC9",
+        )
+
     def test_incomplete_or_failed_evidence_blocks_release(self):
         commit = "a" * 40
         evidence = self.make_completed_evidence(commit, "beta-test")

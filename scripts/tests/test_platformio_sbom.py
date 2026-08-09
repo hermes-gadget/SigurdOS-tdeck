@@ -33,6 +33,35 @@ class PlatformioSbomTests(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(github_purls), 9)
 
+    def test_shipped_registry_libraries_use_exact_canonical_purls(self) -> None:
+        components = {
+            component["name"]: component["purl"]
+            for component in MODULE.generate(ROOT / "ci" / "platformio-packages.lock")[
+                "components"
+            ]
+        }
+        expected = {
+            "Crypto": "pkg:github/rweather/arduinolibs@0.4.0#libraries/Crypto",
+            "Melopero RV3028": (
+                "pkg:github/melopero/Melopero_RV-3028_Arduino_Library@1.2.0"
+            ),
+            "WebSockets": "pkg:github/Links2004/arduinoWebSockets@2.7.3",
+        }
+        for name, purl in expected.items():
+            with self.subTest(name=name):
+                self.assertEqual(components[name], purl)
+
+    def test_unmapped_production_library_fails_closed(self) -> None:
+        lock_text = """\
+Libraries
+└── Unreviewed @ 1.0.0 (required: example/Unreviewed @ 1.0.0)
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "platformio-packages.lock"
+            lock.write_text(lock_text, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Unreviewed"):
+                MODULE.generate(lock)
+
     def test_output_is_deterministic(self) -> None:
         lock = ROOT / "ci" / "platformio-packages.lock"
         self.assertEqual(MODULE.generate(lock), MODULE.generate(lock))
