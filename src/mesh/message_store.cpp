@@ -212,13 +212,7 @@ static uint32_t nextUnusedIdAfter(uint32_t id)
 static bool ensureFs()
 {
     if (g_backend) return g_backend->ensure && g_backend->ensure(g_backend->context);
-    if (!sigurdos::storage_available()) return false;
-    static bool mounted = false;
-    if (!mounted) {
-        if (!SPIFFS.begin(false)) return false;
-        mounted = true;
-    }
-    return true;
+    return sigurdos::storage_ensure_mounted();
 }
 
 static bool existsStore()

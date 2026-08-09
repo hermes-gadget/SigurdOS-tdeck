@@ -21,6 +21,13 @@ bool storage_init();
 // when storage is known unavailable.
 bool storage_available();
 
+// Returns true if SPIFFS is mounted and usable, mounting it on first
+// use if needed. The mount happens at most once per boot, so all
+// downstream modules share a single mount instead of each calling
+// SPIFFS.begin() (which emits a "SPIFFS Already Mounted!" warning per
+// redundant call). Requires storage_init() to have succeeded first.
+bool storage_ensure_mounted();
+
 // Reset internal state (for unit tests only).
 // Resets the init-called and availability flags so tests can
 // start from a clean state.
