@@ -31,6 +31,7 @@ static char g_native_root[160] = "/tmp/sigurdos_sd_store";
 static char g_native_path[192] = "/tmp/sigurdos_sd_store/msgs";
 static bool g_native_mounted = false;
 static int g_native_append_write_limit = -1;
+static bool g_native_remove_failure = false;
 
 static void updateNativePath()
 {
@@ -113,6 +114,7 @@ static bool nativeAppend(const char* path, const uint8_t* data, size_t len)
 
 static bool nativeRemove(const char* path)
 {
+    if (g_native_remove_failure) return false;
     return path && (std::remove(path) == 0 || errno == ENOENT);
 }
 
@@ -181,8 +183,10 @@ static bool nativeRecoverPending(const char* path,
 {
     char temp_path[256];
     char ready_path[256];
-    if (!appendPath(path, ".tmp", temp_path, sizeof(temp_path)) ||
-        !appendPath(path, ".ready", ready_path, sizeof(ready_path))) return false;
+    if (!appendPath(path, SD_MESSAGE_STORE_TEMP_SUFFIX,
+                    temp_path, sizeof(temp_path)) ||
+        !appendPath(path, SD_MESSAGE_STORE_READY_SUFFIX,
+                    ready_path, sizeof(ready_path))) return false;
 
     if (nativeExists(ready_path)) {
         std::vector<uint8_t> ready;
@@ -205,8 +209,10 @@ static bool nativeReplace(const char* path, const uint8_t* data, size_t len)
         !nativeRecoverPending(path, validateStoreBytes, nullptr)) return false;
     char temp_path[256];
     char ready_path[256];
-    if (!appendPath(path, ".tmp", temp_path, sizeof(temp_path)) ||
-        !appendPath(path, ".ready", ready_path, sizeof(ready_path))) return false;
+    if (!appendPath(path, SD_MESSAGE_STORE_TEMP_SUFFIX,
+                    temp_path, sizeof(temp_path)) ||
+        !appendPath(path, SD_MESSAGE_STORE_READY_SUFFIX,
+                    ready_path, sizeof(ready_path))) return false;
     if (!nativeRemove(temp_path) || !nativeRemove(ready_path)) return false;
 
     FILE* file = std::fopen(temp_path, "wb");
@@ -319,8 +325,10 @@ static bool backendRecover(void*, const char* path,
     if (!sigurdos_sdcard_mounted() || !path || !validate) return false;
     char temp_path[256];
     char ready_path[256];
-    if (!appendPath(path, ".tmp", temp_path, sizeof(temp_path)) ||
-        !appendPath(path, ".ready", ready_path, sizeof(ready_path))) return false;
+    if (!appendPath(path, SD_MESSAGE_STORE_TEMP_SUFFIX,
+                    temp_path, sizeof(temp_path)) ||
+        !appendPath(path, SD_MESSAGE_STORE_READY_SUFFIX,
+                    ready_path, sizeof(ready_path))) return false;
 
     if (sigurdos_sdcard_exists(ready_path)) {
         const uint64_t ready_size = sigurdos_sdcard_file_size(ready_path);
@@ -436,6 +444,96 @@ bool sdMessageStoreSelect(bool spiffs_available)
     return true;
 }
 
+namespace {
+
+static void restoreDefaultMessageStore()
+{
+    detail::messageStoreSelectDefaultBackend();
+    (void)messageStoreBegin();
+}
+
+static bool sdMessageStoreMounted()
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos_sdcard_mounted();
+#else
+    return g_native_mounted;
+#endif
+}
+
+static bool resetPath(const char* path, const char* suffix,
+                      char* out, size_t out_size)
+{
+    if (!path || !suffix || !out || out_size == 0) return false;
+    if (suffix[0] == '\0') {
+        const int written = std::snprintf(out, out_size, "%s", path);
+        if (written <= 0 || static_cast<size_t>(written) >= out_size) return false;
+    } else if (!appendPath(path, suffix, out, out_size)) {
+        return false;
+    }
+
+    const bool removed = backendRemove(nullptr, out);
+    return removed && !backendExists(nullptr, out);
+}
+
+} // namespace
+
+bool sdMessageStoreReset(SdMessageStoreResetPreflightFn preflight,
+                         void* preflight_context)
+{
+    const bool was_using_sd = g_using_sd;
+
+    // The preflight must run before deselecting or deleting the backend so a
+    // transport failure cannot be mistaken for a successful storage reset.
+    if (preflight && !preflight(preflight_context)) {
+        detail::messageStoreSelectDefaultBackend();
+        g_using_sd = false;
+        g_degraded = true;
+        restoreDefaultMessageStore();
+        return false;
+    }
+
+    // Message-store operations open files for each call, so selecting the
+    // default backend is the close/quiesce operation for the SD backend. It
+    // also invalidates the in-memory recovery/index state before deletion.
+    detail::messageStoreSelectDefaultBackend();
+    g_using_sd = false;
+    g_degraded = false;
+
+    // No active SD backend means there is no SD history to erase. If an
+    // active backend lost its mount, however, reset cannot claim that history
+    // was deleted and must fail closed.
+    if (!sdMessageStoreMounted()) {
+        g_degraded = true;
+        restoreDefaultMessageStore();
+        return !was_using_sd;
+    }
+
+    const char* const suffixes[] = {
+        SD_MESSAGE_STORE_TEMP_SUFFIX,
+        SD_MESSAGE_STORE_READY_SUFFIX,
+        SD_MESSAGE_STORE_CORRUPT_SUFFIX,
+        "",
+    };
+    bool removed = true;
+    for (const char* suffix : suffixes) {
+        char path[256];
+        if (!resetPath(SD_MESSAGE_STORE_BACKEND.path(nullptr), suffix,
+                       path, sizeof(path))) {
+            removed = false;
+        }
+    }
+
+    if (!removed) {
+        // Keep the runtime usable after a non-rebooting failure, but do not
+        // leave the SD backend selected after its files may be incomplete.
+        g_degraded = true;
+        restoreDefaultMessageStore();
+        return false;
+    }
+    return true;
+}
+
 bool sdMessageStoreUsingSd()
 {
     return g_using_sd;
@@ -482,6 +580,11 @@ void sdMessageStoreSetNativeAppendWriteLimit(int bytes)
     g_native_append_write_limit = bytes < -1 ? -1 : bytes;
 }
 
+void sdMessageStoreSetNativeRemoveFailure(bool fail)
+{
+    g_native_remove_failure = fail;
+}
+
 void sdMessageStoreResetNative()
 {
     std::strncpy(g_native_root, "/tmp/sigurdos_sd_store", sizeof(g_native_root) - 1);
@@ -489,6 +592,7 @@ void sdMessageStoreResetNative()
     updateNativePath();
     g_native_mounted = false;
     g_native_append_write_limit = -1;
+    g_native_remove_failure = false;
     g_using_sd = false;
     g_degraded = false;
 }

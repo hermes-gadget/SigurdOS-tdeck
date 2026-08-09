@@ -13,6 +13,7 @@
 #include "public_channel.h"
 #include "advert_blob.h"
 #include "message_store.h"
+#include "sd_message_store.h"
 #include "companion_message_policy.h"
 #include "cmd_response_queue.h"
 #include "durable_fanout.h"
@@ -40,6 +41,10 @@
 #include "hal/radio_profiles.h"
 #include "hal/github_ota.h"
 #include "hal/wifi_ota.h"
+#include "comms/transport_iface.h"
+#if defined(ESP32_PLATFORM)
+#include <esp_task_wdt.h>
+#endif
 #include "sigurd_mesh_v2.h"
 #include "regions.h"
 #include "utils/utf8_util.h"
@@ -2180,19 +2185,70 @@ void shutdown(uint32_t wake_secs)
         });
 }
 
+static bool prepareCompanionTransportsForFactoryReset(void*)
+{
+    if (!sigurdos::mesh::companionAdapterPrepareFactoryReset()) {
+        Serial.println("[mesh] factory reset failed: companion BLE quiesce failed");
+        return false;
+    }
+
+    const sigurdos::comms::TransportId transports[] = {
+        sigurdos::comms::TransportId::TCP,
+        sigurdos::comms::TransportId::WS,
+    };
+    for (const sigurdos::comms::TransportId transport : transports) {
+        if (!sigurdos::comms::transport_enabled(transport)) continue;
+        if (!sigurdos::comms::transport_set_enabled(transport, false)) {
+            Serial.println("[mesh] factory reset failed: companion transport "
+                           "quiesce failed");
+            return false;
+        }
+    }
+    return true;
+}
+
 bool factoryReset()
 {
+    // The reset is terminal (reboots on success), but loopTask is the sole
+    // runtime-watchdog owner and SPIFFS.format() alone can block it for more
+    // than the 10 s runtime timeout on real hardware, aborting the wipe
+    // mid-format with a task_wdt panic. Extend the timeout to the setup
+    // length for the duration of the reset and restore it on the failure
+    // path below (the device continues running after a failed reset).
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_init(SIGURDOS_SETUP_WATCHDOG_TIMEOUT_SEC, true);
+#endif
+
     // Commit the safe BLE interlock before any destructive operation. If this
     // fails, do not erase anything and do not claim that reset succeeded.
     if (!sigurdos::prefs_arm_factory_reset()) {
         Serial.println("[mesh] factory reset failed: could not arm BLE interlock");
         return false;
     }
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+#endif
+
+    // Quiesce every enabled companion transport before touching any reset
+    // storage. The SD reset invokes this callback before deselecting or
+    // deleting its backend, and the NVS/SPIFFS sequence below follows it.
+    if (!sigurdos::mesh::sdMessageStoreReset(
+            prepareCompanionTransportsForFactoryReset, nullptr)) {
+        Serial.println("[mesh] factory reset aborted: companion or SD history "
+                       "quiesce failed");
+        return false;
+    }
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+#endif
 
     // Save identity in case we need it for rollback, then wipe everything
     if (g_mesh) saveIdentity(g_mesh->self_id);
     saveChannels();
     saveContacts();
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+#endif
 
     // Close SPIFFS before reformatting
     SPIFFS.end();
@@ -2211,15 +2267,16 @@ bool factoryReset()
         }
         const bool cleared = nvs.clear();
         nvs.end();
+#if defined(ESP32_PLATFORM)
+        esp_task_wdt_reset();
+#endif
         if (!cleared) {
             Serial.printf("[mesh] factory reset failed: could not clear NVS namespace %s\n",
                           target.name);
         }
         return cleared;
     };
-    const auto format_spiffs = [](void*) -> bool {
-        return SPIFFS.format();
-    };
+    const auto format_spiffs = [](void*) -> bool { return SPIFFS.format(); };
 
     const hal::factory_reset::NvsTarget* failed_target = nullptr;
     hal::factory_reset::FailureStage failed_stage = hal::factory_reset::FailureStage::None;
@@ -2238,6 +2295,9 @@ bool factoryReset()
             Serial.println("[mesh] SPIFFS remount after factory-reset failure also "
                            "failed; reboot required");
         }
+#if defined(ESP32_PLATFORM)
+        esp_task_wdt_init(SIGURDOS_RUNTIME_WATCHDOG_TIMEOUT_SEC, true);
+#endif
         return false;
     }
 
@@ -2254,6 +2314,9 @@ bool factoryReset()
 
     // Reboot — on next boot, init() will find no prefs and no identity,
     // so it will use defaults and generate a fresh identity
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+#endif
     ESP.restart();
     return true;  // unreachable but satisfies bool return type
 }
