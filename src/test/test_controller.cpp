@@ -743,7 +743,7 @@ static void cmd_status() {
     lv_mem_monitor(&mon);
     Serial.printf("[test] heap=%u psram=%u lvmem_used_pct=%u lvmem_free=%u "
                   "lvmem_total=%u lvmem_frag=%u stack_hwm_words=%lu "
-                  "stress_lvgl_min_free=%lu stress_lvgl_max_used_pct=%u\n",
+                  "stress_lvgl_min_free=%lu stress_lvgl_max_used_pct=%u mesh=%u\n",
                   (unsigned)ESP.getFreeHeap(),
                   (unsigned)ESP.getFreePsram(),
                   (unsigned)mon.used_pct,
@@ -752,7 +752,8 @@ static void cmd_status() {
                   (unsigned)mon.frag_pct,
                   (unsigned long)stress_min_stack_words,
                   (unsigned long)stress_min_lvgl_free,
-                  (unsigned)stress_max_lvgl_used_pct);
+                  (unsigned)stress_max_lvgl_used_pct,
+                  sigurdos::mesh::meshIsReady() ? 1 : 0);
 }
 
 static void cmd_contactstats() {
