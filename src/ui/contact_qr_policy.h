@@ -58,7 +58,7 @@ inline bool contact_qr_build_uri(const ContactQrPayload& payload,
 
     char encoded_name[sizeof(payload.display_name) * 3]{};
     size_t encoded_length = 0;
-    static constexpr char HEX[] = "0123456789ABCDEF";
+    static constexpr char HEX_DIGITS[] = "0123456789ABCDEF";
     for (const unsigned char* p =
              reinterpret_cast<const unsigned char*>(payload.display_name);
          *p; ++p) {
@@ -72,8 +72,8 @@ inline bool contact_qr_build_uri(const ContactQrPayload& payload,
             encoded_name[encoded_length++] = static_cast<char>(*p);
         } else {
             encoded_name[encoded_length++] = '%';
-            encoded_name[encoded_length++] = HEX[*p >> 4];
-            encoded_name[encoded_length++] = HEX[*p & 0x0F];
+            encoded_name[encoded_length++] = HEX_DIGITS[*p >> 4];
+            encoded_name[encoded_length++] = HEX_DIGITS[*p & 0x0F];
         }
     }
     encoded_name[encoded_length] = '\0';

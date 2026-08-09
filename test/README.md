@@ -41,6 +41,7 @@ test/
 |-- test_ble_frame_queue/        BLE host-to-loop frame handoff, incl. thread stress
 |-- test_boot_watchdog/          Setup/runtime watchdog policy and deadline bounds
 |-- test_build/                  Header inclusion and cross-module sanity checks
+|-- test_audit_b3/               QR contact policy: name encoding, payload init, URI bounds
 |-- test_build_info/             Firmware version string and build info defaults
 |-- test_buzzer/                 Buzzer notification patterns and duration bounds
 |-- test_channel_menu/           Channel menu actions and named random-key scopes

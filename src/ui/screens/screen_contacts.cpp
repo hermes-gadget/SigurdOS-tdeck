@@ -1619,7 +1619,7 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_set_style_text_color(qr_lbl, lv_color_hex(BG_PRIMARY), 0);
         lv_obj_center(qr_lbl);
 
-        auto* qr_payload = new(std::nothrow) ContactQrPayload{};
+        ContactQrPayload* qr_payload = new (std::nothrow) ContactQrPayload();
         if (!qr_payload || !contact_qr_payload_init(
                 *qr_payload, target->id, target->name, target->type)) {
             delete qr_payload;
