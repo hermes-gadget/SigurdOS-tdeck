@@ -20,6 +20,7 @@
 #include "../screens_common.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../prefs_ui.h"
 #include "../../hal/prefs.h"
 #include "../../hal/gps.h"
 #include "../../app/gps_track_log.h"
@@ -305,7 +306,7 @@ void settings_gps_show()
         lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
         sigurdos::NodePrefs np = sigurdos::prefs_get();
         np.gps_enabled = !np.gps_enabled;
-        sigurdos::prefs_set(np);
+        if (!prefs_ui_commit(np)) return;
         char row_buf[64];
         snprintf(row_buf, sizeof(row_buf), "  GPS: %s", np.gps_enabled ? "ON" : "OFF");
         lv_obj_t* lbl = lv_obj_get_child(target, 1);
@@ -336,7 +337,7 @@ void settings_gps_show()
             }
             idx = (idx + 1) % 4;
             np.gps_interval = GPS_INT_VALUES[idx];
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  GPS interval: %s",
                      GPS_INT_LABELS[idx]);
@@ -376,7 +377,7 @@ void settings_gps_show()
         lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(event));
         sigurdos::NodePrefs prefs = sigurdos::prefs_get();
         prefs.gps_track_enabled = !prefs.gps_track_enabled;
-        if (!sigurdos::prefs_set(prefs)) return;
+        if (!prefs_ui_commit(prefs)) return;
         char text[64];
         snprintf(text, sizeof(text), "  Track recording: %s",
                  prefs.gps_track_enabled ? "ON" : "OFF");
@@ -409,7 +410,7 @@ void settings_gps_show()
         }
         index = (index + 1) % 4;
         prefs.gps_track_interval = TRACK_INT_VALUES[index];
-        if (!sigurdos::prefs_set(prefs)) return;
+        if (!prefs_ui_commit(prefs)) return;
         char text[64];
         snprintf(text, sizeof(text), "  Track interval: %s",
                  TRACK_INT_LABELS[index]);
@@ -460,7 +461,7 @@ void settings_gps_show()
         lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
         sigurdos::NodePrefs np = sigurdos::prefs_get();
         np.advert_loc_policy = np.advert_loc_policy ? 0 : 1;
-        sigurdos::prefs_set(np);
+        if (!prefs_ui_commit(np)) return;
         char row_buf[64];
         snprintf(row_buf, sizeof(row_buf), "  Share location: %s", np.advert_loc_policy ? "ON" : "OFF");
         lv_obj_t* lbl = lv_obj_get_child(target, 1);

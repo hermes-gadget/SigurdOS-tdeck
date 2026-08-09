@@ -28,6 +28,7 @@
 #include "../repeater_transcript.h"
 #include "../generation_owner.h"
 #include "../room_fetch_policy.h"
+#include "../contact_qr_policy.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../mesh/contact_store.h"
@@ -1618,16 +1619,26 @@ void contact_detail_screen_show(const char* contact_name)
         lv_obj_set_style_text_color(qr_lbl, lv_color_hex(BG_PRIMARY), 0);
         lv_obj_center(qr_lbl);
 
-        char* qr_name = strdup(contact_name);
-        lv_obj_set_user_data(qr_btn, qr_name);
+        ContactQrPayload* qr_payload = new (std::nothrow) ContactQrPayload();
+        if (!qr_payload || !contact_qr_payload_init(
+                *qr_payload, target->id, target->name, target->type)) {
+            delete qr_payload;
+            qr_payload = nullptr;
+            lv_label_set_text(qr_lbl, "QR unavailable");
+            lv_obj_set_style_bg_color(qr_btn, lv_color_hex(ACCENT_RED), 0);
+        }
+        lv_obj_set_user_data(qr_btn, qr_payload);
         lv_obj_add_event_cb(qr_btn, [](lv_event_t* e) {
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
-            const char* name = (const char*)lv_obj_get_user_data(btn);
-            if (!name) return;
+            auto* payload = static_cast<ContactQrPayload*>(
+                lv_obj_get_user_data(btn));
+            if (!payload) return;
 
-            // Get public key hex for this contact
+            // Resolve the public key by stable ID so duplicate display names
+            // can never select the wrong contact.
             char pubkey_hex[65] = {0};
-            if (!sigurdos::mesh::getContactPubkeyHex(name, pubkey_hex, sizeof(pubkey_hex))) {
+            if (!sigurdos::mesh::getContactPubkeyHex(
+                    payload->stable_id, pubkey_hex, sizeof(pubkey_hex))) {
                 SIG_LOGW("QR: failed to get public key for contact");
                 lv_obj_t* label = lv_obj_get_child(btn, 0);
                 if (label) {
@@ -1638,28 +1649,18 @@ void contact_detail_screen_show(const char* contact_name)
                 return;
             }
 
-            // Determine contact type from the stored type in row's user data
-            int ctype = 1; // default ADV_TYPE_CHAT
-            // Check if row has type data on its parent
-            lv_obj_t* row = lv_obj_get_parent(btn);
-            if (row) {
-                void* td = lv_obj_get_user_data(row);
-                if (td) ctype = (int)(intptr_t)td;
-            }
-
             // Build URI: meshcore://contact/add?name=<url_encoded>&public_key=<64hex>&type=<type>
             char uri[512];
-            char enc_name[96];  // worst-case 31 * 3 + NUL
-            sigurdos::mesh::urlEncodeQueryValue(name, enc_name, sizeof(enc_name));
-            snprintf(uri, sizeof(uri), "meshcore://contact/add?name=%s&public_key=%s&type=%d",
-                     enc_name, pubkey_hex, ctype);
+            if (!contact_qr_build_uri(*payload, pubkey_hex, uri, sizeof(uri))) {
+                SIG_LOGW("QR: failed to build contact URI");
+                return;
+            }
             sigurdos::app::qr_show("Share Contact", uri);
         }, LV_EVENT_CLICKED, nullptr);
         lv_obj_add_event_cb(qr_btn, [](lv_event_t* e) {
-            free(lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e)));
+            delete static_cast<ContactQrPayload*>(lv_obj_get_user_data(
+                (lv_obj_t*)lv_event_get_target(e)));
         }, LV_EVENT_DELETE, nullptr);
-        // Store the contact type on the row object for the callback to retrieve
-        lv_obj_set_user_data(qr_row, (void*)(intptr_t)target->type);
     }
 
     // Remove Contact button
