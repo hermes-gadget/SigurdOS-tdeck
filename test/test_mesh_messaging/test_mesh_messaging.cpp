@@ -35,6 +35,8 @@
 #include "mesh/incoming_message_policy.h"
 #include "mesh/mesh_safety_policy.h"
 #include "mesh/status_response.h"
+#include "mesh/bounded_response_queue.h"
+#include "mesh/contact_runtime_cleanup.h"
 
 namespace {
 
@@ -1027,24 +1029,22 @@ protected:
         uint8_t  len;
     };
 
-    TestResponseEntry _responses[MAX_RESPONSES];
-    int _n_responses = 0;
+    sigurdos::mesh::detail::BoundedResponseQueue<
+        TestResponseEntry, MAX_RESPONSES> _responses;
 
     // Matches SigurdMeshV2::onContactResponse() logic
     void handle_response(const char* contact_name, const uint8_t* data, uint8_t len) {
         if (!data || len < 4) return;
-        if (_n_responses < MAX_RESPONSES) {
-            TestResponseEntry& re = _responses[_n_responses++];
-            memcpy(&re.tag, data, 4);
-            if (contact_name) {
-                strncpy(re.contact_name, contact_name, 31);
-                re.contact_name[31] = '\0';
-            } else {
-                re.contact_name[0] = '\0';
-            }
-            re.len = (len < MAX_RESP_DATA) ? len : MAX_RESP_DATA;
-            memcpy(re.data, data, re.len);
+        TestResponseEntry* re = _responses.appendSlot();
+        memcpy(&re->tag, data, 4);
+        if (contact_name) {
+            strncpy(re->contact_name, contact_name, 31);
+            re->contact_name[31] = '\0';
+        } else {
+            re->contact_name[0] = '\0';
         }
+        re->len = (len < MAX_RESP_DATA) ? len : MAX_RESP_DATA;
+        memcpy(re->data, data, re->len);
     }
 };
 
@@ -1052,35 +1052,35 @@ TEST_F(ReqResponseTest, ExtractsTagFromFirst4Bytes) {
     uint8_t resp_data[8] = {0x78, 0x56, 0x34, 0x12, 0x01, 0x02, 0x03, 0x04};
     handle_response("Alice", resp_data, sizeof(resp_data));
 
-    ASSERT_EQ(_n_responses, 1);
+    ASSERT_EQ(_responses.size(), 1U);
     // LE: 0x12345678 = 305419896
-    EXPECT_EQ(_responses[0].tag, (uint32_t)0x12345678);
-    EXPECT_STREQ(_responses[0].contact_name, "Alice");
+    EXPECT_EQ(_responses.at(0)->tag, (uint32_t)0x12345678);
+    EXPECT_STREQ(_responses.at(0)->contact_name, "Alice");
 }
 
 TEST_F(ReqResponseTest, ExtractsTagAtMinimumLength) {
     uint8_t resp_data[4] = {0x01, 0x00, 0x00, 0x00};
     handle_response("Bob", resp_data, 4);
 
-    ASSERT_EQ(_n_responses, 1);
-    EXPECT_EQ(_responses[0].tag, (uint32_t)1);
-    EXPECT_EQ(_responses[0].len, 4);
+    ASSERT_EQ(_responses.size(), 1U);
+    EXPECT_EQ(_responses.at(0)->tag, (uint32_t)1);
+    EXPECT_EQ(_responses.at(0)->len, 4);
     // Only tag, no payload
-    EXPECT_EQ(_responses[0].data[0], 1);
-    EXPECT_EQ(_responses[0].data[1], 0);
-    EXPECT_EQ(_responses[0].data[2], 0);
-    EXPECT_EQ(_responses[0].data[3], 0);
+    EXPECT_EQ(_responses.at(0)->data[0], 1);
+    EXPECT_EQ(_responses.at(0)->data[1], 0);
+    EXPECT_EQ(_responses.at(0)->data[2], 0);
+    EXPECT_EQ(_responses.at(0)->data[3], 0);
 }
 
 TEST_F(ReqResponseTest, RejectsNullData) {
     handle_response("Charlie", nullptr, 0);
-    EXPECT_EQ(_n_responses, 0);
+    EXPECT_EQ(_responses.size(), 0U);
 }
 
 TEST_F(ReqResponseTest, RejectsShortData) {
     uint8_t resp_data[3] = {0x01, 0x02, 0x03};
     handle_response("Dave", resp_data, 3);
-    EXPECT_EQ(_n_responses, 0) << "Response with len < 4 should be rejected";
+    EXPECT_EQ(_responses.size(), 0U) << "Response with len < 4 should be rejected";
 }
 
 TEST_F(ReqResponseTest, StoresPayloadAfterTag) {
@@ -1088,12 +1088,12 @@ TEST_F(ReqResponseTest, StoresPayloadAfterTag) {
     uint8_t resp_data[6] = {0xEF, 0xBE, 0xAD, 0xDE, 0x4F, 0x4B};
     handle_response("Eve", resp_data, sizeof(resp_data));
 
-    ASSERT_EQ(_n_responses, 1);
-    EXPECT_EQ(_responses[0].tag, (uint32_t)0xDEADBEEF);
-    EXPECT_EQ(_responses[0].len, 6);
+    ASSERT_EQ(_responses.size(), 1U);
+    EXPECT_EQ(_responses.at(0)->tag, (uint32_t)0xDEADBEEF);
+    EXPECT_EQ(_responses.at(0)->len, 6);
     // Payload bytes at offset 4+
-    EXPECT_EQ(_responses[0].data[4], 0x4F);    // 'O'
-    EXPECT_EQ(_responses[0].data[5], 0x4B);    // 'K'
+    EXPECT_EQ(_responses.at(0)->data[4], 0x4F);    // 'O'
+    EXPECT_EQ(_responses.at(0)->data[5], 0x4B);    // 'K'
 }
 
 TEST_F(ReqResponseTest, StoresUpToMaxPayload) {
@@ -1106,15 +1106,16 @@ TEST_F(ReqResponseTest, StoresUpToMaxPayload) {
     }
     handle_response("Frank", large_data, MAX_RESP_DATA + 20);
 
-    ASSERT_EQ(_n_responses, 1);
-    EXPECT_EQ(_responses[0].tag, (uint32_t)0xCAFEBABE);
+    ASSERT_EQ(_responses.size(), 1U);
+    EXPECT_EQ(_responses.at(0)->tag, (uint32_t)0xCAFEBABE);
     // Length should be clamped to MAX_RESP_DATA
-    EXPECT_EQ(_responses[0].len, MAX_RESP_DATA);
+    EXPECT_EQ(_responses.at(0)->len, MAX_RESP_DATA);
     // Verify last stored byte
-    EXPECT_EQ(_responses[0].data[MAX_RESP_DATA - 1], large_data[MAX_RESP_DATA - 1]);
+    EXPECT_EQ(_responses.at(0)->data[MAX_RESP_DATA - 1],
+              large_data[MAX_RESP_DATA - 1]);
 }
 
-TEST_F(ReqResponseTest, BufferOverflowsGracefully) {
+TEST_F(ReqResponseTest, FullBufferRetainsNewestMatchedResponse) {
     // Fill the response buffer to max
     for (int i = 0; i < MAX_RESPONSES; i++) {
         uint8_t resp[6] = {0};
@@ -1125,12 +1126,83 @@ TEST_F(ReqResponseTest, BufferOverflowsGracefully) {
         handle_response("Overflow", resp, 6);
     }
 
-    EXPECT_EQ(_n_responses, MAX_RESPONSES);
+    EXPECT_EQ(_responses.size(), static_cast<size_t>(MAX_RESPONSES));
 
-    // Next response should be silently dropped
+    // A ninth completion evicts the oldest completed entry, rather than
+    // silently dropping the newly matched response.
     uint8_t extra[4] = {0xFF, 0xFF, 0xFF, 0xFF};
     handle_response("Dropped", extra, 4);
-    EXPECT_EQ(_n_responses, MAX_RESPONSES) << "Response beyond capacity should be dropped";
+    ASSERT_EQ(_responses.size(), static_cast<size_t>(MAX_RESPONSES));
+    EXPECT_EQ(_responses.at(0)->tag, 2U);
+    EXPECT_EQ(_responses.at(MAX_RESPONSES - 1)->tag, 0xFFFFFFFFU);
+}
+
+TEST_F(ReqResponseTest, ConsumingResponsePreservesUnrelatedResponses) {
+    uint8_t status[4] = {1, 0, 0, 0};
+    uint8_t telemetry[4] = {2, 0, 0, 0};
+    handle_response("Status", status, sizeof(status));
+    handle_response("Telemetry", telemetry, sizeof(telemetry));
+
+    ASSERT_EQ(_responses.size(), 2U);
+    ASSERT_TRUE(_responses.consume(0));
+    ASSERT_EQ(_responses.size(), 1U);
+    EXPECT_EQ(_responses.at(0)->tag, 2U);
+    EXPECT_STREQ(_responses.at(0)->contact_name, "Telemetry");
+}
+
+TEST(ContactRuntimeCleanup, RemovesOnlyDeletedContactFromPendingTables) {
+    struct RuntimeEntry {
+        uint8_t key[4]{};
+        bool active = false;
+        uint32_t tag = 0;
+    };
+    const uint8_t deleted_key[4] = {1, 2, 3, 4};
+    const uint8_t retained_key[4] = {9, 8, 7, 6};
+    RuntimeEntry entries[4]{};
+    std::memcpy(entries[0].key, deleted_key, sizeof(deleted_key));
+    entries[0].active = true;
+    entries[0].tag = 100; // binary/anonymous request correlation
+    std::memcpy(entries[1].key, retained_key, sizeof(retained_key));
+    entries[1].active = true;
+    entries[1].tag = 200; // unrelated status/telemetry operation
+    std::memcpy(entries[2].key, deleted_key, sizeof(deleted_key));
+    entries[2].active = true;
+    entries[2].tag = 300; // path discovery / ACK-style second slot
+
+    const auto matchesDeleted = [&](const RuntimeEntry& entry) {
+        return entry.active &&
+               std::memcmp(entry.key, deleted_key, sizeof(deleted_key)) == 0;
+    };
+    EXPECT_EQ(sigurdos::mesh::detail::clearMatchingEntries(
+                  entries, 4U, matchesDeleted), 2U);
+    EXPECT_FALSE(entries[0].active);
+    EXPECT_TRUE(entries[1].active);
+    EXPECT_EQ(entries[1].tag, 200U);
+    EXPECT_FALSE(entries[2].active);
+}
+
+TEST(ContactRuntimeCleanup, CompactionKeepsUnrelatedFetchAndSignalEntries) {
+    struct RuntimeEntry {
+        uint8_t key[4]{};
+        uint32_t value = 0;
+    };
+    const uint8_t deleted_key[4] = {4, 3, 2, 1};
+    const uint8_t retained_key[4] = {6, 7, 8, 9};
+    RuntimeEntry entries[3]{};
+    std::memcpy(entries[0].key, deleted_key, sizeof(deleted_key));
+    entries[0].value = 10;
+    std::memcpy(entries[1].key, retained_key, sizeof(retained_key));
+    entries[1].value = 20;
+    std::memcpy(entries[2].key, deleted_key, sizeof(deleted_key));
+    entries[2].value = 30;
+
+    const size_t kept = sigurdos::mesh::detail::compactRemoveMatchingEntries(
+        entries, 3U, [&](const RuntimeEntry& entry) {
+            return std::memcmp(entry.key, deleted_key, sizeof(deleted_key)) == 0;
+        });
+    ASSERT_EQ(kept, 1U);
+    EXPECT_EQ(entries[0].value, 20U);
+    EXPECT_EQ(std::memcmp(entries[0].key, retained_key, sizeof(retained_key)), 0);
 }
 
 TEST_F(ReqResponseTest, TagMatchingZeroIsValid) {
@@ -1138,9 +1210,9 @@ TEST_F(ReqResponseTest, TagMatchingZeroIsValid) {
     uint8_t resp_data[4] = {0x00, 0x00, 0x00, 0x00};
     handle_response("ZeroTag", resp_data, 4);
 
-    ASSERT_EQ(_n_responses, 1);
-    EXPECT_EQ(_responses[0].tag, (uint32_t)0);
-    EXPECT_STREQ(_responses[0].contact_name, "ZeroTag");
+    ASSERT_EQ(_responses.size(), 1U);
+    EXPECT_EQ(_responses.at(0)->tag, (uint32_t)0);
+    EXPECT_STREQ(_responses.at(0)->contact_name, "ZeroTag");
 }
 
 TEST_F(ReqResponseTest, TagMatchClearsPendingRequest) {

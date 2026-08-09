@@ -87,6 +87,32 @@ TEST(ChannelSecurityInputTest, ChannelUriHasExactGrammarAndNoTruncation) {
     }
 }
 
+TEST(ChannelSecurityInputTest, ChannelQrSecretRoundTripsAsCipherKey) {
+    uint8_t expected[sigurdos::mesh::CHANNEL_SECRET_BYTES]{};
+    for (size_t i = 0; i < sizeof(expected); ++i) {
+        expected[i] = static_cast<uint8_t>(0xA0 + i);
+    }
+
+    char secret_hex[sigurdos::mesh::CHANNEL_SECRET_HEX_CAPACITY]{};
+    ASSERT_TRUE(sigurdos::mesh::channelSecretHexEncode(
+        expected, secret_hex, sizeof(secret_hex)));
+    EXPECT_EQ(std::strlen(secret_hex),
+              sigurdos::mesh::CHANNEL_SECRET_HEX_LEN);
+    EXPECT_EQ(sizeof(secret_hex),
+              sigurdos::mesh::CHANNEL_SECRET_HEX_CAPACITY);
+
+    char uri[160]{};
+    std::snprintf(uri, sizeof(uri),
+                  "meshcore://channel/add?name=ops&secret=%s", secret_hex);
+    sigurdos::mesh::ChannelUriFields fields{};
+    ASSERT_TRUE(sigurdos::mesh::parseChannelAddUri(uri, fields));
+
+    uint8_t decoded[sigurdos::mesh::CHANNEL_SECRET_BYTES]{};
+    ASSERT_TRUE(sigurdos::mesh::channelSecretHexDecode(
+        fields.secret_hex, decoded, sizeof(decoded)));
+    EXPECT_EQ(std::memcmp(decoded, expected, sizeof(expected)), 0);
+}
+
 TEST(ChannelSecurityInputTest, RawContactUriRejectsSeparatorsAndOddOrOversizeData) {
     char hex[512]{};
     size_t len = 0;

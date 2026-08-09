@@ -403,6 +403,49 @@ static bool selectDefaultStore(bool spiffs_available,
     return true;
 }
 
+static bool migrationIsDurablyRepresented(
+    const std::vector<StoredMessage>& migration)
+{
+    if (migration.empty()) return true;
+    const int count = messageStoreCount();
+    if (count < static_cast<int>(migration.size())) return false;
+
+    std::vector<StoredMessage> destination(static_cast<size_t>(count));
+    if (messageStoreLoadAll(destination.data(), count) != count) return false;
+    for (const StoredMessage& source : migration) {
+        bool found = false;
+        for (const StoredMessage& candidate : destination) {
+            if (detail::storedMessageSameIdentity(source, candidate)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
+static bool retireDefaultStore(const std::vector<StoredMessage>& migration)
+{
+    if (migration.empty()) return true;
+    detail::messageStoreSelectDefaultBackend();
+    // The source is retired only after the SD backend has committed and been
+    // read back above. messageStoreClear() is an atomic empty-store replace,
+    // so a failed clear leaves the original source available for retry.
+    return messageStoreBegin() && messageStoreClear();
+}
+
+static bool restoreDefaultStoreWithMigration(
+    const std::vector<StoredMessage>& migration)
+{
+    detail::messageStoreSelectDefaultBackend();
+    if (!messageStoreBegin() || !messageStoreClear()) return false;
+    for (const StoredMessage& message : migration) {
+        if (!messageStoreAppend(message)) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool sdMessageStoreSelect(bool spiffs_available)
@@ -422,20 +465,44 @@ bool sdMessageStoreSelect(bool spiffs_available)
         return spiffs_ready;
     }
 
-    detail::messageStoreSelectBackend(&SD_MESSAGE_STORE_BACKEND);
-    if (!messageStoreBegin()) {
+    const auto fallBackToDefault = [&]() {
         detail::messageStoreSelectDefaultBackend();
         if (spiffs_ready) (void)messageStoreBegin();
         g_degraded = true;
         return spiffs_ready;
+    };
+
+    detail::messageStoreSelectBackend(&SD_MESSAGE_STORE_BACKEND);
+    if (!messageStoreBegin()) {
+        return fallBackToDefault();
     }
 
     for (const StoredMessage& message : migration) {
         if (!messageStoreAppend(message)) {
-            detail::messageStoreSelectDefaultBackend();
-            if (spiffs_ready) (void)messageStoreBegin();
-            g_degraded = true;
-            return spiffs_ready;
+            return fallBackToDefault();
+        }
+    }
+
+    if (!migration.empty()) {
+        if (!migrationIsDurablyRepresented(migration)) {
+            return fallBackToDefault();
+        }
+
+        if (!retireDefaultStore(migration)) {
+            return fallBackToDefault();
+        }
+
+        // Retiring the source changes the selected backend; re-open SD so the
+        // caller always returns with the SD store active. If that re-open
+        // fails, restore the source records before falling back to SPIFFS.
+        detail::messageStoreSelectBackend(&SD_MESSAGE_STORE_BACKEND);
+        if (!messageStoreBegin()) {
+            const bool restored = restoreDefaultStoreWithMigration(migration);
+            if (!restored) {
+                g_degraded = true;
+                return false;
+            }
+            return fallBackToDefault();
         }
     }
 

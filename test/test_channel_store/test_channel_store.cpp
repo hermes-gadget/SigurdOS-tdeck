@@ -205,6 +205,31 @@ TEST(ChannelStoreTransaction, CorruptActiveBankFallsBackToPreviousCommit)
     EXPECT_EQ(loaded[0].name, "Old");
 }
 
+TEST(ChannelStoreTransaction, CorruptTransactionalBanksDoNotReviveLegacyKeys)
+{
+    FakeKv fake;
+    std::vector<Channel> old_channels{{"Old", 0x10}};
+    std::vector<Channel> new_channels{{"New", 0x20}};
+    save(fake, old_channels); // bank 0
+    save(fake, new_channels); // bank 1, and the active marker now exists
+
+    // Leave a stale pre-migration copy behind and corrupt both transactional
+    // banks. The marker must make this a corrupt/degraded load, not a legacy
+    // fallback that resurrects "LegacyOld" and its old secret.
+    putU8(&fake, "ch_cnt", 1);
+    putString(&fake, "ch_0_name", "LegacyOld");
+    uint8_t legacy_secret[32]{};
+    uint8_t legacy_hash[32]{};
+    putBytes(&fake, "ch_0_sec", legacy_secret, sizeof(legacy_secret));
+    putBytes(&fake, "ch_0_hash", legacy_hash, sizeof(legacy_hash));
+    fake.values["c0_crc"][0] ^= 0x80;
+    fake.values["c1_crc"][0] ^= 0x80;
+
+    EXPECT_TRUE(has(&fake, "ch_active"));
+    EXPECT_TRUE(load(fake).empty());
+    EXPECT_TRUE(sigurdos::mesh::detail::channelStoreLoadHadCorruption());
+}
+
 TEST(ChannelStoreTransaction, LegacyKeysRemainReadable)
 {
     FakeKv fake;

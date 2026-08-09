@@ -237,8 +237,47 @@ TEST_F(SdMessageStoreTest, MigratesSpiFlashHistoryWhenSdAppears)
     ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(messages, 2), 2);
     EXPECT_STREQ(messages[0].text, "old-one");
     EXPECT_STREQ(messages[1].text, "old-two");
-    EXPECT_FALSE(readFile(spiffs_path).empty());
+    // Migration retires the source as an empty valid store after the SD
+    // records have been committed and verified.
+    sigurdos::mesh::detail::messageStoreSelectDefaultBackend();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 0);
+    selectSd();
     EXPECT_FALSE(readFile(sigurdos::mesh::sdMessageStoreNativePath()).empty());
+}
+
+TEST_F(SdMessageStoreTest, RetiredSpiFlashHistoryIsNotResurrectedAfterSdClear)
+{
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(30, "retire-me")));
+    selectSd();
+    ASSERT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+
+    // Model compaction/removal of the migrated destination followed by a
+    // reboot/re-selection. The retired SPIFFS source must not replay the row.
+    ASSERT_TRUE(sigurdos::mesh::messageStoreClear());
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(true));
+    EXPECT_TRUE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 0);
+}
+
+TEST_F(SdMessageStoreTest, FailedMigrationKeepsSourceForRetry)
+{
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(40, "retry-me")));
+    sigurdos::mesh::sdMessageStoreSetNativeAppendWriteLimit(7);
+
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(true));
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_TRUE(sigurdos::mesh::sdMessageStoreDegraded());
+
+    // The source remains available after the partial SD append. A retry with
+    // normal writes completes migration and then retires it.
+    sigurdos::mesh::sdMessageStoreSetNativeAppendWriteLimit(-1);
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(true));
+    EXPECT_TRUE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+    sigurdos::mesh::detail::messageStoreSelectDefaultBackend();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 0);
 }
 
 TEST_F(SdMessageStoreTest, PartialRuntimeAppendIsRecoveredOnNextSelection)

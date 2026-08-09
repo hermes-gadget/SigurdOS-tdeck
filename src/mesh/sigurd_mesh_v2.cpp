@@ -20,6 +20,7 @@
 #include "contact_store.h"
 #include "strict_base64.h"
 #include "telemetry_response_policy.h"
+#include "contact_runtime_cleanup.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -164,6 +165,59 @@ namespace mesh {
         if (!pub_key) return;
         BaseChatMesh::stopConnection(pub_key);
         removeLoginEntry(pub_key);
+    }
+
+    void SigurdMeshV2::teardownContactRuntime(const uint8_t* pub_key) {
+        if (!pub_key) return;
+
+        BaseChatMesh::stopConnection(pub_key);
+        removeLoginEntry(pub_key);
+
+        const auto requestKeyMatches = [pub_key](const PendingRequest& entry) {
+            return memcmp(entry.dest_key, pub_key, PUB_KEY_SIZE) == 0;
+        };
+        const auto ackKeyMatches = [pub_key](const PendingAck& entry) {
+            return memcmp(entry.dest_key, pub_key, PUB_KEY_SIZE) == 0;
+        };
+        const auto discoveryKeyMatches =
+            [pub_key](const DiscoveryPending& entry) {
+                return memcmp(entry.dest_key, pub_key, PUB_KEY_SIZE) == 0;
+            };
+        detail::clearMatchingEntries(
+            _pending_reqs, MAX_PENDING_REQUESTS, requestKeyMatches);
+        detail::clearMatchingEntries(
+            _pending_acks, MAX_PENDING_ACKS, ackKeyMatches);
+        detail::clearMatchingEntries(
+            _discovery_pending, MAX_DISCOVERY_PENDING, discoveryKeyMatches);
+
+        for (int i = 0; i < getResponseCount();) {
+            const ResponseEntry* response = getResponse(i);
+            if (response && memcmp(response->contact_key, pub_key,
+                                   PUB_KEY_SIZE) == 0) {
+                consumeResponse(i);
+            } else {
+                ++i;
+            }
+        }
+
+        _n_room_fetched = static_cast<int>(detail::compactRemoveMatchingEntries(
+            _room_fetch_buf, static_cast<size_t>(_n_room_fetched),
+            [pub_key](const RoomMsgFetchEntry& entry) {
+                return entry.valid && memcmp(entry.contact_key, pub_key,
+                                             PUB_KEY_SIZE) == 0;
+            }));
+        _n_signal_samples = static_cast<int>(detail::compactRemoveMatchingEntries(
+            _signal_samples, static_cast<size_t>(_n_signal_samples),
+            [pub_key](const SignalSample& entry) {
+                return memcmp(entry.key, pub_key, sizeof(entry.key)) == 0;
+            }));
+
+        for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; ++i) {
+            if (memcmp(_advert_paths[i].pubkey_prefix, pub_key,
+                       sizeof(_advert_paths[i].pubkey_prefix)) == 0) {
+                _advert_paths[i] = AdvertPathEntry{};
+            }
+        }
     }
 
     int SigurdMeshV2::exportSelfContact(const char* name, uint8_t* out, size_t out_cap) {
@@ -663,6 +717,7 @@ namespace mesh {
             e.timestamp = getRTCClock()->getCurrentTime();
             strncpy(e.channel, channel_name, sizeof(e.channel) - 1);
             e.channel[sizeof(e.channel) - 1] = '\0';
+            memcpy(e.contact_key, contact.id.pub_key, PUB_KEY_SIZE);
             e.valid = true;
 
             // Also push to mesh message queue so it appears in chat
@@ -992,19 +1047,18 @@ namespace mesh {
         const uint8_t matched_type = pending_idx >= 0
             ? _pending_reqs[pending_idx].req_type : 0;
 
-        // ── Existing ring buffer logic ────────────────
-        // Store the response in the ring buffer
-        if (_n_responses < MAX_RESPONSES) {
-            ResponseEntry& re = _responses[_n_responses++];
-            re.tag = tag;
-            strncpy(re.contact_name, contact.name, sizeof(re.contact_name) - 1);
-            re.contact_name[sizeof(re.contact_name) - 1] = '\0';
-            memcpy(re.contact_key, contact.id.pub_key, PUB_KEY_SIZE);
-            re.req_type = matched_type;
-            re.len = (len < MAX_RESPONSE_DATA) ? len : MAX_RESPONSE_DATA;
-            memcpy(re.data, data, re.len);
-            re.valid = true;
-        }
+        // Store every completed response in a bounded queue. If all slots are
+        // occupied, the oldest completed entry is reclaimed so this newly
+        // matched request is not silently lost.
+        ResponseEntry* re = _responses.appendSlot();
+        re->tag = tag;
+        strncpy(re->contact_name, contact.name, sizeof(re->contact_name) - 1);
+        re->contact_name[sizeof(re->contact_name) - 1] = '\0';
+        memcpy(re->contact_key, contact.id.pub_key, PUB_KEY_SIZE);
+        re->req_type = matched_type;
+        re->len = (len < MAX_RESPONSE_DATA) ? len : MAX_RESPONSE_DATA;
+        memcpy(re->data, data, re->len);
+        re->valid = true;
 
         // Clear matching pending request — also parse room msg responses and
         // fan status/telemetry responses out to the phone app.
@@ -1492,6 +1546,7 @@ namespace mesh {
         uint8_t key[PUB_KEY_SIZE] = {};
         memcpy(key, pub_key, sizeof(key));
         if (!BaseChatMesh::removeContact(*contact)) return false;
+        teardownContactRuntime(key);
         deleteBlobByKey(SPIFFS, key, sizeof(key));
         return true;
     }

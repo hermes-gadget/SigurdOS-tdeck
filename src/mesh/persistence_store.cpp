@@ -26,6 +26,7 @@ namespace {
 
 static constexpr int CHANNEL_STORE_MAX = 16;
 static constexpr uint32_t CHANNEL_COMMIT_MAGIC = 0x43484E31; // "CHN1"
+static bool g_channel_store_corrupt = false;
 
 uint32_t checksumUpdate(uint32_t checksum, const void* raw, size_t length)
 {
@@ -230,8 +231,13 @@ bool channelStoreSaveTransactional(ChannelStoreKv& kv, int count,
 int channelStoreLoadTransactional(ChannelStoreKv& kv,
                                   ChannelLoadFn load, void* ctx)
 {
+    g_channel_store_corrupt = false;
     if (!kvComplete(kv) || !load) return 0;
-    const uint8_t active = kv.has(kv.ctx, "ch_active")
+    // ch_active is the durable migration/transaction marker. Once it exists,
+    // a corrupt pair of transactional banks is a degraded/corrupt store, not
+    // permission to revive stale pre-migration legacy keys.
+    const bool has_transaction_marker = kv.has(kv.ctx, "ch_active");
+    const uint8_t active = has_transaction_marker
         ? kv.getU8(kv.ctx, "ch_active", 0xFF) : 0xFF;
     if (active <= 1) {
         int count = 0;
@@ -242,7 +248,7 @@ int channelStoreLoadTransactional(ChannelStoreKv& kv,
         if (validateBank(kv, fallback, &count)) {
             return applyBank(kv, fallback, count, load, ctx);
         }
-    } else {
+    } else if (has_transaction_marker) {
         for (int bank = 0; bank < 2; ++bank) {
             int count = 0;
             if (validateBank(kv, bank, &count)) {
@@ -250,7 +256,16 @@ int channelStoreLoadTransactional(ChannelStoreKv& kv,
             }
         }
     }
+    if (has_transaction_marker) {
+        g_channel_store_corrupt = true;
+        return 0;
+    }
     return loadLegacy(kv, load, ctx);
+}
+
+bool channelStoreLoadHadCorruption()
+{
+    return g_channel_store_corrupt;
 }
 
 } // namespace detail
@@ -274,6 +289,7 @@ bool channelStoreSave(int count, ChannelReadFn read, void* ctx)
 
 int channelStoreLoad(ChannelLoadFn load, void* ctx)
 {
+    g_channel_store_corrupt = false;
     if (!load) return 0;
 
 #if defined(ESP32_PLATFORM)

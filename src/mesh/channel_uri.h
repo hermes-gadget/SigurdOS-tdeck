@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "channel_key.h"
 #include "channel_validation.h"
 #include "contact_uri.h"
 
@@ -13,7 +14,7 @@ namespace sigurdos::mesh {
 
 struct ChannelUriFields {
     char name[32]{};
-    char secret_hex[33]{};
+    char secret_hex[CHANNEL_SECRET_HEX_CAPACITY]{};
 };
 
 inline bool parseChannelAddUri(const char* uri, ChannelUriFields& out)
@@ -43,7 +44,7 @@ inline bool parseChannelAddUri(const char* uri, ChannelUriFields& out)
                 !channel_name_valid(parsed.name)) return false;
             have_name = true;
         } else if (key_len == 6 && std::memcmp(key, "secret", 6) == 0) {
-            if (have_secret || value_len != 32) return false;
+            if (have_secret || value_len != CHANNEL_SECRET_HEX_LEN) return false;
             for (size_t i = 0; i < value_len; ++i) {
                 if (!detail::uriHex(value[i])) return false;
             }
