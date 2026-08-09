@@ -112,7 +112,7 @@ bool chat_screen_overlay_active();
 
 // Chat message history cap (per-channel): get/set and persistence-backed config.
 uint16_t chat_screen_get_message_cap();
-void     chat_screen_set_message_cap(uint16_t cap);
+bool     chat_screen_set_message_cap(uint16_t cap);
 
 // Restore the UI's RAM window from the unified SPIFFS message log. On first
 // boot after upgrade this also migrates and removes the retired /msgs file.

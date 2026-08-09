@@ -25,6 +25,7 @@
 #include "../chat_screen.h"
 #include "../repeater_command_policy.h"
 #include "../notifications.h"
+#include "../repeater_password_policy.h"
 #include "../generation_owner.h"
 #include "../../hal/prefs.h"
 #include "../../mesh/mesh_wrapper.h"
@@ -276,11 +277,16 @@ void repeaters_screen_show()
 // Sends an admin CLI command to a logged-in repeater/server and pushes
 // a confirmation message into the message queue. The actual response
 // arrives later as a chat message from the server.
-static void repeater_send(const char* contact_name, const char* cmd, const char* fmt) {
+static void repeater_send(const char* contact_name, const char* cmd,
+                          const char* fmt, bool is_credential = false) {
     if (!contact_name || !cmd || !cmd[0]) return;
     const bool sent = sigurdos::mesh::sendCommand(contact_name, cmd);
     char buf[80];
-    repeater_command_feedback(buf, sizeof(buf), sent, cmd, fmt);
+    if (is_credential) {
+        snprintf(buf, sizeof(buf), "%s", repeater_password_feedback(sent));
+    } else {
+        repeater_command_feedback(buf, sizeof(buf), sent, cmd, fmt);
+    }
     sigurdos::mesh::mesh_v2_queue_push("System", "", buf, 0, 0.0f);
 }
 
@@ -290,7 +296,7 @@ static void repeater_input_dialog(const char* contact_name,
                                   const char* title,
                                   const char* hint,
                                   const char* cmd_prefix,
-                                  bool password_mode)
+                                  bool is_credential)
 {
     static constexpr size_t MAX_REPEATER_CLI_COMMAND_LENGTH = 63;
     if (!contact_name || !cmd_prefix) return;
@@ -325,7 +331,7 @@ static void repeater_input_dialog(const char* contact_name,
     lv_obj_set_size(ta, dlg_sz.w - 16, 28);
     lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 38);
     lv_textarea_set_placeholder_text(ta, "Value (Enter to send)");
-    lv_textarea_set_password_mode(ta, password_mode);
+    lv_textarea_set_password_mode(ta, is_credential);
     lv_textarea_set_one_line(ta, true);
     lv_textarea_set_max_length(ta,
         MAX_REPEATER_CLI_COMMAND_LENGTH - prefix_len);
@@ -351,8 +357,9 @@ static void repeater_input_dialog(const char* contact_name,
     }, LV_EVENT_CLICKED, nullptr);
 
     // Send button
-    struct RiData { char* name; const char* prefix; lv_obj_t* ta; };
-    RiData* rd = new RiData{strdup(contact_name), strdup(cmd_prefix), ta};
+    struct RiData { char* name; const char* prefix; lv_obj_t* ta; bool is_credential; };
+    RiData* rd = new RiData{strdup(contact_name), strdup(cmd_prefix), ta,
+                            is_credential || repeater_password_action(cmd_prefix)};
 
     lv_obj_t* send_btn = lv_btn_create(dlg);
     lv_obj_set_size(send_btn, 80, 24);
@@ -372,7 +379,7 @@ static void repeater_input_dialog(const char* contact_name,
             if (val && val[0]) {
                 char cmd[64];
                 snprintf(cmd, sizeof(cmd), "%s%s", d->prefix, val);
-                repeater_send(d->name, cmd, "Sent: %s");
+                repeater_send(d->name, cmd, "Sent: %s", d->is_credential);
             }
         }
         lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(le)));
@@ -698,11 +705,11 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         };
 
         // Set-value button: opens an input dialog and sends <prefix> + user input
-        struct SetCtx { char* name; char prefix[24]; char title[24]; char hint[32]; bool pw; };
-        auto add_set = [&](const char* icon_lbl, const char* title, const char* hint, const char* prefix, bool pw) {
+        struct SetCtx { char* name; char prefix[24]; char title[24]; char hint[32]; bool is_credential; };
+        auto add_set = [&](const char* icon_lbl, const char* title, const char* hint, const char* prefix, bool is_credential) {
             auto* ctx = new SetCtx();
             ctx->name = strdup(contact_name);
-            ctx->pw = pw;
+            ctx->is_credential = is_credential || repeater_password_action(prefix);
             strncpy(ctx->prefix, prefix, sizeof(ctx->prefix)-1);
             strncpy(ctx->title, title, sizeof(ctx->title)-1);
             strncpy(ctx->hint, hint, sizeof(ctx->hint)-1);
@@ -716,7 +723,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
             lv_obj_set_user_data(r, ctx);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {
                 auto* c = (SetCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
-                if (c && c->name) repeater_input_dialog(c->name, c->title, c->hint, c->prefix, c->pw);
+                if (c && c->name) repeater_input_dialog(c->name, c->title, c->hint, c->prefix, c->is_credential);
             }, LV_EVENT_CLICKED, nullptr);
             lv_obj_add_event_cb(r, [](lv_event_t* e) {
                 auto* c = (SetCtx*)lv_obj_get_user_data((lv_obj_t*)lv_event_get_target(e));
@@ -804,7 +811,7 @@ void repeater_detail_screen_show(const char* contact_name, bool skip_login)
         add_set(LV_SYMBOL_REFRESH "  Advert Duration", "Advert Duration", "Hours (24/72/168)", "set advert.duration ", false);
         add_act(LV_SYMBOL_REFRESH "  Sync Clock", "clock sync", "Sent: clock sync");
         add_set(LV_SYMBOL_CLOSE "  Admin Password",   "Admin Password",   "New admin password", "password ",  true);
-        add_set(LV_SYMBOL_CLOSE "  Guest Password",   "Guest Password",   "New guest password", "set guest.password ", false);
+        add_set(LV_SYMBOL_CLOSE "  Guest Password",   "Guest Password",   "New guest password", "set guest.password ", true);
         add_act(LV_SYMBOL_LIST "  Version",           "ver",              "Sent: ver");
         }
 

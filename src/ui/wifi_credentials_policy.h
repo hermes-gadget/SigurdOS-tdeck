@@ -39,4 +39,13 @@ inline bool wifi_credentials_commit(const WifiCredentialStage& stage, bool conne
     return true;
 }
 
+// Association alone is not enough to report success: the staged credentials
+// must also have been durably written to preferences.
+inline bool wifi_credentials_save_succeeded(bool associated,
+                                            bool staged,
+                                            bool persisted)
+{
+    return associated && staged && persisted;
+}
+
 } // namespace sigurdos::ui

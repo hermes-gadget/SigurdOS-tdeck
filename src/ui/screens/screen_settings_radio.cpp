@@ -20,8 +20,10 @@
 #include "../screens_common.h"
 #include "../theme.h"
 #include "../responsive.h"
+#include "../prefs_ui.h"
 #include "../../hal/prefs.h"
 #include "../../hal/radio_profiles.h"
+#include "../../mesh/airtime_policy.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../fonts/emoji_font.h"
 #include <lvgl.h>
@@ -100,7 +102,7 @@ void settings_radio_show()
             }
             idx = (idx + 1) % 6;
             np.flood_max_hops = (uint8_t[]){0,3,5,10,20,50}[idx];
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Flood max hops: %s",
                      (const char*[]){"No limit","3","5","10","20","50"}[idx]);
@@ -140,7 +142,7 @@ void settings_radio_show()
             }
             idx = (idx + 1) % N;
             np.autoadd_config = VALS[idx];
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Auto-add: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
@@ -177,7 +179,7 @@ void settings_radio_show()
             }
             idx = (idx + 1) % N;
             np.autoadd_max_hops = VALS[idx];
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Add max hops: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
@@ -214,7 +216,7 @@ void settings_radio_show()
             }
             idx = (idx + 1) % N;
             np.rx_delay_base = VALS[idx];
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  RX delay base: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
@@ -251,7 +253,7 @@ void settings_radio_show()
             }
             idx = (idx + 1) % N;
             np.tx_delay_factor = VALS[idx];
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  TX delay factor: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
@@ -288,7 +290,7 @@ void settings_radio_show()
             }
             idx = (idx + 1) % N;
             np.direct_tx_delay_factor = VALS[idx];
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Direct TX delay: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
@@ -325,7 +327,7 @@ void settings_radio_show()
             }
             idx = (idx + 1) % N;
             np.advert_interval_h = VALS[idx];
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Auto-advert: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
@@ -362,7 +364,7 @@ void settings_radio_show()
             }
             idx = (idx + 1) % N;
             np.advert_type = VALS[idx];
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Node type: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
@@ -398,7 +400,9 @@ void settings_radio_show()
                 if (np.duty_cycle == VALS[i]) { idx = i; break; }
             }
             idx = (idx + 1) % N;
-            sigurdos::mesh::setDutyCycle(VALS[idx]);
+            sigurdos::mesh::airtime_policy::setDutyCyclePercent(
+                np.airtime_factor, np.duty_cycle, VALS[idx]);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Duty cycle: %s", LABELS[idx]);
             lv_obj_t* lbl = lv_obj_get_child(target, 1);
@@ -420,7 +424,7 @@ void settings_radio_show()
             lv_obj_t* target = (lv_obj_t*)lv_event_get_target(e);
             sigurdos::NodePrefs np = sigurdos::prefs_get();
             np.client_repeat = np.client_repeat ? 0 : 1;
-            sigurdos::prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             char row_buf[64];
             snprintf(row_buf, sizeof(row_buf), "  Client repeat: %s", np.client_repeat ? "ON" : "OFF");
             lv_obj_t* lbl = lv_obj_get_child(target, 1);

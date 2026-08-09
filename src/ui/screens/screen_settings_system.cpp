@@ -24,6 +24,7 @@
 #include "../responsive.h"
 #include "../lv_timer_owner.h"
 #include "../notifications.h"
+#include "../prefs_ui.h"
 #include "../system_action_policy.h"
 #include "../home_screen.h"
 #include "../../hal/keyboard.h"
@@ -875,7 +876,7 @@ void settings_system_show()
                 }
                 auto p = sigurdos::prefs_get();
                 p.device_pin = (uint32_t)atoi(pin_str);
-                if (!sigurdos::prefs_set(p)) {
+                if (!prefs_ui_commit(p)) {
                     if (feedback) lv_label_set_text(feedback, "PIN could not be saved");
                     return;
                 }
@@ -909,7 +910,7 @@ void settings_system_show()
                     lv_obj_t* dlg = lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev));
                     auto p = sigurdos::prefs_get();
                     p.device_pin = 0;
-                    sigurdos::prefs_set(p);
+                    if (!prefs_ui_commit(p)) return;
                     pin_clear_grace();
                     lv_obj_del_async(dlg);
                 }, LV_EVENT_CLICKED, nullptr);
@@ -1106,7 +1107,7 @@ void settings_system_show()
             }
             strncpy(np.ota_branch, branches[current], sizeof(np.ota_branch) - 1);
             np.ota_branch[sizeof(np.ota_branch) - 1] = '\0';
-            prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             // Update button label without rebuilding the screen
             lv_obj_t* label = lv_obj_get_child(btn, 0);
             if (label) {
@@ -1131,7 +1132,7 @@ void settings_system_show()
             lv_obj_t* btn = (lv_obj_t*)lv_event_get_target(e);
             NodePrefs np = prefs_get();
             np.ota_allow_prerelease = !np.ota_allow_prerelease;
-            prefs_set(np);
+            if (!prefs_ui_commit(np)) return;
             // Update button label without rebuilding the screen
             lv_obj_t* label = lv_obj_get_child(btn, 0);
             if (label) {

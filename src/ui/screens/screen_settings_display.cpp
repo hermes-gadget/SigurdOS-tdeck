@@ -22,6 +22,7 @@
 #include "../responsive.h"
 #include "../chat_screen.h"
 #include "../display_settings_helpers.h"
+#include "../prefs_ui.h"
 #include "../../hal/prefs.h"
 #include "../../hal/display.h"
 #include "../../hal/keyboard.h"
@@ -45,12 +46,14 @@ struct BacklightCtx {
     lv_obj_t* value_label;
     lv_obj_t* row_label;
     int       brightness;
+    int       original_brightness;
 };
 
 struct DisplayBrightnessCtx {
     lv_obj_t* value_label;
     lv_obj_t* row_label;
     int       brightness;
+    int       original_brightness;
 };
 
 struct ChatHistoryCapCtx {
@@ -213,7 +216,7 @@ static void chat_message_cap_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 
     lv_obj_add_event_cb(set_btn, [](lv_event_t* e) {
         auto* c = (ChatHistoryCapCtx*)lv_event_get_user_data(e);
-        chat_screen_set_message_cap((uint16_t)c->cap);
+        if (!chat_screen_set_message_cap((uint16_t)c->cap)) return;
 
         char row_buf[64];
         snprintf(row_buf, sizeof(row_buf), "  Chat history: %d messages", c->cap);
@@ -282,7 +285,7 @@ static void backlight_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     lv_label_set_text(sl, "Set");
     lv_obj_center(sl);
 
-    auto* ctx = new BacklightCtx{ val_lbl, row_label, brightness };
+    auto* ctx = new BacklightCtx{ val_lbl, row_label, brightness, brightness };
 
     lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
         delete (BacklightCtx*)lv_event_get_user_data(e);
@@ -312,7 +315,15 @@ static void backlight_dialog(lv_obj_t* parent, lv_obj_t* row_label)
         auto* c = (BacklightCtx*)lv_event_get_user_data(e);
         sigurdos::NodePrefs np = sigurdos::prefs_get();
         np.kbd_backlight = (uint8_t)c->brightness;
-        sigurdos::prefs_set(np);
+        if (!prefs_ui_commit(np)) {
+            sigurdos_keyboard_set_brightness(c->original_brightness);
+            c->brightness = c->original_brightness;
+            char b[24];
+            snprintf(b, sizeof(b), "%d (%d%%)", c->brightness,
+                     c->brightness * 100 / 255);
+            lv_label_set_text(c->value_label, b);
+            return;
+        }
         sigurdos_keyboard_set_default_brightness(c->brightness);
 
         char row_buf[64];
@@ -432,7 +443,7 @@ static void auto_off_dialog(lv_obj_t* parent, lv_obj_t* row_label)
 
         sigurdos::NodePrefs np = sigurdos::prefs_get();
         np.auto_off_timeout = value;
-        sigurdos::prefs_set(np);
+        if (!prefs_ui_commit(np)) return;
         sigurdos_display_reset_auto_off();
 
         char row_buf[64];
@@ -505,7 +516,7 @@ static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
     lv_label_set_text(sl_lbl, "Set");
     lv_obj_center(sl_lbl);
 
-    auto* ctx = new DisplayBrightnessCtx{ val_lbl, row_label, brightness };
+    auto* ctx = new DisplayBrightnessCtx{ val_lbl, row_label, brightness, brightness };
 
     lv_obj_add_event_cb(dlg, [](lv_event_t* e) {
         delete (DisplayBrightnessCtx*)lv_event_get_user_data(e);
@@ -535,7 +546,15 @@ static void display_brightness_dialog(lv_obj_t* parent, lv_obj_t* row_label)
         auto* c = (DisplayBrightnessCtx*)lv_event_get_user_data(e);
         sigurdos::NodePrefs np = sigurdos::prefs_get();
         np.display_brightness = (uint8_t)c->brightness;
-        sigurdos::prefs_set(np);
+        if (!prefs_ui_commit(np)) {
+            sigurdos_display_set_brightness(c->original_brightness);
+            c->brightness = c->original_brightness;
+            char b[24];
+            snprintf(b, sizeof(b), "%d (%d%%)", c->brightness,
+                     c->brightness * 100 / 255);
+            lv_label_set_text(c->value_label, b);
+            return;
+        }
         sigurdos_display_set_brightness(c->brightness);
 
         char row_buf[64];
@@ -629,8 +648,8 @@ void settings_display_show()
         lv_obj_add_event_cb(btn_theme, [](lv_event_t*) {
             sigurdos::NodePrefs np = sigurdos::prefs_get();
             np.theme_id = (np.theme_id + 1) % NUM_THEMES;
+            if (!prefs_ui_commit(np)) return;
             theme_apply(np.theme_id);
-            sigurdos::prefs_set(np);
             // Defer screen refresh to next LVGL tick — the current event
             // handler runs on a widget that will be deleted by lv_scr_load().
             lv_async_call([](void*) { refresh_current_screen(); }, nullptr);

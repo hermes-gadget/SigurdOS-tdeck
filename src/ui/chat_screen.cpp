@@ -29,6 +29,7 @@
 #include "responsive.h"
 #include "list_window.h"
 #include "notifications.h"
+#include "prefs_ui.h"
 #include "../hal/tdeck_pins.h"
 #include "../hal/battery.h"
 #include "../mesh/mesh_wrapper.h"
@@ -3102,17 +3103,18 @@ uint16_t chat_screen_get_message_cap()
     return chat_msg_cap();
 }
 
-void chat_screen_set_message_cap(uint16_t cap)
+bool chat_screen_set_message_cap(uint16_t cap)
 {
     const uint16_t clamped = chat_screen_normalize_message_cap(cap);
 
     sigurdos::NodePrefs np = sigurdos::prefs_get();
     np.chat_msg_cap = clamped;
-    sigurdos::prefs_set(np);
+    if (!prefs_ui_commit(np)) return false;
 
     for (int i = 0; i < MAX_CONVERSATIONS; i++) {
         trim_channel_history(i, clamped);
     }
+    return true;
 }
 
 } // namespace sigurdos::ui

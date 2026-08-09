@@ -21,6 +21,7 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../screen_lifetime.h"
+#include "../prefs_ui.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../app/map_renderer.h"
 #include "../../app/gps_track_log.h"
@@ -230,7 +231,7 @@ void map_screen_show()
     lv_obj_add_event_cb(g_map_track_toggle, [](lv_event_t*) {
         sigurdos::NodePrefs prefs = sigurdos::prefs_get();
         prefs.gps_track_enabled = !prefs.gps_track_enabled;
-        if (sigurdos::prefs_set(prefs)) update_track_status();
+        if (prefs_ui_commit(prefs)) update_track_status();
     }, LV_EVENT_CLICKED, nullptr);
 
     g_map_track_status = lv_label_create(map);

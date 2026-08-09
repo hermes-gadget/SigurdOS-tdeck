@@ -6,6 +6,7 @@
 #include "screens.h"
 #include "screens_common.h"
 #include "notifications.h"
+#include "prefs_ui.h"
 #include "../fonts/emoji_font.h"
 #include "../hal/prefs.h"
 #include "../hal/radio_profiles.h"
@@ -400,8 +401,8 @@ static void build_step3()
         if (s_radio_profile) {
             sigurdos::radio_profile_apply(*s_radio_profile, np);
         }
+        if (!prefs_ui_commit(np)) return;
         sigurdos::mesh::setOwnName(s_name);
-        sigurdos::prefs_set(np);
         // Auto-join the Public channel so new devices can receive group messages
         // immediately. Without this, a freshly-flashed device has zero channels
         // and cannot decrypt any group traffic after restart.

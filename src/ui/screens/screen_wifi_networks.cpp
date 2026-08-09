@@ -22,6 +22,7 @@
 #include "../responsive.h"
 #include "../lv_timer_owner.h"
 #include "../wifi_credentials_policy.h"
+#include "../prefs_ui.h"
 #include "../../hal/wifi_ota.h"
 #include "../../hal/wifi_coordinator.h"
 #include "../../hal/prefs.h"
@@ -162,10 +163,19 @@ static void wifi_connection_poll(lv_timer_t* timer)
     const auto status = sigurdos::wifi_sta::getStatus();
     if (status == sigurdos::wifi_sta::Status::Connected) {
         auto prefs = sigurdos::prefs_get();
-        if (wifi_credentials_commit(ctx->staged, true,
-                                    prefs.wifi_ssid, sizeof(prefs.wifi_ssid),
-                                    prefs.wifi_password, sizeof(prefs.wifi_password))) {
-            sigurdos::prefs_set(prefs);
+        const bool staged = wifi_credentials_commit(
+            ctx->staged, true,
+            prefs.wifi_ssid, sizeof(prefs.wifi_ssid),
+            prefs.wifi_password, sizeof(prefs.wifi_password));
+        const bool persisted = staged && prefs_ui_commit(prefs);
+        if (!wifi_credentials_save_succeeded(true, staged, persisted)) {
+            lv_label_set_text(ctx->title, "Connected, settings not saved");
+            lv_obj_set_style_text_color(ctx->title, lv_color_hex(ACCENT_RED), 0);
+            // Keep the dialog open so the user can retry or close it.  A live
+            // association must not be presented as a durable configuration.
+            lv_obj_clear_state(ctx->save_btn, LV_STATE_DISABLED);
+            ctx->poll_timer.complete(timer);
+            return;
         }
         lv_label_set_text(ctx->title, "Connected!");
         lv_obj_set_style_text_color(ctx->title, lv_color_hex(ACCENT_GREEN), 0);
