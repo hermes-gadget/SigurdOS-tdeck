@@ -27,7 +27,13 @@ class SecurityWorkflowTests(unittest.TestCase):
         self.assertIn("osv-scanner\" scan source", self.workflow)
         self.assertIn("--lockfile \"${{ runner.temp }}/platformio-sbom.cdx.json\"", self.workflow)
         self.assertIn("--config ci/osv-scanner.toml", self.workflow)
-        self.assertIn('osv-results.json\" lib', self.workflow)
+        for source_target in (
+            "lib",
+            ".pio/libdeps/SigurdOS_TDeck/Crypto",
+            ".pio/libdeps/SigurdOS_TDeck/Melopero RV3028",
+            ".pio/libdeps/SigurdOS_TDeck/WebSockets",
+        ):
+            self.assertIn(source_target, self.workflow)
         self.assertIn("pio run -e SigurdOS_TDeck", self.workflow)
 
     def test_dependency_inventories_are_required_artifacts(self) -> None:
@@ -47,15 +53,26 @@ class SecurityWorkflowTests(unittest.TestCase):
 
     def test_font_inputs_and_converter_are_reproducible(self) -> None:
         self.assertIn("npm ci --ignore-scripts --prefix scripts/font-tools", self.workflow)
-        self.assertIn("cmp src/fonts/emoji_font.c", self.workflow)
-        self.assertIn("cmp src/fonts/latin_ext_font.c", self.workflow)
-        for script_name in ("generate_emoji_font.sh", "generate_latin_ext_font.sh"):
+        generated_fonts = {
+            "emoji_font.c": "generate_emoji_font.sh",
+            "latin_ext_font.c": "generate_latin_ext_font.sh",
+            "keyboard_layout_font.c": "generate_keyboard_layout_font.sh",
+            "montserrat_8.c": "generate_montserrat_8_font.sh",
+        }
+        for output_name, script_name in generated_fonts.items():
+            self.assertIn(script_name, self.workflow)
+            self.assertIn(f"cmp src/fonts/{output_name}", self.workflow)
+
+        for script_name in generated_fonts.values():
             script = (ROOT / "scripts" / script_name).read_text()
-            self.assertIn("raw.githubusercontent.com", script)
+            self.assertIn("FONT_URL=", script)
             self.assertIn("FONT_SHA256=", script)
             self.assertIn("curl --fail --location", script)
             self.assertIn("sha256sum --check", script)
-            self.assertNotIn("raw/main", script)
+            self.assertNotIn("/usr/share/fonts", script)
+            if script_name != "generate_keyboard_layout_font.sh":
+                self.assertIn("raw.githubusercontent.com", script)
+                self.assertNotIn("raw/main", script)
 
     def test_codeql_runs_extended_cpp_queries(self) -> None:
         self.assertIn("github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81", self.workflow)

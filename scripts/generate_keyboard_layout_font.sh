@@ -7,16 +7,22 @@ set -euo pipefail
 # DejaVu Sans is distributed under the Bitstream Vera font license; the notice
 # is retained in LICENSES/DejaVu-Fonts.txt.
 
-FONT_FILE="${1:-/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf}"
-LV_FONT_CONV="${LV_FONT_CONV:-lv_font_conv}"
-OUTPUT="$(dirname "$0")/../src/fonts/keyboard_layout_font.c"
-TEMP_OUTPUT="$(mktemp)"
-trap 'rm -f "$TEMP_OUTPUT"' EXIT
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FONT_URL="https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-sans-ttf-2.37.zip"
+FONT_SHA256="5c6e497a2f36552cb5ffb112c413a6af39c0f3c47653662b90b4fa6499822fd7"
+FONT_WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$FONT_WORK_DIR"' EXIT
+FONT_ARCHIVE="$FONT_WORK_DIR/dejavu-sans-ttf-2.37.zip"
+FONT_FILE="$FONT_WORK_DIR/DejaVuSans.ttf"
+OUTPUT_DIR="${FONT_OUTPUT_DIR:-$SCRIPT_DIR/../src/fonts}"
+OUTPUT="$OUTPUT_DIR/keyboard_layout_font.c"
+TEMP_OUTPUT="$FONT_WORK_DIR/keyboard_layout_font.c"
+LV_FONT_CONV="${LV_FONT_CONV:-$SCRIPT_DIR/font-tools/node_modules/.bin/lv_font_conv}"
 
-if [[ ! -r "$FONT_FILE" ]]; then
-    echo "Font not readable: $FONT_FILE" >&2
-    exit 1
-fi
+mkdir -p "$OUTPUT_DIR"
+curl --fail --location --silent --show-error "$FONT_URL" -o "$FONT_ARCHIVE"
+echo "$FONT_SHA256  $FONT_ARCHIVE" | sha256sum --check
+unzip -p "$FONT_ARCHIVE" '*/ttf/DejaVuSans.ttf' > "$FONT_FILE"
 
 "$LV_FONT_CONV" \
     --font "$FONT_FILE" \
@@ -38,7 +44,10 @@ fi
         '// Generated from DejaVu Sans. Copyright (c) 2003 Bitstream, Inc.' \
         '// DejaVu changes are in the public domain.' \
         '// Full font notice: LICENSES/DejaVu-Fonts.txt'
-    sed "s|--output $TEMP_OUTPUT|--output $OUTPUT|" "$TEMP_OUTPUT"
+    sed \
+        -e "s|--font $FONT_FILE|--font DejaVuSans.ttf|" \
+        -e "s|--output $TEMP_OUTPUT|--output keyboard_layout_font.c|" \
+        "$TEMP_OUTPUT"
 } > "$OUTPUT"
 
 # Keep generated diffs clean while preserving exactly one final newline.

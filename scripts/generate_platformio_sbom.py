@@ -37,14 +37,28 @@ UPSTREAM_PURLS = {
     "RTClib": "pkg:github/adafruit/RTClib@2.1.4",
     "CayenneLPP": "pkg:github/ElectronicCats/CayenneLPP@1.6.1",
     "ArduinoJson": "pkg:github/bblanchon/ArduinoJson@v7.4.3",
+    "Crypto": "pkg:github/rweather/arduinolibs@0.4.0#libraries/Crypto",
+    "Melopero RV3028": (
+        "pkg:github/melopero/Melopero_RV-3028_Arduino_Library@1.2.0"
+    ),
+    "WebSockets": "pkg:github/Links2004/arduinoWebSockets@2.7.3",
+}
+
+# Toolchains are resolved production inputs but do not have a canonical library
+# repository coordinate. Every production library must be listed in UPSTREAM_PURLS.
+UNMAPPED_ALLOWLIST = {
+    "toolchain-riscv32-esp",
+    "toolchain-xtensa-esp32s3",
 }
 
 
 def component(name: str, version: str, requirement: str) -> dict[str, object]:
     namespace = urllib.parse.quote(requirement.split(" @ ", 1)[0], safe="/")
-    purl = UPSTREAM_PURLS.get(
-        name, f"pkg:generic/{namespace}@{urllib.parse.quote(version, safe='.+-')}"
-    )
+    purl = UPSTREAM_PURLS.get(name)
+    if purl is None and name not in UNMAPPED_ALLOWLIST:
+        raise ValueError(f"no canonical upstream PURL for production package {name!r}")
+    if purl is None:
+        purl = f"pkg:generic/{namespace}@{urllib.parse.quote(version, safe='.+-')}"
     return {
         "type": "library",
         "bom-ref": purl,
@@ -63,6 +77,10 @@ def generate(lock_path: Path) -> dict[str, object]:
         match = PLATFORM.match(line) or PACKAGE.match(line)
         if match:
             name, version, owner, requirement = match.groups()
+            if name == "MeshCore" and owner.startswith("file://"):
+                # The git submodule is represented by the dedicated
+                # "MeshCore submodule @ <commit>" record below.
+                continue
             components.append(component(name, version, f"{owner} @ {requirement}"))
             continue
         url_match = PACKAGE_URL.match(line)

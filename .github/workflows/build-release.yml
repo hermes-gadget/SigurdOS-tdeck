@@ -45,6 +45,9 @@ jobs:
       - name: Run native tests
         run: pio test -e native_test -v
 
+      - name: Run production-linked MeshCore integration tests
+        run: pio test -e native_mesh_integration -v
+
       - name: Run native sanitizers
         env:
           ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:check_initialization_order=1:halt_on_error=1

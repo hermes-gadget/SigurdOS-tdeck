@@ -4,8 +4,9 @@
 
 #if !defined(SIGURDOS_MESHCORE_INTEGRATION)
 
-TEST(MeshCoreIntegrationEnvironmentTest, UsesDedicatedProductionLinkedEnvironment) {
-    SUCCEED() << "run with pio test -e native_mesh_integration";
+TEST(MeshCoreIntegrationEnvironmentTest, PlaceholderIsNotProductionCoverage) {
+    GTEST_SKIP() << "placeholder only; run pio test -e native_mesh_integration for "
+                    "production-linked MeshCore coverage";
 }
 
 #else

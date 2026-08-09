@@ -76,6 +76,9 @@ jobs:
         run: |
           set -o pipefail
           pio run -e ${{ matrix.env }} 2>&1 | tee "build-${{ matrix.env }}.log"
+      - name: Run production-linked MeshCore integration tests
+        if: matrix.env == 'SigurdOS_TDeck'
+        run: pio test -e native_mesh_integration -v
       - name: Enforce first-party warning budget for ${{ matrix.env }}
         if: matrix.env == 'SigurdOS_TDeck'
         run: >-

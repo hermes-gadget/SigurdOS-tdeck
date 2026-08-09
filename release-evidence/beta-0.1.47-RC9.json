@@ -173,7 +173,7 @@
     {
       "id": "REL-ARTIFACTS",
       "outcome": "pass",
-      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/releases/tag/beta-0.1.46-RC8",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/releases/tag/beta-0.1.47-RC9",
       "tested_at": "2026-08-02",
       "firmware_version": "beta-0.1.47-RC9",
       "peer_version": "sha256-verified-locally"

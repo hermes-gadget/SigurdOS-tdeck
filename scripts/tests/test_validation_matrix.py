@@ -66,6 +66,24 @@ class ValidationMatrixTests(unittest.TestCase):
         )
         self.assertIn("full-matrix", release["jobs"]["build"]["needs"])
 
+    def test_production_meshcore_integration_is_in_required_workflow_gates(self) -> None:
+        self.assertIn("[env:native_mesh_integration]", self.platformio)
+        for workflow_path in (
+            ROOT / ".github" / "workflows" / "pr-ci.yml",
+            ROOT / ".github" / "workflows" / "build-release.yml",
+            ROOT / ".github" / "workflows" / "build-validation-matrix.yml",
+        ):
+            with self.subTest(workflow=workflow_path.name):
+                self.assertIn("pio test -e native_mesh_integration -v", workflow_path.read_text())
+
+    def test_native_test_placeholder_cannot_claim_meshcore_coverage(self) -> None:
+        placeholder = (
+            ROOT / "test" / "test_mesh_integration" / "test_mesh_integration.cpp"
+        ).read_text()
+        self.assertIn("PlaceholderIsNotProductionCoverage", placeholder)
+        self.assertIn("GTEST_SKIP()", placeholder)
+        self.assertIn("production-linked MeshCore coverage", placeholder)
+
     def test_artifact_retention_is_explicit(self) -> None:
         pr = (ROOT / ".github" / "workflows" / "pr-ci.yml").read_text()
         release = (ROOT / ".github" / "workflows" / "build-release.yml").read_text()
