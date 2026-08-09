@@ -32,6 +32,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 // T-Deck SD card uses SPI on the shared LoRa/display bus (GPIO40/38/41).
 // FSPI (SPI2_HOST) is used here; the display also uses SPI2_HOST (via
@@ -43,13 +44,14 @@ static SPIClass& sd_spi = sigurdos_shared_spi();
 
 static bool mounted = false;
 static bool bus_reset_locked = false;
-static uint64_t capacity_bytes = 0;
-static uint64_t free_bytes = 0;
+static sigurdos::sdcard::detail::CapacityCache capacity_cache;
 
 static constexpr uint8_t SDCARD_INIT_MAX_ATTEMPTS = 3;
 static constexpr uint8_t SDCARD_LAZY_RETRY_MAX_ATTEMPTS = 3;
 
 static int sdcard_retry_count = 0;  // total additional lazy retry attempts
+
+static void sdcard_note_io_failure(int error);
 
 namespace {
 
@@ -84,28 +86,53 @@ bool sdcard_ready_path(const char* path, char* out, size_t out_size)
 bool posix_exists(void*, const char* path)
 {
     struct stat info {};
-    return ::stat(path, &info) == 0;
+    if (::stat(path, &info) == 0) return true;
+    sdcard_note_io_failure(errno);
+    return false;
 }
 
 bool posix_remove(void*, const char* path)
 {
-    return std::remove(path) == 0 || errno == ENOENT;
+    if (std::remove(path) == 0 || errno == ENOENT) return true;
+    sdcard_note_io_failure(errno);
+    return false;
 }
 
 void* posix_open(void*, const char* path)
 {
-    return std::fopen(path, "wb");
+    const int fd = ::open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        sdcard_note_io_failure(errno);
+        return nullptr;
+    }
+    FILE* file = fdopen(fd, "wb");
+    if (!file) {
+        ::close(fd);
+        sdcard_note_io_failure(errno);
+        return nullptr;
+    }
+    return file;
 }
 
 size_t posix_write(void*, void* file, const uint8_t* data, size_t length)
 {
-    return std::fwrite(data, 1, length, static_cast<FILE*>(file));
+    const size_t written = std::fwrite(data, 1, length, static_cast<FILE*>(file));
+    if (written != length) sdcard_note_io_failure(errno);
+    return written;
 }
 
 bool posix_sync(void*, void* file)
 {
     FILE* stream = static_cast<FILE*>(file);
-    return std::fflush(stream) == 0 && ::fsync(::fileno(stream)) == 0;
+    if (std::fflush(stream) != 0) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
+    if (::fsync(::fileno(stream)) != 0) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
+    return true;
 }
 
 bool posix_size(void*, void* file, size_t* size)
@@ -113,6 +140,7 @@ bool posix_size(void*, void* file, size_t* size)
     if (!size) return false;
     struct stat info {};
     if (::fstat(::fileno(static_cast<FILE*>(file)), &info) != 0 || info.st_size < 0) {
+        sdcard_note_io_failure(errno);
         return false;
     }
     *size = static_cast<size_t>(info.st_size);
@@ -121,13 +149,17 @@ bool posix_size(void*, void* file, size_t* size)
 
 bool posix_close(void*, void* file)
 {
-    return std::fclose(static_cast<FILE*>(file)) == 0;
+    if (std::fclose(static_cast<FILE*>(file)) == 0) return true;
+    sdcard_note_io_failure(errno);
+    return false;
 }
 
 RenameResult posix_rename(void*, const char* from, const char* to)
 {
     if (std::rename(from, to) == 0) return RenameResult::Success;
-    return errno == EEXIST || errno == ENOTEMPTY
+    const int error = errno;
+    sdcard_note_io_failure(error);
+    return error == EEXIST || error == ENOTEMPTY
         ? RenameResult::DestinationExists
         : RenameResult::Failure;
 }
@@ -174,12 +206,22 @@ bool sdcard_ensure_parent_dir(const char* live_path)
     for (char* cursor = parent + mount_length; *cursor; ++cursor) {
         if (*cursor != '/') continue;
         *cursor = '\0';
-        if (::mkdir(parent, 0777) != 0 && errno != EEXIST) return false;
+        if (::mkdir(parent, 0777) != 0 && errno != EEXIST) {
+            sdcard_note_io_failure(errno);
+            return false;
+        }
         *cursor = '/';
     }
-    if (::mkdir(parent, 0777) != 0 && errno != EEXIST) return false;
+    if (::mkdir(parent, 0777) != 0 && errno != EEXIST) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
     struct stat info {};
-    return ::stat(parent, &info) == 0 && S_ISDIR(info.st_mode);
+    if (::stat(parent, &info) != 0) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
+    return S_ISDIR(info.st_mode);
 }
 
 bool sdcard_recover_file(const char* path)
@@ -198,11 +240,35 @@ bool sdcard_recover_file(const char* path)
 
 static SigurdosSdMountDiagnostic sdcard_diag = {
     false,
+    false,
     0,
     SIGURDOS_SD_MOUNT_SOURCE_NONE,
     SIGURDOS_SD_MOUNT_ERROR_NONE,
     0,
 };
+
+static void sdcard_mark_mount_failed()
+{
+    mounted = false;
+    capacity_cache.invalidate();
+}
+
+static void sdcard_note_io_failure(int error)
+{
+    if (!mounted || !sigurdos::sdcard::detail::isMediaLossError(error)) return;
+
+    // A failed VFS operation is the first reliable indication that the card
+    // disappeared. End the stale mount immediately so lazy retry can probe a
+    // replacement card instead of trusting the old boolean forever.
+    SD.end();
+    sigurdos::sdcard::detail::markMediaLost(
+        mounted, sdcard_retry_count, capacity_cache.valid);
+    capacity_cache.dirty = true;
+    sdcard_diag.mounted = false;
+    sdcard_diag.capacity_valid = false;
+    sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_MEDIA_LOST;
+    sdcard_diag.last_backoff_ms = 0;
+}
 
 static uint32_t sdcard_backoff_ms(uint8_t attempt_index)
 {
@@ -215,29 +281,60 @@ static uint32_t sdcard_backoff_ms(uint8_t attempt_index)
 static void sdcard_reset_mount_state()
 {
     mounted = false;
-    capacity_bytes = 0;
-    free_bytes = 0;
+    capacity_cache.clear();
 }
 
 static void sdcard_reset_diagnostics()
 {
     sdcard_diag.mounted = false;
+    sdcard_diag.capacity_valid = false;
     sdcard_diag.attempt_count = 0;
     sdcard_diag.last_source = SIGURDOS_SD_MOUNT_SOURCE_NONE;
     sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_NONE;
     sdcard_diag.last_backoff_ms = 0;
 }
 
+static bool sdcard_refresh_capacity_impl()
+{
+    if (!mounted) return false;
+
+    errno = 0;
+    const uint64_t total = static_cast<uint64_t>(SD.totalBytes());
+    const int total_error = errno;
+    errno = 0;
+    const uint64_t used = static_cast<uint64_t>(SD.usedBytes());
+    const int used_error = errno;
+
+    if (!capacity_cache.update(total, used)) {
+        const int error = sigurdos::sdcard::detail::isMediaLossError(total_error)
+            ? total_error : used_error;
+        if (total == 0 || sigurdos::sdcard::detail::isMediaLossError(error)) {
+            // The Arduino SD API reports f_getfree() failure as zero without
+            // preserving its FatFs error code. A zero total on an otherwise
+            // mounted card is therefore a media-health failure, not a valid
+            // empty filesystem reading.
+            sdcard_note_io_failure(
+                sigurdos::sdcard::detail::isMediaLossError(error) ? error : EIO);
+        } else {
+            sdcard_diag.capacity_valid = false;
+            sdcard_diag.last_error =
+                SIGURDOS_SD_MOUNT_ERROR_CAPACITY_QUERY_FAILED;
+        }
+        return false;
+    }
+
+    sdcard_diag.capacity_valid = true;
+    sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_NONE;
+    return true;
+}
+
 static void sdcard_record_success()
 {
-    uint64_t total = (uint64_t)SD.totalBytes();
-    uint64_t used = (uint64_t)SD.usedBytes();
-
-    capacity_bytes = total;
-    free_bytes = used <= total ? (total - used) : 0;
-    mounted = true;
-    sdcard_diag.mounted = true;
-    sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_NONE;
+    sigurdos::sdcard::detail::markMountSuccess(
+        mounted, sdcard_retry_count, capacity_cache.valid);
+    capacity_cache.dirty = true;
+    (void)sdcard_refresh_capacity_impl();
+    sdcard_diag.mounted = mounted;
 }
 
 static bool sdcard_mount_once(SigurdosSdMountSource source)
@@ -275,12 +372,13 @@ static bool sdcard_mount_once(SigurdosSdMountSource source)
 
     if (SD.begin(PIN_SD_CS, sd_spi, 4000000, SIGURDOS_SD_MOUNTPOINT)) {
         sdcard_record_success();
-        return true;
+        return mounted;
     }
 
     SD.end();
-    sdcard_reset_mount_state();
+    sdcard_mark_mount_failed();
     sdcard_diag.mounted = false;
+    sdcard_diag.capacity_valid = capacity_cache.valid;
     sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_BEGIN_FAILED;
     return false;
 }
@@ -328,7 +426,13 @@ bool sigurdos_sdcard_bus_reset_locked()
 
 bool sigurdos_sdcard_retry()
 {
-    if (mounted) return true;  // already mounted
+    if (mounted) {
+        // Probe current filesystem state instead of treating the old mount
+        // bit as proof that the card is still present.
+        const bool capacity_ok = sdcard_refresh_capacity_impl();
+        if (mounted && capacity_ok) return true;
+        if (mounted) return false;
+    }
     if (sdcard_retry_count >= SDCARD_LAZY_RETRY_MAX_ATTEMPTS) {
         sdcard_diag.last_source = SIGURDOS_SD_MOUNT_SOURCE_RETRY;
         sdcard_diag.last_error = SIGURDOS_SD_MOUNT_ERROR_RETRIES_EXHAUSTED;
@@ -355,6 +459,7 @@ bool sigurdos_sdcard_mounted()
 SigurdosSdMountDiagnostic sigurdos_sdcard_diagnostics()
 {
     sdcard_diag.mounted = mounted;
+    sdcard_diag.capacity_valid = capacity_cache.valid;
     return sdcard_diag;
 }
 
@@ -378,20 +483,35 @@ const char* sigurdos_sdcard_mount_error_name(SigurdosSdMountError error)
         return "begin_failed";
     case SIGURDOS_SD_MOUNT_ERROR_RETRIES_EXHAUSTED:
         return "retries_exhausted";
+    case SIGURDOS_SD_MOUNT_ERROR_MEDIA_LOST:
+        return "media_lost";
+    case SIGURDOS_SD_MOUNT_ERROR_CAPACITY_QUERY_FAILED:
+        return "capacity_query_failed";
     case SIGURDOS_SD_MOUNT_ERROR_NONE:
     default:
         return "none";
     }
 }
 
+bool sigurdos_sdcard_refresh_capacity()
+{
+    return sdcard_refresh_capacity_impl();
+}
+
 uint64_t sigurdos_sdcard_capacity_bytes()
 {
-    return capacity_bytes;
+    if (mounted && (!capacity_cache.valid || capacity_cache.dirty)) {
+        (void)sdcard_refresh_capacity_impl();
+    }
+    return capacity_cache.total_bytes;
 }
 
 uint64_t sigurdos_sdcard_free_bytes()
 {
-    return free_bytes;
+    if (mounted && (!capacity_cache.valid || capacity_cache.dirty)) {
+        (void)sdcard_refresh_capacity_impl();
+    }
+    return capacity_cache.free_bytes;
 }
 
 const char* sigurdos_sdcard_format_size(uint64_t bytes, char* buf, size_t buf_sz)
@@ -430,9 +550,15 @@ size_t sigurdos_sdcard_read(const char* path, uint8_t* buf, size_t max_len)
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return 0;
     FILE* file = std::fopen(live_path, "rb");
-    if (!file) return 0;
+    if (!file) {
+        sdcard_note_io_failure(errno);
+        return 0;
+    }
+    errno = 0;
     const size_t read = std::fread(buf, 1, max_len, file);
-    std::fclose(file);
+    const int read_error = std::ferror(file) ? errno : 0;
+    if (read_error != 0) sdcard_note_io_failure(read_error);
+    if (std::fclose(file) != 0) sdcard_note_io_failure(errno);
     return read;
 }
 
@@ -449,10 +575,14 @@ bool sigurdos_sdcard_list(const char* path, SigurdosSdDirEntry* entries,
     char directory_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, directory_path, sizeof(directory_path))) return false;
     DIR* directory = ::opendir(directory_path);
-    if (!directory) return false;
+    if (!directory) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
 
     bool overflow = false;
     struct dirent* item = nullptr;
+    errno = 0;
     while ((item = ::readdir(directory)) != nullptr) {
         if (std::strcmp(item->d_name, ".") == 0 ||
             std::strcmp(item->d_name, "..") == 0) {
@@ -480,7 +610,12 @@ bool sigurdos_sdcard_list(const char* path, SigurdosSdDirEntry* entries,
         }
 
         struct stat info {};
-        if (::stat(item_path, &info) != 0) continue;
+        if (::stat(item_path, &info) != 0) {
+            const int error = errno;
+            sdcard_note_io_failure(error);
+            if (sigurdos::sdcard::detail::isMediaLossError(error)) break;
+            continue;
+        }
 
         SigurdosSdDirEntry& entry = entries[*count];
         std::memcpy(entry.name, item->d_name, name_length + 1);
@@ -491,7 +626,9 @@ bool sigurdos_sdcard_list(const char* path, SigurdosSdDirEntry* entries,
         entry.modified_time = info.st_mtime;
         (*count)++;
     }
-    ::closedir(directory);
+    const int read_error = errno;
+    if (read_error != 0) sdcard_note_io_failure(read_error);
+    if (::closedir(directory) != 0) sdcard_note_io_failure(errno);
 
     std::sort(entries, entries + *count,
               [](const SigurdosSdDirEntry& left, const SigurdosSdDirEntry& right) {
@@ -518,18 +655,32 @@ bool sigurdos_sdcard_copy_file(const char* source_path, const char* destination_
     }
 
     struct stat source_info {};
-    if (::stat(source, &source_info) != 0 || !S_ISREG(source_info.st_mode)) {
+    if (::stat(source, &source_info) != 0) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
+    if (!S_ISREG(source_info.st_mode)) {
         return false;
     }
     struct stat destination_info {};
-    if (::stat(destination, &destination_info) == 0 || errno != ENOENT) {
+    if (::stat(destination, &destination_info) == 0) {
+        return false;
+    }
+    const int destination_error = errno;
+    if (destination_error != ENOENT) {
+        sdcard_note_io_failure(destination_error);
         return false;
     }
 
     FILE* input = std::fopen(source, "rb");
-    if (!input) return false;
+    if (!input) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
     FILE* output = std::fopen(destination, "wb");
     if (!output) {
+        const int error = errno;
+        sdcard_note_io_failure(error);
         std::fclose(input);
         return false;
     }
@@ -539,18 +690,30 @@ bool sigurdos_sdcard_copy_file(const char* source_path, const char* destination_
     size_t bytes_read = 0;
     while ((bytes_read = std::fread(buffer, 1, sizeof(buffer), input)) > 0) {
         if (std::fwrite(buffer, 1, bytes_read, output) != bytes_read) {
+            sdcard_note_io_failure(errno);
             success = false;
             break;
         }
         delay(0);  // Keep the ESP task watchdog serviced during large copies.
     }
-    if (std::ferror(input)) success = false;
-    if (success && (std::fflush(output) != 0 || ::fsync(::fileno(output)) != 0)) {
+    if (std::ferror(input)) {
+        sdcard_note_io_failure(errno);
         success = false;
     }
-    if (std::fclose(input) != 0) success = false;
-    if (std::fclose(output) != 0) success = false;
+    if (success && (std::fflush(output) != 0 || ::fsync(::fileno(output)) != 0)) {
+        sdcard_note_io_failure(errno);
+        success = false;
+    }
+    if (std::fclose(input) != 0) {
+        sdcard_note_io_failure(errno);
+        success = false;
+    }
+    if (std::fclose(output) != 0) {
+        sdcard_note_io_failure(errno);
+        success = false;
+    }
     if (!success) std::remove(destination);
+    if (success) capacity_cache.invalidate();
     return success;
 }
 
@@ -563,8 +726,17 @@ bool sigurdos_sdcard_delete_file(const char* path)
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return false;
     struct stat info {};
-    return ::stat(live_path, &info) == 0 && S_ISREG(info.st_mode) &&
-        std::remove(live_path) == 0;
+    if (::stat(live_path, &info) != 0) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
+    if (!S_ISREG(info.st_mode)) return false;
+    if (std::remove(live_path) != 0) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
+    capacity_cache.invalidate();
+    return true;
 }
 
 bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
@@ -582,8 +754,10 @@ bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
     }
     if (!sdcard_ensure_parent_dir(live_path)) return false;
 
-    return sigurdos::sdcard::detail::replaceFile(
+    const bool replaced = sigurdos::sdcard::detail::replaceFile(
         live_path, temp_path, ready_path, data, len, SDCARD_REPLACE_OPS);
+    if (replaced) capacity_cache.invalidate();
+    return replaced;
 }
 
 uint64_t sigurdos_sdcard_file_size(const char* path)
@@ -593,7 +767,11 @@ uint64_t sigurdos_sdcard_file_size(const char* path)
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return 0;
     struct stat info {};
-    if (::stat(live_path, &info) != 0 || info.st_size < 0) return 0;
+    if (::stat(live_path, &info) != 0) {
+        sdcard_note_io_failure(errno);
+        return 0;
+    }
+    if (info.st_size < 0) return 0;
     return static_cast<uint64_t>(info.st_size);
 }
 
@@ -609,10 +787,18 @@ bool sigurdos_sdcard_read_at(const char* path, uint64_t offset,
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return false;
     FILE* file = std::fopen(live_path, "rb");
-    if (!file) return false;
-    const bool ok = std::fseek(file, static_cast<long>(offset), SEEK_SET) == 0 &&
+    if (!file) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
+    errno = 0;
+    bool ok = std::fseek(file, static_cast<long>(offset), SEEK_SET) == 0 &&
         std::fread(data, 1, len, file) == len;
-    std::fclose(file);
+    if (!ok && std::ferror(file)) sdcard_note_io_failure(errno);
+    if (std::fclose(file) != 0) {
+        sdcard_note_io_failure(errno);
+        ok = false;
+    }
     return ok;
 }
 
@@ -631,11 +817,22 @@ bool sigurdos_sdcard_write_at(const char* path, uint64_t offset,
     }
     FILE* file = std::fopen(live_path, "r+b");
     if (!file) file = std::fopen(live_path, "w+b");
-    if (!file) return false;
+    if (!file) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
     bool ok = std::fseek(file, static_cast<long>(offset), SEEK_SET) == 0 &&
         std::fwrite(data, 1, len, file) == len;
-    if (ok) ok = std::fflush(file) == 0 && ::fsync(::fileno(file)) == 0;
-    if (std::fclose(file) != 0) ok = false;
+    if (!ok) sdcard_note_io_failure(errno);
+    if (ok && (std::fflush(file) != 0 || ::fsync(::fileno(file)) != 0)) {
+        sdcard_note_io_failure(errno);
+        ok = false;
+    }
+    if (std::fclose(file) != 0) {
+        sdcard_note_io_failure(errno);
+        ok = false;
+    }
+    if (ok) capacity_cache.invalidate();
     return ok;
 }
 
@@ -650,10 +847,21 @@ bool sigurdos_sdcard_append(const char* path, const uint8_t* data, size_t len)
         return false;
     }
     FILE* file = std::fopen(live_path, "ab");
-    if (!file) return false;
+    if (!file) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
     bool ok = std::fwrite(data, 1, len, file) == len;
-    if (ok) ok = std::fflush(file) == 0 && ::fsync(::fileno(file)) == 0;
-    if (std::fclose(file) != 0) ok = false;
+    if (!ok) sdcard_note_io_failure(errno);
+    if (ok && (std::fflush(file) != 0 || ::fsync(::fileno(file)) != 0)) {
+        sdcard_note_io_failure(errno);
+        ok = false;
+    }
+    if (std::fclose(file) != 0) {
+        sdcard_note_io_failure(errno);
+        ok = false;
+    }
+    if (ok) capacity_cache.invalidate();
     return ok;
 }
 
@@ -662,8 +870,13 @@ bool sigurdos_sdcard_remove_path(const char* path)
     if (!mounted || !sigurdos_sdcard_path_valid(path) ||
         std::strcmp(path, "/") == 0) return false;
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
-    return sdcard_vfs_path(path, live_path, sizeof(live_path)) &&
-        (std::remove(live_path) == 0 || errno == ENOENT);
+    if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return false;
+    if (std::remove(live_path) == 0 || errno == ENOENT) {
+        capacity_cache.invalidate();
+        return true;
+    }
+    sdcard_note_io_failure(errno);
+    return false;
 }
 
 bool sigurdos_sdcard_rename_path(const char* from, const char* to)
@@ -675,11 +888,18 @@ bool sigurdos_sdcard_rename_path(const char* from, const char* to)
     if (!sdcard_vfs_path(from, from_path, sizeof(from_path)) ||
         !sdcard_vfs_path(to, to_path, sizeof(to_path)) ||
         !sdcard_ensure_parent_dir(to_path)) return false;
-    return std::rename(from_path, to_path) == 0;
+    if (std::rename(from_path, to_path) != 0) {
+        sdcard_note_io_failure(errno);
+        return false;
+    }
+    capacity_cache.invalidate();
+    return true;
 }
 
 bool sigurdos_sdcard_recover_file(const char* path)
 {
     if (!mounted || !sigurdos_sdcard_path_valid(path)) return false;
-    return sdcard_recover_file(path);
+    const bool recovered = sdcard_recover_file(path);
+    if (recovered) capacity_cache.invalidate();
+    return recovered;
 }

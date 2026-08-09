@@ -54,15 +54,15 @@ bool acquire(Owner owner, RadioMode requested_mode) {
     if (!coordinator.acquire(owner, requested_mode, readRadioMode())) return false;
     if (applyRadioMode(requested_mode)) return true;
 
-    const ReleasePlan rollback = coordinator.release(owner);
-    if (rollback.released) applyRadioMode(rollback.restored_mode);
+    if (!coordinator.releaseWith(owner, applyRadioMode) &&
+        coordinator.hasOwner(owner)) {
+        release_requests.request(owner);
+    }
     return false;
 }
 
 bool release(Owner owner) {
-    const ReleasePlan plan = coordinator.release(owner);
-    if (!plan.released) return false;
-    return applyRadioMode(plan.restored_mode);
+    return coordinator.releaseWith(owner, applyRadioMode);
 }
 
 void requestRelease(Owner owner) {
@@ -76,7 +76,12 @@ void servicePendingReleases() {
     };
     for (const Owner owner : owners) {
         if ((pending & releaseRequestMask(owner)) != 0) {
-            (void)release(owner);
+            if (!release(owner) && coordinator.hasOwner(owner)) {
+                // Keep the logical lease and retry the hardware restoration
+                // on the next loop iteration. A worker request must never be
+                // silently discarded after a transient driver failure.
+                release_requests.request(owner);
+            }
         }
     }
 }
@@ -87,6 +92,10 @@ bool canAcquire(Owner owner) {
 
 Owner currentOwner() {
     return coordinator.currentOwner();
+}
+
+bool hasOwner(Owner owner) {
+    return coordinator.hasOwner(owner);
 }
 
 const char* ownerName(Owner owner) {

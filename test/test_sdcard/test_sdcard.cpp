@@ -243,6 +243,55 @@ TEST_F(SDCardTest, ErrorStateHasZeroCapacity) {
     EXPECT_EQ(sd_state, SDState::ERROR);
 }
 
+TEST(SDCardPolicyTest, MediaRemovalInvalidatesMountAndReopensRetryBudget) {
+    bool mounted = true;
+    int retry_count = 3;
+    bool capacity_valid = true;
+
+    EXPECT_TRUE(sigurdos::sdcard::detail::isMediaLossError(EIO));
+    EXPECT_FALSE(sigurdos::sdcard::detail::isMediaLossError(ENOENT));
+
+    sigurdos::sdcard::detail::markMediaLost(
+        mounted, retry_count, capacity_valid);
+    EXPECT_FALSE(mounted);
+    EXPECT_EQ(retry_count, 0);
+    EXPECT_FALSE(capacity_valid);
+
+    // A later lazy SD.begin() success uses the same transition without a
+    // reboot, and starts a fresh retry budget for the replacement card.
+    sigurdos::sdcard::detail::markMountSuccess(
+        mounted, retry_count, capacity_valid);
+    EXPECT_TRUE(mounted);
+    EXPECT_EQ(retry_count, 0);
+    EXPECT_FALSE(capacity_valid);
+}
+
+TEST(SDCardPolicyTest, CapacityCachePreservesLastKnownValuesAcrossRefreshFailure) {
+    sigurdos::sdcard::detail::CapacityCache cache;
+
+    ASSERT_TRUE(cache.update(1000, 250));
+    EXPECT_EQ(cache.total_bytes, 1000u);
+    EXPECT_EQ(cache.free_bytes, 750u);
+    EXPECT_TRUE(cache.valid);
+    EXPECT_FALSE(cache.dirty);
+
+    cache.invalidate();
+    EXPECT_EQ(cache.total_bytes, 1000u);
+    EXPECT_EQ(cache.free_bytes, 750u);
+    EXPECT_FALSE(cache.valid);
+    EXPECT_TRUE(cache.dirty);
+
+    EXPECT_FALSE(cache.update(0, 0));
+    EXPECT_EQ(cache.total_bytes, 1000u);
+    EXPECT_EQ(cache.free_bytes, 750u);
+    EXPECT_FALSE(cache.valid);
+
+    ASSERT_TRUE(cache.update(1000, 400));
+    EXPECT_EQ(cache.free_bytes, 600u);
+    EXPECT_TRUE(cache.valid);
+    EXPECT_FALSE(cache.dirty);
+}
+
 TEST_F(SDCardTest, ValidPathStartsWithSlash) {
     EXPECT_TRUE(sigurdos_sdcard_path_valid("/maps/london.mbtiles"));
     EXPECT_TRUE(sigurdos_sdcard_path_valid("/config.txt"));

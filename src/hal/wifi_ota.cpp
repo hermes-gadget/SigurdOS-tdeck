@@ -41,6 +41,7 @@ static uint32_t session_started_at = 0;
 static std::atomic<uint32_t> worker_tick_ms{0};
 static constexpr uint32_t OTA_WORKER_STALE_LIMIT_MS = 3000U;
 static std::atomic<bool> using_access_point{false};
+static std::atomic<bool> ap_release_pending{false};
 static std::atomic<bool> companion_transport_parked{false};
 static std::atomic<CompanionTransportParkHook> companion_transport_park_hook{nullptr};
 static String csrf_token;  // regenerated per OTA session
@@ -74,6 +75,18 @@ static void notifyCompanionTransportParked(bool parked)
     if (hook) hook(parked);
 }
 
+static void finalizePendingApRelease()
+{
+    if (!ap_release_pending.load(std::memory_order_acquire) ||
+        wifi::hasOwner(wifi::Owner::ApOta)) {
+        return;
+    }
+
+    ap_release_pending.store(false, std::memory_order_release);
+    using_access_point.store(false, std::memory_order_release);
+    notifyCompanionTransportParked(false);
+}
+
 static void cleanupServer() {
     if (server) {
         server->stop();
@@ -83,8 +96,13 @@ static void cleanupServer() {
     if (Update.isRunning()) Update.abort();
     const bool was_ap = using_access_point.load(std::memory_order_acquire);
     if (was_ap) WiFi.softAPdisconnect(true);
-    using_access_point.store(false, std::memory_order_release);
-    if (was_ap) notifyCompanionTransportParked(false);
+    if (was_ap) {
+        // Keep the AP lease and transport park state visible until the main
+        // loop successfully restores the previous hardware mode.
+        ap_release_pending.store(true, std::memory_order_release);
+    } else {
+        using_access_point.store(false, std::memory_order_release);
+    }
     sigurdos::comms::secureWipe(ap_password, sizeof(ap_password));
     wifi::requestRelease(wifi::Owner::ApOta);
     session_started_at = 0;
@@ -240,6 +258,15 @@ static bool startAccessPoint(const char* ssid, const char* password) {
 }
 
 bool start(const char* ssid, const char* password) {
+    finalizePendingApRelease();
+    if (ap_release_pending.load(std::memory_order_acquire)) {
+        wifi::requestRelease(wifi::Owner::ApOta);
+        strncpy(last_error, "WiFi cleanup is still in progress",
+                sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        return false;
+    }
+
     if (active.load(std::memory_order_acquire)) {
         // Idempotent re-entry while a live session is running. A session whose
         // worker stalled past its window must be torn down first, or the next
@@ -623,6 +650,8 @@ bool start(const char* ssid, const char* password) {
 }
 
 void loop() {
+    finalizePendingApRelease();
+
     // #1495 watchdog: if the worker stalls (crash/wedge) while a session is
     // marked active and past its window, the session would otherwise stick
     // forever, blocking reboots and every later OTA start. The loop owns the
@@ -717,8 +746,14 @@ int scan_capacity = 0;
 void releaseScan() {
     WiFi.scanDelete();
     if (scan_lease_held) {
-        wifi::release(wifi::Owner::Scan);
-        scan_lease_held = false;
+        if (wifi::release(wifi::Owner::Scan)) {
+            scan_lease_held = false;
+        } else {
+            // Keep the local lease marker until the coordinator has actually
+            // restored the previous hardware mode. The loop-level service
+            // path will retry a transient driver failure.
+            wifi::requestRelease(wifi::Owner::Scan);
+        }
     }
     scan_driver_started = false;
     scan_acquired_at = 0;
@@ -729,7 +764,12 @@ void releaseScan() {
 }  // namespace
 
 StartResult begin() {
-    if (scan_lease_held) return {Status::Busy, 0};
+    if (scan_lease_held) {
+        if (wifi::hasOwner(wifi::Owner::Scan)) return {Status::Busy, 0};
+        // A queued release succeeded on the main loop since the last scan
+        // cleanup. Reconcile the local marker before acquiring a new lease.
+        scan_lease_held = false;
+    }
     if (!wifi::acquire(wifi::Owner::Scan, wifi::RadioMode::Sta)) {
         return {Status::Busy, 0};
     }
@@ -834,6 +874,7 @@ namespace {
 static constexpr uint32_t AUTO_RECONNECT_INTERVAL_MS = 30000U;
 
 bool s_connected = false;
+bool s_lease_held = false;
 int s_rssi = 0;
 Status s_status = Status::Idle;
 uint32_t s_conn_start = 0;
@@ -925,7 +966,11 @@ void markConnected()
 void releaseAfterFailure(const char* error)
 {
     WiFi.disconnect();
-    wifi::release(wifi::Owner::Sta);
+    if (wifi::release(wifi::Owner::Sta)) {
+        s_lease_held = false;
+    } else {
+        wifi::requestRelease(wifi::Owner::Sta);
+    }
     s_status = Status::Failed;
     s_connected = false;
     s_rssi = 0;
@@ -937,6 +982,9 @@ void releaseAfterFailure(const char* error)
 }  // namespace
 
 bool beginConnect(const char* ssid, const char* password) {
+    if (s_lease_held && !wifi::hasOwner(wifi::Owner::Sta)) {
+        s_lease_held = false;
+    }
     if (!ssid || !ssid[0]) {
         s_status = Status::Failed;
         s_connected = false;
@@ -954,6 +1002,7 @@ bool beginConnect(const char* ssid, const char* password) {
                  wifi::ownerName(wifi::currentOwner()));
         return false;
     }
+    s_lease_held = true;
     delay(100);  // let MAC/BB/RF settle after potential mode switch (ESP32-S3 erratum)
     WiFi.begin(ssid, password);
     s_status = Status::Connecting;
@@ -1005,11 +1054,18 @@ bool reconnect()
 }
 
 void disconnect() {
-    if (wifi::currentOwner() != wifi::Owner::Sta) return;
+    if (s_lease_held && !wifi::hasOwner(wifi::Owner::Sta)) {
+        s_lease_held = false;
+    }
+    if (!wifi::hasOwner(wifi::Owner::Sta)) return;
     if (s_connected || s_status == Status::Connecting) {
         WiFi.disconnect();
     }
-    wifi::release(wifi::Owner::Sta);
+    if (wifi::release(wifi::Owner::Sta)) {
+        s_lease_held = false;
+    } else {
+        wifi::requestRelease(wifi::Owner::Sta);
+    }
     s_connected = false;
     s_rssi = 0;
     s_status = Status::Idle;

@@ -130,17 +130,23 @@ void observe_system_state(uint32_t now)
     }
 
     if (sigurdos_sdcard_mounted()) {
+        sigurdos_sdcard_refresh_capacity();
+    }
+    const SigurdosSdMountDiagnostic sd_diag = sigurdos_sdcard_diagnostics();
+    if (sd_diag.mounted && sd_diag.capacity_valid) {
         const uint64_t total = sigurdos_sdcard_capacity_bytes();
         const uint64_t free = sigurdos_sdcard_free_bytes();
-        if (notification_storage_low(free, total)) {
-            if (!g_storage_latched) {
-                notifications_post(NotificationEvent::StorageFull,
-                                   "SD card storage is nearly full");
-                g_storage_latched = true;
-            }
-        } else {
-            g_storage_latched = false;
+        const bool next_latched = notification_storage_latch_next(
+            g_storage_latched, sd_diag.mounted, sd_diag.capacity_valid,
+            free, total);
+        if (next_latched && !g_storage_latched) {
+            notifications_post(NotificationEvent::StorageFull,
+                               "SD card storage is nearly full");
         }
+        g_storage_latched = next_latched;
+    } else if (sd_diag.mounted) {
+        g_storage_latched = notification_storage_latch_next(
+            g_storage_latched, true, false, 0, 0);
     } else {
         g_storage_latched = false;
     }
