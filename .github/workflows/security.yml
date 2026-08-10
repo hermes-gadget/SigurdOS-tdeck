@@ -84,7 +84,7 @@ jobs:
           pio pkg list -e SigurdOS_TDeck > "${{ runner.temp }}/platformio-dependencies.txt"
 
       - name: Verify resolved PlatformIO graph
-        run: python scripts/platformio_lock.py --check
+        run: python scripts/platformio_lock.py --check --environment SigurdOS_TDeck
 
       - name: Generate firmware CycloneDX SBOM
         run: >-

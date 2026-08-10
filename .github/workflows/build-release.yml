@@ -40,7 +40,7 @@ jobs:
         run: pio pkg install -e SigurdOS_TDeck
 
       - name: Verify resolved PlatformIO graph
-        run: python scripts/platformio_lock.py --check
+        run: python scripts/platformio_lock.py --check --environment SigurdOS_TDeck
 
       - name: Run native tests
         run: pio test -e native_test -v
@@ -156,7 +156,7 @@ jobs:
           cp webflasher_release/sigurdos-tdeck-launcher.bin      artifacts/sigurdos-tdeck-launcher.bin
 
       - name: Verify resolved PlatformIO graph
-        run: python scripts/platformio_lock.py --check
+        run: python scripts/platformio_lock.py --check --environment SigurdOS_TDeck
 
       - name: Validate final release artifact set
         run: |
