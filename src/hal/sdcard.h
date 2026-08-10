@@ -165,6 +165,28 @@ bool sigurdos_sdcard_retry();
 // Check if SD card is currently mounted
 bool sigurdos_sdcard_mounted();
 
+// Shared-SPI bus guard for the display flush path (#1540).
+//
+// The SD card shares SPI2_HOST with the display (and LoRa). A hung card can
+// hold the bus lock indefinitely (the SPI receive path has no timeout), which
+// would wedge the display flush in loopTask and trip the task watchdog.
+//
+// SD consumers (map tile worker, message store) wrap their work in
+// sigurdos_sdcard_bus_enter()/exit(); the display flush calls
+// sigurdos_sdcard_bus_try_lock(timeout_ms) before touching the bus and drops
+// the frame on timeout, so loopTask can never block on the bus.
+void sigurdos_sdcard_bus_enter();
+void sigurdos_sdcard_bus_exit();
+bool sigurdos_sdcard_bus_try_lock(uint32_t timeout_ms);
+void sigurdos_sdcard_bus_unlock();
+
+// RAII form of the shared-bus guard for SD file operations.
+class SdSharedBusGuard {
+public:
+    SdSharedBusGuard() { sigurdos_sdcard_bus_enter(); }
+    ~SdSharedBusGuard() { sigurdos_sdcard_bus_exit(); }
+};
+
 // Last mount diagnostic state for telemetry/UI/debug surfaces.
 SigurdosSdMountDiagnostic sigurdos_sdcard_diagnostics();
 const char* sigurdos_sdcard_mount_source_name(SigurdosSdMountSource source);

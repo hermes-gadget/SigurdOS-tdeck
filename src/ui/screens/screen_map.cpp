@@ -344,7 +344,10 @@ void map_screen_show()
     // servicing input even with a very large or malformed tile tree.
     sigurdos_map_discover_tiles();
     g_map_discovery_timer = lv_timer_create([](lv_timer_t* timer) {
-        const bool more = sigurdos_map_discovery_step();
+        // Discovery SD I/O runs on the tile worker task; this timer only
+        // pumps one step request per tick, so a slow or hung SD op can no
+        // longer stall LVGL or trip the task watchdog (see #1540).
+        const bool more = sigurdos_map_discovery_pump();
         const SigurdosMapDiscoveryProgress progress =
             sigurdos_map_discovery_progress();
         if (g_map_discovery_status && more) {

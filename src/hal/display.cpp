@@ -27,6 +27,7 @@
 #include "prefs.h"
 #include "trackball.h"
 #include "tdeck_pins.h"
+#include "sdcard.h"
 #include "../ui/ui.h"
 #include "../ui/chat_screen.h"
 #include "../ui/navigation.h"
@@ -61,7 +62,14 @@ public:
             cfg.freq_read  = 16000000;
             cfg.spi_3wire  = false;
             cfg.use_lock   = true;
-            cfg.dma_channel = SPI_DMA_CH_AUTO;
+            // The display shares SPI2_HOST + its DMA channel with the SD
+            // card and the LoRa radio. The bus guard (sigurdos_sdcard_bus_*)
+            // serializes SD vs display, but the radio's DMA transactions can
+            // still interleave with the display's DMA push; a corrupted DMA
+            // state wedges dmaWait() forever (#1540). Polling keeps every
+            // flush wait bounded by one transaction. Full-frame pushes
+            // (~31ms at 40MHz) block the CPU, which is acceptable here.
+            cfg.dma_channel = -1;
             cfg.pin_sclk   = PIN_TFT_SCL;
             cfg.pin_mosi   = PIN_TFT_SDA;
             cfg.pin_miso   = -1;
@@ -586,6 +594,7 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
 #if SIGURDOS_DEBUG_DISPLAY
     dbg_last_flush_area = *area;
     dbg_flush_count++;
+    const uint32_t flush_t0 = millis();
     // Runtime level + feature check only when full debug module is compiled
 #if defined(SIGURDOS_DEBUG) && SIGURDOS_DEBUG
     if (sigurdos::debug::get_level() >= 2 && sigurdos::debug::feat_get_display())
@@ -617,6 +626,25 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
     const uint32_t bpp = lv_color_format_get_size(cf);
     uint32_t row_bytes = w * bpp;
     uint32_t stride = lv_draw_buf_width_to_stride(w, cf);
+
+    // Drop the frame while the SD holds the shared SPI bus (#1540). A hung
+    // SD transaction (card stops responding mid data-phase) holds the SPI
+    // bus lock with no timeout; pushing now could block loopTask past the
+    // watchdog limit. The bus guard makes the wait bounded: SD writers hold
+    // the mutex across their transactions, and this bounded take either
+    // succeeds (bus free) or times out (drop the frame).
+    if (!sigurdos_sdcard_bus_try_lock(150)) {
+#if defined(SIGURDOS_DEBUG) && SIGURDOS_DEBUG
+        Serial.printf("[flush] SKIP t=%lu\n", (unsigned long)millis());
+#endif
+        lv_display_flush_ready(disp);
+        return;
+    }
+#if defined(SIGURDOS_DEBUG) && SIGURDOS_DEBUG
+    Serial.printf("[flush] start #%lu t=%lu\n",
+                  (unsigned long)dbg_flush_count,
+                  (unsigned long)millis());
+#endif
 
     tft.startWrite();
     tft.setAddrWindow(area->x1, area->y1, w, h);
@@ -654,7 +682,17 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
         }
     }
     tft.endWrite();
+    sigurdos_sdcard_bus_unlock();
     lv_display_flush_ready(disp);
+#if defined(SIGURDOS_DEBUG) && SIGURDOS_DEBUG
+    {
+        const uint32_t flush_total = millis() - flush_t0;
+        if (flush_total >= 250) {
+            Serial.printf("[flush] SLOW d=%lums t=%lu\n",
+                          (unsigned long)flush_total, (unsigned long)millis());
+        }
+    }
+#endif
 }
 
 // ── Touch read callback ──────────────────────────────────

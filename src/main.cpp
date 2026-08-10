@@ -305,6 +305,11 @@ void setup()
         }
     }
     boot_status(spiffs_ok ? "Storage ready" : "Storage unavailable");
+    if (spiffs_ok) {
+        // Absorb the first-write SPIFFS GC in a background task so the
+        // first runtime commit (channel store etc.) is not 10-90s slow.
+        sigurdos::storage_warm_after_mount();
+    }
 
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Settings);
     boot_status("Loading settings...");

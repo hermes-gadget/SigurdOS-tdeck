@@ -17,7 +17,10 @@ struct LabelFontState {
     const lv_font_t* largest_font = nullptr;
     std::uint32_t generation = 0;
     std::uint32_t pending_generation = 0;
+    std::uint32_t fitted_text_hash = 0;
+    lv_coord_t fitted_max_width = 0;
     bool fit_pending = false;
+    bool fitted_inputs_valid = false;
     bool retired = false;
 };
 
@@ -114,6 +117,38 @@ lv_coord_t label_max_width(lv_obj_t* label)
     // make a previously downscaled label keep the smaller font forever. Its
     // parent is the stable clipping boundary for content-sized labels.
     return static_cast<lv_coord_t>(parent_width);
+}
+
+std::uint32_t text_hash(const char* text)
+{
+    // FNV-1a gives the draw hook a bounded state value instead of retaining a
+    // pointer into LVGL's mutable label buffer.
+    std::uint32_t hash = 2166136261U;
+    const auto* byte = reinterpret_cast<const unsigned char*>(text ? text : "");
+    while (*byte) {
+        hash ^= *byte++;
+        hash *= 16777619U;
+    }
+    return hash;
+}
+
+void record_fitted_inputs(LabelFontState* state,
+                          const char* text,
+                          lv_coord_t max_width)
+{
+    if (!state) return;
+    state->fitted_text_hash = text_hash(text);
+    state->fitted_max_width = max_width;
+    state->fitted_inputs_valid = true;
+}
+
+bool fitted_inputs_changed(LabelFontState* state,
+                           const char* text,
+                           lv_coord_t max_width)
+{
+    return !state || !state->fitted_inputs_valid ||
+           state->fitted_text_hash != text_hash(text) ||
+           state->fitted_max_width != max_width;
 }
 
 void append(TextFitFontLadder& ladder, const lv_font_t* font)
@@ -221,15 +256,20 @@ void apply_registered_label(LabelFontState* state,
         ? state->largest_font
         : lv_obj_get_style_text_font(label, 0);
     const TextFitFontLadder ladder = ladder_for_font(largest);
-    if (ladder.count == 0) return;
-
     const char* text = lv_label_get_text(label);
+    const lv_coord_t max_width = label_max_width(label);
+    if (ladder.count == 0) {
+        record_fitted_inputs(state, text, max_width);
+        return;
+    }
+
     const TextFitChoice choice = text_fit_choose_font(
-        text, label_max_width(label), ladder, measure_label, label);
+        text, max_width, ladder, measure_label, label);
     const lv_font_t* selected = static_cast<const lv_font_t*>(choice.font);
     if (selected && lv_obj_get_style_text_font(label, 0) != selected) {
         lv_obj_set_style_text_font(label, selected, 0);
     }
+    record_fitted_inputs(state, text, max_width);
 }
 
 void apply_deferred_fit(void* user_data)
@@ -260,6 +300,11 @@ void on_label_draw(lv_event_t* event)
     LabelFontState* state = find_label_state(label);
     if (!state || state->retired || state->fit_pending) return;
 
+    const lv_coord_t max_width = label_max_width(label);
+    if (!fitted_inputs_changed(state, lv_label_get_text(label), max_width)) {
+        return;
+    }
+
     state->fit_pending = true;
     state->pending_generation = state->generation;
     if (lv_async_call(apply_deferred_fit, state) != LV_RESULT_OK) {
@@ -276,7 +321,8 @@ void text_fit_label(lv_obj_t* label,
                     const TextFitFontLadder& ladder)
 {
     if (!label) return;
-    if (auto* state = register_label(label)) {
+    LabelFontState* state = register_label(label);
+    if (state) {
         state->largest_font = ladder.count > 0
             ? static_cast<const lv_font_t*>(ladder.fonts[0])
             : nullptr;
@@ -288,6 +334,7 @@ void text_fit_label(lv_obj_t* label,
         lv_obj_set_style_text_font(
             label, static_cast<const lv_font_t*>(choice.font), 0);
     }
+    record_fitted_inputs(state, text, max_width);
 }
 
 lv_obj_t* text_fit_label_create(lv_obj_t* parent)

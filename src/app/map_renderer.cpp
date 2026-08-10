@@ -251,8 +251,11 @@ static int last_negative_hits = 0;
 static int last_deferred_tiles = 0;
 static QueueHandle_t tile_request_queue = nullptr;
 static QueueHandle_t tile_completion_queue = nullptr;
+static QueueHandle_t discovery_request_queue = nullptr;
 static TaskHandle_t tile_worker_task_handle = nullptr;
 static std::atomic<uint32_t> tile_generation{1};
+static std::atomic<uint32_t> discovery_generation{1};
+static bool discovery_xcache_release_requested = false;
 static portMUX_TYPE tile_lifecycle_mux = portMUX_INITIALIZER_UNLOCKED;
 
 enum class TileLoadResult : uint8_t { Ready, Missing, Deferred };
@@ -414,27 +417,49 @@ static SigurdosMapTileCompletion load_tile_off_ui(
 
 static void tile_worker_task(void*) {
     SigurdosMapTileRequest request{};
+    uint8_t discovery_dummy = 0;
     for (;;) {
-        if (xQueueReceive(tile_request_queue, &request, portMAX_DELAY) != pdTRUE) {
-            continue;
+        // Bounded wait so discovery step requests (queued from the UI task)
+        // are drained even when no tile requests are pending.
+        if (xQueueReceive(tile_request_queue, &request,
+                          pdMS_TO_TICKS(50)) == pdTRUE) {
+            if (!tile_request_still_owned(request)) continue;
+            // Hold the shared-bus guard while the SD is touched so the
+            // display flush in loopTask drops frames instead of waiting
+            // behind a potentially hung SD transaction (#1540).
+            sigurdos_sdcard_bus_enter();
+            SigurdosMapTileCompletion completion = load_tile_off_ui(request);
+            sigurdos_sdcard_bus_exit();
+            if (completion.status == SigurdosMapTileCompletionStatus::Cancelled) {
+                if (completion.pixels) map_free(completion.pixels);
+            } else {
+                bool queued = false;
+                portENTER_CRITICAL(&tile_lifecycle_mux);
+                if (sigurdos_map_completion_owned(
+                        tile_generation.load(std::memory_order_acquire),
+                        request.generation, initialized) &&
+                    xQueueSend(tile_completion_queue, &completion, 0) == pdTRUE) {
+                    queued = true;
+                }
+                portEXIT_CRITICAL(&tile_lifecycle_mux);
+                if (!queued && completion.pixels) {
+                    map_free(completion.pixels);
+                }
+            }
         }
-        if (!tile_request_still_owned(request)) continue;
-        SigurdosMapTileCompletion completion = load_tile_off_ui(request);
-        if (completion.status == SigurdosMapTileCompletionStatus::Cancelled) {
-            if (completion.pixels) map_free(completion.pixels);
-            continue;
-        }
-        bool queued = false;
-        portENTER_CRITICAL(&tile_lifecycle_mux);
-        if (sigurdos_map_completion_owned(
-                tile_generation.load(std::memory_order_acquire),
-                request.generation, initialized) &&
-            xQueueSend(tile_completion_queue, &completion, 0) == pdTRUE) {
-            queued = true;
-        }
-        portEXIT_CRITICAL(&tile_lifecycle_mux);
-        if (!queued && completion.pixels) {
-            map_free(completion.pixels);
+        // Discovery steps do blocking SD directory I/O; they must run here
+        // (worker task) rather than in the LVGL timer on loopTask, where a
+        // slow or hung SD op would starve the UI and trip the task watchdog.
+        // The steps are additionally spaced so the shared SPI bus (display
+        // flushes + SD) is not saturated: the display flush in loopTask can
+        // only wait behind one step's worth of transactions.
+        if (discovery_request_queue &&
+            xQueueReceive(discovery_request_queue, &discovery_dummy, 0) == pdTRUE) {
+            sigurdos_sdcard_bus_enter();
+            sigurdos_map_discovery_step(SIGURDOS_MAP_DISCOVERY_ITEMS_PER_STEP,
+                                        SIGURDOS_MAP_DISCOVERY_MAX_STEP_MS);
+            sigurdos_sdcard_bus_exit();
+            vTaskDelay(pdMS_TO_TICKS(40));
         }
     }
 }
@@ -447,19 +472,25 @@ static bool ensure_tile_worker() {
     tile_completion_queue = xQueueCreate(
         SIGURDOS_MAP_TILE_COMPLETION_QUEUE_LENGTH,
         sizeof(SigurdosMapTileCompletion));
-    if (!tile_request_queue || !tile_completion_queue) {
+    discovery_request_queue = xQueueCreate(1, sizeof(uint8_t));
+    if (!tile_request_queue || !tile_completion_queue ||
+        !discovery_request_queue) {
         if (tile_request_queue) vQueueDelete(tile_request_queue);
         if (tile_completion_queue) vQueueDelete(tile_completion_queue);
+        if (discovery_request_queue) vQueueDelete(discovery_request_queue);
         tile_request_queue = nullptr;
         tile_completion_queue = nullptr;
+        discovery_request_queue = nullptr;
         return false;
     }
     if (xTaskCreate(tile_worker_task, "map-tile", 6144, nullptr, 1,
                     &tile_worker_task_handle) != pdPASS) {
         vQueueDelete(tile_request_queue);
         vQueueDelete(tile_completion_queue);
+        vQueueDelete(discovery_request_queue);
         tile_request_queue = nullptr;
         tile_completion_queue = nullptr;
+        discovery_request_queue = nullptr;
         tile_worker_task_handle = nullptr;
         return false;
     }
@@ -662,6 +693,7 @@ struct DiscoveryState {
     bool stop_after_zoom = false;
     uint32_t entries_processed = 0;
     bool used_index = false;
+    bool pending_scan = false;
 };
 
 static DiscoveryState discovery;
@@ -675,11 +707,6 @@ static void close_discovery_directories() {
         closedir(discovery.zoom_dir);
         discovery.zoom_dir = nullptr;
     }
-}
-
-static void reset_discovery_state() {
-    close_discovery_directories();
-    discovery = DiscoveryState{};
 }
 
 static void record_discovery_column() {
@@ -902,6 +929,7 @@ static void stop_at_entry_limit() {
 static bool delete_cb_registered = false;
 
 void sigurdos_map_init() {
+    MAP_DEBUG_PRINTF("[map] init t=%lu\n", (unsigned long)millis());
     if (initialized) return;
     if (!ensure_tile_worker()) return;
     advance_tile_generation();
@@ -961,7 +989,12 @@ void sigurdos_map_reparent(lv_obj_t* new_parent) {
 
 void sigurdos_map_discover_tiles() {
     advance_tile_generation();
-    reset_discovery_state();
+    discovery_generation.fetch_add(1, std::memory_order_acq_rel);
+    // Session state (DIR handles, xcache) is owned by the tile worker task:
+    // this only records the intent and bumps the generation; the worker
+    // performs the actual reset on its next step. This keeps loopTask free
+    // of SD I/O even during a quick leave/re-enter.
+    discovery.pending_scan = true;
     reset_tile_coverage();
     sigurdos::hal::boot_watchdog_progress(
         sigurdos::hal::BootStage::MapDiscovery);
@@ -969,12 +1002,52 @@ void sigurdos_map_discover_tiles() {
     cache_clock = 0;
     missing_tile_cache_init(missing_tile_cache, MISSING_TILE_CACHE_SIZE);
     discovery.result = SigurdosMapDiscoveryResult::InProgress;
-    discovery.phase = DiscoveryPhase::CheckStorage;
 }
 
 bool sigurdos_map_discovery_step(int max_items, uint32_t max_ms) {
-    if (discovery.phase == DiscoveryPhase::Idle) return false;
+    if (discovery.pending_scan) {
+        // Worker-owned session init: a new map visit requested a scan while
+        // the previous session's handles may still be open. Reset fully here
+        // (worker context) so loopTask never touches DIR handles or the
+        // xcache. The previous session was already abandoned via the
+        // discovery_generation bump in discover_tiles().
+        const bool release_xcache = discovery_xcache_release_requested;
+        discovery_xcache_release_requested = false;
+        if (release_xcache) {
+            sigurdos_map_release_owned_buffer(discovery_xcache, map_free);
+            discovery_xcache = nullptr;
+        }
+        close_discovery_directories();
+        discovery = DiscoveryState{};
+        discovery.pending_scan = false;
+        discovery.result = SigurdosMapDiscoveryResult::InProgress;
+        discovery.phase = DiscoveryPhase::CheckStorage;
+    }
+    if (discovery.phase == DiscoveryPhase::Idle) {
+        // Worker-context cleanup: cancel/deinit run on loopTask and must not
+        // touch DIR handles or free the xcache, so deferred cleanup lands
+        // here on the next worker-side step.
+        close_discovery_directories();
+        if (discovery_xcache_release_requested) {
+            discovery_xcache_release_requested = false;
+            sigurdos_map_release_owned_buffer(discovery_xcache, map_free);
+            discovery_xcache = nullptr;
+        }
+        return false;
+    }
     if (max_items <= 0 || max_ms == 0) return true;
+    const uint32_t step_generation =
+        discovery_generation.load(std::memory_order_acquire);
+    {
+        static uint32_t last_ds_log = 0;
+        const uint32_t now = millis();
+        if (now - last_ds_log >= 500) {
+            last_ds_log = now;
+            MAP_DEBUG_PRINTF("[map] ds phase=%d t=%lu\n",
+                             static_cast<int>(discovery.phase),
+                             (unsigned long)now);
+        }
+    }
 
     SigurdosMapDiscoveryBudget budget(max_items);
     const uint32_t started_at = millis();
@@ -992,6 +1065,15 @@ bool sigurdos_map_discovery_step(int max_items, uint32_t max_ms) {
              discovery.phase == DiscoveryPhase::ScanY ||
              discovery.phase == DiscoveryPhase::OpenY)) {
             stop_at_entry_limit();
+        }
+
+        // A new discovery session (next map visit / discover_tiles) bumps the
+        // generation while this step may be mid-scan. Abandon our stale dir
+        // handles and state instead of clobbering the new session.
+        if (discovery_generation.load(std::memory_order_acquire) !=
+            step_generation) {
+            close_discovery_directories();
+            return false;
         }
 
         switch (discovery.phase) {
@@ -1236,12 +1318,27 @@ bool sigurdos_map_discovery_in_progress() {
     return discovery.phase != DiscoveryPhase::Idle;
 }
 
+bool sigurdos_map_discovery_pump() {
+    if (discovery.phase == DiscoveryPhase::Idle &&
+        !discovery.pending_scan) {
+        return false;
+    }
+    if (discovery_request_queue) {
+        uint8_t dummy = 0;
+        xQueueSend(discovery_request_queue, &dummy, 0);
+    }
+    return true;
+}
+
 void sigurdos_map_cancel_discovery() {
     if (discovery.phase == DiscoveryPhase::Idle) return;
-    close_discovery_directories();
-    reset_tile_coverage();
-    discovery = DiscoveryState{};
+    // The discovery state (DIR handles, xcache) is owned by the tile worker
+    // task, so cancellation only flips the phase here; the worker performs
+    // the actual directory close on its next step. This keeps loopTask free
+    // of SD I/O even during cancellation.
+    discovery.phase = DiscoveryPhase::Idle;
     discovery.result = SigurdosMapDiscoveryResult::Cancelled;
+    reset_tile_coverage();
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Runtime);
 }
 
@@ -1251,6 +1348,10 @@ SigurdosMapDiscoveryProgress sigurdos_map_discovery_progress() {
 }
 
 void sigurdos_map_deinit() {
+    MAP_DEBUG_PRINTF("[map] deinit t=%lu gen=%lu canvas=%p\n",
+                     (unsigned long)millis(),
+                     (unsigned long)tile_generation.load(std::memory_order_acquire),
+                     (void*)map_canvas);
     SigurdosMapTileCompletion stale_completions[
         SIGURDOS_MAP_TILE_COMPLETION_QUEUE_LENGTH]{};
     std::size_t stale_count = 0;
@@ -1272,7 +1373,10 @@ void sigurdos_map_deinit() {
         if (stale_completions[i].pixels) map_free(stale_completions[i].pixels);
     }
     sigurdos_map_cancel_discovery();
-    sigurdos_map_release_owned_buffer(discovery_xcache, map_free);
+    // The discovery xcache is owned by the tile worker task; request its
+    // release there instead of freeing it from loopTask while the worker
+    // may still be scanning with it.
+    discovery_xcache_release_requested = true;
     if (!was_initialized) return;
     delete_cb_registered = false;
 
@@ -1512,6 +1616,9 @@ void sigurdos_map_render() {
 
     MAP_DEBUG_PRINTF("[map] render: zoom=%d center=%.4f,%.4f\n",
                      zoom_level, center_lat, center_lon);
+#if SIGURDOS_MAP_DIAGNOSTICS
+    const uint32_t render_t0 = millis();
+#endif
     lv_canvas_fill_bg(map_canvas, lv_color_hex(0x0f3460), LV_OPA_COVER);
 
     lv_layer_t layer;
@@ -1677,6 +1784,9 @@ void sigurdos_map_render() {
     lv_canvas_finish_layer(map_canvas, &layer);
     lv_obj_invalidate(map_canvas);
     render_own_position();
+    MAP_DEBUG_PRINTF("[map] render- d=%lums t=%lu\n",
+                     (unsigned long)(millis() - render_t0),
+                     (unsigned long)millis());
 }
 
 bool sigurdos_map_tiles_available() {

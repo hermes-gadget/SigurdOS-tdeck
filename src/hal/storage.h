@@ -28,6 +28,12 @@ bool storage_available();
 // redundant call). Requires storage_init() to have succeeded first.
 bool storage_ensure_mounted();
 
+// Absorb the first-write SPIFFS GC cost (10-90s on this encrypted
+// partition) in a background task shortly after boot, so the first
+// runtime commit — channel store, contacts — stays fast. Safe to call
+// once after storage_init() succeeds; never blocks the caller.
+void storage_warm_after_mount();
+
 // Reset internal state (for unit tests only).
 // Resets the init-called and availability flags so tests can
 // start from a clean state.
