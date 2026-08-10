@@ -835,11 +835,15 @@ def run_radio(
             for attempt in range(1, 4):
                 response = connection.send_command(
                     f"addchannel {channel}",
-                    timeout_s=7,
+                    timeout_s=20,
                     expected=("addchannel",),
-                    # The response marker is frequently delayed behind the
-                    # post-boot serial flood; tolerate a longer idle gap.
-                    silence_grace_s=2.0,
+                    # The first channel-store commit after a reboot can block
+                    # in a SPIFFS GC pass (~9.5s of quiet, measured) and the
+                    # acknowledgement can be swallowed by the post-boot serial
+                    # flood; use a grace longer than the quiet block and retry
+                    # as a backstop. A duplicate entry from a lost first
+                    # response is cleaned up by radio.cleanup.
+                    silence_grace_s=12.0,
                 )
                 last_output = response.output
                 if "addchannel OK" in last_output:
