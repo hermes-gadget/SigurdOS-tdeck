@@ -1616,7 +1616,9 @@ void sigurdos_map_render() {
 
     MAP_DEBUG_PRINTF("[map] render: zoom=%d center=%.4f,%.4f\n",
                      zoom_level, center_lat, center_lon);
+#if SIGURDOS_MAP_DIAGNOSTICS
     const uint32_t render_t0 = millis();
+#endif
     lv_canvas_fill_bg(map_canvas, lv_color_hex(0x0f3460), LV_OPA_COVER);
 
     lv_layer_t layer;
