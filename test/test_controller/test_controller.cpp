@@ -36,7 +36,7 @@ TEST(TestControllerCommandTest, EveryDispatchedCommandAndAliasIsRecognized) {
         "tbdiag", "gpsdiag", "contactstats", "ble status", "debug level", "emoji",
         "emoji-ac a", "capture", "acmd node", "loginstat node", "tree", "widgets",
         "telemetry on", "query crash", "crash report", "drift", "scrolllist 1",
-        "tap 1 2", "backlight on", "fetchmsgs node 0", "getrf", "setrf args",
+        "tap 1 2", "backlight on", "buildinfo", "fetchmsgs node 0", "getrf", "setrf args",
         "reboot", "restart", "factoryreset", "wipe", "advert"};
     for (const char* line : commands) {
         SigurdOSTestCommandLine parsed{};

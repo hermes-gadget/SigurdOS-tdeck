@@ -214,6 +214,12 @@ bool setSystemTime(uint32_t epoch_seconds,
                    TimeSource source = TimeSource::Manual);
 TimeSyncStatus getTimeSyncStatus();
 
+// True once the mesh radio has reached the fully-initialized Ready state
+// (remote-test builds without a radio stay ClockOnly and report false).
+// Exposed for diagnostics (test controller status) so hardware automation
+// can wait on real mesh readiness instead of a fixed boot timer.
+bool meshIsReady();
+
 void getCurrentLocalDateTime(int* year, int* month, int* day, int* hour, int* minute);
 uint32_t makeEpoch(int year, int month, int day, int hour, int minute);
 

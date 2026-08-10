@@ -1878,6 +1878,10 @@ TimeSyncStatus getTimeSyncStatus() {
     return time_sync_tracker.status(getCurrentTime());
 }
 
+bool meshIsReady() {
+    return init_state == sigurdos::mesh::detail::MeshInitState::Ready;
+}
+
 void getCurrentLocalDateTime(int* year, int* month, int* day, int* hour, int* minute) {
     if (!sigurdos::mesh::detail::meshInitUsable(init_state) ||
         !year || !month || !day || !hour || !minute) {
