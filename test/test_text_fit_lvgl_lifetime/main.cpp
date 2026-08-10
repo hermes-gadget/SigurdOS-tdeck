@@ -59,14 +59,25 @@ private:
     int label_count_ = 0;
 };
 
-TEST_F(TextFitLvglLifetimeTest, RepeatedDrawsCoalesceIntoOneDeferredFit)
+TEST_F(TextFitLvglLifetimeTest, DrawRefitsOnlyWhenInputsChange)
 {
     lv_obj_t* label = create_label();
     ASSERT_NE(label, nullptr);
-    prepare_label(label, "coalesced");
+    prepare_label(label, "unchanged");
     const lv_mock_event_slot_t draw = latest_event(label, LV_EVENT_DRAW_MAIN);
     ASSERT_NE(draw.cb, nullptr);
 
+    lvgl_mock::dispatch(draw, label);
+    lvgl_mock::dispatch(draw, label);
+    lvgl_mock::dispatch(draw, label);
+
+    EXPECT_EQ(lvgl_mock::async_call_count, 0);
+    EXPECT_EQ(lvgl_mock::async_pending_count(), 0);
+    EXPECT_EQ(lvgl_mock::invalid_object_access_count, 0);
+
+    // Exercise a direct LVGL update such as lv_label_set_text_fmt(), which
+    // cannot be routed through the text-fit wrapper.
+    lv_label_set_text(label, "after");
     lvgl_mock::dispatch(draw, label);
     lvgl_mock::dispatch(draw, label);
     lvgl_mock::dispatch(draw, label);
@@ -75,6 +86,24 @@ TEST_F(TextFitLvglLifetimeTest, RepeatedDrawsCoalesceIntoOneDeferredFit)
     EXPECT_EQ(lvgl_mock::async_pending_count(), 1);
     lvgl_mock::drain_async();
     EXPECT_EQ(lvgl_mock::async_execute_count, 1);
+
+    lvgl_mock::dispatch(draw, label);
+    EXPECT_EQ(lvgl_mock::async_call_count, 1);
+    EXPECT_EQ(lvgl_mock::async_pending_count(), 0);
+    EXPECT_EQ(lvgl_mock::invalid_object_access_count, 0);
+
+    lv_obj_set_width(label, 60);
+    lvgl_mock::dispatch(draw, label);
+    lvgl_mock::dispatch(draw, label);
+
+    EXPECT_EQ(lvgl_mock::async_call_count, 2);
+    EXPECT_EQ(lvgl_mock::async_pending_count(), 1);
+    lvgl_mock::drain_async();
+    EXPECT_EQ(lvgl_mock::async_execute_count, 2);
+
+    lvgl_mock::dispatch(draw, label);
+    EXPECT_EQ(lvgl_mock::async_call_count, 2);
+    EXPECT_EQ(lvgl_mock::async_pending_count(), 0);
     EXPECT_EQ(lvgl_mock::invalid_object_access_count, 0);
 }
 
@@ -85,6 +114,7 @@ TEST_F(TextFitLvglLifetimeTest, DeleteCancelsQueuedFitBeforeAsyncDrain)
     prepare_label(label, "deleted");
     const lv_mock_event_slot_t draw = latest_event(label, LV_EVENT_DRAW_MAIN);
     ASSERT_NE(draw.cb, nullptr);
+    lv_label_set_text(label, "deleted while pending");
     lvgl_mock::dispatch(draw, label);
     ASSERT_EQ(lvgl_mock::async_pending_count(), 1);
 
@@ -105,6 +135,7 @@ TEST_F(TextFitLvglLifetimeTest, RetiredGenerationRejectsStaleWorkAfterPointerReu
     const lv_mock_event_slot_t old_draw =
         latest_event(old_label, LV_EVENT_DRAW_MAIN);
     ASSERT_NE(old_draw.cb, nullptr);
+    lv_label_set_text(old_label, "old pending");
     lvgl_mock::dispatch(old_draw, old_label);
     ASSERT_EQ(lvgl_mock::async_pending_count(), 1);
 
@@ -120,6 +151,7 @@ TEST_F(TextFitLvglLifetimeTest, RetiredGenerationRejectsStaleWorkAfterPointerReu
     const lv_mock_event_slot_t new_draw =
         latest_event(reused_label, LV_EVENT_DRAW_MAIN);
     ASSERT_NE(new_draw.cb, nullptr);
+    lv_label_set_text(reused_label, "new pending");
     lvgl_mock::dispatch(new_draw, reused_label);
     ASSERT_EQ(lvgl_mock::async_pending_count(), 2);
 

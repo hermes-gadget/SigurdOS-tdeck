@@ -258,6 +258,9 @@ static bool backendEnsure(void*)
 static bool backendExists(void*, const char* path)
 {
 #if defined(ESP32_PLATFORM)
+    SdSharedBusGuard guard;
+#endif
+#if defined(ESP32_PLATFORM)
     return sigurdos_sdcard_exists(path);
 #else
     return nativeExists(path);
@@ -266,6 +269,9 @@ static bool backendExists(void*, const char* path)
 
 static size_t backendSize(void*, const char* path)
 {
+#if defined(ESP32_PLATFORM)
+    SdSharedBusGuard guard;
+#endif
 #if defined(ESP32_PLATFORM)
     return static_cast<size_t>(sigurdos_sdcard_file_size(path));
 #else
@@ -277,6 +283,9 @@ static bool backendReadAt(void*, const char* path, size_t offset,
                           uint8_t* data, size_t len)
 {
 #if defined(ESP32_PLATFORM)
+    SdSharedBusGuard guard;
+#endif
+#if defined(ESP32_PLATFORM)
     return sigurdos_sdcard_read_at(path, offset, data, len);
 #else
     return nativeReadAt(path, offset, data, len);
@@ -287,6 +296,9 @@ static bool backendWriteAt(void*, const char* path, size_t offset,
                            const uint8_t* data, size_t len)
 {
 #if defined(ESP32_PLATFORM)
+    SdSharedBusGuard guard;
+#endif
+#if defined(ESP32_PLATFORM)
     return sigurdos_sdcard_write_at(path, offset, data, len);
 #else
     return nativeWriteAt(path, offset, data, len);
@@ -295,6 +307,9 @@ static bool backendWriteAt(void*, const char* path, size_t offset,
 
 static bool backendAppend(void*, const char* path, const uint8_t* data, size_t len)
 {
+#if defined(ESP32_PLATFORM)
+    SdSharedBusGuard guard;
+#endif
 #if defined(ESP32_PLATFORM)
     return sigurdos_sdcard_append(path, data, len);
 #else
@@ -308,6 +323,9 @@ static bool backendRecover(void*, const char* path,
 
 static bool backendReplace(void*, const char* path, const uint8_t* data, size_t len)
 {
+#if defined(ESP32_PLATFORM)
+    SdSharedBusGuard guard;
+#endif
     if (!validateStoreBytes(data, len, nullptr)) return false;
 #if defined(ESP32_PLATFORM)
     if (!backendRecover(nullptr, path, validateStoreBytes, nullptr)) return false;
@@ -321,6 +339,9 @@ static bool backendRecover(void*, const char* path,
                            detail::MessageStoreValidateBytesFn validate,
                            void* validate_ctx)
 {
+#if defined(ESP32_PLATFORM)
+    SdSharedBusGuard guard;
+#endif
 #if defined(ESP32_PLATFORM)
     if (!sigurdos_sdcard_mounted() || !path || !validate) return false;
     char temp_path[256];
@@ -355,6 +376,9 @@ static bool backendRecover(void*, const char* path,
 static bool backendRemove(void*, const char* path)
 {
 #if defined(ESP32_PLATFORM)
+    SdSharedBusGuard guard;
+#endif
+#if defined(ESP32_PLATFORM)
     return sigurdos_sdcard_remove_path(path);
 #else
     return nativeRemove(path);
@@ -363,6 +387,9 @@ static bool backendRemove(void*, const char* path)
 
 static bool backendRename(void*, const char* from, const char* to)
 {
+#if defined(ESP32_PLATFORM)
+    SdSharedBusGuard guard;
+#endif
 #if defined(ESP32_PLATFORM)
     return sigurdos_sdcard_rename_path(from, to);
 #else

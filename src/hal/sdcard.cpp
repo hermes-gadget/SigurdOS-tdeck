@@ -24,6 +24,8 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
@@ -454,6 +456,53 @@ bool sigurdos_sdcard_retry()
 bool sigurdos_sdcard_mounted()
 {
     return mounted;
+}
+
+// Shared-bus guard for the display flush path (#1540).
+//
+// The SD card shares SPI2_HOST with the display. A hung SD transaction
+// (card stops responding mid data-phase) holds the SPI bus lock without
+// any timeout, so a display flush that reaches the bus would block
+// forever and trip the loopTask watchdog.
+//
+// The bus mutex serializes SD users (map tile worker, message store) with
+// the display flush. Writers hold it across their transactions; the flush
+// takes it with a timeout and drops the frame on timeout, so loopTask can
+// never block on the bus.
+static SemaphoreHandle_t s_sd_bus_mutex = nullptr;
+
+static SemaphoreHandle_t sd_bus_mutex()
+{
+    if (!s_sd_bus_mutex) {
+        // Recursive so nested SD sections (e.g. backendReplace calling
+        // backendRecover) do not self-deadlock.
+        s_sd_bus_mutex = xSemaphoreCreateRecursiveMutex();
+    }
+    return s_sd_bus_mutex;
+}
+
+void sigurdos_sdcard_bus_enter()
+{
+    SemaphoreHandle_t m = sd_bus_mutex();
+    if (m) xSemaphoreTakeRecursive(m, portMAX_DELAY);
+}
+
+void sigurdos_sdcard_bus_exit()
+{
+    SemaphoreHandle_t m = s_sd_bus_mutex;
+    if (m) xSemaphoreGiveRecursive(m);
+}
+
+bool sigurdos_sdcard_bus_try_lock(uint32_t timeout_ms)
+{
+    SemaphoreHandle_t m = sd_bus_mutex();
+    if (!m) return false;
+    return xSemaphoreTakeRecursive(m, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+void sigurdos_sdcard_bus_unlock()
+{
+    sigurdos_sdcard_bus_exit();
 }
 
 SigurdosSdMountDiagnostic sigurdos_sdcard_diagnostics()

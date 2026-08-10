@@ -468,12 +468,21 @@ void sigurdos_map_discover_tiles();
 // Advance discovery within both an operation count and a wall-clock budget.
 // Returns true while more work remains. Discovery can be cancelled safely
 // when the owning screen is deleted.
+//
+// The step performs blocking SD directory I/O, so it must only be called
+// from the tile worker task (see sigurdos_map_discovery_pump below).
 bool sigurdos_map_discovery_step(
     int max_items = SIGURDOS_MAP_DISCOVERY_ITEMS_PER_STEP,
     std::uint32_t max_ms = SIGURDOS_MAP_DISCOVERY_MAX_STEP_MS);
 bool sigurdos_map_discovery_in_progress();
 void sigurdos_map_cancel_discovery();
 SigurdosMapDiscoveryProgress sigurdos_map_discovery_progress();
+
+// UI-task (loopTask) entry point: request the tile worker to run one
+// discovery step. Never performs SD I/O itself — a slow or hung SD op
+// therefore cannot stall LVGL or trip the task watchdog. Returns true
+// while the discovery is still running (same contract as step()).
+bool sigurdos_map_discovery_pump();
 
 // Set the map viewport center (lat/lon) and zoom level
 void sigurdos_map_set_view(double lat, double lon, int zoom);

@@ -14,6 +14,34 @@ namespace sigurdos {
 static bool s_storage_available = false;
 static bool s_storage_init_called = false;
 static bool s_storage_mounted = false;
+static bool s_storage_warm_started = false;
+
+// First-write SPIFFS GC absorption: the first write after mount can trigger
+// a GC pass that blocks the writer for 10-90s on this encrypted partition
+// (measured 9.5-90s for the first channel-store commit after boot). Running
+// that write in a background task after the boot sequence keeps loopTask
+// (and its 10s runtime watchdog) free of the stall, so runtime commits —
+// channel store, contacts — stay fast.
+#if defined(ESP32_PLATFORM)
+static void storage_warm_task(void*) {
+    // Boot's own SPIFFS readers (settings/chats/mesh) finish around t+5-8s;
+    // wait for them so the warm write cannot stall boot-time reads.
+    vTaskDelay(pdMS_TO_TICKS(12000));
+    if (!s_storage_mounted) {
+        vTaskDelete(nullptr);
+        return;
+    }
+    for (int i = 0; i < 3; ++i) {
+        File f = SPIFFS.open("/.warm", FILE_WRITE);
+        if (!f) break;
+        const uint8_t byte = static_cast<uint8_t>('w' + i);
+        f.write(&byte, 1);
+        f.close();
+    }
+    SPIFFS.remove("/.warm");
+    vTaskDelete(nullptr);
+}
+#endif
 
 enum class PartitionEraseState {
     Erased,
@@ -127,11 +155,22 @@ bool storage_ensure_mounted()
     return true;
 }
 
+void storage_warm_after_mount()
+{
+    if (!s_storage_mounted || s_storage_warm_started) return;
+    s_storage_warm_started = true;
+#if defined(ESP32_PLATFORM)
+    // 4096-byte stack; the warm does only a tiny bounded file op.
+    xTaskCreate(storage_warm_task, "storage-warm", 4096, nullptr, 1, nullptr);
+#endif
+}
+
 void storage_reset()
 {
     s_storage_init_called = false;
     s_storage_available = false;
     s_storage_mounted = false;
+    s_storage_warm_started = false;
 }
 
 } // namespace sigurdos
