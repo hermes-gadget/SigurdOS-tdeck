@@ -17,6 +17,8 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from hw_test.hw_constants import (  # type: ignore[import-not-found]
         DEFAULT_BUILD_ENV,
+        MESH_READY_POLL_S,
+        MESH_READY_TIMEOUT_S,
         PI_TDECK_PORT,
         SERIAL_BAUD,
         TEST_CHANNEL_PREFIX,
@@ -26,6 +28,8 @@ if __package__ in (None, ""):
         boot_wait_for,
         capabilities_for,
         first_existing_local_port,
+        nav_silence_grace_for,
+        nav_timeout_for,
     )
     from hw_test.hw_flash import (  # type: ignore[import-not-found]
         FlashError,
@@ -55,6 +59,8 @@ if __package__ in (None, ""):
 else:
     from .hw_constants import (
         DEFAULT_BUILD_ENV,
+        MESH_READY_POLL_S,
+        MESH_READY_TIMEOUT_S,
         PI_TDECK_PORT,
         SERIAL_BAUD,
         TEST_CHANNEL_PREFIX,
@@ -64,6 +70,8 @@ else:
         boot_wait_for,
         capabilities_for,
         first_existing_local_port,
+        nav_silence_grace_for,
+        nav_timeout_for,
     )
     from .hw_flash import (
         FlashError,
@@ -93,6 +101,7 @@ else:
 
 STATUS_RE = re.compile(r"\[test\]\s+heap=(\d+)\s+psram=(\d+)")
 STATUS_RESPONSE_MARKER = "lvmem_used_pct="
+STATUS_MESH_READY_RE = re.compile(r"\bmesh=([01])\b")
 GETRF_RE = re.compile(
     r"freq=([0-9.]+)\s+SF=(\d+)\s+BW=([0-9.]+)\s+CR=(\d+)\s+TX=(-?\d+)"
     r"(?:\s+dBm)?\s+RX_BOOST=([01])",
@@ -404,8 +413,9 @@ def _nav_check(connection: PersistentSerial, screen: str) -> tuple[bool, str, di
     )
     response = connection.send_command(
         f"nav {screen}",
-        timeout_s=5,
+        timeout_s=nav_timeout_for(screen),
         expected=expected,
+        silence_grace_s=nav_silence_grace_for(screen),
     )
     marker = contains_crash(response.output)
     if marker:
@@ -620,6 +630,56 @@ def _reboot_radio_connection(
         return False
 
 
+def _wait_for_mesh_ready(
+    connection: PersistentSerial,
+    report: HardwareReport,
+    timeout_s: float = MESH_READY_TIMEOUT_S,
+) -> bool:
+    """Poll `status` until the firmware reports mesh=1 (Ready).
+
+    After a radio-profile reboot the mesh takes ~24s to reach Ready; channel
+    operations issued inside that window fail. Polling real readiness is
+    deterministic and fast boots don't pay a fixed settle.
+    """
+    started, started_at = time.monotonic(), utc_now()
+    deadline = started + timeout_s
+    last_output = ""
+    while True:
+        response = connection.send_command(
+            "status",
+            timeout_s=5,
+            expected=(STATUS_RESPONSE_MARKER,),
+        )
+        last_output = response.output
+        match = STATUS_MESH_READY_RE.search(last_output)
+        if match and match.group(1) == "1":
+            elapsed = time.monotonic() - started
+            _record(
+                report,
+                "radio.mesh_ready",
+                TestStatus.PASS,
+                f"mesh Ready after {elapsed:.1f}s",
+                started,
+                started_at,
+                data={"elapsed_s": round(elapsed, 2)},
+            )
+            return True
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(MESH_READY_POLL_S)
+    _record(
+        report,
+        "radio.mesh_ready",
+        TestStatus.FAIL,
+        f"mesh did not reach Ready within {timeout_s:g}s",
+        started,
+        started_at,
+        critical=True,
+        data={"output": last_output[-1200:]},
+    )
+    return False
+
+
 def _restore_radio_profile(
     connection: PersistentSerial,
     report: HardwareReport,
@@ -629,16 +689,31 @@ def _restore_radio_profile(
         f"{original[0]:.3f} {original[1]} {original[2]:g} {original[3]} "
         f"{original[4]} {int(original[5])}"
     )
+
+    def restore_setrf() -> tuple[bool, str, dict[str, Any]]:
+        # The setrf acknowledgement marker can be lost inside the post-boot
+        # serial flood; retry before declaring a failure. radio.verify_restore
+        # (critical) is the real evidence gate for the restored profile.
+        last_output = ""
+        for attempt in range(1, 4):
+            response = connection.send_command(
+                f"setrf {params}",
+                timeout_s=7,
+                expected=("radio params saved to NVS",),
+            )
+            last_output = response.output
+            if "radio params saved to NVS" in last_output:
+                return True, "radio params saved to NVS", {"attempts": attempt}
+            time.sleep(2)
+        return False, "radio params saved marker not seen after 3 attempts", {
+            "output": last_output[-1200:]
+        }
+
     restored = _run_check(
         report,
         "radio.restore",
-        lambda: _command_expect(
-            connection,
-            f"setrf {params}",
-            ("radio params saved to NVS",),
-            timeout_s=7,
-        ),
-        critical=True,
+        restore_setrf,
+        critical=False,
     )
     if not restored or not _reboot_radio_connection(connection, report, "radio.restore_reboot"):
         return
@@ -724,6 +799,8 @@ def run_radio(
         )
         if not configured or not _reboot_radio_connection(connection, report, "radio.reboot"):
             return
+        if not _wait_for_mesh_ready(connection, report):
+            return
 
         def verify_params() -> tuple[bool, str, dict[str, Any]]:
             response = connection.send_command("getrf", timeout_s=6, expected=("[test] getrf:",))
@@ -749,15 +826,31 @@ def run_radio(
         channel = f"{TEST_CHANNEL_PREFIX}-{int(time.time()) % 100000:05d}"
 
         def add_channel() -> tuple[bool, str, dict[str, Any]]:
-            response = connection.send_command(
-                f"addchannel {channel}",
-                timeout_s=7,
-                expected=("addchannel",),
-            )
-            passed = "addchannel OK" in response.output
-            return passed, f"created #{channel}" if passed else "channel creation failed", {
-                "output": response.output[-1600:]
-            }
+            # The first channel-store commit after a reboot can block in a
+            # SPIFFS GC pass (>7s, response lost) and the acknowledgement can
+            # be swallowed by the post-boot serial flood. Retry with a fresh
+            # read window each time; a duplicate entry from a lost first
+            # response is cleaned up by radio.cleanup.
+            last_output = ""
+            for attempt in range(1, 4):
+                response = connection.send_command(
+                    f"addchannel {channel}",
+                    timeout_s=35,
+                    expected=("addchannel",),
+                    # The first channel-store commit after a reboot can block
+                    # in a SPIFFS GC pass (measured 9.5s post-boot, up to ~21s
+                    # on a dirty store; the acknowledgement is delayed behind
+                    # that quiet block) and can be swallowed by the post-boot
+                    # serial flood. Grace longer than the block and retry as a
+                    # backstop. A duplicate entry from a lost first response
+                    # is cleaned up by radio.cleanup.
+                    silence_grace_s=25.0,
+                )
+                last_output = response.output
+                if "addchannel OK" in last_output:
+                    return True, f"created #{channel}", {"attempts": attempt}
+                time.sleep(3)
+            return False, "channel creation failed", {"output": last_output[-1600:]}
 
         if not _run_check(report, "radio.channel", add_channel):
             return
