@@ -222,9 +222,13 @@ warning gate parses only compiler warnings whose paths start with `src/`;
 third-party warnings do not spend this budget. When a warning is fixed, reduce
 `ci/first_party_warnings.json` in the same PR so the debt cannot return.
 
-## A4 — 12h soak evidence
+## A4 — 12h soak evidence (superseded partial capture)
 
-> ⚠️ **INCOMPLETE WINDOW** — Soak still running at report time (21:01 UTC). Last sample 20:50 UTC. Target window end 21:49 UTC not yet reached. Re-run this check after 21:50 UTC for final PASS/FAIL verdict.
+> ⚠️ **SUPERSEDED — NOT A PASS.** This appendix records a partial 11.03-hour
+> window retained for historical context. It is superseded by the owner-signed
+> operational soak status in [`ROADMAP.md`](ROADMAP.md#14-how-to-ship--phase-a-reliability-p1-do-first),
+> but no completed release-grade 12-hour PASS is recorded here. Do not use this
+> appendix as completed release evidence.
 
 | Field | Value |
 |-------|-------|
@@ -245,4 +249,5 @@ third-party warnings do not spend this budget. When a warning is fixed, reduce
 
 **Anomalies:** None. All 42 samples returned `ok=True`. No crashes, no reboots, no dead samples. Battery consistently 100% when reported. Stat bytes stable (range 212 B) from sample 7 onward — initial low values (samples 1–5) are normal boot/init warmup. Heap/PSRAM breakdown not available in soak-watch format (stats field is a count, not memory detail).
 
-**WARNING:** Window is 11.03 h / 12 h. Last sample (20:50) is 11 min before report time — next expected ~21:06 UTC. Three more samples expected (~21:06, ~21:22, ~21:38) before window closes at 21:49. **Not a PASS yet — partial evidence only.**
+**Status:** Window is 11.03 h / 12 h. Last sample (20:50) is 11 min before
+report time. The capture is superseded partial evidence and is **not a PASS**.

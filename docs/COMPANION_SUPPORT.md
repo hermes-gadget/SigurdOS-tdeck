@@ -6,7 +6,7 @@ signing, and configuration. Recognition of a command identifier does not imply
 that its operation is supported.
 
 This matrix describes the pinned MeshCore protocol at submodule commit
-`a75f24ecc98889e2beb4f702dc89e737aa82739e`. Its numeric companion
+`c5787ee46124d540944ea238ff443f8d87ca0899`. Its numeric companion
 command/response/PUSH/error contract also matches reviewed public-upstream
 commit `a3a1aa5e3be34b42d8ac8c2cc244d30af6cdd71e`; the reproducible verification
 procedure is in [`RELEASE_EVIDENCE.md`](RELEASE_EVIDENCE.md#companion-interop-and-golden-frames).
