@@ -17,18 +17,21 @@ from pathlib import Path
 
 EXPECTED_PACKAGE_VERSION = "3.20017.241212+sha.dcc1105b"
 EXPECTED_HASHES = {
-    "Parsing.cpp": "7485c16824cfe52c23e205f1d35c4cf1c4c1eb59c4dbb5952bbaee0578f2caea",
+    "Parsing.cpp": "b0f7168d8becfd8a7b437f0e6f7025952e878bc6c3b7c66b69d5105aece566ab",
     "WebServer.cpp": "d026efc5ff120059ec405a85a5629f0bd1c5c4e56850aff24ab96718e2b5194a",
 }
 REQUIRED_BLOCKS = {
     "Parsing.cpp": """bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
-  (void) len;
   log_v("Parse Form: Boundary: %s Length: %d", boundary.c_str(), len);
-  if (boundary.length() > 70) {
-    log_e("Multipart boundary too long: %d", boundary.length());
+  if (boundary.length() == 0 || boundary.length() > 70 || len == 0 ||
+      len > WEBSERVER_MAX_MULTIPART_BODY_SIZE) {
+    log_e("Invalid multipart framing: boundary=%d length=%u",
+          boundary.length(), static_cast<unsigned>(len));
+    client.stop();
     return false;
   }
-  String line;
+
+  activeMultipartSocket.store(client.fd(), std::memory_order_release);
 """,
     "WebServer.cpp": """void WebServer::sendHeader(const String& name, const String& value, bool first) {
   String safeName = name;
