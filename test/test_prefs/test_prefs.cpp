@@ -561,4 +561,34 @@ TEST(FactoryResetPolicyTest, InterlockWriteFailureDoesNotCommit) {
     EXPECT_EQ(writer.commit_calls, 0);
 }
 
+TEST(FactoryResetMarkerTest, MarkerSurvivesStageAdvanceAcrossRestart)
+{
+    using namespace sigurdos::hal::factory_reset;
+    ASSERT_TRUE(reset_marker_clear());
+    EXPECT_EQ(reset_marker_read(), ResetMarkerStatus::Absent);
+
+    ASSERT_TRUE(reset_marker_write(ResetMarkerStage::Armed));
+    ResetMarkerStage stage = ResetMarkerStage::Armed;
+    EXPECT_EQ(reset_marker_read(&stage), ResetMarkerStatus::Pending);
+    EXPECT_EQ(stage, ResetMarkerStage::Armed);
+
+    // A process restart loses RAM but not this mock's NVS-backed marker.
+    ASSERT_TRUE(reset_marker_write(ResetMarkerStage::Nvs));
+    stage = ResetMarkerStage::Armed;
+    EXPECT_EQ(reset_marker_read(&stage), ResetMarkerStatus::Pending);
+    EXPECT_EQ(stage, ResetMarkerStage::Nvs);
+
+    ASSERT_TRUE(reset_marker_write(ResetMarkerStage::Spiffs));
+    stage = ResetMarkerStage::Armed;
+    EXPECT_EQ(reset_marker_read(&stage), ResetMarkerStatus::Pending);
+    EXPECT_EQ(stage, ResetMarkerStage::Spiffs);
+}
+
+TEST(FactoryResetMarkerTest, AbsentMarkerAllowsNormalBoot)
+{
+    using namespace sigurdos::hal::factory_reset;
+    ASSERT_TRUE(reset_marker_clear());
+    EXPECT_EQ(reset_marker_read(), ResetMarkerStatus::Absent);
+}
+
 } // namespace

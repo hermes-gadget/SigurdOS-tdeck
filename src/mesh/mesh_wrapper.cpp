@@ -2215,7 +2215,11 @@ void shutdown(uint32_t wake_secs)
         });
 }
 
-static bool prepareCompanionTransportsForFactoryReset(void*)
+struct FactoryResetPreflightContext {
+    bool completed = false;
+};
+
+static bool prepareCompanionTransportsForFactoryReset(void* raw)
 {
     if (!sigurdos::mesh::companionAdapterPrepareFactoryReset()) {
         Serial.println("[mesh] factory reset failed: companion BLE quiesce failed");
@@ -2233,6 +2237,9 @@ static bool prepareCompanionTransportsForFactoryReset(void*)
                            "quiesce failed");
             return false;
         }
+    }
+    if (raw) {
+        static_cast<FactoryResetPreflightContext*>(raw)->completed = true;
     }
     return true;
 }
@@ -2254,6 +2261,21 @@ public:
 };
 #endif
 
+static bool factoryResetTerminalFailure(const char* reason)
+{
+    Serial.printf("[mesh] factory reset terminal failure: %s\n",
+                  reason ? reason : "unknown");
+#if defined(ESP32_PLATFORM)
+    esp_task_wdt_reset();
+    ESP.restart();
+    // Preserve the no-return invariant even if the platform restart call
+    // unexpectedly returns. The marker remains set for the next boot.
+    while (true) delay(1000);
+#else
+    return false;
+#endif
+}
+
 bool factoryReset()
 {
     // The reset is terminal (reboots on success), but loopTask is the sole
@@ -2267,9 +2289,22 @@ bool factoryReset()
     FactoryResetWatchdogGuard watchdog_guard;
 #endif
 
-    // Commit the safe BLE interlock before any destructive operation. If this
-    // fails, do not erase anything and do not claim that reset succeeded.
-    if (!sigurdos::prefs_arm_factory_reset()) {
+    sigurdos::hal::factory_reset::ResetMarkerStage reset_stage =
+        sigurdos::hal::factory_reset::ResetMarkerStage::Armed;
+    const sigurdos::hal::factory_reset::ResetMarkerStatus marker_status =
+        sigurdos::hal::factory_reset::reset_marker_read(&reset_stage);
+    if (marker_status ==
+        sigurdos::hal::factory_reset::ResetMarkerStatus::Invalid) {
+        return factoryResetTerminalFailure("reset marker is invalid");
+    }
+
+    // Commit the safe BLE interlock and the first transaction stage before any
+    // destructive operation. A pending marker means this is a boot-time
+    // resume; completed stages are skipped below so a missing SD card cannot
+    // block recovery of the NVS/SPIFFS portion.
+    const bool resuming = marker_status ==
+        sigurdos::hal::factory_reset::ResetMarkerStatus::Pending;
+    if (!resuming && !sigurdos::prefs_arm_factory_reset()) {
         Serial.println("[mesh] factory reset failed: could not arm BLE interlock");
         return false;
     }
@@ -2277,78 +2312,114 @@ bool factoryReset()
     esp_task_wdt_reset();
 #endif
 
-    // Quiesce every enabled companion transport before touching any reset
-    // storage. The SD reset invokes this callback before deselecting or
-    // deleting its backend, and the NVS/SPIFFS sequence below follows it.
-    if (!sigurdos::mesh::sdMessageStoreReset(
-            prepareCompanionTransportsForFactoryReset, nullptr)) {
-        Serial.println("[mesh] factory reset aborted: companion or SD history "
-                       "quiesce failed");
-        return false;
-    }
+    if (reset_stage == sigurdos::hal::factory_reset::ResetMarkerStage::Armed) {
+        // Quiesce every enabled companion transport before touching the SD
+        // history. The callback runs before backend deselection/deletion.
+        FactoryResetPreflightContext preflight;
+        if (!sigurdos::mesh::sdMessageStoreReset(
+                prepareCompanionTransportsForFactoryReset, &preflight)) {
+            if (!preflight.completed && !resuming) {
+                if (!sigurdos::hal::factory_reset::reset_marker_clear()) {
+                    return factoryResetTerminalFailure(
+                        "could not clear marker after preflight failure");
+                }
+                Serial.println("[mesh] factory reset aborted: companion quiesce failed");
+                return false;
+            }
+            return factoryResetTerminalFailure(
+                "companion or SD history quiesce failed");
+        }
 #if defined(ESP32_PLATFORM)
-    esp_task_wdt_reset();
+        esp_task_wdt_reset();
 #endif
 
-    // Save identity in case we need it for rollback, then wipe everything
-    if (g_mesh) saveIdentity(g_mesh->self_id);
-    saveChannels();
-    saveContacts();
+        // Verify the pre-reset snapshots. Once SD deletion has completed, any
+        // failure is terminal so the mixed state cannot return to the app.
+        bool saved = true;
+        if (g_mesh) saved = saveIdentity(g_mesh->self_id) && saved;
+        saved = saveChannels() && saved;
+        saved = saveContacts() && saved;
+        if (!saved) {
+            return factoryResetTerminalFailure(
+                "could not save reset rollback snapshot");
+        }
 #if defined(ESP32_PLATFORM)
-    esp_task_wdt_reset();
+        esp_task_wdt_reset();
 #endif
+    }
 
     // Close SPIFFS before reformatting. The warm task is allowed to run well
-    // after boot, so it must leave the filesystem before SPIFFS.end().
+    // after boot, so it must leave the filesystem before SPIFFS.end(). Any
+    // failure here follows a completed destructive stage and is terminal.
     if (!sigurdos::storage_stop_warm()) {
-        Serial.println("[mesh] factory reset aborted: storage warm task did not stop");
-        return false;
+        return factoryResetTerminalFailure(
+            "storage warm task did not stop before format");
     }
     SPIFFS.end();
 
     const auto apply_nvs_target = [](const hal::factory_reset::NvsTarget& target,
                                      void*) -> bool {
+        bool committed = false;
         if (target.action == hal::factory_reset::NvsAction::ReplaceWithSafePrefs) {
-            return sigurdos::prefs_commit_factory_reset();
+            committed = sigurdos::prefs_commit_factory_reset();
+        } else {
+            Preferences nvs;
+            if (!nvs.begin(target.name, false)) {
+                Serial.printf("[mesh] factory reset failed: could not open NVS namespace %s\n",
+                              target.name);
+                return false;
+            }
+            committed = nvs.clear();
+            nvs.end();
+#if defined(ESP32_PLATFORM)
+            esp_task_wdt_reset();
+#endif
+            if (!committed) {
+                Serial.printf("[mesh] factory reset failed: could not clear NVS namespace %s\n",
+                              target.name);
+            }
         }
+        if (!committed) return false;
 
-        Preferences nvs;
-        if (!nvs.begin(target.name, false)) {
-            Serial.printf("[mesh] factory reset failed: could not open NVS namespace %s\n",
-                          target.name);
+        // The primary prefs namespace is the final NVS target. Publish the
+        // next stage only after its safe defaults and transport prefs commit.
+        if (target.action == hal::factory_reset::NvsAction::ReplaceWithSafePrefs &&
+            !hal::factory_reset::reset_marker_write(
+                hal::factory_reset::ResetMarkerStage::Spiffs)) {
+            Serial.println("[mesh] factory reset failed: could not advance format marker");
             return false;
         }
-        const bool cleared = nvs.clear();
-        nvs.end();
-#if defined(ESP32_PLATFORM)
-        esp_task_wdt_reset();
-#endif
-        if (!cleared) {
-            Serial.printf("[mesh] factory reset failed: could not clear NVS namespace %s\n",
-                          target.name);
-        }
-        return cleared;
+        return true;
     };
     const auto format_spiffs = [](void*) -> bool { return SPIFFS.format(); };
 
-    const hal::factory_reset::NvsTarget* failed_target = nullptr;
-    hal::factory_reset::FailureStage failed_stage = hal::factory_reset::FailureStage::None;
-    if (!hal::factory_reset::eraseOwnedStorage(
-            apply_nvs_target, nullptr, format_spiffs, nullptr,
-            &failed_target, &failed_stage)) {
-        if (failed_stage == hal::factory_reset::FailureStage::Nvs && failed_target) {
-            Serial.printf("[mesh] factory reset aborted during NVS namespace %s\n",
-                          failed_target->name);
-        } else {
-            Serial.println("[mesh] factory reset aborted: SPIFFS format failed");
+    if (reset_stage != hal::factory_reset::ResetMarkerStage::Spiffs) {
+        if (!hal::factory_reset::reset_marker_write(
+                hal::factory_reset::ResetMarkerStage::Nvs)) {
+            return factoryResetTerminalFailure("could not write NVS stage marker");
         }
-        // Remount SPIFFS — it was unmounted before the erase attempt and the
-        // device continues running after this failure (no reboot).
-        if (!SPIFFS.begin(true)) {
-            Serial.println("[mesh] SPIFFS remount after factory-reset failure also "
-                           "failed; reboot required");
+
+        const hal::factory_reset::NvsTarget* failed_target = nullptr;
+        hal::factory_reset::FailureStage failed_stage =
+            hal::factory_reset::FailureStage::None;
+        if (!hal::factory_reset::eraseOwnedStorage(
+                apply_nvs_target, nullptr, format_spiffs, nullptr,
+                &failed_target, &failed_stage)) {
+            if (failed_stage == hal::factory_reset::FailureStage::Nvs &&
+                failed_target) {
+                Serial.printf("[mesh] factory reset aborted during NVS namespace %s\n",
+                              failed_target->name);
+            } else {
+                Serial.println("[mesh] factory reset aborted: SPIFFS format failed");
+            }
+            return factoryResetTerminalFailure("destructive storage step failed");
         }
-        return false;
+    } else if (!SPIFFS.format()) {
+        return factoryResetTerminalFailure("SPIFFS format resume failed");
+    }
+
+    if (!hal::factory_reset::reset_marker_clear()) {
+        return factoryResetTerminalFailure("could not clear completed reset marker");
     }
 
     // Only erase SigurdOS-owned NVS namespaces — do NOT erase the full

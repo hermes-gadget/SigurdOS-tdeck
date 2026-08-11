@@ -15,6 +15,7 @@
 #include "hal/github_ota.h"
 #include "hal/wifi_coordinator.h"
 #include "hal/prefs.h"
+#include "hal/factory_reset_policy.h"
 #include "hal/launcher_env.h"
 #include "hal/buzzer.h"
 #include "hal/boot_watchdog.h"
@@ -374,11 +375,40 @@ void setup()
         boot_status("SD card ready");
     }
 
+    // A reset marker means a destructive wipe was interrupted or is being
+    // resumed. Do not initialize radio/mesh or enter ordinary runtime until
+    // the transaction has completed; factoryReset() preserves the marker on
+    // terminal failure so the next boot retries the correct stage.
+    sigurdos::hal::factory_reset::ResetMarkerStage reset_stage =
+        sigurdos::hal::factory_reset::ResetMarkerStage::Armed;
+    const sigurdos::hal::factory_reset::ResetMarkerStatus reset_status =
+        sigurdos::hal::factory_reset::reset_marker_read(&reset_stage);
+
     // ── Phase 2: select the deep chat-history backend ──
     // Mesh/UI callers keep using message_store; this boot-time selector
     // chooses SD when mounted and leaves the bounded SPIFFS fallback active
-    // otherwise.
-    sigurdos::mesh::sdMessageStoreSelect(spiffs_ok);
+    // otherwise. Once NVS or SPIFFS reset work has completed, skip selection
+    // so boot cannot migrate history back onto an SD card being wiped.
+    if (reset_status ==
+            sigurdos::hal::factory_reset::ResetMarkerStatus::Absent ||
+        (reset_status ==
+             sigurdos::hal::factory_reset::ResetMarkerStatus::Pending &&
+         reset_stage ==
+             sigurdos::hal::factory_reset::ResetMarkerStage::Armed)) {
+        sigurdos::mesh::sdMessageStoreSelect(spiffs_ok);
+    }
+
+    if (reset_status !=
+        sigurdos::hal::factory_reset::ResetMarkerStatus::Absent) {
+        boot_status("Resuming factory reset...");
+        if (!sigurdos::mesh::factoryReset()) {
+            Serial.println("[boot] HALTED: factory reset could not complete");
+        } else {
+            Serial.println("[boot] HALTED: factory reset restart returned unexpectedly");
+        }
+        sigurdos::hal::boot_watchdog_stop();
+        while (true) { delay(1000); }
+    }
 
     sigurdos::hal::boot_watchdog_progress(sigurdos::hal::BootStage::Radio);
     boot_status("Starting radio...");

@@ -6,7 +6,40 @@
 // can compile and link without real NVS (Preferences) hardware.
 
 #include "hal/prefs.h"
+#include "hal/factory_reset_policy.h"
 #include "mocks/mock_state.h"
+
+namespace sigurdos::hal::factory_reset {
+
+namespace {
+bool g_reset_marker_present = false;
+ResetMarkerStage g_reset_marker_stage = ResetMarkerStage::Armed;
+}
+
+bool reset_marker_write(ResetMarkerStage stage)
+{
+    if (stage < ResetMarkerStage::Armed || stage > ResetMarkerStage::Spiffs) {
+        return false;
+    }
+    g_reset_marker_stage = stage;
+    g_reset_marker_present = true;
+    return true;
+}
+
+ResetMarkerStatus reset_marker_read(ResetMarkerStage* stage)
+{
+    if (!g_reset_marker_present) return ResetMarkerStatus::Absent;
+    if (stage) *stage = g_reset_marker_stage;
+    return ResetMarkerStatus::Pending;
+}
+
+bool reset_marker_clear()
+{
+    g_reset_marker_present = false;
+    return true;
+}
+
+} // namespace sigurdos::hal::factory_reset
 
 namespace sigurdos {
 
@@ -17,6 +50,7 @@ void prefs_mock_set_save_result(bool result) { g_prefs_set_result = result; }
 
 void prefs_mock_reset() {
     g_prefs = NodePrefs{};
+    hal::factory_reset::reset_marker_clear();
 }
 
 bool prefs_load(NodePrefs& p) {
@@ -35,6 +69,8 @@ bool prefs_exists() {
 
 bool prefs_arm_factory_reset() {
     if (!g_prefs_set_result) return false;
+    if (!hal::factory_reset::reset_marker_write(
+            hal::factory_reset::ResetMarkerStage::Armed)) return false;
     g_prefs.ble_enabled = false;
     g_prefs.ble_user_set = true;
     g_prefs.ble_bond_reset_pending = true;

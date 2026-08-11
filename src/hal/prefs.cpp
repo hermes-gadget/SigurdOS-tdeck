@@ -347,9 +347,89 @@ bool prefs_arm_factory_reset()
                  esp_err_to_name((esp_err_t)failure.error));
         return false;
     }
+    if (!hal::factory_reset::reset_marker_write(
+            hal::factory_reset::ResetMarkerStage::Armed)) {
+        SIG_LOGE("[prefs] factory reset marker write failed");
+        return false;
+    }
     g_prefs.ble_enabled = false;
     g_prefs.ble_user_set = true;
     g_prefs.ble_bond_reset_pending = true;
+    return true;
+}
+
+bool hal::factory_reset::reset_marker_write(
+    hal::factory_reset::ResetMarkerStage stage)
+{
+    const uint8_t raw = static_cast<uint8_t>(stage);
+    if (raw < static_cast<uint8_t>(ResetMarkerStage::Armed) ||
+        raw > static_cast<uint8_t>(ResetMarkerStage::Spiffs)) {
+        return false;
+    }
+
+    nvs_handle_t handle = 0;
+    esp_err_t error = nvs_open(RESET_MARKER_NAMESPACE, NVS_READWRITE, &handle);
+    if (error == ESP_OK) error = nvs_set_u8(handle, RESET_MARKER_KEY, raw);
+    if (error == ESP_OK) error = nvs_commit(handle);
+    if (handle != 0) nvs_close(handle);
+    if (error != ESP_OK) {
+        SIG_LOGE("[prefs] reset marker write failed: %s",
+                 esp_err_to_name(error));
+        return false;
+    }
+    return true;
+}
+
+hal::factory_reset::ResetMarkerStatus
+hal::factory_reset::reset_marker_read(
+    hal::factory_reset::ResetMarkerStage* stage)
+{
+    if (stage) *stage = ResetMarkerStage::Armed;
+    nvs_handle_t handle = 0;
+    esp_err_t error = nvs_open(RESET_MARKER_NAMESPACE, NVS_READONLY, &handle);
+    if (error == ESP_ERR_NVS_NOT_FOUND) {
+        return ResetMarkerStatus::Absent;
+    }
+    if (error != ESP_OK) {
+        SIG_LOGE("[prefs] reset marker open failed: %s",
+                 esp_err_to_name(error));
+        return ResetMarkerStatus::Invalid;
+    }
+
+    uint8_t raw = 0;
+    error = nvs_get_u8(handle, RESET_MARKER_KEY, &raw);
+    nvs_close(handle);
+    if (error == ESP_ERR_NVS_NOT_FOUND) return ResetMarkerStatus::Absent;
+    if (error != ESP_OK ||
+        raw < static_cast<uint8_t>(ResetMarkerStage::Armed) ||
+        raw > static_cast<uint8_t>(ResetMarkerStage::Spiffs)) {
+        SIG_LOGE("[prefs] reset marker is invalid");
+        return ResetMarkerStatus::Invalid;
+    }
+    if (stage) *stage = static_cast<ResetMarkerStage>(raw);
+    return ResetMarkerStatus::Pending;
+}
+
+bool hal::factory_reset::reset_marker_clear()
+{
+    nvs_handle_t handle = 0;
+    esp_err_t error = nvs_open(RESET_MARKER_NAMESPACE, NVS_READWRITE, &handle);
+    if (error == ESP_ERR_NVS_NOT_FOUND) return true;
+    if (error != ESP_OK) {
+        SIG_LOGE("[prefs] reset marker clear open failed: %s",
+                 esp_err_to_name(error));
+        return false;
+    }
+
+    error = nvs_erase_key(handle, RESET_MARKER_KEY);
+    if (error == ESP_ERR_NVS_NOT_FOUND) error = ESP_OK;
+    if (error == ESP_OK) error = nvs_commit(handle);
+    nvs_close(handle);
+    if (error != ESP_OK) {
+        SIG_LOGE("[prefs] reset marker clear failed: %s",
+                 esp_err_to_name(error));
+        return false;
+    }
     return true;
 }
 
