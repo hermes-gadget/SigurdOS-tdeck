@@ -2237,16 +2237,34 @@ static bool prepareCompanionTransportsForFactoryReset(void*)
     return true;
 }
 
+#if defined(ESP32_PLATFORM)
+class FactoryResetWatchdogGuard final {
+public:
+    FactoryResetWatchdogGuard() = default;
+    FactoryResetWatchdogGuard(const FactoryResetWatchdogGuard&) = delete;
+    FactoryResetWatchdogGuard& operator=(const FactoryResetWatchdogGuard&) = delete;
+
+    ~FactoryResetWatchdogGuard()
+    {
+        // Any ordinary return means the device remains in the application.
+        // Always hand the watchdog back to the runtime owner, including
+        // failures before the destructive storage sequence starts.
+        esp_task_wdt_init(SIGURDOS_RUNTIME_WATCHDOG_TIMEOUT_SEC, true);
+    }
+};
+#endif
+
 bool factoryReset()
 {
     // The reset is terminal (reboots on success), but loopTask is the sole
     // runtime-watchdog owner and SPIFFS.format() alone can block it for more
     // than the 10 s runtime timeout on real hardware, aborting the wipe
     // mid-format with a task_wdt panic. Extend the timeout to the setup
-    // length for the duration of the reset and restore it on the failure
-    // path below (the device continues running after a failed reset).
+    // length for the duration of the reset; the local guard restores the
+    // runtime timeout on every non-reboot return.
 #if defined(ESP32_PLATFORM)
     esp_task_wdt_init(SIGURDOS_SETUP_WATCHDOG_TIMEOUT_SEC, true);
+    FactoryResetWatchdogGuard watchdog_guard;
 #endif
 
     // Commit the safe BLE interlock before any destructive operation. If this
@@ -2330,9 +2348,6 @@ bool factoryReset()
             Serial.println("[mesh] SPIFFS remount after factory-reset failure also "
                            "failed; reboot required");
         }
-#if defined(ESP32_PLATFORM)
-        esp_task_wdt_init(SIGURDOS_RUNTIME_WATCHDOG_TIMEOUT_SEC, true);
-#endif
         return false;
     }
 
