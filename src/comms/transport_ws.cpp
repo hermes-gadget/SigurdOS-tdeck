@@ -5,6 +5,21 @@
 
 #include <cstring>
 
+#if defined(ESP32_PLATFORM)
+#include "hal/wifi_ota.h"
+#endif
+
+namespace {
+bool networkTransportAllowed()
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos::ota::companionTransportsAllowed();
+#else
+    return true;
+#endif
+}
+} // namespace
+
 namespace sigurdos {
 namespace comms {
 
@@ -18,6 +33,7 @@ WebSocketCompanionServer::~WebSocketCompanionServer()
 void WebSocketCompanionServer::begin(uint16_t port)
 {
     stop();
+    if (!networkTransportAllowed()) return;
     _port = port;
     _started = true;
 #if defined(ESP32_PLATFORM)
@@ -65,6 +81,10 @@ void WebSocketCompanionServer::resetClient(int client_index)
 
 void WebSocketCompanionServer::loop()
 {
+    if (!networkTransportAllowed()) {
+        stop();
+        return;
+    }
 #if defined(ESP32_PLATFORM)
     if (_started && _server) _server->loop();
 #endif
@@ -80,6 +100,11 @@ void WebSocketCompanionServer::onEvent(uint8_t client_num, WStype_t type,
     }
     ClientSlot& client = _clients[client_num];
     if (type == WStype_CONNECTED) {
+        if (!networkTransportAllowed()) {
+            if (_server) _server->disconnect(client_num);
+            resetClient(client_num);
+            return;
+        }
         client.in_use = true;
         client.parser.reset();
         client.rx_head = 0;
@@ -90,6 +115,11 @@ void WebSocketCompanionServer::onEvent(uint8_t client_num, WStype_t type,
         return;
     }
     if (type == WStype_DISCONNECTED) {
+        resetClient(client_num);
+        return;
+    }
+    if (!networkTransportAllowed()) {
+        if (_server) _server->disconnect(client_num);
         resetClient(client_num);
         return;
     }
@@ -125,6 +155,10 @@ void WebSocketCompanionServer::queuePayload(int client_index,
 size_t WebSocketCompanionServer::pollRecvFrame(uint8_t dest[],
                                                int* client_index_out)
 {
+    if (!networkTransportAllowed()) {
+        stop();
+        return 0;
+    }
     if (!_started || !dest) return 0;
     loop();
     int start = _poll_start;
@@ -149,7 +183,8 @@ size_t WebSocketCompanionServer::pollRecvFrame(uint8_t dest[],
 size_t WebSocketCompanionServer::writeToClient(int client_index,
                                                const uint8_t src[], size_t len)
 {
-    if (!_started || !src || len == 0 || len > MAX_FRAME_SIZE ||
+    if (!_started || !networkTransportAllowed() || !src || len == 0 ||
+        len > MAX_FRAME_SIZE ||
         !isClientConnected(client_index)) return 0;
     uint8_t encoded[MAX_FRAME_SIZE + 3];
     const size_t encoded_len = encodeCompanionTransportFrame(
@@ -171,7 +206,8 @@ size_t WebSocketCompanionServer::writeToClient(int client_index,
 
 size_t WebSocketCompanionServer::writeToAllClients(const uint8_t src[], size_t len)
 {
-    if (!src || len == 0 || len > MAX_FRAME_SIZE) return 0;
+    if (!networkTransportAllowed() || !src || len == 0 ||
+        len > MAX_FRAME_SIZE) return 0;
     int connected = 0;
     int sent = 0;
     for (int i = 0; i < MAX_CLIENTS; ++i) {
@@ -184,7 +220,8 @@ size_t WebSocketCompanionServer::writeToAllClients(const uint8_t src[], size_t l
 
 bool WebSocketCompanionServer::isClientConnected(int client_index) const
 {
-    if (client_index < 0 || client_index >= MAX_CLIENTS) return false;
+    if (!networkTransportAllowed() || client_index < 0 ||
+        client_index >= MAX_CLIENTS) return false;
     const ClientSlot& client = _clients[client_index];
 #if defined(ESP32_PLATFORM)
     return client.in_use && _server && _server->clientIsConnected(

@@ -6,11 +6,25 @@
 #include <cstring>
 
 #if defined(ESP32_PLATFORM)
+#include "hal/wifi_ota.h"
 #include <lwip/sockets.h>
+#endif
 
 namespace {
+#if defined(ESP32_PLATFORM)
 constexpr uint32_t TCP_WRITE_TIMEOUT_MS = 120;
+#endif
 
+bool networkTransportAllowed()
+{
+#if defined(ESP32_PLATFORM)
+    return sigurdos::ota::companionTransportsAllowed();
+#else
+    return true;
+#endif
+}
+
+#if defined(ESP32_PLATFORM)
 bool socketWritableNow(WiFiClient& client)
 {
     const int fd = client.fd();
@@ -22,8 +36,8 @@ bool socketWritableNow(WiFiClient& client)
     return select(fd + 1, nullptr, &write_set, nullptr, &timeout) > 0 &&
            FD_ISSET(fd, &write_set);
 }
-} // namespace
 #endif
+} // namespace
 
 namespace sigurdos {
 namespace comms {
@@ -38,6 +52,7 @@ TCPCompanionServer::TCPCompanionServer()
 void TCPCompanionServer::begin(uint16_t port)
 {
     stop();
+    if (!networkTransportAllowed()) return;
     _port = port;
     _started = true;
 #if defined(ESP32_PLATFORM)
@@ -72,6 +87,7 @@ void TCPCompanionServer::resetClient(int client_index)
 #if defined(ESP32_PLATFORM)
 void TCPCompanionServer::acceptNewClients()
 {
+    if (!networkTransportAllowed()) return;
     while (_server.hasClient()) {
         WiFiClient incoming = _server.accept();
         if (!incoming) continue;
@@ -109,6 +125,7 @@ bool TCPCompanionServer::writeBytes(WiFiClient& client, const uint8_t* data,
     size_t sent = 0;
     const uint32_t started = millis();
     while (sent < len) {
+        if (!networkTransportAllowed()) return false;
         if (socketWritableNow(client)) {
             const size_t count = client.write(data + sent, len - sent);
             if (count > 0) {
@@ -125,9 +142,17 @@ bool TCPCompanionServer::writeBytes(WiFiClient& client, const uint8_t* data,
 
 size_t TCPCompanionServer::pollRecvFrame(uint8_t dest[], int* client_index_out)
 {
+    if (!networkTransportAllowed()) {
+        stop();
+        return 0;
+    }
     if (!_started || !dest) return 0;
 #if defined(ESP32_PLATFORM)
     acceptNewClients();
+    if (!networkTransportAllowed()) {
+        stop();
+        return 0;
+    }
     pruneDisconnected();
 #endif
 
@@ -170,6 +195,7 @@ size_t TCPCompanionServer::writeToClient(int client_index, const uint8_t src[],
 {
     if (!_started || client_index < 0 || client_index >= MAX_CLIENTS ||
         !src || len == 0 || len > MAX_FRAME_SIZE ||
+        !networkTransportAllowed() ||
         !isClientConnected(client_index)) return 0;
     uint8_t encoded[MAX_FRAME_SIZE + 3];
     const size_t encoded_len = encodeCompanionTransportFrame(
@@ -190,7 +216,8 @@ size_t TCPCompanionServer::writeToClient(int client_index, const uint8_t src[],
 
 size_t TCPCompanionServer::writeToAllClients(const uint8_t src[], size_t len)
 {
-    if (!src || len == 0 || len > MAX_FRAME_SIZE) return 0;
+    if (!networkTransportAllowed() || !src || len == 0 ||
+        len > MAX_FRAME_SIZE) return 0;
     int connected = 0;
     int sent = 0;
     for (int i = 0; i < MAX_CLIENTS; ++i) {
@@ -203,7 +230,8 @@ size_t TCPCompanionServer::writeToAllClients(const uint8_t src[], size_t len)
 
 bool TCPCompanionServer::isClientConnected(int client_index) const
 {
-    if (client_index < 0 || client_index >= MAX_CLIENTS) return false;
+    if (!networkTransportAllowed() || client_index < 0 ||
+        client_index >= MAX_CLIENTS) return false;
     const ClientSlot& client = _clients[client_index];
 #if defined(ESP32_PLATFORM)
     return client.in_use && client.client.connected();

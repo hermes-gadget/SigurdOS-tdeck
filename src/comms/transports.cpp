@@ -9,6 +9,9 @@
 #include <helpers/BaseSerialInterface.h>
 
 #include "hal/prefs.h"
+#include "hal/wifi_ota.h"
+
+#include <atomic>
 
 #if defined(ESP32_PLATFORM)
 #include <WiFi.h>
@@ -37,6 +40,17 @@ struct Registry {
 };
 
 Registry g_registry;
+std::atomic<bool> g_ota_parked{false};
+
+bool networkTransportsAllowed()
+{
+#if defined(ESP32_PLATFORM)
+    return !g_ota_parked.load(std::memory_order_acquire) &&
+           sigurdos::ota::companionTransportsAllowed();
+#else
+    return !g_ota_parked.load(std::memory_order_acquire);
+#endif
+}
 
 bool wifiReady()
 {
@@ -62,9 +76,23 @@ void stopWs()
     g_registry.ws_started = false;
 }
 
+#if defined(ESP32_PLATFORM)
+void otaTransportParkHook(bool parked)
+{
+    g_ota_parked.store(parked, std::memory_order_release);
+    if (!parked) return;
+
+    // OTA sets its AP-active gate before invoking this callback. Close every
+    // client and listener synchronously before AP setup makes the network
+    // reachable. Unpark is restored by the normal non-blocking loop.
+    stopTcp();
+    stopWs();
+}
+#endif
+
 void reconcileServers()
 {
-    const bool ready = wifiReady();
+    const bool ready = wifiReady() && networkTransportsAllowed();
     if (!g_registry.tcp_enabled || !ready) {
         stopTcp();
     } else if (!g_registry.tcp_started) {
@@ -88,6 +116,7 @@ bool validFrame(const uint8_t* frame, size_t len)
 void dispatchFrame(TransportId id, int client_index, uint32_t generation,
                    const uint8_t* frame, size_t len)
 {
+    if (id != TransportId::BLE && !networkTransportsAllowed()) return;
     if (!g_registry.frame_handler || !validFrame(frame, len)) return;
     g_registry.request_active = true;
     g_registry.request_id = id;
@@ -134,6 +163,9 @@ void transports_init()
     g_registry.tcp_enabled = prefs.transport_tcp_enabled;
     g_registry.ws_enabled = prefs.transport_ws_enabled;
     g_registry.initialized = true;
+#if defined(ESP32_PLATFORM)
+    sigurdos::ota::setCompanionTransportParkHook(&otaTransportParkHook);
+#endif
     reconcileServers();
 }
 
@@ -141,6 +173,7 @@ void transports_loop()
 {
     if (!g_registry.initialized) transports_init();
     reconcileServers();
+    const bool network_allowed = networkTransportsAllowed();
 
     uint8_t frame[MAX_FRAME_SIZE];
     if (g_registry.serial && g_registry.serial->isEnabled()) {
@@ -151,7 +184,7 @@ void transports_loop()
         }
     }
 
-    if (g_registry.tcp_started) {
+    if (network_allowed && g_registry.tcp_started) {
         int client_index = -1;
         const size_t len = g_registry.tcp.pollRecvFrame(frame, &client_index);
         if (len > 0) {
@@ -160,7 +193,7 @@ void transports_loop()
         }
     }
 
-    if (g_registry.ws_started) {
+    if (network_allowed && g_registry.ws_started) {
         int client_index = -1;
         const size_t len = g_registry.ws.pollRecvFrame(frame, &client_index);
         if (len > 0) {
@@ -184,7 +217,7 @@ bool transport_set_enabled(TransportId id, bool on)
     // Keep the public setter's failure contract honest: a persisted preference
     // may request a listener before WiFi is ready during boot, but an explicit
     // runtime enable only succeeds once the endpoint can actually start.
-    if (on && !wifiReady()) return false;
+    if (on && (!wifiReady() || !networkTransportsAllowed())) return false;
 
     NodePrefs candidate = prefs_get();
     bool* cached = nullptr;
@@ -226,15 +259,19 @@ TransportStatus transport_status(TransportId id)
         status.detail = status.enabled ? (status.connected ? "connected" : "advertising")
                                        : "disabled";
     } else if (id == TransportId::TCP) {
-        status.clientCount = g_registry.tcp.connectedCount();
+        const bool allowed = networkTransportsAllowed();
+        status.clientCount = allowed ? g_registry.tcp.connectedCount() : 0;
         status.connected = status.clientCount > 0;
         status.detail = !status.enabled ? "disabled" :
-            (g_registry.tcp_started ? "tcp://:5000" : "waiting for WiFi");
+            (!allowed ? "parked for OTA" :
+             (g_registry.tcp_started ? "tcp://:5000" : "waiting for WiFi"));
     } else if (id == TransportId::WS) {
-        status.clientCount = g_registry.ws.connectedCount();
+        const bool allowed = networkTransportsAllowed();
+        status.clientCount = allowed ? g_registry.ws.connectedCount() : 0;
         status.connected = status.clientCount > 0;
         status.detail = !status.enabled ? "disabled" :
-            (g_registry.ws_started ? "ws://:8765" : "waiting for WiFi");
+            (!allowed ? "parked for OTA" :
+             (g_registry.ws_started ? "ws://:8765" : "waiting for WiFi"));
     } else {
         status.detail = "unknown";
     }
@@ -247,8 +284,14 @@ bool transports_client_connected(TransportId id, int client_index)
         return client_index == 0 && g_registry.serial &&
                g_registry.serial->isEnabled() && g_registry.serial->isConnected();
     }
-    if (id == TransportId::TCP) return g_registry.tcp.isClientConnected(client_index);
-    if (id == TransportId::WS) return g_registry.ws.isClientConnected(client_index);
+    if (id == TransportId::TCP) {
+        return networkTransportsAllowed() &&
+               g_registry.tcp.isClientConnected(client_index);
+    }
+    if (id == TransportId::WS) {
+        return networkTransportsAllowed() &&
+               g_registry.ws.isClientConnected(client_index);
+    }
     return false;
 }
 
@@ -258,8 +301,14 @@ uint32_t transports_client_generation(TransportId id, int client_index)
         return transports_client_connected(id, client_index) && g_registry.serial
             ? g_registry.serial->connectionGeneration() : 0;
     }
-    if (id == TransportId::TCP) return g_registry.tcp.clientGeneration(client_index);
-    if (id == TransportId::WS) return g_registry.ws.clientGeneration(client_index);
+    if (id == TransportId::TCP) {
+        return networkTransportsAllowed()
+            ? g_registry.tcp.clientGeneration(client_index) : 0;
+    }
+    if (id == TransportId::WS) {
+        return networkTransportsAllowed()
+            ? g_registry.ws.clientGeneration(client_index) : 0;
+    }
     return 0;
 }
 
@@ -281,9 +330,11 @@ bool transports_send_to_result(TransportId id, int client_index,
         return client_index == 0 && writeToBle(frame, len);
     }
     if (id == TransportId::TCP) {
+        if (!networkTransportsAllowed()) return false;
         return g_registry.tcp.writeToClient(client_index, frame, len) == len;
     }
     if (id == TransportId::WS) {
+        if (!networkTransportsAllowed()) return false;
         return g_registry.ws.writeToClient(client_index, frame, len) == len;
     }
     return false;
@@ -294,9 +345,11 @@ bool transports_broadcast_result(TransportId id, const uint8_t* frame, size_t le
     if (!validFrame(frame, len)) return false;
     if (id == TransportId::BLE) return writeToBle(frame, len);
     if (id == TransportId::TCP) {
+        if (!networkTransportsAllowed()) return false;
         return g_registry.tcp.writeToAllClients(frame, len) == len;
     }
     if (id == TransportId::WS) {
+        if (!networkTransportsAllowed()) return false;
         return g_registry.ws.writeToAllClients(frame, len) == len;
     }
     return false;
@@ -330,6 +383,7 @@ void transports_test_reset()
     g_registry.request_id = TransportId::BLE;
     g_registry.request_client = -1;
     g_registry.request_generation = 0;
+    g_ota_parked.store(false, std::memory_order_release);
 }
 
 bool transports_test_connect(TransportId id, int client_index)

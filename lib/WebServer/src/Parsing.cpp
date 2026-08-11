@@ -25,10 +25,81 @@
 #include "WiFiClient.h"
 #include "WebServer.h"
 #include "detail/mimetable.h"
+#include <atomic>
+#include <climits>
+#include <cstdint>
+#include <sys/socket.h>
 
 #ifndef WEBSERVER_MAX_POST_ARGS
 #define WEBSERVER_MAX_POST_ARGS 32
 #endif
+
+#ifndef WEBSERVER_MAX_MULTIPART_FILE_SIZE
+#define WEBSERVER_MAX_MULTIPART_FILE_SIZE 0x640000U
+#endif
+
+#ifndef WEBSERVER_MAX_MULTIPART_BODY_SIZE
+#define WEBSERVER_MAX_MULTIPART_BODY_SIZE \
+  (WEBSERVER_MAX_MULTIPART_FILE_SIZE + 16384U)
+#endif
+
+#ifndef WEBSERVER_MAX_MULTIPART_FIELD_SIZE
+#define WEBSERVER_MAX_MULTIPART_FIELD_SIZE 1024U
+#endif
+
+#ifndef WEBSERVER_MAX_MULTIPART_HEADER_SIZE
+#define WEBSERVER_MAX_MULTIPART_HEADER_SIZE 1024U
+#endif
+
+#ifndef WEBSERVER_MULTIPART_IDLE_TIMEOUT_MS
+#define WEBSERVER_MULTIPART_IDLE_TIMEOUT_MS 5000U
+#endif
+
+#ifndef WEBSERVER_MULTIPART_ABSOLUTE_TIMEOUT_MS
+#define WEBSERVER_MULTIPART_ABSOLUTE_TIMEOUT_MS 120000U
+#endif
+
+// SigurdOS' managed OTA worker supplies this optional cancellation predicate.
+// Keeping it weak preserves the WebServer overlay's use outside that firmware.
+extern "C" bool sigurdosWebServerMultipartCancelled() __attribute__((weak));
+
+// The supervisor may need to wake a worker blocked in multipart input. Track
+// only the socket descriptor so cancellation does not mutate the worker-owned
+// WiFiClient object. The worker observes shutdown(), aborts parsing, and owns
+// the eventual client/server destruction.
+static std::atomic<int> activeMultipartSocket{-1};
+static std::atomic<int> multipartCancelHazard{-1};
+
+extern "C" void sigurdosWebServerCancelMultipartClient() {
+  int current = -1;
+  do {
+    current = activeMultipartSocket.load(std::memory_order_acquire);
+    multipartCancelHazard.store(current, std::memory_order_release);
+  } while (current != activeMultipartSocket.load(std::memory_order_acquire));
+
+  if (current >= 0) (void)::shutdown(current, SHUT_RDWR);
+  multipartCancelHazard.store(-1, std::memory_order_release);
+}
+
+static bool multipartCancelled() {
+  return sigurdosWebServerMultipartCancelled &&
+         sigurdosWebServerMultipartCancelled();
+}
+
+static bool parseContentLength(const String& value, uint32_t& parsed) {
+  if (value.length() == 0) return false;
+  uint32_t result = 0;
+  for (size_t i = 0; i < value.length(); ++i) {
+    const char ch = value.charAt(i);
+    if (ch < '0' || ch > '9') return false;
+    const uint32_t digit = static_cast<uint32_t>(ch - '0');
+    if (result > (UINT32_MAX - digit) / 10U) return false;
+    result = result * 10U + digit;
+  }
+  if (result > static_cast<uint32_t>(INT_MAX)) return false;
+  parsed = result;
+  return true;
+}
 
 #define __STR(a) #a
 #define _STR(a) __STR(a)
@@ -137,6 +208,8 @@ bool WebServer::_parseRequest(WiFiClient& client) {
     String headerValue;
     bool isForm = false;
     bool isEncoded = false;
+    bool contentLengthSeen = false;
+    bool contentLengthValid = false;
     //parse headers
     while(1){
       req = client.readStringUntil('\r');
@@ -167,7 +240,16 @@ bool WebServer::_parseRequest(WiFiClient& client) {
           isForm = true;
         }
       } else if (headerName.equalsIgnoreCase(F("Content-Length"))){
-        _clientContentLength = headerValue.toInt();
+        uint32_t parsedLength = 0;
+        if (contentLengthSeen) {
+          contentLengthValid = false;
+        } else {
+          contentLengthSeen = true;
+          contentLengthValid = parseContentLength(headerValue, parsedLength);
+          if (contentLengthValid) {
+            _clientContentLength = static_cast<int>(parsedLength);
+          }
+        }
       } else if (headerName.equalsIgnoreCase(F("Host"))){
         _hostHeader = headerValue;
       }
@@ -225,6 +307,14 @@ bool WebServer::_parseRequest(WiFiClient& client) {
       }
     } else {
       // it IS a form
+      if (!contentLengthSeen || !contentLengthValid ||
+          _clientContentLength <= 0 ||
+          static_cast<uint32_t>(_clientContentLength) >
+              WEBSERVER_MAX_MULTIPART_BODY_SIZE) {
+        log_e("Invalid multipart Content-Length: %d", _clientContentLength);
+        client.stop();
+        return false;
+      }
       _parseArguments(searchStr);
       if (!_parseForm(client, boundaryStr, _clientContentLength)) {
         return false;
@@ -346,20 +436,82 @@ int WebServer::_uploadReadByte(WiFiClient& client) {
 }
 
 bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
-  (void) len;
   log_v("Parse Form: Boundary: %s Length: %d", boundary.c_str(), len);
-  if (boundary.length() > 70) {
-    log_e("Multipart boundary too long: %d", boundary.length());
+  if (boundary.length() == 0 || boundary.length() > 70 || len == 0 ||
+      len > WEBSERVER_MAX_MULTIPART_BODY_SIZE) {
+    log_e("Invalid multipart framing: boundary=%d length=%u",
+          boundary.length(), static_cast<unsigned>(len));
+    client.stop();
     return false;
   }
+
+  activeMultipartSocket.store(client.fd(), std::memory_order_release);
+  struct ActiveClientGuard {
+    ~ActiveClientGuard() {
+      activeMultipartSocket.store(-1, std::memory_order_release);
+      while (multipartCancelHazard.load(std::memory_order_acquire) >= 0) {
+        delay(1);
+      }
+    }
+  } activeClientGuard;
+
+  uint32_t remaining = len;
+  const uint32_t startedAt = millis();
+  auto timedOut = [&]() {
+    return static_cast<uint32_t>(millis() - startedAt) >=
+           WEBSERVER_MULTIPART_ABSOLUTE_TIMEOUT_MS;
+  };
+  auto readByte = [&]() -> int {
+    const uint32_t idleStartedAt = millis();
+    while (!client.available()) {
+      if (remaining == 0 || multipartCancelled() || !client.connected() ||
+          timedOut() ||
+          static_cast<uint32_t>(millis() - idleStartedAt) >=
+              WEBSERVER_MULTIPART_IDLE_TIMEOUT_MS) {
+        return -1;
+      }
+      delay(1);
+    }
+    if (remaining == 0 || multipartCancelled() || timedOut()) return -1;
+    const int value = _uploadReadByte(client);
+    if (value < 0) return -1;
+    --remaining;
+    return value;
+  };
+  auto readLine = [&](String& out, size_t maxLength) -> bool {
+    out = String();
+    while (true) {
+      const int value = readByte();
+      if (value < 0) return false;
+      if (value == '\r') {
+        return readByte() == '\n';
+      }
+      if (out.length() >= maxLength) return false;
+      out += static_cast<char>(value);
+    }
+  };
+  auto reject = [&](bool abortUpload) -> bool {
+    if (abortUpload && _currentUpload) {
+      (void)_parseFormUploadAborted();
+    }
+    if (_postArgs) {
+      delete[] _postArgs;
+      _postArgs = nullptr;
+      _postArgsLen = 0;
+    }
+    client.stop();
+    return false;
+  };
+
   String line;
   int retry = 0;
   do {
-    line = client.readStringUntil('\r');
+    if (!readLine(line, WEBSERVER_MAX_MULTIPART_HEADER_SIZE)) {
+      return reject(false);
+    }
     ++retry;
   } while (line.length() == 0 && retry < 3);
 
-  client.readStringUntil('\n');
   //start reading the form
   if (line == ("--"+boundary)){
    if(_postArgs) delete[] _postArgs;
@@ -372,8 +524,9 @@ bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
       String argFilename;
       bool argIsFile = false;
 
-      line = client.readStringUntil('\r');
-      client.readStringUntil('\n');
+      if (!readLine(line, WEBSERVER_MAX_MULTIPART_HEADER_SIZE)) {
+        return reject(false);
+      }
       if (line.length() > 19 && line.substring(0, 19).equalsIgnoreCase(F("Content-Disposition"))){
         int nameStart = line.indexOf('=');
         if (nameStart != -1){
@@ -393,21 +546,31 @@ bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
           log_v("PostArg Name: %s", argName.c_str());
           using namespace mime;
           argType = FPSTR(mimeTable[txt].mimeType);
-          line = client.readStringUntil('\r');
-          client.readStringUntil('\n');
+          if (!readLine(line, WEBSERVER_MAX_MULTIPART_HEADER_SIZE)) {
+            return reject(false);
+          }
           if (line.length() > 12 && line.substring(0, 12).equalsIgnoreCase(FPSTR(Content_Type))){
             argType = line.substring(line.indexOf(':')+2);
             //skip next line
-            client.readStringUntil('\r');
-            client.readStringUntil('\n');
+            if (!readLine(line, WEBSERVER_MAX_MULTIPART_HEADER_SIZE)) {
+              return reject(false);
+            }
           }
           log_v("PostArg Type: %s", argType.c_str());
           if (!argIsFile){
             while(1){
-              line = client.readStringUntil('\r');
-              client.readStringUntil('\n');
+              if (!readLine(line, WEBSERVER_MAX_MULTIPART_FIELD_SIZE)) {
+                log_e("Multipart field exceeded limit or deadline");
+                return reject(false);
+              }
               if (line.startsWith("--"+boundary)) break;
-              if (argValue.length() > 0) argValue += "\n";
+              const size_t separator = argValue.length() > 0 ? 1U : 0U;
+              if (argValue.length() + separator + line.length() >
+                  WEBSERVER_MAX_MULTIPART_FIELD_SIZE) {
+                log_e("Multipart field too large");
+                return reject(false);
+              }
+              if (separator) argValue += "\n";
               argValue += line;
             }
             log_v("PostArg Value: %s", argValue.c_str());
@@ -421,7 +584,7 @@ bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
               break;
             } else if (_postArgsLen >= WEBSERVER_MAX_POST_ARGS) {
               log_e("Too many PostArgs (max: %d) in request.", WEBSERVER_MAX_POST_ARGS);
-              return false;
+              return reject(false);
             }
           } else {
             _currentUpload.reset(new HTTPUpload());
@@ -434,17 +597,28 @@ bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
             log_v("Start File: %s Type: %s", _currentUpload->filename.c_str(), _currentUpload->type.c_str());
             if(_currentHandler && _currentHandler->canUpload(_currentUri))
               _currentHandler->upload(*this, _currentUri, *_currentUpload);
+            if (multipartCancelled() || !client.connected()) {
+              return reject(true);
+            }
             _currentUpload->status = UPLOAD_FILE_WRITE;
 
             int fastBoundaryLen = 4 /* \r\n-- */ + boundary.length() + 1 /* \0 */;
             char fastBoundary[ fastBoundaryLen ];
             snprintf(fastBoundary, fastBoundaryLen, "\r\n--%s", boundary.c_str());
             int boundaryPtr = 0;
+            auto writeUploadByte = [&](uint8_t value) -> bool {
+              if (_currentUpload->totalSize + _currentUpload->currentSize >=
+                  WEBSERVER_MAX_MULTIPART_FILE_SIZE) {
+                log_e("Multipart file exceeds maximum image size");
+                return false;
+              }
+              _uploadWriteByte(value);
+              return !multipartCancelled() && client.connected();
+            };
             while ( true ) {
-                int ret = _uploadReadByte(client);
+                int ret = readByte();
                 if (ret < 0) {
-                    // Unexpected, we should have had data available per above
-                    return _parseFormUploadAborted();
+                    return reject(true);
                 }
                 char in = (char) ret;
                 if (in == fastBoundary[ boundaryPtr ]) {
@@ -457,14 +631,16 @@ bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
                 } else {
                     // The char doesn't match what we want, so dump whatever matches we had, the read in char, and reset ptr to start
                     for (int i = 0; i < boundaryPtr; i++) {
-                        _uploadWriteByte( fastBoundary[ i ] );
+                        if (!writeUploadByte(fastBoundary[i])) {
+                          return reject(true);
+                        }
                     }
                     if (in == fastBoundary[ 0 ]) {
                        // This could be the start of the real end, mark it so and don't emit/skip it
                        boundaryPtr = 1;
                     } else {
                       // Not the 1st char of our pattern, so emit and ignore
-                      _uploadWriteByte( in );
+                      if (!writeUploadByte(in)) return reject(true);
                       boundaryPtr = 0;
                     }
                 }
@@ -472,6 +648,9 @@ bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
             // Found the boundary string, finish processing this file upload
             if (_currentHandler && _currentHandler->canUpload(_currentUri))
                 _currentHandler->upload(*this, _currentUri, *_currentUpload);
+            if (multipartCancelled() || !client.connected()) {
+                return reject(true);
+            }
             _currentUpload->totalSize += _currentUpload->currentSize;
             _currentUpload->status = UPLOAD_FILE_END;
             if (_currentHandler && _currentHandler->canUpload(_currentUri))
@@ -480,9 +659,10 @@ bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
                 _currentUpload->filename.c_str(),
                 _currentUpload->type.c_str(),
                 (int)_currentUpload->totalSize);
-            if (!client.connected()) return _parseFormUploadAborted();
-            line = client.readStringUntil('\r');
-            client.readStringUntil('\n');
+            if (!client.connected()) return reject(true);
+            if (!readLine(line, WEBSERVER_MAX_MULTIPART_HEADER_SIZE)) {
+              return reject(true);
+            }
             if (line == "--") {     // extra two dashes mean we reached the end of all form fields
                 log_v("Done Parsing POST");
                 break;
@@ -513,9 +693,16 @@ bool WebServer::_parseForm(WiFiClient& client, String boundary, uint32_t len){
       _postArgs=nullptr;
       _postArgsLen = 0;
     }
+    if (remaining != 0) {
+      log_e("Multipart body length mismatch: %u bytes remain",
+            static_cast<unsigned>(remaining));
+      client.stop();
+      return false;
+    }
     return true;
   }
   log_e("Error: line: %s", line.c_str());
+  client.stop();
   return false;
 }
 
