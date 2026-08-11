@@ -25,12 +25,17 @@
 #include <atomic>
 #include <new>
 
+extern "C" void sigurdosWebServerCancelMultipartClient();
+
 namespace sigurdos {
 namespace ota {
 
 static WebServer* server = nullptr;
 static std::atomic<bool> active{false};
 static std::atomic<bool> stop_requested{false};
+static std::atomic<bool> worker_exited{true};
+static std::atomic<bool> worker_owns_server{false};
+static std::atomic<bool> worker_exit_overdue{false};
 static std::atomic<bool> reboot_pending{false};
 static int  save_state_retries  = 0;
 static constexpr int MAX_SAVE_STATE_RETRIES = 5;
@@ -40,12 +45,17 @@ static char last_error[96] = "";
 static uint32_t session_started_at = 0;
 static std::atomic<uint32_t> worker_tick_ms{0};
 static constexpr uint32_t OTA_WORKER_STALE_LIMIT_MS = 3000U;
+static constexpr uint32_t OTA_WORKER_JOIN_TIMEOUT_MS = 5000U;
 static std::atomic<bool> using_access_point{false};
 static std::atomic<bool> ap_release_pending{false};
 static std::atomic<bool> companion_transport_parked{false};
 static std::atomic<CompanionTransportParkHook> companion_transport_park_hook{nullptr};
 static String csrf_token;  // regenerated per OTA session
 static OtaUploadSessionState upload_state;
+
+extern "C" bool sigurdosWebServerMultipartCancelled() {
+    return stop_requested.load(std::memory_order_acquire);
+}
 
 // OTA PIN brute-force protection (SEC-001)
 static constexpr int MAX_PIN_FAILURES = 5;
@@ -87,7 +97,17 @@ static void finalizePendingApRelease()
     notifyCompanionTransportParked(false);
 }
 
-static void cleanupServer() {
+enum class ServerCleanupContext : uint8_t {
+    Starter,
+    Worker,
+};
+
+static bool cleanupServer(ServerCleanupContext context) {
+    if (worker_owns_server.load(std::memory_order_acquire) &&
+        context != ServerCleanupContext::Worker) {
+        SIG_LOGE("[ota] refused cross-task cleanup of worker-owned server");
+        return false;
+    }
     if (server) {
         server->stop();
         delete server;
@@ -112,6 +132,7 @@ static void cleanupServer() {
     // keeps working for scans and STA reconnects after an OTA session.
     wifi_init_config_t icfg = WIFI_INIT_CONFIG_DEFAULT();
     (void)esp_wifi_init(&icfg);
+    return true;
 }
 
 void setCompanionTransportParkHook(CompanionTransportParkHook hook)
@@ -136,6 +157,29 @@ bool isAccessPointActive()
     return using_access_point.load(std::memory_order_acquire);
 }
 
+static void requestWorkerStop() {
+    stop_requested.store(true, std::memory_order_release);
+    worker_exit_overdue.store(false, std::memory_order_release);
+    sigurdosWebServerCancelMultipartClient();
+}
+
+static bool waitForWorkerExit(uint32_t timeoutMs) {
+    const uint32_t startedAt = millis();
+    while (!worker_exited.load(std::memory_order_acquire) &&
+           static_cast<uint32_t>(millis() - startedAt) < timeoutMs) {
+        sigurdosWebServerCancelMultipartClient();
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return worker_exited.load(std::memory_order_acquire);
+}
+
+static void abortUploadAndCloseClient() {
+    upload_state.failed = true;
+    upload_state.started = false;
+    if (Update.isRunning()) Update.abort();
+    sigurdosWebServerCancelMultipartClient();
+}
+
 static void otaServerWorker(void*) {
     while (!stop_requested.load(std::memory_order_acquire)) {
         worker_tick_ms.store(millis(), std::memory_order_release);
@@ -147,8 +191,10 @@ static void otaServerWorker(void*) {
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-    cleanupServer();
+    (void)cleanupServer(ServerCleanupContext::Worker);
+    worker_owns_server.store(false, std::memory_order_release);
     active.store(false, std::memory_order_release);
+    worker_exited.store(true, std::memory_order_release);
     vTaskDelete(nullptr);
 }
 
@@ -271,21 +317,25 @@ bool start(const char* ssid, const char* password) {
         // Idempotent re-entry while a live session is running. A session whose
         // worker stalled past its window must be torn down first, or the next
         // start would silently reuse a dead AP (#1495).
-        if (!otaSessionExpired(session_started_at, millis())) {
+        if (!stop_requested.load(std::memory_order_acquire) &&
+            !otaSessionExpired(session_started_at, millis())) {
             SIG_LOGW("[ota] OTA session already active — duplicate start ignored");
             return true;
         }
         SIG_LOGW("[ota] stale OTA session — stopping worker before restart");
-        stop_requested.store(true, std::memory_order_release);
-        const uint32_t wait_deadline = millis() + 1500U;
-        while (active.load(std::memory_order_acquire) && millis() < wait_deadline) {
-            vTaskDelay(pdMS_TO_TICKS(20));
-        }
-        if (active.load(std::memory_order_acquire)) {
+        requestWorkerStop();
+        if (!waitForWorkerExit(OTA_WORKER_JOIN_TIMEOUT_MS)) {
             strncpy(last_error, "OTA session is shutting down — retry in a few seconds",
                     sizeof(last_error) - 1);
             last_error[sizeof(last_error) - 1] = '\0';
-            SIG_LOGW("[ota] REFUSED: stale worker did not exit; loop watchdog will clear it");
+            SIG_LOGW("[ota] REFUSED: prior worker has not acknowledged exit");
+            return false;
+        }
+        finalizePendingApRelease();
+        if (ap_release_pending.load(std::memory_order_acquire)) {
+            strncpy(last_error, "WiFi cleanup is still in progress",
+                    sizeof(last_error) - 1);
+            last_error[sizeof(last_error) - 1] = '\0';
             return false;
         }
     }
@@ -374,7 +424,7 @@ bool start(const char* ssid, const char* password) {
                 last_error[sizeof(last_error) - 1] = '\0';
             }
             SIG_LOGE("[ota] WiFi AP startup failed");
-            cleanupServer();
+            (void)cleanupServer(ServerCleanupContext::Starter);
             return false;
         }
 
@@ -393,7 +443,7 @@ bool start(const char* ssid, const char* password) {
         strncpy(last_error, "Out of memory for OTA server", sizeof(last_error) - 1);
         last_error[sizeof(last_error) - 1] = '\0';
         SIG_LOGE("[ota] WebServer allocation failed; OTA aborted");
-        cleanupServer();
+        (void)cleanupServer(ServerCleanupContext::Starter);
         return false;
     }
     server = static_cast<WebServer*>(server_object);
@@ -487,10 +537,7 @@ bool start(const char* ssid, const char* password) {
         []() {
             HTTPUpload& upload = server->upload();
             if (stop_requested.load(std::memory_order_acquire)) {
-                upload_state.failed = true;
-                upload_state.started = false;
-                Update.abort();
-                server->client().stop();
+                abortUploadAndCloseClient();
                 return;
             }
             if (upload.status == UPLOAD_FILE_START) {
@@ -502,8 +549,7 @@ bool start(const char* ssid, const char* password) {
                 String csrf_arg = server->arg("csrf");
                 if (csrf_arg.length() == 0 || csrf_arg != csrf_token) {
                     SIG_LOGW("[ota] Upload rejected: invalid CSRF token");
-                    upload_state.failed = true;
-                    Update.abort();
+                    abortUploadAndCloseClient();
                     return;
                 }
                 // PIN brute-force protection: lock out after N failures (SEC-001).
@@ -511,8 +557,7 @@ bool start(const char* ssid, const char* password) {
                 if (pin_fail_count >= MAX_PIN_FAILURES) {
                     SIG_LOGW("[ota] Upload rejected: too many failed PIN attempts (%d) — restart OTA to retry",
                              pin_fail_count);
-                    upload_state.failed = true;
-                    Update.abort();
+                    abortUploadAndCloseClient();
                     return;
                 }
                 // A PIN is mandatory: start() refuses to run without one, so
@@ -525,8 +570,7 @@ bool start(const char* ssid, const char* password) {
                              pin_fail_count, MAX_PIN_FAILURES);
                     // Keep the upload session failed so WRITE/END callbacks
                     // cannot touch flash or reboot the device.
-                    upload_state.failed = true;
-                    Update.abort();
+                    abortUploadAndCloseClient();
                     return;
                 }
                 upload_state.authenticated = true;
@@ -541,7 +585,7 @@ bool start(const char* ssid, const char* password) {
                          static_cast<unsigned>(Update.size()), Update.isRunning() ? 1 : 0,
                          Update.errorString());
                 if (!begin_ok) {
-                    upload_state.failed = true;
+                    abortUploadAndCloseClient();
                     SIG_LOGW("[ota] Update.begin failed: %s", Update.errorString());
                     Update.printError(Serial);
                 } else {
@@ -555,9 +599,7 @@ bool start(const char* ssid, const char* password) {
                         upload.buf, upload.currentSize, currentSecurityEpoch(),
                         &incoming_epoch);
                     if (epoch_status != hal::OtaEpochStatus::Allowed) {
-                        upload_state.failed = true;
-                        upload_state.started = false;
-                        Update.abort();
+                        abortUploadAndCloseClient();
                         SIG_LOGW("[ota] Upload rejected: %s security epoch (%u)",
                                  epoch_status == hal::OtaEpochStatus::Downgrade
                                      ? "downgrade" : "malformed",
@@ -578,11 +620,9 @@ bool start(const char* ssid, const char* password) {
                     upload_state.received, upload.currentSize, written,
                     0, &next_received);
                 if (!hal::otaWriteAccepted(write_result)) {
-                    upload_state.failed = true;
-                    upload_state.started = false;
+                    abortUploadAndCloseClient();
                     SIG_LOGW("[ota] Update.write failed: %s", Update.errorString());
                     Update.printError(Serial);
-                    Update.abort();
                 } else {
                     upload_state.received = next_received;
                 }
@@ -620,9 +660,7 @@ bool start(const char* ssid, const char* password) {
                     Update.printError(Serial);
                 }
             } else if (upload.status == UPLOAD_FILE_ABORTED) {
-                upload_state.failed = true;
-                upload_state.started = false;
-                Update.abort();
+                abortUploadAndCloseClient();
                 SIG_LOGW("[ota] Upload aborted after %u bytes",
                          static_cast<unsigned>(upload_state.received));
             }
@@ -635,6 +673,9 @@ bool start(const char* ssid, const char* password) {
 
     server->begin();
     stop_requested.store(false, std::memory_order_release);
+    worker_exited.store(false, std::memory_order_release);
+    worker_owns_server.store(true, std::memory_order_release);
+    worker_exit_overdue.store(false, std::memory_order_release);
     active.store(true, std::memory_order_release);
     session_started_at = millis();
     if (xTaskCreatePinnedToCore(
@@ -643,7 +684,9 @@ bool start(const char* ssid, const char* password) {
         strncpy(last_error, "Unable to start OTA worker", sizeof(last_error) - 1);
         last_error[sizeof(last_error) - 1] = '\0';
         active.store(false, std::memory_order_release);
-        cleanupServer();
+        worker_owns_server.store(false, std::memory_order_release);
+        worker_exited.store(true, std::memory_order_release);
+        (void)cleanupServer(ServerCleanupContext::Starter);
         return false;
     }
     return true;
@@ -652,23 +695,21 @@ bool start(const char* ssid, const char* password) {
 void loop() {
     finalizePendingApRelease();
 
-    // #1495 watchdog: if the worker stalls (crash/wedge) while a session is
-    // marked active and past its window, the session would otherwise stick
-    // forever, blocking reboots and every later OTA start. The loop owns the
-    // WiFi driver, so force the cleanup here once the worker has been given a
-    // grace period to exit on its own. In-flight uploads are left to finish
-    // (upload_state.started guards the force path).
+    // Expiry requests cancellation and wakes a blocked multipart read. The
+    // supervisor never deletes the worker-owned server; it waits for the
+    // worker's post-cleanup exit acknowledgement instead.
     if (active.load(std::memory_order_acquire) && session_started_at != 0 &&
         !reboot_pending.load(std::memory_order_acquire) &&
         otaSessionExpired(session_started_at, millis())) {
         if (!stop_requested.load(std::memory_order_acquire)) {
             SIG_LOGW("[ota] session expired — requesting worker exit");
-            stop_requested.store(true, std::memory_order_release);
-        } else if (!upload_state.started &&
-                   workerStaleMs() > OTA_WORKER_STALE_LIMIT_MS) {
-            SIG_LOGW("[ota] worker stalled past expiry — forcing session cleanup");
-            cleanupServer();
-            active.store(false, std::memory_order_release);
+            requestWorkerStop();
+        } else if (workerStaleMs() > OTA_WORKER_STALE_LIMIT_MS &&
+                   !worker_exit_overdue.exchange(true, std::memory_order_acq_rel)) {
+            // Re-close the active socket, but never reclaim the worker's
+            // WebServer. The worker acknowledges exit after owning cleanup.
+            SIG_LOGW("[ota] worker exit overdue — waiting for owner cleanup");
+            sigurdosWebServerCancelMultipartClient();
         }
     }
 
@@ -702,9 +743,13 @@ void loop() {
 
 void stop() {
     if (!active.load(std::memory_order_acquire)) return;
-    stop_requested.store(true, std::memory_order_release);
-    // The worker remains the only task that accesses WebServer or Update. Its
-    // next upload callback closes a slow client from the owning task.
+    requestWorkerStop();
+    if (!waitForWorkerExit(OTA_WORKER_JOIN_TIMEOUT_MS)) {
+        // Fail safe: retain the object rather than deleting it from this task.
+        // The parser's absolute deadline remains the final bounded escape.
+        SIG_LOGW("[ota] worker did not acknowledge stop within %u ms",
+                 static_cast<unsigned>(OTA_WORKER_JOIN_TIMEOUT_MS));
+    }
 }
 
 bool isActive() {
