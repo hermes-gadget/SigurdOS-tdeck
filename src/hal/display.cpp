@@ -27,7 +27,7 @@
 #include "prefs.h"
 #include "trackball.h"
 #include "tdeck_pins.h"
-#include "sdcard.h"
+#include "spi_shared.h"
 #include "../ui/ui.h"
 #include "../ui/chat_screen.h"
 #include "../ui/navigation.h"
@@ -62,13 +62,11 @@ public:
             cfg.freq_read  = 16000000;
             cfg.spi_3wire  = false;
             cfg.use_lock   = true;
-            // The display shares SPI2_HOST + its DMA channel with the SD
-            // card and the LoRa radio. The bus guard (sigurdos_sdcard_bus_*)
-            // serializes SD vs display, but the radio's DMA transactions can
-            // still interleave with the display's DMA push; a corrupted DMA
-            // state wedges dmaWait() forever (#1540). Polling keeps every
-            // flush wait bounded by one transaction. Full-frame pushes
-            // (~31ms at 40MHz) block the CPU, which is acceptable here.
+            // The display shares SPI2_HOST with SD and LoRa. Polling keeps a
+            // flush bounded by one transaction; the firmware-owned outer
+            // arbiter below prevents those three drivers from interleaving.
+            // Full-frame pushes (~31ms at 40MHz) block the CPU, which is
+            // acceptable here.
             cfg.dma_channel = -1;
             cfg.pin_sclk   = PIN_TFT_SCL;
             cfg.pin_mosi   = PIN_TFT_SDA;
@@ -627,13 +625,13 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
     uint32_t row_bytes = w * bpp;
     uint32_t stride = lv_draw_buf_width_to_stride(w, cf);
 
-    // Drop the frame while the SD holds the shared SPI bus (#1540). A hung
-    // SD transaction (card stops responding mid data-phase) holds the SPI
-    // bus lock with no timeout; pushing now could block loopTask past the
-    // watchdog limit. The bus guard makes the wait bounded: SD writers hold
-    // the mutex across their transactions, and this bounded take either
-    // succeeds (bus free) or times out (drop the frame).
-    if (!sigurdos_sdcard_bus_try_lock(150)) {
+    // Display, SD, and RadioLib all enter the same outer SPI2 arbiter. Keep
+    // the established frame-drop budget: a busy or faulted peer must never
+    // make the LVGL flush path wait into the loopTask watchdog window.
+    SigurdosSharedSpiGuard spi_guard(
+        SigurdosSharedSpiDevice::Display,
+        SIGURDOS_SHARED_SPI_DISPLAY_TIMEOUT_MS);
+    if (!spi_guard) {
 #if defined(SIGURDOS_DEBUG) && SIGURDOS_DEBUG
         Serial.printf("[flush] SKIP t=%lu\n", (unsigned long)millis());
 #endif
@@ -682,7 +680,7 @@ static void lvgl_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px
         }
     }
     tft.endWrite();
-    sigurdos_sdcard_bus_unlock();
+    spi_guard.release();
     lv_display_flush_ready(disp);
 #if defined(SIGURDOS_DEBUG) && SIGURDOS_DEBUG
     {

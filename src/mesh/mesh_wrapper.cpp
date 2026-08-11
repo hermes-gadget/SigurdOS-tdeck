@@ -128,7 +128,10 @@ static sigurdos::mesh::TimeSyncTracker time_sync_tracker;
 
 static void cleanupRadioModule(Module& module)
 {
-    module.term();
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::Radio,
+        SIGURDOS_SHARED_SPI_STARTUP_TIMEOUT_MS);
+    if (bus) module.term();
     delete module.hal;
     module.hal = nullptr;
 }
@@ -239,6 +242,14 @@ static bool applyRadioConfigAtomically(
         return false;
     }
 
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::Radio,
+        SIGURDOS_SHARED_SPI_RADIO_TIMEOUT_MS);
+    if (!bus) {
+        last_radio_config_error = -1;
+        return false;
+    }
+
     const sigurdos::mesh::RadioTransactionResult result =
         sigurdos::mesh::applyRadioConfigTransaction(
             requested, active_radio_config, applyRadioHardware);
@@ -271,6 +282,18 @@ static bool sigurdos_mesh_radio_tx_allowed()
 #else
     return active_radio_config_valid && radio_config_tx_enabled;
 #endif
+}
+
+static bool readRadioSignal(int& rssi, float& snr)
+{
+    if (!radio_driver) return false;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::Radio,
+        SIGURDOS_SHARED_SPI_RADIO_TIMEOUT_MS);
+    if (!bus) return false;
+    rssi = static_cast<int>(radio_driver->getLastRSSI());
+    snr = radio_driver->getLastSNR();
+    return true;
 }
 
 // ════════════════════════════════════════════════════
@@ -412,8 +435,9 @@ static void queue_push(const char* sender, const char* channel, const char* text
     if (!msg_queue.push(m)) return;
     // Log as packet entry (accessible via Packets screen)
     if (sender && sender[0] && g_mesh) {
-        int rssi = (int)radio_driver->getLastRSSI();
-        float snr = radio_driver->getLastSNR();
+        int rssi = 0;
+        float snr = 0.0f;
+        (void)readRadioSignal(rssi, snr);
         const char* ptype = (channel && channel[0]) ? "CHANNEL" : "DM";
         sigurdos::mesh::pushPacketLog(sender, rssi, snr, ptype);
     }
@@ -480,8 +504,11 @@ uint32_t sigurdos::mesh::meshRtcTimeUnique() { return rtc_clock.getCurrentTimeUn
 bool sigurdos::mesh::meshRadioTxAllowed() { return sigurdos_mesh_radio_tx_allowed(); }
 
 void sigurdos::mesh::meshRadioDriverStats(sigurdos::mesh::MeshRadioDriverStats& out) {
-    out.last_rssi = radio_driver ? radio_driver->getLastRSSI() : 0;
-    out.last_snr = radio_driver ? radio_driver->getLastSNR() : 0.0f;
+    int rssi = 0;
+    float snr = 0.0f;
+    (void)readRadioSignal(rssi, snr);
+    out.last_rssi = rssi;
+    out.last_snr = snr;
     out.packets_recv = radio_driver ? radio_driver->getPacketsRecv() : 0;
     out.packets_sent = radio_driver ? radio_driver->getPacketsSent() : 0;
     out.packets_recv_errors = radio_driver ? radio_driver->getPacketsRecvErrors() : 0;
@@ -1256,10 +1283,15 @@ bool init(bool spiffs_ok)
 #if SIGURDOS_DEBUG_MESH
     Serial.println("[mesh] calling radio_module->std_init()...");
 #endif
-    if (!radio_module->std_init(&sigurdos_shared_spi())) {
-        Serial.println("[mesh] ERROR: Radio init failed");
-        cleanupMeshInit();
-        return false;
+    {
+        SigurdosSharedSpiGuard bus(
+            SigurdosSharedSpiDevice::Radio,
+            SIGURDOS_SHARED_SPI_STARTUP_TIMEOUT_MS);
+        if (!bus || !radio_module->std_init(&sigurdos_shared_spi())) {
+            Serial.println("[mesh] ERROR: Radio init failed");
+            cleanupMeshInit();
+            return false;
+        }
     }
     radio_inited = true;
 
@@ -1325,7 +1357,19 @@ bool init(bool spiffs_ok)
         g_mesh->self_id = candidate;
     }
 
-    g_mesh->begin();
+    {
+        // MeshCore's begin() reaches RadioLib for preamble/RX setup. Keep
+        // that pinned call behind the same SigurdOS-owned arbiter boundary.
+        SigurdosSharedSpiGuard bus(
+            SigurdosSharedSpiDevice::Radio,
+            SIGURDOS_SHARED_SPI_STARTUP_TIMEOUT_MS);
+        if (!bus) {
+            Serial.println("[mesh] ERROR: Radio begin arbitration timed out");
+            cleanupMeshInit();
+            return false;
+        }
+        g_mesh->begin();
+    }
 
     // Apply duty cycle from prefs
     g_mesh->setDutyCycle(p.duty_cycle);
@@ -1416,7 +1460,14 @@ void loop()
 {
     if (!sigurdos::mesh::detail::meshInitUsable(init_state)) return;
     if (g_mesh) {
-        g_mesh->loop();  // Dispatcher::loop() — fast, non-blocking
+        // MeshCore/RadioLib is pinned, so SigurdOS owns the transaction
+        // boundary around Dispatcher::loop(). If an SD worker is stalled,
+        // skip this pass after 25 ms instead of entering SPIClass's
+        // portMAX_DELAY bus lock on loopTask. The next pass retries RX/TX.
+        SigurdosSharedSpiGuard bus(
+            SigurdosSharedSpiDevice::Radio,
+            SIGURDOS_SHARED_SPI_RADIO_TIMEOUT_MS);
+        if (bus) g_mesh->loop();
         g_mesh->expirePendingAcks();
     }
     // Companion USB/BLE bridge must poll even if mesh radio init was deferred
@@ -1784,8 +1835,16 @@ const char* getOwnName() { return own_name; }
 // ── Radio stats ─────────────────────────────────
 
 int getNoiseFloor()   { return g_mesh ? (int)radio_driver->getNoiseFloor() : -120; }
-int getLastRSSI()     { return g_mesh ? (int)radio_driver->getLastRSSI() : 0; }
-float getLastSNR()    { return g_mesh ? radio_driver->getLastSNR() : 0.0f; }
+int getLastRSSI() {
+    int rssi = 0;
+    float snr = 0.0f;
+    return g_mesh && readRadioSignal(rssi, snr) ? rssi : 0;
+}
+float getLastSNR() {
+    int rssi = 0;
+    float snr = 0.0f;
+    return g_mesh && readRadioSignal(rssi, snr) ? snr : 0.0f;
+}
 unsigned long getTotalTxAirtimeMs() { return g_mesh ? g_mesh->getTotalAirTime() : 0; }
 unsigned long getTotalRxAirtimeMs() { return g_mesh ? g_mesh->getReceiveAirTime() : 0; }
 uint32_t getNumSentFlood()   { return g_mesh ? g_mesh->getNumSentFlood() : 0; }
