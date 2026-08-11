@@ -90,6 +90,9 @@ jobs:
       - name: Install PlatformIO
         run: python -m pip install --require-hashes -r ci/requirements-platformio.txt
 
+      - name: Resolve exact firmware packages
+        run: pio pkg install -e SigurdOS_TDeck
+
       - name: Check version fallback matches tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -157,6 +160,12 @@ jobs:
 
       - name: Verify resolved PlatformIO graph
         run: python scripts/platformio_lock.py --check --environment SigurdOS_TDeck
+
+      - name: Generate firmware CycloneDX SBOM from resolved lock
+        run: >-
+          python scripts/generate_platformio_sbom.py
+          --lock ci/platformio-packages.lock
+          --output artifacts/sbom.cdx.json
 
       - name: Validate final release artifact set
         run: |
@@ -261,6 +270,7 @@ jobs:
             | `firmware-merged.bin` | Full flash (flash at 0x0) |
             | `SigurdOS-tdeck-launcher.bin` | For bmorcelli/Launcher install |
             | `firmware-debug.bin` | Debug build with verbose logging |
+            | `sbom.cdx.json` | CycloneDX firmware dependency inventory |
             | `manifest.json` | Web flasher manifest |
             | `build-metadata.json` | Build provenance and component hashes |
             | `sigurdos-tdeck-bootloader.bin` | Bootloader (web flasher) |
@@ -277,6 +287,7 @@ jobs:
             firmware/firmware-merged.bin
             firmware/SigurdOS-tdeck-launcher.bin
             firmware/firmware-debug.bin
+            firmware/sbom.cdx.json
             firmware/SHA256SUMS.txt
             firmware/SHA256SUMS.sigstore.json
             firmware/manifest.json
