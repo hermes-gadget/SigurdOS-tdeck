@@ -4,6 +4,10 @@ name: Pull Request CI
   pull_request:
     branches:
       - dev
+  push:
+    branches:
+      - dev
+      - 'release/**'
   workflow_dispatch:
 
 permissions:
