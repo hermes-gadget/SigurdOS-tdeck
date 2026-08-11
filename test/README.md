@@ -97,6 +97,7 @@ test/
 |-- test_mesh_wrapper_internal/  Wrapper seam helpers: scope-key hex codec, DM conversation key
 |-- test_message_search/         Message search indexing and result bounds
 |-- test_message_store/          Message append, dedup, rotation, and persistence
+|-- test_message_store_failover/ Runtime store backend failover, retry queue, and durability
 |-- test_navigation/             Navigation stack and back-swipe behavior
 |-- test_navigation_contract/    Screen enum stability and screen inventory checks
 |-- test_navigation_pin_gate/    PIN-gated navigation dispatch and unlock policy
@@ -124,6 +125,7 @@ test/
 |-- test_sdcard/                 SD card state, path checks, size formatting
 |-- test_sd_store/               SD message store persistence, chunking, and recovery
 |-- test_storage/                SPIFFS mount, erased-partition recovery, and failure policy
+|-- test_storage_warm/           Storage warm task lifecycle, cancel, and teardown interlock
 |-- test_system_action/          System action confirmation and destructive op guards
 |-- test_tdeck_board/            Board power thresholds and shutdown logic
 |-- test_tdeck_sleep/            Production-linked T-Deck sleep ordering and failures
