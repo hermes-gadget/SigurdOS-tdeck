@@ -134,6 +134,14 @@ uint32_t messageStoreBackendCompactToRecords();
 
 bool storedMessageSameIdentity(const StoredMessage& a, const StoredMessage& b);
 void storedMessageNormalize(StoredMessage& msg);
+
+// Single append attempt against the currently selected backend, WITHOUT the
+// runtime failover/retry-queue behavior of the public messageStoreAppend().
+// Used by migration paths where a failed write must NOT be retried into the
+// source store (that would let the migration appear successful and then
+// retire the only durable copy). Returns true and sets *store_id_out (when
+// non-null) only if the selected backend committed the record.
+bool messageStoreAppendOnce(const StoredMessage& msg, uint32_t* store_id_out);
 } // namespace detail
 
 bool messageStoreBegin();

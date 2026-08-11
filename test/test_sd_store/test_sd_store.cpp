@@ -344,22 +344,26 @@ TEST_F(SdMessageStoreTest, FailedMigrationKeepsSourceForRetry)
     EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 0);
 }
 
-TEST_F(SdMessageStoreTest, PartialRuntimeAppendIsRecoveredOnNextSelection)
+TEST_F(SdMessageStoreTest, PartialRuntimeAppendFailsOverToSpiFlash)
 {
     selectSd();
     ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(1)));
     sigurdos::mesh::sdMessageStoreSetNativeAppendWriteLimit(7);
-    EXPECT_FALSE(sigurdos::mesh::messageStoreAppend(makeMsg(2)));
+    // A mid-record SD write failure must NOT lose the message: the runtime
+    // coordinator fails the append over to SPIFFS and reports degraded.
+    EXPECT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(2)));
+    EXPECT_TRUE(sigurdos::mesh::sdMessageStoreDegraded());
     sigurdos::mesh::sdMessageStoreSetNativeAppendWriteLimit(-1);
 
-    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(false));
-    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
-    EXPECT_TRUE(sigurdos::mesh::messageStoreLastRecoveryResult() ==
-                    sigurdos::mesh::MessageStoreRecoveryResult::Repaired ||
-                sigurdos::mesh::messageStoreLastRecoveryResult() ==
-                    sigurdos::mesh::MessageStoreRecoveryResult::Salvaged);
-    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(3)));
+    // Re-selection (production path: SPIFFS available) migrates the SPIFFS
+    // copy back onto the healthy SD card; the torn SD tail is repaired and
+    // both messages remain durable.
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(true));
     EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 2);
+    EXPECT_NE(sigurdos::mesh::messageStoreLastRecoveryResult(),
+              sigurdos::mesh::MessageStoreRecoveryResult::Failed);
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(3)));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 3);
 }
 
 TEST_F(SdMessageStoreTest, FactoryResetCompanionInterlockRunsBeforeHistoryDeletion)

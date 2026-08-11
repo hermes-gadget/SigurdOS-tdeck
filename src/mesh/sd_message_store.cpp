@@ -536,7 +536,11 @@ bool sdMessageStoreSelect(bool spiffs_available)
     }
 
     for (const StoredMessage& message : migration) {
-        if (!messageStoreAppend(message)) {
+        // Migration must NOT use the public append path: its runtime failover
+        // would retry a failed SD write into the SPIFFS source and make the
+        // migration look successful, after which the source is retired and the
+        // data is lost. A failed migration must keep the source for retry.
+        if (!detail::messageStoreAppendOnce(message, nullptr)) {
             return fallBackToDefault();
         }
     }

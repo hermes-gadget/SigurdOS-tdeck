@@ -1470,6 +1470,11 @@ static void retryQueuedOnDefaultBackend()
 
 namespace detail {
 
+bool messageStoreAppendOnce(const StoredMessage& msg, uint32_t* store_id_out)
+{
+    return appendOnce(msg, store_id_out);
+}
+
 void messageStoreSelectBackend(const MessageStoreBackend* backend)
 {
     MessageStoreCoordinator::Guard guard(g_coordinator);
@@ -1639,7 +1644,10 @@ bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out)
     if (appendOnce(msg, store_id_out)) return true;
 
     if (g_backend == nullptr) {
-        retryQueuePush(msg);
+        // Default (SPIFFS) backend failed: keep the historical drop policy —
+        // a torn record is discarded, not queued, so the next append still
+        // starts at the expected ID. There is no custom backend to fail over
+        // to, so nothing can be retried here.
         return false;
     }
 
