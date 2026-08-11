@@ -21,6 +21,7 @@
 #include "tile_cache.h"
 #include "../hal/tdeck_pins.h"
 #include "../hal/sdcard.h"
+#include "../hal/spi_shared.h"
 #include "../hal/boot_watchdog.h"
 #include <Arduino.h>
 #include "../hal/prefs.h"
@@ -296,48 +297,62 @@ static SigurdosMapTileCompletion load_tile_off_ui(
     char path[64];
     snprintf(path, sizeof(path), SIGURDOS_SD_MOUNTPOINT "/tiles/%d/%d/%d.png",
              request.zoom, request.tx, request.ty);
-    FILE* file = fopen(path, "rb");
-    if (!file) return completion;
-
     long file_size = -1;
-    if (fseek(file, 0, SEEK_END) == 0) {
-        file_size = ftell(file);
-    }
-    if (file_size <= 0 ||
-        static_cast<unsigned long>(file_size) >
-            SIGURDOS_MAP_PNG_MAX_COMPRESSED_BYTES ||
-        fseek(file, 0, SEEK_SET) != 0) {
-        fclose(file);
-        completion.status = SigurdosMapTileCompletionStatus::Corrupt;
-        return completion;
-    }
-
-    uint8_t* png = static_cast<uint8_t*>(
-        map_alloc(static_cast<size_t>(file_size)));
-    if (!png) {
-        fclose(file);
-        completion.status = SigurdosMapTileCompletionStatus::OutOfMemory;
-        return completion;
-    }
-
-    size_t offset = 0;
-    while (offset < static_cast<size_t>(file_size)) {
-        const size_t remaining = static_cast<size_t>(file_size) - offset;
-        const size_t chunk = std::min(
-            remaining, SIGURDOS_MAP_TILE_READ_CHUNK_BYTES);
-        const size_t read = fread(png + offset, 1, chunk, file);
-        if (read != chunk) {
-            completion.status = SigurdosMapTileCompletionStatus::Corrupt;
-            break;
+    uint8_t* png = nullptr;
+    {
+        // Hold SPI2 only for the compressed file read. PNG inspection,
+        // decode, and RGB conversion are CPU/PSRAM work and must not suppress
+        // radio servicing after the SD transaction has completed.
+        SigurdosSharedSpiGuard bus(
+            SigurdosSharedSpiDevice::SdCard,
+            SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+        if (!bus) {
+            completion.status = SigurdosMapTileCompletionStatus::TimedOut;
+            return completion;
         }
-        offset += read;
-        if (cancelled_or_timed_out()) break;
-    }
-    fclose(file);
-    if (offset != static_cast<size_t>(file_size) ||
-        completion.status != SigurdosMapTileCompletionStatus::Missing) {
-        map_free(png);
-        return completion;
+
+        FILE* file = fopen(path, "rb");
+        if (!file) return completion;
+
+        if (fseek(file, 0, SEEK_END) == 0) {
+            file_size = ftell(file);
+        }
+        if (file_size <= 0 ||
+            static_cast<unsigned long>(file_size) >
+                SIGURDOS_MAP_PNG_MAX_COMPRESSED_BYTES ||
+            fseek(file, 0, SEEK_SET) != 0) {
+            fclose(file);
+            completion.status = SigurdosMapTileCompletionStatus::Corrupt;
+            return completion;
+        }
+
+        png = static_cast<uint8_t*>(
+            map_alloc(static_cast<size_t>(file_size)));
+        if (!png) {
+            fclose(file);
+            completion.status = SigurdosMapTileCompletionStatus::OutOfMemory;
+            return completion;
+        }
+
+        size_t offset = 0;
+        while (offset < static_cast<size_t>(file_size)) {
+            const size_t remaining = static_cast<size_t>(file_size) - offset;
+            const size_t chunk = std::min(
+                remaining, SIGURDOS_MAP_TILE_READ_CHUNK_BYTES);
+            const size_t read = fread(png + offset, 1, chunk, file);
+            if (read != chunk) {
+                completion.status = SigurdosMapTileCompletionStatus::Corrupt;
+                break;
+            }
+            offset += read;
+            if (cancelled_or_timed_out()) break;
+        }
+        fclose(file);
+        if (offset != static_cast<size_t>(file_size) ||
+            completion.status != SigurdosMapTileCompletionStatus::Missing) {
+            map_free(png);
+            return completion;
+        }
     }
 
     unsigned width = 0;
@@ -424,12 +439,7 @@ static void tile_worker_task(void*) {
         if (xQueueReceive(tile_request_queue, &request,
                           pdMS_TO_TICKS(50)) == pdTRUE) {
             if (!tile_request_still_owned(request)) continue;
-            // Hold the shared-bus guard while the SD is touched so the
-            // display flush in loopTask drops frames instead of waiting
-            // behind a potentially hung SD transaction (#1540).
-            sigurdos_sdcard_bus_enter();
             SigurdosMapTileCompletion completion = load_tile_off_ui(request);
-            sigurdos_sdcard_bus_exit();
             if (completion.status == SigurdosMapTileCompletionStatus::Cancelled) {
                 if (completion.pixels) map_free(completion.pixels);
             } else {
@@ -455,10 +465,14 @@ static void tile_worker_task(void*) {
         // only wait behind one step's worth of transactions.
         if (discovery_request_queue &&
             xQueueReceive(discovery_request_queue, &discovery_dummy, 0) == pdTRUE) {
-            sigurdos_sdcard_bus_enter();
-            sigurdos_map_discovery_step(SIGURDOS_MAP_DISCOVERY_ITEMS_PER_STEP,
-                                        SIGURDOS_MAP_DISCOVERY_MAX_STEP_MS);
-            sigurdos_sdcard_bus_exit();
+            SigurdosSharedSpiGuard bus(
+                SigurdosSharedSpiDevice::SdCard,
+                SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+            if (bus) {
+                sigurdos_map_discovery_step(
+                    SIGURDOS_MAP_DISCOVERY_ITEMS_PER_STEP,
+                    SIGURDOS_MAP_DISCOVERY_MAX_STEP_MS);
+            }
             vTaskDelay(pdMS_TO_TICKS(40));
         }
     }

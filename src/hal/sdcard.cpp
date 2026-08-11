@@ -24,8 +24,6 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <SD.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
@@ -299,6 +297,10 @@ static void sdcard_reset_diagnostics()
 static bool sdcard_refresh_capacity_impl()
 {
     if (!mounted) return false;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
 
     errno = 0;
     const uint64_t total = static_cast<uint64_t>(SD.totalBytes());
@@ -341,6 +343,11 @@ static void sdcard_record_success()
 
 static bool sdcard_mount_once(SigurdosSdMountSource source)
 {
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
+
     sdcard_diag.attempt_count++;
     sdcard_diag.last_source = source;
 
@@ -458,46 +465,25 @@ bool sigurdos_sdcard_mounted()
     return mounted;
 }
 
-// Shared-bus guard for the display flush path (#1540).
-//
-// The SD card shares SPI2_HOST with the display. A hung SD transaction
-// (card stops responding mid data-phase) holds the SPI bus lock without
-// any timeout, so a display flush that reaches the bus would block
-// forever and trip the loopTask watchdog.
-//
-// The bus mutex serializes SD users (map tile worker, message store) with
-// the display flush. Writers hold it across their transactions; the flush
-// takes it with a timeout and drops the frame on timeout, so loopTask can
-// never block on the bus.
-static SemaphoreHandle_t s_sd_bus_mutex = nullptr;
-
-static SemaphoreHandle_t sd_bus_mutex()
-{
-    if (!s_sd_bus_mutex) {
-        // Recursive so nested SD sections (e.g. backendReplace calling
-        // backendRecover) do not self-deadlock.
-        s_sd_bus_mutex = xSemaphoreCreateRecursiveMutex();
-    }
-    return s_sd_bus_mutex;
-}
-
+// Compatibility wrappers for the #1540 SD guard API. All owned callers now
+// use the shared display/SD/radio arbiter directly, but keeping these bounded
+// adapters preserves the existing HAL surface without a second mutex.
 void sigurdos_sdcard_bus_enter()
 {
-    SemaphoreHandle_t m = sd_bus_mutex();
-    if (m) xSemaphoreTakeRecursive(m, portMAX_DELAY);
+    (void)sigurdos_shared_spi_try_lock(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
 }
 
 void sigurdos_sdcard_bus_exit()
 {
-    SemaphoreHandle_t m = s_sd_bus_mutex;
-    if (m) xSemaphoreGiveRecursive(m);
+    sigurdos_shared_spi_unlock();
 }
 
 bool sigurdos_sdcard_bus_try_lock(uint32_t timeout_ms)
 {
-    SemaphoreHandle_t m = sd_bus_mutex();
-    if (!m) return false;
-    return xSemaphoreTakeRecursive(m, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+    return sigurdos_shared_spi_try_lock(
+        SigurdosSharedSpiDevice::SdCard, timeout_ms);
 }
 
 void sigurdos_sdcard_bus_unlock()
@@ -585,6 +571,10 @@ const char* sigurdos_sdcard_format_size(uint64_t bytes, char* buf, size_t buf_sz
 bool sigurdos_sdcard_exists(const char* path)
 {
     if (!mounted || !sigurdos_sdcard_path_valid(path)) return false;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
     if (!sdcard_recover_file(path)) return false;
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     return sdcard_vfs_path(path, live_path, sizeof(live_path)) &&
@@ -594,6 +584,10 @@ bool sigurdos_sdcard_exists(const char* path)
 size_t sigurdos_sdcard_read(const char* path, uint8_t* buf, size_t max_len)
 {
     if (!mounted || !sigurdos_sdcard_path_valid(path) || !buf || max_len == 0) return 0;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return 0;
 
     if (!sdcard_recover_file(path)) return 0;
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
@@ -620,6 +614,10 @@ bool sigurdos_sdcard_list(const char* path, SigurdosSdDirEntry* entries,
         max_entries == 0 || !count) {
         return false;
     }
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
 
     char directory_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, directory_path, sizeof(directory_path))) return false;
@@ -695,6 +693,10 @@ bool sigurdos_sdcard_copy_file(const char* source_path, const char* destination_
         std::strcmp(source_path, destination_path) == 0) {
         return false;
     }
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
 
     char source[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     char destination[sizeof(source)];
@@ -772,6 +774,10 @@ bool sigurdos_sdcard_delete_file(const char* path)
         std::strcmp(path, "/") == 0) {
         return false;
     }
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return false;
     struct stat info {};
@@ -792,6 +798,10 @@ bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
 {
     if (!mounted || !sigurdos_sdcard_path_valid(path)) return false;
     if (len > 0 && !data) return false;  // data required only for non-empty writes
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
 
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     char temp_path[sizeof(live_path) + 4];
@@ -811,8 +821,11 @@ bool sigurdos_sdcard_write(const char* path, const uint8_t* data, size_t len)
 
 uint64_t sigurdos_sdcard_file_size(const char* path)
 {
-    if (!mounted || !sigurdos_sdcard_path_valid(path) ||
-        !sdcard_recover_file(path)) return 0;
+    if (!mounted || !sigurdos_sdcard_path_valid(path)) return 0;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus || !sdcard_recover_file(path)) return 0;
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return 0;
     struct stat info {};
@@ -832,6 +845,10 @@ bool sigurdos_sdcard_read_at(const char* path, uint64_t offset,
         return false;
     }
     if (len == 0) return true;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
     if (!sdcard_recover_file(path)) return false;
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return false;
@@ -859,6 +876,10 @@ bool sigurdos_sdcard_write_at(const char* path, uint64_t offset,
         return false;
     }
     if (len == 0) return true;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path)) ||
         !sdcard_ensure_parent_dir(live_path) || !sdcard_recover_file(path)) {
@@ -890,6 +911,10 @@ bool sigurdos_sdcard_append(const char* path, const uint8_t* data, size_t len)
     if (!mounted || !sigurdos_sdcard_path_valid(path) ||
         (len > 0 && !data)) return false;
     if (len == 0) return true;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path)) ||
         !sdcard_ensure_parent_dir(live_path) || !sdcard_recover_file(path)) {
@@ -918,6 +943,10 @@ bool sigurdos_sdcard_remove_path(const char* path)
 {
     if (!mounted || !sigurdos_sdcard_path_valid(path) ||
         std::strcmp(path, "/") == 0) return false;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
     char live_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     if (!sdcard_vfs_path(path, live_path, sizeof(live_path))) return false;
     if (std::remove(live_path) == 0 || errno == ENOENT) {
@@ -932,6 +961,10 @@ bool sigurdos_sdcard_rename_path(const char* from, const char* to)
 {
     if (!mounted || !sigurdos_sdcard_path_valid(from) ||
         !sigurdos_sdcard_path_valid(to)) return false;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
     char from_path[sizeof(SIGURDOS_SD_MOUNTPOINT) + SIGURDOS_SD_MAX_PATH_LEN + 1];
     char to_path[sizeof(from_path)];
     if (!sdcard_vfs_path(from, from_path, sizeof(from_path)) ||
@@ -948,6 +981,10 @@ bool sigurdos_sdcard_rename_path(const char* from, const char* to)
 bool sigurdos_sdcard_recover_file(const char* path)
 {
     if (!mounted || !sigurdos_sdcard_path_valid(path)) return false;
+    SigurdosSharedSpiGuard bus(
+        SigurdosSharedSpiDevice::SdCard,
+        SIGURDOS_SHARED_SPI_SD_TIMEOUT_MS);
+    if (!bus) return false;
     const bool recovered = sdcard_recover_file(path);
     if (recovered) capacity_cache.invalidate();
     return recovered;
