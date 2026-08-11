@@ -13,6 +13,7 @@
 #include "ota_security_epoch.h"
 #include "ota_write_policy.h"
 #include "prefs.h"
+#include "storage.h"
 #include "wifi_coordinator.h"
 #include "wifi_ota.h"
 #include <WiFi.h>
@@ -708,6 +709,11 @@ void loop() {
     // reboot finalization on loopTask prevents filesystem teardown racing mesh
     // persistence after the worker has finished writing the OTA partition.
     if (s_reboot_pending.exchange(false, std::memory_order_acq_rel)) {
+        if (!storage_stop_warm()) {
+            Serial.println("[gh-ota] storage warm task still active; retrying reboot");
+            s_reboot_pending.store(true, std::memory_order_release);
+            return;
+        }
         SPIFFS.end();
         delay(500);
         ESP.restart();

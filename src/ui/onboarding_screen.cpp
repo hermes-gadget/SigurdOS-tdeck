@@ -9,6 +9,7 @@
 #include "prefs_ui.h"
 #include "../fonts/emoji_font.h"
 #include "../hal/prefs.h"
+#include "../hal/storage.h"
 #include "../hal/radio_profiles.h"
 #include "../mesh/mesh_wrapper.h"
 #include <Arduino.h>
@@ -413,6 +414,12 @@ static void build_step3()
             return;
         }
         // Flush and wait for flash writes to complete before restart
+        if (!sigurdos::storage_stop_warm()) {
+            notifications_post(
+                NotificationEvent::UiError,
+                "Storage is busy; restart cancelled");
+            return;
+        }
         SPIFFS.end();
         delay(200);
         ESP.restart();

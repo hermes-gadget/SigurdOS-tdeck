@@ -25,6 +25,7 @@
 #include "../theme.h"
 #include "../responsive.h"
 #include "../../hal/prefs.h"
+#include "../../hal/storage.h"
 #include "../../hal/radio_profiles.h"
 #include "../../mesh/mesh_wrapper.h"
 #include "../../mesh/airtime_policy.h"
@@ -741,6 +742,12 @@ void radio_setup_screen_show()
         }
         sigurdos::mesh::saveChannels();
         // Flush and wait for flash writes to complete before restart
+        if (!sigurdos::storage_stop_warm()) {
+            notifications_post(
+                NotificationEvent::UiError,
+                "Storage is busy; restart cancelled");
+            return;
+        }
         SPIFFS.end();
         delay(200);
         ESP.restart();

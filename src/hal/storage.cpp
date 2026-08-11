@@ -6,15 +6,30 @@
 #include <Arduino.h>
 #include <SPIFFS.h>
 #include <esp_partition.h>
+#include <atomic>
 #include <memory>
 #include <new>
 
+#if defined(ESP32_PLATFORM)
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#endif
+
 namespace sigurdos {
 
-static bool s_storage_available = false;
-static bool s_storage_init_called = false;
-static bool s_storage_mounted = false;
-static bool s_storage_warm_started = false;
+static std::atomic<bool> s_storage_available{false};
+static std::atomic<bool> s_storage_init_called{false};
+static std::atomic<bool> s_storage_mounted{false};
+static std::atomic<bool> s_storage_warm_cancel{false};
+static std::atomic<StorageWarmState> s_storage_warm_state{StorageWarmState::Idle};
+
+#if defined(ESP32_PLATFORM)
+static std::atomic<TaskHandle_t> s_storage_warm_task{nullptr};
+static std::atomic<bool> s_storage_warm_task_starting{false};
+static constexpr uint32_t STORAGE_WARM_JOIN_TIMEOUT_MS = 2000;
+static constexpr uint32_t STORAGE_WARM_DELAY_MS = 100;
+static constexpr uint32_t STORAGE_WARM_DELAY_TOTAL_MS = 12000;
+#endif
 
 // First-write SPIFFS GC absorption: the first write after mount can trigger
 // a GC pass that blocks the writer for 10-90s on this encrypted partition
@@ -23,23 +38,73 @@ static bool s_storage_warm_started = false;
 // (and its 10s runtime watchdog) free of the stall, so runtime commits —
 // channel store, contacts — stay fast.
 #if defined(ESP32_PLATFORM)
+static bool storage_warm_cancelled()
+{
+    return s_storage_warm_cancel.load(std::memory_order_acquire) ||
+           !s_storage_mounted.load(std::memory_order_acquire) ||
+           s_storage_warm_state.load(std::memory_order_acquire) ==
+               StorageWarmState::Stopping;
+}
+
+static void storage_warm_finish(bool ready)
+{
+    s_storage_warm_state.store(ready ? StorageWarmState::Ready
+                                     : StorageWarmState::Idle,
+                               std::memory_order_release);
+    s_storage_warm_task.store(nullptr, std::memory_order_release);
+    vTaskDelete(nullptr);
+}
+
 static void storage_warm_task(void*) {
+    // xTaskCreate may schedule this task before its caller has received and
+    // published the handle. Wait for that publication so cancellation cannot
+    // make the creator store a stale handle after this task has exited.
+    while (s_storage_warm_task_starting.load(std::memory_order_acquire)) {
+        vTaskDelay(1);
+    }
+
     // Boot's own SPIFFS readers (settings/chats/mesh) finish around t+5-8s;
     // wait for them so the warm write cannot stall boot-time reads.
-    vTaskDelay(pdMS_TO_TICKS(12000));
-    if (!s_storage_mounted) {
-        vTaskDelete(nullptr);
+    for (uint32_t waited = 0; waited < STORAGE_WARM_DELAY_TOTAL_MS;
+         waited += STORAGE_WARM_DELAY_MS) {
+        if (storage_warm_cancelled()) {
+            storage_warm_finish(false);
+            return;
+        }
+        vTaskDelay(pdMS_TO_TICKS(STORAGE_WARM_DELAY_MS));
+    }
+
+    if (storage_warm_cancelled()) {
+        storage_warm_finish(false);
         return;
     }
+
+    bool warmed = true;
     for (int i = 0; i < 3; ++i) {
+        if (storage_warm_cancelled()) {
+            storage_warm_finish(false);
+            return;
+        }
         File f = SPIFFS.open("/.warm", FILE_WRITE);
-        if (!f) break;
+        if (!f) {
+            Serial.println("[storage] warm open failed");
+            warmed = false;
+            break;
+        }
         const uint8_t byte = static_cast<uint8_t>('w' + i);
-        f.write(&byte, 1);
+        const bool wrote = f.write(&byte, 1) == 1;
         f.close();
+        if (!wrote) {
+            Serial.println("[storage] warm write failed");
+            warmed = false;
+            break;
+        }
     }
-    SPIFFS.remove("/.warm");
-    vTaskDelete(nullptr);
+    if (warmed && !storage_warm_cancelled() && !SPIFFS.remove("/.warm")) {
+        Serial.println("[storage] warm cleanup failed");
+        warmed = false;
+    }
+    storage_warm_finish(warmed && !storage_warm_cancelled());
 }
 #endif
 
@@ -85,13 +150,18 @@ static PartitionEraseState classify_partition_erasure(
 
 bool storage_init()
 {
-    if (s_storage_init_called) return s_storage_available;
-    s_storage_init_called = true;
+    if (s_storage_init_called.load(std::memory_order_acquire)) {
+        return s_storage_available.load(std::memory_order_acquire);
+    }
+    s_storage_init_called.store(true, std::memory_order_release);
 
     // Attempt a safe mount first — don't format, respect existing data.
     if (SPIFFS.begin(false)) {
-        s_storage_available = true;
-        s_storage_mounted = true;
+        s_storage_available.store(true, std::memory_order_release);
+        s_storage_mounted.store(true, std::memory_order_release);
+        s_storage_warm_cancel.store(false, std::memory_order_release);
+        s_storage_warm_state.store(StorageWarmState::Idle,
+                                   std::memory_order_release);
         return true;
     }
 
@@ -103,7 +173,7 @@ bool storage_init()
         nullptr);
     if (!part) {
         Serial.println("[storage] SPIFFS partition not found — storage unavailable");
-        s_storage_available = false;
+        s_storage_available.store(false, std::memory_order_release);
         return false;
     }
 
@@ -113,64 +183,136 @@ bool storage_init()
         Serial.println("[storage] SPIFFS partition is fully erased — formatting once");
         if (!SPIFFS.format()) {
             Serial.println("[storage] SPIFFS format failed — storage unavailable");
-            s_storage_available = false;
+            s_storage_available.store(false, std::memory_order_release);
             return false;
         }
         if (!SPIFFS.begin(false)) {
             Serial.println("[storage] SPIFFS mount after format failed — storage unavailable");
-            s_storage_available = false;
+            s_storage_available.store(false, std::memory_order_release);
             return false;
         }
         Serial.println("[storage] SPIFFS formatted and mounted");
-        s_storage_available = true;
-        s_storage_mounted = true;
+        s_storage_available.store(true, std::memory_order_release);
+        s_storage_mounted.store(true, std::memory_order_release);
+        s_storage_warm_cancel.store(false, std::memory_order_release);
+        s_storage_warm_state.store(StorageWarmState::Idle,
+                                   std::memory_order_release);
         return true;
     }
 
     if (erase_state == PartitionEraseState::Unknown) {
         Serial.println("[storage] SPIFFS erased-state check failed — preserving partition");
-        s_storage_available = false;
+        s_storage_available.store(false, std::memory_order_release);
         return false;
     }
 
     // Partition has data but SPIFFS can't mount it — likely corruption.
     Serial.println("[storage] SPIFFS mount failed (partition contains non-erased data but is not a valid SPIFFS filesystem)");
     Serial.println("[storage] Storage unavailable — identity/contacts won't persist. Use factory reset to reformat.");
-    s_storage_available = false;
+    s_storage_available.store(false, std::memory_order_release);
     return false;
 }
 
 bool storage_available()
 {
-    return s_storage_available;
+    return s_storage_available.load(std::memory_order_acquire);
 }
 
 bool storage_ensure_mounted()
 {
-    if (!s_storage_available) return false;
-    if (!s_storage_mounted) {
+    if (!s_storage_available.load(std::memory_order_acquire)) return false;
+    if (!s_storage_mounted.load(std::memory_order_acquire)) {
         if (!SPIFFS.begin(false)) return false;
-        s_storage_mounted = true;
+        s_storage_mounted.store(true, std::memory_order_release);
     }
     return true;
 }
 
 void storage_warm_after_mount()
 {
-    if (!s_storage_mounted || s_storage_warm_started) return;
-    s_storage_warm_started = true;
+    if (!s_storage_mounted.load(std::memory_order_acquire)) return;
+    StorageWarmState expected = StorageWarmState::Idle;
+    if (!s_storage_warm_state.compare_exchange_strong(
+            expected, StorageWarmState::Warming,
+            std::memory_order_acq_rel, std::memory_order_acquire)) {
+        return;
+    }
+    s_storage_warm_cancel.store(false, std::memory_order_release);
 #if defined(ESP32_PLATFORM)
     // 4096-byte stack; the warm does only a tiny bounded file op.
-    xTaskCreate(storage_warm_task, "storage-warm", 4096, nullptr, 1, nullptr);
+    s_storage_warm_task_starting.store(true, std::memory_order_release);
+    TaskHandle_t task = nullptr;
+    if (xTaskCreate(storage_warm_task, "storage-warm", 4096, nullptr, 1,
+                    &task) != pdPASS || !task) {
+        Serial.println("[storage] could not create warm task");
+        s_storage_warm_task_starting.store(false, std::memory_order_release);
+        s_storage_warm_state.store(StorageWarmState::Idle,
+                                   std::memory_order_release);
+        return;
+    }
+    s_storage_warm_task.store(task, std::memory_order_release);
+    s_storage_warm_task_starting.store(false, std::memory_order_release);
+#else
+    // The host has no FreeRTOS task or SPIFFS implementation. Treat the
+    // bounded warm operation as completed so lifecycle tests can exercise the
+    // same stop/state contract without sleeping for twelve seconds.
+    s_storage_warm_state.store(StorageWarmState::Ready,
+                               std::memory_order_release);
 #endif
+}
+
+bool storage_stop_warm()
+{
+    s_storage_warm_cancel.store(true, std::memory_order_release);
+
+#if defined(ESP32_PLATFORM)
+    s_storage_warm_state.store(StorageWarmState::Stopping,
+                               std::memory_order_release);
+    const uint32_t started = millis();
+    while (s_storage_warm_task_starting.load(std::memory_order_acquire) &&
+           static_cast<uint32_t>(millis() - started) <
+               STORAGE_WARM_JOIN_TIMEOUT_MS) {
+        delay(STORAGE_WARM_DELAY_MS);
+    }
+    if (s_storage_warm_task_starting.load(std::memory_order_acquire)) {
+        Serial.println("[storage] warm task creation did not settle before teardown");
+        return false;
+    }
+
+    TaskHandle_t task = s_storage_warm_task.load(std::memory_order_acquire);
+    while (task != nullptr &&
+           static_cast<uint32_t>(millis() - started) <
+               STORAGE_WARM_JOIN_TIMEOUT_MS) {
+        delay(1);
+        task = s_storage_warm_task.load(std::memory_order_acquire);
+    }
+    if (task != nullptr) {
+        Serial.println("[storage] warm task did not stop before teardown");
+        return false;
+    }
+#endif
+
+    s_storage_warm_state.store(StorageWarmState::Idle,
+                               std::memory_order_release);
+    s_storage_mounted.store(false, std::memory_order_release);
+    s_storage_available.store(false, std::memory_order_release);
+    return true;
+}
+
+StorageWarmState storage_warm_state()
+{
+    return s_storage_warm_state.load(std::memory_order_acquire);
 }
 
 void storage_reset()
 {
-    s_storage_init_called = false;
-    s_storage_available = false;
-    s_storage_mounted = false;
-    s_storage_warm_started = false;
+    if (!storage_stop_warm()) return;
+    s_storage_init_called.store(false, std::memory_order_release);
+    s_storage_available.store(false, std::memory_order_release);
+    s_storage_mounted.store(false, std::memory_order_release);
+    s_storage_warm_cancel.store(false, std::memory_order_release);
+    s_storage_warm_state.store(StorageWarmState::Idle,
+                               std::memory_order_release);
 }
 
 } // namespace sigurdos

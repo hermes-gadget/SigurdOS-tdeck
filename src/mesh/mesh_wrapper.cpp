@@ -39,6 +39,7 @@
 #include "hal/factory_reset_policy.h"
 #include "hal/prefs.h"
 #include "hal/radio_profiles.h"
+#include "hal/storage.h"
 #include "hal/github_ota.h"
 #include "hal/wifi_ota.h"
 #include "comms/transport_iface.h"
@@ -2279,7 +2280,12 @@ bool factoryReset()
     esp_task_wdt_reset();
 #endif
 
-    // Close SPIFFS before reformatting
+    // Close SPIFFS before reformatting. The warm task is allowed to run well
+    // after boot, so it must leave the filesystem before SPIFFS.end().
+    if (!sigurdos::storage_stop_warm()) {
+        Serial.println("[mesh] factory reset aborted: storage warm task did not stop");
+        return false;
+    }
     SPIFFS.end();
 
     const auto apply_nvs_target = [](const hal::factory_reset::NvsTarget& target,
