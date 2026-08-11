@@ -13,9 +13,13 @@
 #include <vector>
 
 #if defined(ESP32_PLATFORM)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <SPIFFS.h>
 #include <esp_heap_caps.h>
 #include "hal/storage.h"
+#else
+#include <mutex>
 #endif
 
 namespace sigurdos {
@@ -26,9 +30,18 @@ namespace {
 #if defined(ESP32_PLATFORM)
 static constexpr const char* STORE_PATH = "/companion_msgs";
 #endif
+// A failed SD append is retried once on SPIFFS. If that retry also fails, the
+// record is retained in this fixed RAM queue for a later append attempt. The
+// queue is deliberately small and bounded for the ESP32-S3; overflow rejects
+// the newest record and increments the internal drop counter.
+static constexpr uint32_t MESSAGE_STORE_RETRY_QUEUE_CAPACITY = 8;
 
 static const detail::MessageStoreBackend* g_backend = nullptr;
 static uint32_t g_companion_backlog_drop_count = 0;
+static bool g_backend_degraded = false;
+static StoredMessage g_retry_queue[MESSAGE_STORE_RETRY_QUEUE_CAPACITY]{};
+static uint32_t g_retry_queue_count = 0;
+static uint32_t g_retry_queue_drop_count = 0;
 static MessageStoreRecoveryResult g_last_recovery_result =
     MessageStoreRecoveryResult::Clean;
 // A record append reaches durable storage before its header is published. If
@@ -45,6 +58,67 @@ static IdentityIndexEntry* g_identity_index = nullptr;
 static uint32_t g_identity_index_capacity = 0;
 static uint32_t g_identity_index_count = 0;
 static bool g_identity_index_valid = false;
+
+// Backend selection, recovery, and append/failover must be one transaction.
+// The recursive form is intentional: the failover path selects SPIFFS and
+// runs messageStoreBegin() while already holding the append guard.
+class MessageStoreCoordinator {
+public:
+    class Guard {
+    public:
+        explicit Guard(const MessageStoreCoordinator& coordinator)
+            : _coordinator(coordinator)
+        {
+            _coordinator.lock();
+        }
+
+        ~Guard() { _coordinator.unlock(); }
+
+        Guard(const Guard&) = delete;
+        Guard& operator=(const Guard&) = delete;
+
+    private:
+        const MessageStoreCoordinator& _coordinator;
+    };
+
+    MessageStoreCoordinator()
+    {
+#if defined(ESP32_PLATFORM)
+        _handle = xSemaphoreCreateRecursiveMutexStatic(&_storage);
+        configASSERT(_handle != nullptr);
+#endif
+    }
+
+private:
+    void lock() const
+    {
+#if defined(ESP32_PLATFORM)
+        xSemaphoreTakeRecursive(_handle, portMAX_DELAY);
+#else
+        _mutex.lock();
+#endif
+    }
+
+    void unlock() const
+    {
+#if defined(ESP32_PLATFORM)
+        xSemaphoreGiveRecursive(_handle);
+#else
+        _mutex.unlock();
+#endif
+    }
+
+    friend class Guard;
+
+#if defined(ESP32_PLATFORM)
+    mutable StaticSemaphore_t _storage{};
+    mutable SemaphoreHandle_t _handle = nullptr;
+#else
+    mutable std::recursive_mutex _mutex;
+#endif
+};
+
+static MessageStoreCoordinator g_coordinator;
 
 #if !defined(ESP32_PLATFORM)
 static char g_native_path[160] = "/tmp/sigurdos_companion_msgs.bin";
@@ -1306,13 +1380,101 @@ static bool compactStoreToRecent(uint32_t max_records)
     return ok;
 }
 
+static void retryQueuePopFront()
+{
+    if (g_retry_queue_count == 0) return;
+    for (uint32_t i = 1; i < g_retry_queue_count; ++i) {
+        g_retry_queue[i - 1] = g_retry_queue[i];
+    }
+    --g_retry_queue_count;
+}
+
+static void retryQueuePush(const StoredMessage& msg)
+{
+    if (g_retry_queue_count >= MESSAGE_STORE_RETRY_QUEUE_CAPACITY) {
+        // Preserve the oldest unsaved records. Dropping the newest record is
+        // visible through the counter and avoids silently reordering history.
+        ++g_retry_queue_drop_count;
+        return;
+    }
+    g_retry_queue[g_retry_queue_count++] = msg;
+}
+
+static void retryQueueClear()
+{
+    g_retry_queue_count = 0;
+}
+
+// One attempt against the currently selected backend. This deliberately has
+// no failover or queue behavior so the public append path can enforce exactly
+// one SD attempt and exactly one SPIFFS retry for the current record.
+static bool appendOnce(const StoredMessage& msg, uint32_t* store_id_out)
+{
+    if (g_append_recovery_required) {
+        const MessageStoreRecoveryResult recovery = repairInterruptedAppend();
+        if (recovery == MessageStoreRecoveryResult::UnsupportedVersion ||
+            recovery == MessageStoreRecoveryResult::Failed) {
+            return false;
+        }
+        g_append_recovery_required = false;
+        if (!rebuildIdentityIndex()) return false;
+    }
+    if (!writeHeaderIfNeeded()) return false;
+
+    StoredMessage norm = msg;
+    detail::storedMessageNormalize(norm);
+
+    uint32_t existing_id = 0;
+    if (messageExists(norm, &existing_id)) {
+        if (store_id_out) *store_id_out = existing_id;
+        return true;
+    }
+
+    uint32_t count = 0;
+    uint32_t next_id = 0;
+    if (!readHeader(&count, &next_id) || next_id == 0) return false;
+    norm.store_id = next_id;
+    const uint32_t following_id = nextUnusedIdAfter(next_id);
+    if (following_id == 0) return false;
+
+    uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
+    writeRecordRaw(norm, rec, sizeof(rec));
+
+    g_append_recovery_required = true;
+    const bool ok = storeAppend(storePath(), rec, sizeof(rec));
+    if (!ok) return false;
+
+    uint32_t new_count = count + 1;
+    if (!writeHeaderState(new_count, following_id)) return false;
+    g_append_recovery_required = false;
+    if (new_count > backendMaxRecords()) {
+        if (!compactStoreToRecent(backendCompactToRecords())) return false;
+        if (!rebuildIdentityIndex()) return false;
+    } else {
+        identityIndexAdd(norm);
+    }
+    if (store_id_out) *store_id_out = norm.store_id;
+    return true;
+}
+
+static void retryQueuedOnDefaultBackend()
+{
+    if (g_backend != nullptr) return;
+    while (g_retry_queue_count > 0) {
+        if (!appendOnce(g_retry_queue[0], nullptr)) return;
+        retryQueuePopFront();
+    }
+}
+
 } // namespace
 
 namespace detail {
 
 void messageStoreSelectBackend(const MessageStoreBackend* backend)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     g_backend = backend;
+    g_backend_degraded = false;
     g_identity_index_count = 0;
     g_identity_index_valid = false;
     g_append_recovery_required = false;
@@ -1325,16 +1487,25 @@ void messageStoreSelectDefaultBackend()
 
 bool messageStoreBackendSelected()
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     return g_backend != nullptr;
+}
+
+bool messageStoreBackendDegraded()
+{
+    MessageStoreCoordinator::Guard guard(g_coordinator);
+    return g_backend_degraded;
 }
 
 uint32_t messageStoreBackendMaxRecords()
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     return backendMaxRecords();
 }
 
 uint32_t messageStoreBackendCompactToRecords()
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     return backendCompactToRecords();
 }
 
@@ -1374,6 +1545,7 @@ void storedMessageNormalize(StoredMessage& msg)
 
 bool messageStoreBegin()
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     g_last_recovery_result = MessageStoreRecoveryResult::Clean;
     if (!ensureFs()) {
         g_last_recovery_result = MessageStoreRecoveryResult::Failed;
@@ -1442,78 +1614,61 @@ bool messageStoreBegin()
 
 MessageStoreRecoveryResult messageStoreLastRecoveryResult()
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     return g_last_recovery_result;
 }
 
 bool messageStoreClear()
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     if (!atomicReplaceStore(nullptr, 0, 1)) return false;
     identityIndexClear();
     g_append_recovery_required = false;
+    retryQueueClear();
+    g_retry_queue_drop_count = 0;
     return true;
 }
 
 bool messageStoreAppend(const StoredMessage& msg, uint32_t* store_id_out)
 {
-    if (g_append_recovery_required) {
-        const MessageStoreRecoveryResult recovery = repairInterruptedAppend();
-        if (recovery == MessageStoreRecoveryResult::UnsupportedVersion ||
-            recovery == MessageStoreRecoveryResult::Failed) {
-            return false;
-        }
-        g_append_recovery_required = false;
-        if (!rebuildIdentityIndex()) return false;
-    }
-    if (!writeHeaderIfNeeded()) return false;
+    MessageStoreCoordinator::Guard guard(g_coordinator);
 
-    StoredMessage norm = msg;
-    detail::storedMessageNormalize(norm);
+    // A queue is only retried against the already-selected fallback backend;
+    // it never causes a second SD attempt for the current append.
+    retryQueuedOnDefaultBackend();
+    if (appendOnce(msg, store_id_out)) return true;
 
-    uint32_t existing_id = 0;
-    if (messageExists(norm, &existing_id)) {
-        if (store_id_out) *store_id_out = existing_id;
-        return true;
+    if (g_backend == nullptr) {
+        retryQueuePush(msg);
+        return false;
     }
 
-    uint32_t count = 0;
-    uint32_t next_id = 0;
-    if (!readHeader(&count, &next_id) || next_id == 0) return false;
-    norm.store_id = next_id;
-    const uint32_t following_id = nextUnusedIdAfter(next_id);
-    if (following_id == 0) return false;
+    // The selected custom backend is the SD store in production. Treat any
+    // failed operation as media loss, select SPIFFS under the same guard, and
+    // retry this exact record once. A failed fallback is queued for later.
+    detail::messageStoreSelectDefaultBackend();
+    g_backend_degraded = true;
+    if (messageStoreBegin() && appendOnce(msg, store_id_out)) return true;
 
-    uint8_t rec[detail::MESSAGE_STORE_RECORD_SIZE];
-    writeRecordRaw(norm, rec, sizeof(rec));
-
-    g_append_recovery_required = true;
-    const bool ok = storeAppend(storePath(), rec, sizeof(rec));
-    if (!ok) return false;
-
-    uint32_t new_count = count + 1;
-    if (!writeHeaderState(new_count, following_id)) return false;
-    g_append_recovery_required = false;
-    if (new_count > backendMaxRecords()) {
-        if (!compactStoreToRecent(backendCompactToRecords())) return false;
-        if (!rebuildIdentityIndex()) return false;
-    } else {
-        identityIndexAdd(norm);
-    }
-    if (store_id_out) *store_id_out = norm.store_id;
-    return true;
+    retryQueuePush(msg);
+    return false;
 }
 
 int messageStoreLoadRecent(const char* conversation, StoredMessage* out, int max)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     return loadRecentInternal(conversation, out, max, false);
 }
 
 int messageStoreLoadAll(StoredMessage* out, int max)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     return loadAllInternal(out, max);
 }
 
 bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     if (!conversation || !conversation[0] || timestamp == 0) return false;
     uint32_t count = 0;
     if (!readHeader(&count)) return false;
@@ -1542,6 +1697,7 @@ bool messageStoreMarkAcked(const char* conversation, uint32_t timestamp)
 
 bool messageStoreMarkConfirmationLost(const char* conversation, uint32_t timestamp)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     if (!conversation || !conversation[0] || timestamp == 0) return false;
     uint32_t count = 0;
     if (!readHeader(&count) || count == 0 ||
@@ -1565,6 +1721,7 @@ bool messageStoreMarkConfirmationLost(const char* conversation, uint32_t timesta
 
 int messageStoreMarkOrphanedPendingLost()
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     uint32_t count = 0;
     if (!readHeader(&count) || count == 0 ||
         count > backendRecoveryMaxRecords()) return 0;
@@ -1586,6 +1743,7 @@ int messageStoreMarkOrphanedPendingLost()
 
 bool messageStoreMarkCompanionSent(uint32_t store_id)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     if (store_id == 0) return false;
     uint32_t count = 0;
     if (!readHeader(&count)) return false;
@@ -1617,11 +1775,25 @@ bool messageStoreMarkCompanionSent(uint32_t store_id)
 
 uint32_t messageStoreCompanionBacklogDropCount()
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     return g_companion_backlog_drop_count;
+}
+
+uint32_t messageStoreRetryQueueDepth()
+{
+    MessageStoreCoordinator::Guard guard(g_coordinator);
+    return g_retry_queue_count;
+}
+
+uint32_t messageStoreRetryQueueDropCount()
+{
+    MessageStoreCoordinator::Guard guard(g_coordinator);
+    return g_retry_queue_drop_count;
 }
 
 bool messageStoreGetById(uint32_t store_id, StoredMessage& out)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     if (store_id == 0) return false;
     uint32_t count = 0;
     if (!readHeader(&count) || count == 0) return false;
@@ -1648,6 +1820,7 @@ bool messageStoreFindRecent(const char* conversation, const char* sender,
                             const char* text, uint32_t timestamp, bool is_self,
                             StoredMessage& out)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     if (!conversation || !conversation[0] || !sender || !text || timestamp == 0) {
         return false;
     }
@@ -1684,11 +1857,13 @@ bool messageStoreFindRecent(const char* conversation, const char* sender,
 
 int messageStoreLoadUnsent(StoredMessage* out, int max)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     return loadUnsentInternal(out, max);
 }
 
 int messageStoreCount()
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     uint32_t count = 0;
     return readHeader(&count) ? (int)count : 0;
 }
@@ -1696,6 +1871,7 @@ int messageStoreCount()
 #if !defined(ESP32_PLATFORM)
 void messageStoreSetNativePath(const char* path)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     if (!path || !path[0]) return;
     copyZ(g_native_path, sizeof(g_native_path), path);
     g_identity_index_valid = false;
@@ -1704,11 +1880,13 @@ void messageStoreSetNativePath(const char* path)
 
 void messageStoreSetNativeHeaderWriteLimit(int bytes)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     g_native_header_write_limit = bytes < -1 ? -1 : bytes;
 }
 
 void messageStoreSetNativeRecordWriteLimit(int bytes)
 {
+    MessageStoreCoordinator::Guard guard(g_coordinator);
     g_native_record_write_limit = bytes < -1 ? -1 : bytes;
 }
 #endif

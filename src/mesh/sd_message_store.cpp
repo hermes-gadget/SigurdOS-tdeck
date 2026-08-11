@@ -630,17 +630,21 @@ bool sdMessageStoreReset(SdMessageStoreResetPreflightFn preflight,
 
 bool sdMessageStoreUsingSd()
 {
-    return g_using_sd;
+    // message_store.cpp can demote a live SD backend after a media/write
+    // failure. Keep the UI-facing SD status consistent with that synchronized
+    // coordinator even though this module owns the selection flag.
+    return g_using_sd && !detail::messageStoreBackendDegraded();
 }
 
 bool sdMessageStoreDegraded()
 {
-    return g_degraded;
+    return g_degraded || detail::messageStoreBackendDegraded();
 }
 
 uint32_t sdMessageStoreCapacity()
 {
-    return g_using_sd ? SD_MESSAGE_STORE_MAX_RECORDS : MESSAGE_STORE_MAX_RECORDS;
+    return sdMessageStoreUsingSd() ? SD_MESSAGE_STORE_MAX_RECORDS
+                                   : MESSAGE_STORE_MAX_RECORDS;
 }
 
 uint64_t sdMessageStoreFreeBytes()

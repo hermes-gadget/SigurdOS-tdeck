@@ -355,7 +355,10 @@ public:
         meshQueuePushOutgoing(conversation, meshOwnName(), safe_text, ts, store_id);
         sigurdos::mesh::pushPacketLog(meshOwnName(), 0, 0.0f, "TX_DM");
 
-        result.ok = true;
+        // Radio transmission already happened. Report persistence separately:
+        // the companion must learn that history was not durable even though
+        // the mesh packet was sent successfully.
+        result.ok = store_id != 0;
         result.sent_flood = send_result == MSG_SEND_SENT_FLOOD;
         result.expected_ack = expected_ack;
         result.est_timeout = est_timeout;
@@ -385,7 +388,9 @@ public:
             sigurdos::comms::COMPANION_TXT_PLAIN);
         meshQueuePushOutgoing(cd.name, meshOwnName(), safe_text, ts, store_id);
         sigurdos::mesh::pushPacketLog(meshOwnName(), 0, 0.0f, "TX_CHAN");
-        result.ok = true;
+        // Keep the successful RF send visible to the network, but make the
+        // companion response reflect whether the local history was durable.
+        result.ok = store_id != 0;
         result.sent_flood = true;
         result.expected_ack = 0;
         result.est_timeout = 0;
