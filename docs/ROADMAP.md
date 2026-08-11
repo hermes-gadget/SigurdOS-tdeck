@@ -112,10 +112,13 @@ was hardware-verified on the T-Deck (screenshots vision-verified, boot/soak logs
 - [x] 12h+ soak windows on the instrumented remote-test build (identical
       power/mesh/UI code; `[stat]` heartbeat + batt every 5s at idle). Windows on
       2026-08-04 (00:15 start interrupted by B2/B3 device work; later windows +
-      partial evidence appended in 16ef7599). **Owner signed off 2026-08-04: long
-      soak already done, clean.**
-- [x] Soak report appended to RELEASE_EVIDENCE (partial, 16ef7599).
-- **Exit: ✅ soak evidence satisfied (owner sign-off).**
+      partial evidence appended in 16ef7599). **Owner signed off 2026-08-04:
+      operational soak was long and clean; this is not a completed release-grade
+      evidence record.**
+- [x] Soak report appended to RELEASE_EVIDENCE (partial, 16ef7599; superseded,
+      not a release PASS).
+- **Exit: ✅ operational soak evidence satisfied (owner sign-off); release-grade
+  A4 evidence remains open until a completed record is attached.**
 
 ---
 

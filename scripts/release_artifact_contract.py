@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from audit_launcher_artifact import audit
 
 
+LOCK_PATH = Path(__file__).resolve().parents[1] / "ci" / "platformio-packages.lock"
+SBOM_NAME = "sbom.cdx.json"
 COMPONENT_OFFSETS = {
     "sigurdos-tdeck-bootloader.bin": 0x0000,
     "sigurdos-tdeck-partitions.bin": 0x8000,
@@ -30,6 +33,7 @@ REQUIRED_RELEASE_ARTIFACTS = frozenset(
     {
         "firmware.bin",
         "firmware-debug.bin",
+        SBOM_NAME,
         "manifest.json",
         "build-metadata.json",
         *COMPONENT_OFFSETS,
@@ -102,6 +106,34 @@ def validate_manifest(path: Path, expected_version: str | None = None) -> dict:
     return manifest
 
 
+def validate_sbom(path: Path) -> dict:
+    sbom = _load_json(path)
+    if sbom.get("bomFormat") != "CycloneDX" or sbom.get("specVersion") != "1.5":
+        raise ReleaseArtifactError("release SBOM must be CycloneDX 1.5")
+    metadata = sbom.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ReleaseArtifactError("release SBOM must contain metadata")
+    properties = metadata.get("properties")
+    if not isinstance(properties, list):
+        raise ReleaseArtifactError("release SBOM metadata must contain properties")
+    lock_digest = next(
+        (
+            item.get("value")
+            for item in properties
+            if isinstance(item, dict)
+            and item.get("name") == "sigurdos:lock-sha256"
+        ),
+        None,
+    )
+    if not isinstance(lock_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", lock_digest):
+        raise ReleaseArtifactError("release SBOM must declare a lowercase lock SHA-256")
+    if lock_digest != sha256_file(LOCK_PATH):
+        raise ReleaseArtifactError("release SBOM does not match the checked-in PlatformIO lock")
+    if not isinstance(sbom.get("components"), list) or not sbom["components"]:
+        raise ReleaseArtifactError("release SBOM must contain dependency components")
+    return sbom
+
+
 def validate_release_directory(
     directory: Path,
     *,
@@ -113,6 +145,7 @@ def validate_release_directory(
         raise ReleaseArtifactError(f"missing release artifacts: {', '.join(missing)}")
 
     manifest = validate_manifest(directory / "manifest.json", expected_version)
+    validate_sbom(directory / SBOM_NAME)
     metadata = _load_json(directory / "build-metadata.json")
     if metadata.get("schema_version") != 1:
         raise ReleaseArtifactError("unsupported build metadata schema")
