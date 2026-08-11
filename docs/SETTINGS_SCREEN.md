@@ -199,6 +199,22 @@ rewriting their persisted enabled settings; the transport implementation must
 register the `ota::setCompanionTransportParkHook()` callback and check
 `ota::companionTransportsAllowed()` before enabling and while servicing.
 
+The transport registry registers that hook during initialization. Before the
+OTA AP radio is started, the park callback synchronously closes every TCP and
+WebSocket client and listener. Reconciliation, receive polling, status,
+explicit enable, connection lookup, and send paths all fail closed while the
+OTA gate is active. When the AP lease is released, unpark only schedules normal
+loop reconciliation; listeners whose persisted toggles remain enabled are
+recreated on the restored WiFi network without exposing a transition window.
+
+Hardware regression procedure: enable TCP and WebSocket on a trusted STA,
+connect one client to each endpoint, then open the local OTA AP. Both existing
+connections must close before the AP becomes reachable, ports 5000 and 8765
+must refuse connections on the AP, and the Network rows must report `parked
+for OTA`. Stop or expire the OTA session, allow WiFi ownership to return, and
+confirm both listeners reopen from their unchanged enabled settings. Repeat the
+sequence once to cover stop/restart cleanup.
+
 On an unconfigured device, boot enters Onboarding as a forced navigation root:
 history is cleared, no top-bar Back button is shown, and other routes are
 rejected until setup persists a valid radio profile and restarts. Opening the

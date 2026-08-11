@@ -10,6 +10,7 @@
 
 #if defined(ESP32_PLATFORM)
 #include "hal/tdeck_pins.h"
+#include "hal/wifi_ota.h"
 #endif
 
 namespace sigurdos {
@@ -26,6 +27,17 @@ static constexpr const char* FIRMWARE_VERSION = SIGURDOS_VERSION;
 static constexpr const char* FIRMWARE_VERSION = "SigurdOS";
 #endif
 static constexpr uint8_t COMPANION_OUT_PATH_UNKNOWN = 0xFF;
+
+static bool transportAllowedDuringOta(TransportId id)
+{
+#if defined(ESP32_PLATFORM)
+    return id == TransportId::BLE ||
+           sigurdos::ota::companionTransportsAllowed();
+#else
+    (void)id;
+    return true;
+#endif
+}
 
 static void strzcpy(char* dest, const char* src, size_t dest_sz)
 {
@@ -142,7 +154,7 @@ void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* ho
 void CompanionBridge::transportFrameHandler(const uint8_t* frame, size_t len,
                                             TransportId from)
 {
-    if (!g_transport_bridge) return;
+    if (!g_transport_bridge || !transportAllowedDuringOta(from)) return;
     TransportId id = from;
     int client_index = -1;
     uint32_t generation = 0;
@@ -155,6 +167,7 @@ void CompanionBridge::handleTransportFrame(const uint8_t* frame, size_t len,
                                            TransportId id, int client_index,
                                            uint32_t generation)
 {
+    if (!transportAllowedDuringOta(id)) return;
     TransportSession* session = activateTransportSession(id, client_index, generation);
     if (!session) return;
     _transport_request_active = true;
@@ -299,6 +312,7 @@ void CompanionBridge::serviceTransportSessions()
     const TransportId ids[] = {TransportId::BLE, TransportId::TCP, TransportId::WS};
     const int limits[] = {1, 4, 4};
     for (size_t transport = 0; transport < sizeof(ids) / sizeof(ids[0]); ++transport) {
+        if (!transportAllowedDuringOta(ids[transport])) continue;
         for (int client = 0; client < limits[transport]; ++client) {
             if (!transports_client_connected(ids[transport], client)) continue;
             (void)ensureTransportSession(
@@ -308,7 +322,8 @@ void CompanionBridge::serviceTransportSessions()
     }
 
     for (TransportSession& session : _transport_sessions) {
-        if (!session.used || !transports_client_connected(
+        if (!session.used || !transportAllowedDuringOta(session.id) ||
+            !transports_client_connected(
                 session.id, session.client_index)) continue;
         const uint32_t generation = transports_client_generation(
             session.id, session.client_index);
