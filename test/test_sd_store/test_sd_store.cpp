@@ -14,6 +14,11 @@ namespace {
 
 using sigurdos::mesh::StoredMessage;
 
+static constexpr uint64_t MAX_ENCODED_READY_BYTES =
+    static_cast<uint64_t>(sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE) +
+    static_cast<uint64_t>(sigurdos::mesh::SD_MESSAGE_STORE_MAX_RECORDS + 1) *
+        static_cast<uint64_t>(sigurdos::mesh::detail::MESSAGE_STORE_RECORD_SIZE);
+
 StoredMessage makeMsg(uint32_t timestamp, const char* text = nullptr)
 {
     StoredMessage msg{};
@@ -209,6 +214,65 @@ TEST_F(SdMessageStoreTest, PromotesValidatedReadyFileAfterPowerLoss)
     ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(&restored, 1), 1);
     EXPECT_STREQ(restored.text, "durable");
     EXPECT_FALSE(std::ifstream(ready).good());
+}
+
+TEST_F(SdMessageStoreTest, RejectsOversizedReadyBeforeAllocation)
+{
+    selectSd();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(2, "live")));
+    const std::string ready =
+        std::string(sigurdos::mesh::sdMessageStoreNativePath()) +
+        sigurdos::mesh::SD_MESSAGE_STORE_READY_SUFFIX;
+    {
+        std::ofstream out(ready, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(out.good());
+        out.seekp(static_cast<std::streamoff>(
+            MAX_ENCODED_READY_BYTES));
+        out.put('\0');
+    }
+
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(false));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+    EXPECT_FALSE(std::ifstream(ready).good());
+}
+
+TEST_F(SdMessageStoreTest, RemovesTruncatedReadyWithoutAbortingRecovery)
+{
+    selectSd();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(3, "live")));
+    const std::string ready =
+        std::string(sigurdos::mesh::sdMessageStoreNativePath()) +
+        sigurdos::mesh::SD_MESSAGE_STORE_READY_SUFFIX;
+    {
+        std::ofstream out(ready, std::ios::binary | std::ios::trunc);
+        out.write("short", 5);
+    }
+
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(false));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+    EXPECT_FALSE(std::ifstream(ready).good());
+}
+
+TEST_F(SdMessageStoreTest, MalformedReadyDoesNotQuarantineValidLiveStore)
+{
+    selectSd();
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(4, "live")));
+    const std::string ready =
+        std::string(sigurdos::mesh::sdMessageStoreNativePath()) +
+        sigurdos::mesh::SD_MESSAGE_STORE_READY_SUFFIX;
+    {
+        std::ofstream out(ready, std::ios::binary | std::ios::trunc);
+        const uint8_t malformed[
+            sigurdos::mesh::detail::MESSAGE_STORE_HEADER_SIZE] = {};
+        out.write(reinterpret_cast<const char*>(malformed), sizeof(malformed));
+    }
+
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(false));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
+    EXPECT_FALSE(std::ifstream(ready).good());
+    EXPECT_FALSE(std::ifstream(
+        std::string(sigurdos::mesh::sdMessageStoreNativePath()) +
+        sigurdos::mesh::SD_MESSAGE_STORE_CORRUPT_SUFFIX).good());
 }
 
 TEST_F(SdMessageStoreTest, MissingSdFallsBackAndMarksDegraded)

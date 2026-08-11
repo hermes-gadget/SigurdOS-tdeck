@@ -11,6 +11,9 @@
 #include <climits>
 #include <cstdio>
 #include <cstring>
+#include <limits>
+#include <memory>
+#include <new>
 #include <vector>
 
 #if !defined(ESP32_PLATFORM)
@@ -21,10 +24,28 @@
 
 namespace sigurdos::mesh {
 
+namespace detail {
+bool messageStoreBackendDegraded();
+}
+
 namespace {
 
 static bool g_using_sd = false;
 static bool g_degraded = false;
+// Recovery accepts at most one spare record beyond the steady-state capacity
+// so a torn append can be salvaged without allocating from an untrusted file
+// length. This is the maximum encoded .msgs/.msgs.ready byte count.
+static constexpr uint64_t SD_MESSAGE_STORE_MAX_ENCODED_BYTES =
+    static_cast<uint64_t>(detail::MESSAGE_STORE_HEADER_SIZE) +
+    static_cast<uint64_t>(SD_MESSAGE_STORE_MAX_RECORDS + 1) *
+        static_cast<uint64_t>(detail::MESSAGE_STORE_RECORD_SIZE);
+
+static bool encodedStoreSizeAllowed(uint64_t size)
+{
+    return size != 0 &&
+           size <= static_cast<uint64_t>(SIZE_MAX) &&
+           size <= SD_MESSAGE_STORE_MAX_ENCODED_BYTES;
+}
 
 #if !defined(ESP32_PLATFORM)
 static char g_native_root[160] = "/tmp/sigurdos_sd_store";
@@ -172,8 +193,13 @@ static bool validateStoreBytes(const uint8_t* data, size_t len, void*)
 static bool nativeReadWhole(const char* path, std::vector<uint8_t>& data)
 {
     const size_t size = nativeSize(path);
-    if (!nativeExists(path) || size == 0) return false;
-    data.resize(size);
+    if (!nativeExists(path) || !encodedStoreSizeAllowed(size)) return false;
+    try {
+        data.resize(size);
+    } catch (const std::bad_alloc&) {
+        data.clear();
+        return false;
+    }
     return nativeReadAt(path, 0, data.data(), data.size());
 }
 
@@ -353,10 +379,15 @@ static bool backendRecover(void*, const char* path,
 
     if (sigurdos_sdcard_exists(ready_path)) {
         const uint64_t ready_size = sigurdos_sdcard_file_size(ready_path);
-        std::vector<uint8_t> ready(static_cast<size_t>(ready_size));
-        const bool valid = ready_size > 0 &&
-            sigurdos_sdcard_read_at(ready_path, 0, ready.data(), ready.size()) &&
-            validate(ready.data(), ready.size(), validate_ctx);
+        std::unique_ptr<uint8_t[]> ready;
+        bool valid = false;
+        if (encodedStoreSizeAllowed(ready_size)) {
+            const size_t bounded_size = static_cast<size_t>(ready_size);
+            ready.reset(new (std::nothrow) uint8_t[bounded_size]);
+            valid = ready &&
+                sigurdos_sdcard_read_at(ready_path, 0, ready.get(), bounded_size) &&
+                validate(ready.get(), bounded_size, validate_ctx);
+        }
         if (!valid) {
             if (!sigurdos_sdcard_remove_path(ready_path)) return false;
             if (!sigurdos_sdcard_exists(path)) return false;
