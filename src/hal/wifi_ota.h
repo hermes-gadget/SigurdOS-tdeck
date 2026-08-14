@@ -114,6 +114,21 @@ struct OtaUploadSessionState {
     size_t received = 0;
 };
 
+enum class StartStatus : uint8_t {
+    Idle,
+    Starting,
+    Ready,
+    Failed,
+};
+
+inline bool otaStartFinished(StartStatus status) {
+    return status == StartStatus::Ready || status == StartStatus::Failed;
+}
+
+inline bool otaStartSucceeded(StartStatus status) {
+    return status == StartStatus::Ready;
+}
+
 inline bool otaUploadAcceptsChunk(const OtaUploadSessionState& state) {
     return state.authenticated && state.started &&
            !state.completed && !state.failed;
@@ -125,11 +140,14 @@ inline bool otaUploadCanFinish(const OtaUploadSessionState& state,
            state.received == multipart_total_size;
 }
 
-// Start WiFi AP + web server for OTA upload.
+// Schedule WiFi AP + web-server startup on the managed OTA worker.
 // ssid: 1-32 chars. password: 8-63 chars (empty = generate a password).
-// Returns true if started successfully. Returns false (refuses to start) when
-// no device PIN is configured, since the PIN is the upload endpoint's only auth.
+// Returns true when startup was queued (or a session is already starting/ready).
+// Returns false for a synchronous preflight failure such as a missing device
+// PIN. Poll getStartStatus() for worker-side startup completion.
 bool start(const char* ssid, const char* password = "");
+
+StartStatus getStartStatus();
 
 // Main-loop hook. Multipart parsing and flash writes run on a managed worker.
 void loop();
@@ -137,7 +155,7 @@ void loop();
 // Request the managed worker to stop and release WiFi/server resources.
 void stop();
 
-// Returns true if OTA is active.
+// Returns true while OTA is starting or ready.
 bool isActive();
 
 // Returns true after an upload has completed and until the main loop has

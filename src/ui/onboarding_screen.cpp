@@ -407,7 +407,15 @@ static void build_step3()
         // Auto-join the Public channel so new devices can receive group messages
         // immediately. Without this, a freshly-flashed device has zero channels
         // and cannot decrypt any group traffic after restart.
-        if (!sigurdos::mesh::joinPublicChannel()) {
+        //
+        // First boot on production builds: the radio is still held in reset
+        // (mesh init defers until radio prefs exist), so g_mesh is null and
+        // joinPublicChannel() would fail with a misleading "not saved" error.
+        // The restart below re-runs mesh init with the now-saved radio profile,
+        // and the boot-time ensurePublicChannelPresent() safety net adds Public
+        // durably then.
+        if (sigurdos::mesh::meshIsReady() &&
+            !sigurdos::mesh::joinPublicChannel()) {
             notifications_post(
                 NotificationEvent::UiError,
                 "Public channel was not saved");

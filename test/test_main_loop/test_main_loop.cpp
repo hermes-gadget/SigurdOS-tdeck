@@ -8,6 +8,7 @@
 #include <string>
 
 #include "app/gps_clock_handoff.h"
+#include "diagnostics/diagnostic_io.h"
 
 namespace {
 
@@ -49,6 +50,26 @@ TEST(MainLoopDispatchTest, ServicesRemoteTestTelemetryAndDebugAfterGpsWork)
     EXPECT_LT(controller_pos, telemetry_pos);
     EXPECT_LT(telemetry_pos, timing_pos);
     EXPECT_LT(timing_pos, debug_pos);
+}
+
+TEST(MainLoopDispatchTest, MakesCdcDiagnosticsNonBlockingAtSerialStartup)
+{
+    EXPECT_EQ(sigurdos::diagnostics::DIAGNOSTIC_CDC_TX_TIMEOUT_MS, 0U);
+
+    const std::string source = read_project_file("src/main.cpp");
+    ASSERT_FALSE(source.empty());
+
+    const size_t serial_begin_pos = source.find("Serial.begin(115200);");
+    const size_t configure_pos = source.find(
+        "sigurdos::diagnostics::configure_diagnostic_output();");
+    const size_t watchdog_pos = source.find(
+        "sigurdos::hal::boot_watchdog_begin(reset_reason);");
+
+    ASSERT_NE(serial_begin_pos, std::string::npos);
+    ASSERT_NE(configure_pos, std::string::npos);
+    ASSERT_NE(watchdog_pos, std::string::npos);
+    EXPECT_LT(serial_begin_pos, configure_pos);
+    EXPECT_LT(configure_pos, watchdog_pos);
 }
 
 TEST(MainLoopDispatchTest, ServicesWorkerWifiReleasesBeforeUiCanAcquire)

@@ -59,7 +59,9 @@ class SecurityPatchVerifierTests(unittest.TestCase):
 
     def test_each_security_line_is_mandatory(self) -> None:
         required_lines = [
-            "if (boundary.length() > 70)",
+            "boundary.length() == 0 || boundary.length() > 70",
+            "len > WEBSERVER_MAX_MULTIPART_BODY_SIZE",
+            "client.stop();",
             "return false;",
             'safeName.replace("\\r", "");',
             'safeName.replace("\\n", "");',

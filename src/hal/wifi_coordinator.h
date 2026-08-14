@@ -31,8 +31,9 @@ struct ReleasePlan {
     uint8_t depth = 0;
 };
 
-// A worker task may request cleanup, but ownership transitions and WiFi driver
-// calls remain on the Arduino/LVGL loop task. Requests are coalesced by owner.
+// A worker task may request cleanup, but coordinator ownership transitions and
+// restoration of the prior WiFi mode remain on the Arduino/LVGL loop task.
+// Requests are coalesced by owner.
 inline uint8_t releaseRequestMask(Owner owner) {
     return owner == Owner::None
         ? 0
@@ -151,6 +152,10 @@ private:
 
 // Production singleton helpers. All callers run on the Arduino/LVGL loop task.
 bool acquire(Owner owner, RadioMode requested_mode);
+// Reserve the coordinator lease without changing hardware mode. The caller
+// must run on loopTask; a managed worker may then perform the hardware setup
+// and requestRelease() when finished.
+bool reserveForWorker(Owner owner, RadioMode requested_mode);
 bool release(Owner owner);
 bool canAcquire(Owner owner);
 Owner currentOwner();
