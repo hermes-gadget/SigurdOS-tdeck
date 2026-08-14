@@ -15,6 +15,7 @@ REQUIRED_ARTIFACTS = {
     "firmware-debug.bin",
     "manifest.json",
     "build-metadata.json",
+    "sbom.cdx.json",
     "sigurdos-tdeck-bootloader.bin",
     "sigurdos-tdeck-partitions.bin",
     "sigurdos-tdeck-boot_app0.bin",

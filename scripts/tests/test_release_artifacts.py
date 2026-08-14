@@ -14,11 +14,13 @@ SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import audit_launcher_artifact as launcher  # noqa: E402
+import generate_platformio_sbom  # noqa: E402
 from release_artifact_contract import (  # noqa: E402
     COMPONENT_OFFSETS,
     FULL_IMAGE_NAMES,
     GENERATED_WEB_OFFSETS,
     REQUIRED_RELEASE_ARTIFACTS,
+    SBOM_NAME,
     ReleaseArtifactError,
     sha256_file,
     validate_release_directory,
@@ -149,6 +151,15 @@ def make_release_directory(path, commit="a" * 40, version="beta-test"):
         "artifacts": records,
     }
     (path / "build-metadata.json").write_text(json.dumps(metadata))
+    (path / SBOM_NAME).write_text(
+        json.dumps(
+            generate_platformio_sbom.generate(
+                ROOT / "ci" / "platformio-packages.lock"
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 class ReleaseArtifactTests(unittest.TestCase):
@@ -213,7 +224,7 @@ class ReleaseArtifactTests(unittest.TestCase):
         hashes = validate_release_directory(
             self.release_dir(), expected_commit="a" * 40, expected_version="beta-test"
         )
-        self.assertEqual(len(hashes), 12)
+        self.assertEqual(len(hashes), 13)
 
     def test_missing_file_and_string_offset_fail(self):
         path = self.release_dir()
@@ -275,7 +286,7 @@ class ReleaseArtifactTests(unittest.TestCase):
         )
         self.assertEqual(create.returncode, 0, create.stderr)
         declared = json.loads(attestation.read_text())["artifacts"]
-        self.assertEqual(len(declared), 12)
+        self.assertEqual(len(declared), 13)
 
         verify = self.run_script(
             "verify_release_evidence.py",
