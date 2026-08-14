@@ -37,6 +37,7 @@ static std::atomic<bool> worker_exited{true};
 static std::atomic<bool> worker_owns_server{false};
 static std::atomic<bool> worker_exit_overdue{false};
 static std::atomic<bool> reboot_pending{false};
+static std::atomic<StartStatus> start_status{StartStatus::Idle};
 static int  save_state_retries  = 0;
 static constexpr int MAX_SAVE_STATE_RETRIES = 5;
 static char server_ip[16] = "";
@@ -50,6 +51,9 @@ static std::atomic<bool> using_access_point{false};
 static std::atomic<bool> ap_release_pending{false};
 static std::atomic<bool> companion_transport_parked{false};
 static std::atomic<CompanionTransportParkHook> companion_transport_park_hook{nullptr};
+static char startup_ssid[33] = "";
+static char startup_password[64] = "";
+static bool startup_reuse_sta = false;
 static String csrf_token;  // regenerated per OTA session
 static OtaUploadSessionState upload_state;
 
@@ -180,7 +184,31 @@ static void abortUploadAndCloseClient() {
     sigurdosWebServerCancelMultipartClient();
 }
 
+static bool startSession(const char* ssid, const char* password,
+                         bool reuse_sta);
+
 static void otaServerWorker(void*) {
+    worker_tick_ms.store(millis(), std::memory_order_release);
+    const bool started =
+        !stop_requested.load(std::memory_order_acquire) &&
+        startSession(startup_ssid, startup_password, startup_reuse_sta);
+    sigurdos::comms::secureWipe(startup_password, sizeof(startup_password));
+
+    if (!started || stop_requested.load(std::memory_order_acquire)) {
+        if (!last_error[0]) {
+            strncpy(last_error, "OTA startup cancelled", sizeof(last_error) - 1);
+            last_error[sizeof(last_error) - 1] = '\0';
+        }
+        (void)cleanupServer(ServerCleanupContext::Worker);
+        worker_owns_server.store(false, std::memory_order_release);
+        active.store(false, std::memory_order_release);
+        worker_exited.store(true, std::memory_order_release);
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    start_status.store(StartStatus::Ready, std::memory_order_release);
     while (!stop_requested.load(std::memory_order_acquire)) {
         worker_tick_ms.store(millis(), std::memory_order_release);
         if (otaSessionExpired(session_started_at, millis())) {
@@ -195,6 +223,7 @@ static void otaServerWorker(void*) {
     worker_owns_server.store(false, std::memory_order_release);
     active.store(false, std::memory_order_release);
     worker_exited.store(true, std::memory_order_release);
+    start_status.store(StartStatus::Idle, std::memory_order_release);
     vTaskDelete(nullptr);
 }
 
@@ -303,97 +332,8 @@ static bool startAccessPoint(const char* ssid, const char* password) {
     return true;
 }
 
-bool start(const char* ssid, const char* password) {
-    finalizePendingApRelease();
-    if (ap_release_pending.load(std::memory_order_acquire)) {
-        wifi::requestRelease(wifi::Owner::ApOta);
-        strncpy(last_error, "WiFi cleanup is still in progress",
-                sizeof(last_error) - 1);
-        last_error[sizeof(last_error) - 1] = '\0';
-        return false;
-    }
-
-    if (active.load(std::memory_order_acquire)) {
-        // Idempotent re-entry while a live session is running. A session whose
-        // worker stalled past its window must be torn down first, or the next
-        // start would silently reuse a dead AP (#1495).
-        if (!stop_requested.load(std::memory_order_acquire) &&
-            !otaSessionExpired(session_started_at, millis())) {
-            SIG_LOGW("[ota] OTA session already active — duplicate start ignored");
-            return true;
-        }
-        SIG_LOGW("[ota] stale OTA session — stopping worker before restart");
-        requestWorkerStop();
-        if (!waitForWorkerExit(OTA_WORKER_JOIN_TIMEOUT_MS)) {
-            strncpy(last_error, "OTA session is shutting down — retry in a few seconds",
-                    sizeof(last_error) - 1);
-            last_error[sizeof(last_error) - 1] = '\0';
-            SIG_LOGW("[ota] REFUSED: prior worker has not acknowledged exit");
-            return false;
-        }
-        finalizePendingApRelease();
-        if (ap_release_pending.load(std::memory_order_acquire)) {
-            strncpy(last_error, "WiFi cleanup is still in progress",
-                    sizeof(last_error) - 1);
-            last_error[sizeof(last_error) - 1] = '\0';
-            return false;
-        }
-    }
-
-    if (reboot_pending.load(std::memory_order_acquire)) {
-        strncpy(last_error, "OTA reboot pending", sizeof(last_error) - 1);
-        last_error[sizeof(last_error) - 1] = '\0';
-        SIG_LOGW("[ota] REFUSED: reboot pending after completed upload");
-        return false;
-    }
-
-    sigurdos::comms::secureWipe(ap_password, sizeof(ap_password));
-    using_access_point.store(false, std::memory_order_release);
-    last_error[0] = '\0';
-
-    if (!otaAccessPointInputsValid(ssid, password)) {
-        strncpy(last_error, "Invalid OTA WiFi name or password", sizeof(last_error) - 1);
-        last_error[sizeof(last_error) - 1] = '\0';
-        SIG_LOGW("[ota] REFUSED: invalid AP SSID or password length");
-        return false;
-    }
-
-    if (sigurdos_is_under_launcher()) {
-        strncpy(last_error, "Update through Launcher instead", sizeof(last_error) - 1);
-        last_error[sizeof(last_error) - 1] = '\0';
-        SIG_LOGW("[ota] REFUSED: OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
-        return false;
-    }
-
-    // Require a device PIN — it is the only authentication on the upload
-    // endpoint. Without one, the AP-mode path below is an open network with an
-    // unauthenticated firmware-flash endpoint (#687). Refuse to start so the
-    // exposure can never be opened by default.
-    if (prefs_get().device_pin == 0) {
-        strncpy(last_error, "Set a device PIN before local OTA", sizeof(last_error) - 1);
-        last_error[sizeof(last_error) - 1] = '\0';
-        SIG_LOGW("[ota] REFUSED: no device PIN set — set a PIN before using WiFi OTA");
-        return false;
-    }
-    if (!otaDevicePinEligible(prefs_get().device_pin)) {
-        strncpy(last_error, "Set a 6+ digit device PIN before local OTA",
-                sizeof(last_error) - 1);
-        last_error[sizeof(last_error) - 1] = '\0';
-        SIG_LOGW("[ota] REFUSED: device PIN too weak for OTA (need 6+ digits)");
-        return false;
-    }
-
-    const bool reuse_sta = wifi_sta::isConnected();
-    if (!wifi::acquire(wifi::Owner::ApOta,
-                       reuse_sta ? wifi::RadioMode::Sta : wifi::RadioMode::Ap)) {
-        snprintf(last_error, sizeof(last_error), "WiFi busy: %s",
-                 wifi::ownerName(wifi::currentOwner()));
-        SIG_LOGW("[ota] REFUSED: %s", last_error);
-        return false;
-    }
-    using_access_point.store(!reuse_sta, std::memory_order_release);
-    if (!reuse_sta) notifyCompanionTransportParked(true);
-
+static bool startSession(const char* ssid, const char* password,
+                         bool reuse_sta) {
     // Reset PIN brute-force counter on each OTA session start (SEC-001)
     pin_fail_count = 0;
 
@@ -424,7 +364,6 @@ bool start(const char* ssid, const char* password) {
                 last_error[sizeof(last_error) - 1] = '\0';
             }
             SIG_LOGE("[ota] WiFi AP startup failed");
-            (void)cleanupServer(ServerCleanupContext::Starter);
             return false;
         }
 
@@ -443,7 +382,6 @@ bool start(const char* ssid, const char* password) {
         strncpy(last_error, "Out of memory for OTA server", sizeof(last_error) - 1);
         last_error[sizeof(last_error) - 1] = '\0';
         SIG_LOGE("[ota] WebServer allocation failed; OTA aborted");
-        (void)cleanupServer(ServerCleanupContext::Starter);
         return false;
     }
     server = static_cast<WebServer*>(server_object);
@@ -672,12 +610,107 @@ bool start(const char* ssid, const char* password) {
     });
 
     server->begin();
+    session_started_at = millis();
+    return true;
+}
+
+bool start(const char* ssid, const char* password) {
+    finalizePendingApRelease();
+    if (ap_release_pending.load(std::memory_order_acquire)) {
+        wifi::requestRelease(wifi::Owner::ApOta);
+        strncpy(last_error, "WiFi cleanup is still in progress",
+                sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        return false;
+    }
+
+    if (active.load(std::memory_order_acquire)) {
+        if (!stop_requested.load(std::memory_order_acquire) &&
+            start_status.load(std::memory_order_acquire) != StartStatus::Failed) {
+            SIG_LOGW("[ota] OTA session already starting or active — duplicate start ignored");
+            return true;
+        }
+        strncpy(last_error, "OTA session is shutting down — retry in a few seconds",
+                sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        return false;
+    }
+
+    if (reboot_pending.load(std::memory_order_acquire)) {
+        strncpy(last_error, "OTA reboot pending", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        SIG_LOGW("[ota] REFUSED: reboot pending after completed upload");
+        return false;
+    }
+
+    sigurdos::comms::secureWipe(ap_password, sizeof(ap_password));
+    sigurdos::comms::secureWipe(startup_password, sizeof(startup_password));
+    using_access_point.store(false, std::memory_order_release);
+    server_ip[0] = '\0';
+    last_error[0] = '\0';
+
+    if (!otaAccessPointInputsValid(ssid, password)) {
+        strncpy(last_error, "Invalid OTA WiFi name or password", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        SIG_LOGW("[ota] REFUSED: invalid AP SSID or password length");
+        return false;
+    }
+
+    if (sigurdos_is_under_launcher()) {
+        strncpy(last_error, "Update through Launcher instead", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        SIG_LOGW("[ota] REFUSED: OTA not available under bmorcelli/Launcher — update SigurdOS through Launcher instead");
+        return false;
+    }
+
+    // The device PIN is the upload endpoint's only authentication.
+    const uint32_t device_pin = prefs_get().device_pin;
+    if (device_pin == 0) {
+        strncpy(last_error, "Set a device PIN before local OTA", sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        SIG_LOGW("[ota] REFUSED: no device PIN set — set a PIN before using WiFi OTA");
+        return false;
+    }
+    if (!otaDevicePinEligible(device_pin)) {
+        strncpy(last_error, "Set a 6+ digit device PIN before local OTA",
+                sizeof(last_error) - 1);
+        last_error[sizeof(last_error) - 1] = '\0';
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        SIG_LOGW("[ota] REFUSED: device PIN too weak for OTA (need 6+ digits)");
+        return false;
+    }
+
+    const bool reuse_sta = wifi_sta::isConnected();
+    const wifi::RadioMode requested_mode =
+        reuse_sta ? wifi::RadioMode::Sta : wifi::RadioMode::Ap;
+    if (!wifi::reserveForWorker(wifi::Owner::ApOta, requested_mode)) {
+        snprintf(last_error, sizeof(last_error), "WiFi busy: %s",
+                 wifi::ownerName(wifi::currentOwner()));
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        SIG_LOGW("[ota] REFUSED: %s", last_error);
+        return false;
+    }
+
+    strlcpy(startup_ssid, ssid, sizeof(startup_ssid));
+    strlcpy(startup_password, password ? password : "",
+            sizeof(startup_password));
+    startup_reuse_sta = reuse_sta;
+    using_access_point.store(!reuse_sta, std::memory_order_release);
+    if (!reuse_sta) notifyCompanionTransportParked(true);
+
     stop_requested.store(false, std::memory_order_release);
     worker_exited.store(false, std::memory_order_release);
     worker_owns_server.store(true, std::memory_order_release);
     worker_exit_overdue.store(false, std::memory_order_release);
+    worker_tick_ms.store(0, std::memory_order_release);
     active.store(true, std::memory_order_release);
-    session_started_at = millis();
+    start_status.store(StartStatus::Starting, std::memory_order_release);
     if (xTaskCreatePinnedToCore(
             otaServerWorker, "wifi-ota", hal::OTA_WORKER_STACK_BYTES,
             nullptr, 1, nullptr, hal::OTA_WORKER_CORE) != pdPASS) {
@@ -686,7 +719,15 @@ bool start(const char* ssid, const char* password) {
         active.store(false, std::memory_order_release);
         worker_owns_server.store(false, std::memory_order_release);
         worker_exited.store(true, std::memory_order_release);
-        (void)cleanupServer(ServerCleanupContext::Starter);
+        start_status.store(StartStatus::Failed, std::memory_order_release);
+        using_access_point.store(false, std::memory_order_release);
+        notifyCompanionTransportParked(false);
+        sigurdos::comms::secureWipe(startup_password,
+                                   sizeof(startup_password));
+        if (!wifi::release(wifi::Owner::ApOta) &&
+            wifi::hasOwner(wifi::Owner::ApOta)) {
+            wifi::requestRelease(wifi::Owner::ApOta);
+        }
         return false;
     }
     return true;
@@ -754,6 +795,10 @@ void stop() {
 
 bool isActive() {
     return active.load(std::memory_order_acquire);
+}
+
+StartStatus getStartStatus() {
+    return start_status.load(std::memory_order_acquire);
 }
 
 bool isRebootPending() {

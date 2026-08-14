@@ -12,6 +12,13 @@
 
 namespace sigurdos::diagnostics {
 
+// Arduino-ESP32 HWCDC otherwise retries a full TX ring for roughly two
+// seconds per write. Diagnostics are best-effort and must never stall the
+// watchdog-owned loop task.
+constexpr uint32_t DIAGNOSTIC_CDC_TX_TIMEOUT_MS = 0;
+
+void configure_diagnostic_output();
+
 class NonBlockingWriter {
 public:
     static constexpr std::size_t RECORD_CAPACITY = 384;

@@ -31,6 +31,7 @@ enum class RuntimeWatchdogOwner : uint8_t {
 // application loop (LVGL, mesh, input, battery, and telemetry).
 constexpr RuntimeWatchdogOwner RUNTIME_WATCHDOG_OWNER =
     RuntimeWatchdogOwner::LoopTask;
+constexpr bool OTA_WORKER_OWNS_STARTUP = true;
 constexpr bool OTA_WORKER_OWNS_TRANSPORT_AND_FLASH = true;
 constexpr bool OTA_WORKER_SUBSCRIBES_RUNTIME_WATCHDOG = false;
 
@@ -38,9 +39,10 @@ static_assert(SETUP_WATCHDOG_TIMEOUT_SEC > RUNTIME_WATCHDOG_TIMEOUT_SEC,
               "setup watchdog must allow more time than runtime");
 static_assert(RUNTIME_WATCHDOG_TIMEOUT_SEC > 0,
               "runtime watchdog timeout must be non-zero");
-static_assert(OTA_WORKER_OWNS_TRANSPORT_AND_FLASH &&
+static_assert(OTA_WORKER_OWNS_STARTUP &&
+                  OTA_WORKER_OWNS_TRANSPORT_AND_FLASH &&
                   !OTA_WORKER_SUBSCRIBES_RUNTIME_WATCHDOG,
-              "OTA transport must not block the loopTask watchdog owner");
+              "OTA work must not block the loopTask watchdog owner");
 
 constexpr uint32_t BOOT_WATCHDOG_MAGIC = 0x42574431u;  // "BWD1"
 constexpr uint8_t BOOT_WATCHDOG_VERSION = 1;

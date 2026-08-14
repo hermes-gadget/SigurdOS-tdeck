@@ -61,6 +61,13 @@ bool acquire(Owner owner, RadioMode requested_mode) {
     return false;
 }
 
+bool reserveForWorker(Owner owner, RadioMode requested_mode) {
+    if (coordinator.currentOwner() == owner) {
+        return coordinator.currentMode() == requested_mode;
+    }
+    return coordinator.acquire(owner, requested_mode, readRadioMode());
+}
+
 bool release(Owner owner) {
     return coordinator.releaseWith(owner, applyRadioMode);
 }

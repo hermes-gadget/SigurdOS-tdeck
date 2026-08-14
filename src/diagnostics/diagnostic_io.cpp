@@ -12,6 +12,13 @@ namespace {
 NonBlockingWriter s_writer;
 }
 
+void configure_diagnostic_output() {
+#if defined(ESP32_PLATFORM) && defined(ARDUINO_USB_CDC_ON_BOOT) && \
+    ARDUINO_USB_CDC_ON_BOOT
+    Serial.setTxTimeoutMs(DIAGNOSTIC_CDC_TX_TIMEOUT_MS);
+#endif
+}
+
 NonBlockingWriter& writer() { return s_writer; }
 
 void NonBlockingWriter::lock() const {

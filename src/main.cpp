@@ -229,6 +229,7 @@ void setup()
 {
     esp_log_write(ESP_LOG_ERROR, BOOT_TAG, "SETUP ENTRY - BEFORE Serial.begin");
     Serial.begin(115200);
+    sigurdos::diagnostics::configure_diagnostic_output();
     const esp_reset_reason_t reset_reason = esp_reset_reason();
     sigurdos::ota_boot_health::begin();
     sigurdos::hal::boot_watchdog_begin(reset_reason);

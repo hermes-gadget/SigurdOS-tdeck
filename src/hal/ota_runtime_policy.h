@@ -9,8 +9,9 @@
 namespace sigurdos {
 namespace hal {
 
-// OTA transport and flash writes run on a managed task on core 0. The Arduino
-// loopTask remains free to service LVGL, mesh, input, and the runtime watchdog.
+// OTA WiFi/server startup, transport, and flash writes run on a managed task on
+// core 0. The Arduino loopTask remains free to service LVGL, mesh, input, and
+// the runtime watchdog.
 constexpr uint32_t OTA_WORKER_STACK_BYTES = 12U * 1024U;
 constexpr int OTA_WORKER_CORE = 0;
 

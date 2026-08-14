@@ -94,6 +94,53 @@ struct GitHubOtaDialogCtx {
     LvTimerOwner poll_timer;
 };
 
+struct LocalOtaDialogCtx {
+    lv_obj_t* dialog;
+    lv_obj_t* title;
+    lv_obj_t* message;
+    LvTimerOwner poll_timer;
+};
+
+static void render_local_ota_start(LocalOtaDialogCtx* ctx)
+{
+    if (!ctx || !lv_obj_is_valid(ctx->dialog)) return;
+
+    const sigurdos::ota::StartStatus status =
+        sigurdos::ota::getStartStatus();
+    if (status == sigurdos::ota::StartStatus::Starting) {
+        lv_label_set_text(ctx->title, "Starting OTA Update");
+        lv_label_set_text(ctx->message, "Preparing WiFi and upload server...");
+        return;
+    }
+
+    if (sigurdos::ota::otaStartSucceeded(status)) {
+        lv_label_set_text(ctx->title, "OTA Update Active");
+        lv_obj_set_style_text_color(ctx->title, lv_color_hex(ACCENT), 0);
+        char info[160];
+        const char* ip = sigurdos::ota::getIP();
+        const char* password = sigurdos::ota::getAPPassword();
+        if (password[0]) {
+            snprintf(info, sizeof(info),
+                "WiFi: SigurdOS-OTA\nPassword: %s\nIP: %s\n"
+                "Enter device PIN + firmware.bin\nExpires in 10 minutes",
+                password, ip);
+        } else {
+            snprintf(info, sizeof(info),
+                "Connected WiFi\nIP: %s\n"
+                "Enter device PIN + firmware.bin\nExpires in 10 minutes", ip);
+        }
+        lv_label_set_text(ctx->message, info);
+        return;
+    }
+
+    lv_label_set_text(ctx->title, "OTA Update Failed");
+    lv_obj_set_style_text_color(ctx->title, lv_color_hex(ACCENT_RED), 0);
+    const char* error = sigurdos::ota::getLastError();
+    lv_label_set_text(ctx->message,
+                      error[0] ? error : "OTA startup stopped");
+    lv_obj_set_style_text_color(ctx->message, lv_color_hex(ACCENT_RED), 0);
+}
+
 static void show_build_info_dialog(lv_obj_t* parent)
 {
     const auto& info = sigurdos::build::info();
@@ -1025,52 +1072,41 @@ void settings_system_show()
         lv_obj_set_style_radius(dlg, 0, 0);
         lv_obj_set_style_pad_all(dlg, 8, 0);
 
-        if (!sigurdos::ota::start("SigurdOS-OTA")) {
-            lv_obj_t* err = lv_label_create(dlg);
-            const char* ota_error = sigurdos::ota::getLastError();
-            lv_label_set_text(err, ota_error[0] ? ota_error : "OTA failed to start");
-            lv_obj_set_style_text_color(err, lv_color_hex(ACCENT_RED), 0);
-            lv_obj_set_style_text_font(err, emoji_wrapped_montserrat_10, 0);
-            lv_obj_align(err, LV_ALIGN_TOP_MID, 0, 4);
-
-            lv_obj_t* eclose = lv_btn_create(dlg);
-            lv_obj_set_size(eclose, 80, 24);
-            lv_obj_align(eclose, LV_ALIGN_BOTTOM_MID, 0, -4);
-            lv_obj_set_style_bg_color(eclose, lv_color_hex(BG_INPUT), 0);
-            lv_obj_set_style_radius(eclose, 0, 0);
-            lv_obj_t* ecl = lv_label_create(eclose);
-            lv_label_set_text(ecl, "OK");
-            lv_obj_center(ecl);
-            lv_obj_add_event_cb(eclose, [](lv_event_t* ev) {
-                lv_obj_del_async(lv_obj_get_parent((lv_obj_t*)lv_event_get_target(ev)));
-            }, LV_EVENT_CLICKED, nullptr);
-            return;
-        }
-        const char* ip = sigurdos::ota::getIP();
-
         lv_obj_t* title = lv_label_create(dlg);
-        lv_label_set_text(title, "OTA Update Active");
+        lv_label_set_text(title, "Starting OTA Update");
         lv_obj_set_style_text_color(title, lv_color_hex(ACCENT), 0);
         lv_obj_set_style_text_font(title, emoji_wrapped_montserrat_12, 0);
         lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);
 
-        char info[160];
-        const char* ap_password = sigurdos::ota::getAPPassword();
-        if (ap_password[0]) {
-            snprintf(info, sizeof(info),
-                "WiFi: SigurdOS-OTA\nPassword: %s\nIP: %s\n"
-                "Enter device PIN + firmware.bin\nExpires in 10 minutes",
-                ap_password, ip);
-        } else {
-            snprintf(info, sizeof(info),
-                "Connected WiFi\nIP: %s\n"
-                "Enter device PIN + firmware.bin\nExpires in 10 minutes", ip);
-        }
         lv_obj_t* msg = lv_label_create(dlg);
-        lv_label_set_text(msg, info);
+        lv_label_set_text(msg, "Preparing WiFi and upload server...");
         lv_obj_set_style_text_color(msg, lv_color_hex(TEXT_PRIMARY), 0);
         lv_obj_set_style_text_font(msg, emoji_wrapped_montserrat_10, 0);
         lv_obj_align(msg, LV_ALIGN_CENTER, 0, 0);
+
+        auto* ota_ctx = new LocalOtaDialogCtx{dlg, title, msg, {}};
+        lv_obj_add_event_cb(dlg, [](lv_event_t* ev) {
+            delete (LocalOtaDialogCtx*)lv_event_get_user_data(ev);
+        }, LV_EVENT_DELETE, ota_ctx);
+
+        const bool accepted = sigurdos::ota::start("SigurdOS-OTA");
+        render_local_ota_start(ota_ctx);
+        if (accepted && !sigurdos::ota::otaStartFinished(
+                            sigurdos::ota::getStartStatus())) {
+            ota_ctx->poll_timer.attach(lv_timer_create([](lv_timer_t* timer) {
+                auto* ctx = (LocalOtaDialogCtx*)lv_timer_get_user_data(timer);
+                if (!ctx || !lv_obj_is_valid(ctx->dialog)) {
+                    if (ctx) ctx->poll_timer.complete(timer);
+                    else lv_timer_del(timer);
+                    return;
+                }
+                render_local_ota_start(ctx);
+                if (sigurdos::ota::otaStartFinished(
+                        sigurdos::ota::getStartStatus())) {
+                    ctx->poll_timer.complete(timer);
+                }
+            }, 100, ota_ctx));
+        }
 
         lv_obj_t* close_btn = lv_btn_create(dlg);
         lv_obj_set_size(close_btn, 80, 24);
