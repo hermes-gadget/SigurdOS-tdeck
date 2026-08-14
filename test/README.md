@@ -124,6 +124,7 @@ test/
 |-- test_screen_lifetime/        Screen delete guard: tracked pointer nulling, timer teardown
 |-- test_sdcard/                 SD card state, path checks, size formatting
 |-- test_sd_store/               SD message store persistence, chunking, and recovery
+|-- test_spi_shared_arbiter/     Shared SPI recursive arbitration, timeouts, and ownership
 |-- test_storage/                SPIFFS mount, erased-partition recovery, and failure policy
 |-- test_storage_warm/           Storage warm task lifecycle, cancel, and teardown interlock
 |-- test_system_action/          System action confirmation and destructive op guards

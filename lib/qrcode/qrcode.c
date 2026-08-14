@@ -631,6 +631,32 @@ static void rs_getRemainder(uint8_t degree, uint8_t *coeff, uint8_t *data, uint8
 #pragma mark - QrCode
 
 static int8_t encodeDataCodewords(BitBucket *dataCodewords, const uint8_t *text, uint16_t length, uint8_t version) {
+    // Fail cleanly when the payload cannot fit this version's data capacity.
+    // Without this check, bb_appendBits writes past the caller's codeword
+    // buffer (a stack array in qrcode_initBytes), corrupting the stack —
+    // SigurdOS issue #1561 (QR share PANIC). The version-selection loop
+    // relies on a negative return to advance to the next version.
+    const uint32_t capacityBits = (uint32_t)dataCodewords->capacityBytes * 8U;
+    uint32_t neededBits = 0;
+
+    if (isNumeric((char*)text, length)) {
+        neededBits = 4U + (uint32_t)getModeBits(version, MODE_NUMERIC) +
+                     ((uint32_t)length / 3U) * 10U;
+        const uint32_t rem = length % 3U;
+        if (rem == 1U) neededBits += 4U;      // 1 remaining digit
+        else if (rem == 2U) neededBits += 7U; // 2 remaining digits
+    } else if (isAlphanumeric((char*)text, length)) {
+        neededBits = 4U + (uint32_t)getModeBits(version, MODE_ALPHANUMERIC) +
+                     ((uint32_t)length / 2U) * 11U + ((uint32_t)length % 2U) * 6U;
+    } else {
+        neededBits = 4U + (uint32_t)getModeBits(version, MODE_BYTE) +
+                     8U * (uint32_t)length;
+    }
+
+    if (neededBits > capacityBits) {
+        return -1;
+    }
+
     int8_t mode = MODE_BYTE;
     
     if (isNumeric((char*)text, length)) {
@@ -788,6 +814,18 @@ int8_t qrcode_initBytes(QRCode *qrcode, uint8_t *modules, uint8_t version, uint8
 #if LOCK_VERSION == 0
     uint16_t moduleCount = NUM_RAW_DATA_MODULES[version - 1];
     uint16_t dataCapacity = moduleCount / 8 - NUM_ERROR_CORRECTION_CODEWORDS[eccFormatBits][version - 1];
+
+    // Reject payloads that cannot fit this version's data capacity (byte-mode
+    // worst case). The caller's version-selection loop advances on failure.
+    // Without this check the encoder could emit a corrupt QR for payloads
+    // between dataCapacity and the raw module buffer size (SigurdOS #1561).
+    {
+        const uint32_t neededBits = 4U + (uint32_t)getModeBits(version, MODE_BYTE) +
+                                    8U * (uint32_t)length;
+        if (neededBits > (uint32_t)dataCapacity * 8U) {
+            return -1;
+        }
+    }
 #else
     version = LOCK_VERSION;
     uint16_t moduleCount = NUM_RAW_DATA_MODULES;
