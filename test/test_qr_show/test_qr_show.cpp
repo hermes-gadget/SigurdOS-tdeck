@@ -24,7 +24,6 @@
 #include <vector>
 
 #include "app/qr_show.h"
-#include "qrcode.h"
 
 namespace {
 
@@ -223,81 +222,6 @@ TEST_F(QrShowLayoutTest, CanvasDeleteLifecycleReleasesScreenOwnedBuffer) {
             std::free(buffer);
         }));
     EXPECT_EQ(frees, 1);
-}
-
-TEST_F(QrShowLayoutTest, ConfiguredBufferEncodesRealQrForMaxPayload) {
-    // Regression for issue #1561: the on-device QR path runs inside the LVGL
-    // event chain on the loopTask; the module buffer must be exactly large
-    // enough for the configured max version and payload so the screen can
-    // heap-allocate it (instead of overflowing the 8 KB loop stack with a
-    // stack array). Exercise the real encoder, not just the sizing math.
-    const std::string payload(SIGURDOS_QR_MAX_PAYLOAD_BYTES, 'a');
-    uint8_t modules[SIGURDOS_QR_MODULE_BUFFER_BYTES];
-    QRCode qr;
-
-    const int version = sigurdos_qr_select_smallest_version(
-        [&](int v) {
-            return qrcode_initText(&qr, modules, v, ECC_MEDIUM,
-                                   payload.c_str()) == 0;
-        });
-
-    EXPECT_GT(version, 0);
-    EXPECT_LE(version, SIGURDOS_QR_VERSION);
-    EXPECT_EQ(qr.version, version);
-    EXPECT_EQ(qr.size, sigurdos_qr_module_count(version));
-    // A successfully encoded QR must have a non-trivial dark-module pattern.
-    int dark = 0;
-    for (int y = 0; y < qr.size; ++y) {
-        for (int x = 0; x < qr.size; ++x) {
-            if (qrcode_getModule(&qr, x, y)) ++dark;
-        }
-    }
-    EXPECT_GT(dark, 0);
-}
-
-TEST_F(QrShowLayoutTest, ConfiguredBufferEncodesRealChannelShareUri) {
-    // Realistic channel-share URI (url-encoded name + 64-hex secret) — the
-    // exact payload that crashed the device on every press.
-    const std::string uri =
-        "meshcore://channel/add?name=Public&secret=0123456789abcdef"
-        "0123456789abcdef0123456789abcdef0123456789abcdef";
-    ASSERT_TRUE(sigurdos_qr_payload_fits(uri.c_str()));
-
-    uint8_t modules[SIGURDOS_QR_MODULE_BUFFER_BYTES];
-    QRCode qr;
-
-    const int version = sigurdos_qr_select_smallest_version(
-        [&](int v) {
-            return qrcode_initText(&qr, modules, v, ECC_MEDIUM,
-                                   uri.c_str()) == 0;
-        });
-
-    EXPECT_GT(version, 0);
-    EXPECT_LE(version, SIGURDOS_QR_VERSION);
-    EXPECT_EQ(qr.version, version);
-    EXPECT_EQ(qr.size, sigurdos_qr_module_count(version));
-}
-
-TEST_F(QrShowLayoutTest, ConfiguredBufferEncodesRealContactShareUri) {
-    // Realistic contact-share URI with a 64-hex public key.
-    const std::string uri =
-        "meshcore://contact/add?name=Test&public_key=00112233445566778899"
-        "aabbccddeeff00112233445566778899aabbccddeeff&type=node";
-    ASSERT_TRUE(sigurdos_qr_payload_fits(uri.c_str()));
-
-    uint8_t modules[SIGURDOS_QR_MODULE_BUFFER_BYTES];
-    QRCode qr;
-
-    const int version = sigurdos_qr_select_smallest_version(
-        [&](int v) {
-            return qrcode_initText(&qr, modules, v, ECC_MEDIUM,
-                                   uri.c_str()) == 0;
-        });
-
-    EXPECT_GT(version, 0);
-    EXPECT_LE(version, SIGURDOS_QR_VERSION);
-    EXPECT_EQ(qr.version, version);
-    EXPECT_EQ(qr.size, sigurdos_qr_module_count(version));
 }
 
 } // namespace

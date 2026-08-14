@@ -226,7 +226,7 @@ third-party warnings do not spend this budget. When a warning is fixed, reduce
 
 > ⚠️ **SUPERSEDED — NOT A PASS.** This appendix records a partial 11.03-hour
 > window retained for historical context. It is superseded by the owner-signed
-> operational soak status in [`ROADMAP.md`](ROADMAP.md#14-how-to-ship--phase-a-reliability-p1-do-first),
+> operational soak status in [`ROADMAP.md`](ROADMAP.md#4-how-to-ship--phase-a-reliability-p1-do-first),
 > but no completed release-grade 12-hour PASS is recorded here. Do not use this
 > appendix as completed release evidence.
 
