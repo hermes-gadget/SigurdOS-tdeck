@@ -117,14 +117,26 @@ void qr_show(const char* title, const char* data)
     lv_obj_set_style_border_width(tdiv, 0, 0);
 
     // ── Generate QR code ───────────────────────────────────
-    // Use an explicitly-sized module buffer for the configured version.
-    uint8_t qr_modules[SIGURDOS_QR_MODULE_BUFFER_BYTES];
+    // Heap-allocate the module buffer instead of parking a 407-byte array on
+    // the loopTask stack. qr_show runs inside the LVGL input event dispatch
+    // chain (lv_timer_handler -> indev -> LV_EVENT_CLICKED -> qr_show ->
+    // qrcode_initText -> qrcode_initBytes); the qrcode encoder itself adds
+    // further stack arrays (isFunctionGridBytes, codewordBytes, ecc result),
+    // and the combined chain previously overflowed the 8 KB loopTask stack
+    // (PANIC, corrupted return address — see issue #1561). The heap buffer is
+    // kept alive through rendering (qrcode_getModule reads it) and freed after.
+    uint8_t* qr_modules = static_cast<uint8_t*>(heap_caps_malloc(
+        SIGURDOS_QR_MODULE_BUFFER_BYTES, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!qr_modules) {
+        qr_show_error(scr, "QR: out of memory");
+        return;
+    }
     QRCode qr;
 
     int qr_version = 0;
     if (data && data[0] && sigurdos_qr_payload_fits(data)) {
         qr_version = sigurdos_qr_select_smallest_version(
-            [&qr, &qr_modules, data](int version) {
+            [&qr, qr_modules, data](int version) {
                 return qrcode_initText(&qr, qr_modules, version,
                                        ECC_MEDIUM, data) == 0;
             });
@@ -132,6 +144,7 @@ void qr_show(const char* title, const char* data)
     if (qr_version == 0) {
         // Show error if QR generation fails
         // Still show screen so user can go back
+        heap_caps_free(qr_modules);
         qr_show_error(scr, "QR generation failed");
         return;
     }
@@ -141,6 +154,7 @@ void qr_show(const char* title, const char* data)
     // area, leaving a small margin.
     QrCanvasLayout qr_layout = sigurdos_qr_canvas_layout(qr.size, CONTENT_W, CONTENT_H);
     if (!qr_layout.fits) {
+        heap_caps_free(qr_modules);
         qr_show_error(scr, "QR too large");
         return;
     }
@@ -155,6 +169,7 @@ void qr_show(const char* title, const char* data)
     // QR screen. Fall back to internal RAM only if PSRAM is unavailable.
     const size_t canvas_bytes = sigurdos_qr_canvas_buffer_bytes(qr_layout);
     if (canvas_bytes == 0) {
+        heap_caps_free(qr_modules);
         qr_show_error(scr, "QR size overflow");
         return;
     }
@@ -165,6 +180,7 @@ void qr_show(const char* title, const char* data)
             canvas_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     if (!cbuf) {
+        heap_caps_free(qr_modules);
         qr_show_error(scr, "QR: out of memory");
         return;
     }
@@ -186,6 +202,9 @@ void qr_show(const char* title, const char* data)
         [canvas, dark](int x, int y) {
             lv_canvas_set_px(canvas, x, y, dark, LV_OPA_COVER);
         });
+
+    // Module grid no longer needed after rendering — release the heap buffer.
+    heap_caps_free(qr_modules);
 
     // The QR canvas draws as a light square on dark bg; add a 2px border
     // around it for visual separation from the background.
