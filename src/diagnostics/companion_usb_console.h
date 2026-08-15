@@ -53,6 +53,7 @@ public:
     size_t printf(const char*, Args...) { return 0; }
 
     void setDebugOutput(bool) {}
+    void setTxTimeoutMs(uint32_t) {}
     explicit operator bool() const { return true; }
 };
 
