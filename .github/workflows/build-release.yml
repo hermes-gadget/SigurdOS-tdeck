@@ -315,5 +315,4 @@ jobs:
             firmware/sigurdos-tdeck-boot_app0.bin
             firmware/sigurdos-tdeck-firmware.bin
             firmware/sigurdos-tdeck-full.bin
-            firmware/sigurdos-tdeck-launcher.bin
             firmware/release-evidence.json
