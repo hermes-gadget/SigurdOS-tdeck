@@ -131,6 +131,15 @@ def _valid_merged_fixture() -> bytes:
 
 
 class SerialParsingTests(unittest.TestCase):
+    def test_drain_is_bounded_with_continuous_output(self) -> None:
+        connection = PersistentSerial("/dev/null")
+        connection.read_available = lambda: b"[flush]"  # type: ignore[method-assign]
+        started = time.monotonic()
+        output = connection.drain(0.02)
+        elapsed = time.monotonic() - started
+        self.assertTrue(output)
+        self.assertLess(elapsed, 0.5)
+
     def test_stat_line(self) -> None:
         sample = parse_stat_line(
             "[stat] t=1599 heap=168864/163372 psram=7949451 batt=87% flush=0",

@@ -1,0 +1,175 @@
+{
+  "schema_version": 2,
+  "tag": "beta-0.1.48-RC10",
+  "generated_at": "2026-08-16T21:37:44Z",
+  "requirements": [
+    {
+      "id": "INT-BLE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "companion-protocol-v1.16.0"
+    },
+    {
+      "id": "INT-USB",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "companion-protocol-v1.16.0"
+    },
+    {
+      "id": "INT-GOLDEN",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "pinned-meshcore-a9b51741"
+    },
+    {
+      "id": "SOAK-IDLE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "T-Deck-ESP32-S3-16MB"
+    },
+    {
+      "id": "SOAK-ACTIVE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "T-Deck-ESP32-S3-16MB"
+    },
+    {
+      "id": "OTA-UPGRADE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "github-releases"
+    },
+    {
+      "id": "OTA-NO-UPDATE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "github-releases"
+    },
+    {
+      "id": "OTA-AUTH-FAIL",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "github-releases"
+    },
+    {
+      "id": "OTA-DOWNLOAD-FAIL",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "github-releases"
+    },
+    {
+      "id": "OTA-IMAGE-FAIL",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "github-releases"
+    },
+    {
+      "id": "OTA-SIGNATURE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "github-releases"
+    },
+    {
+      "id": "OTA-DOWNGRADE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "github-releases"
+    },
+    {
+      "id": "OTA-TLS-ROTATION",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "github-releases"
+    },
+    {
+      "id": "BLE-BOND-REVOKE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "companion-protocol-v1.16.0"
+    },
+    {
+      "id": "RESET-RECONNECT",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "companion-protocol-v1.16.0"
+    },
+    {
+      "id": "LAUNCH-DETECT",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "bmorcelli/Launcher-v2.7.2"
+    },
+    {
+      "id": "LAUNCH-HANDOFF",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "bmorcelli/Launcher-v2.7.2"
+    },
+    {
+      "id": "LAUNCH-OTA-GATE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "bmorcelli/Launcher-v2.7.2"
+    },
+    {
+      "id": "LAUNCH-STATE",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "bmorcelli/Launcher-v2.7.2"
+    },
+    {
+      "id": "REL-ARTIFACTS",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/releases/tag/beta-0.1.48-RC10",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "sha256-verified-locally"
+    },
+    {
+      "id": "REL-WARNINGS",
+      "outcome": "pass",
+      "evidence_url": "https://github.com/hermes-gadget/SigurdOS-tdeck/issues/1138",
+      "tested_at": "2026-08-16",
+      "firmware_version": "beta-0.1.48-RC10",
+      "peer_version": "ci-first-party-warning-gate"
+    }
+  ]
+}

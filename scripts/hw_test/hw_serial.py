@@ -419,7 +419,6 @@ class PersistentSerial:
             chunk = self.read_available()
             if chunk:
                 output.extend(chunk)
-                deadline = time.monotonic() + min(duration_s, 0.1)
             else:
                 time.sleep(0.01)
         return bytes(output)
