@@ -174,7 +174,8 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.assertIn("cosign sign-blob --yes", workflow)
         self.assertIn("artifacts/SHA256SUMS.sigstore.json", workflow)
         self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", workflow)
-        self.assertIn("subject-path: artifacts/*", workflow)
+        self.assertIn("subject-checksums: .attestation-subjects.txt", workflow)
+        self.assertIn("Prepare unique provenance subjects", workflow)
         self.assertIn("attestations: write", workflow)
         self.assertIn("id-token: write", workflow)
 
