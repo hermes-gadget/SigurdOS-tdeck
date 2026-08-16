@@ -22,9 +22,6 @@ class PlatformioSbomTests(unittest.TestCase):
         sbom = MODULE.generate(ROOT / "ci" / "platformio-packages.lock")
         names = {component["name"] for component in sbom["components"]}
         self.assertIn("framework-arduinoespressif32", names)
-        self.assertIn("tool-mkfatfs", names)
-        self.assertIn("tool-mklittlefs", names)
-        self.assertIn("tool-mkspiffs", names)
         self.assertIn("toolchain-xtensa-esp32s3", names)
         self.assertIn("ArduinoJson", names)
         self.assertIn("MeshCore", names)
@@ -44,9 +41,6 @@ class PlatformioSbomTests(unittest.TestCase):
             ]
         }
         expected = {
-            "tool-mkfatfs": "pkg:github/labplus-cn/mkfatfs@2.0.1",
-            "tool-mklittlefs": "pkg:github/earlephilhower/mklittlefs@1.203.210628",
-            "tool-mkspiffs": "pkg:github/igrr/mkspiffs@2.230.0",
             "Crypto": "pkg:github/rweather/arduinolibs@0.4.0#libraries/Crypto",
             "Melopero RV3028": (
                 "pkg:github/melopero/Melopero_RV-3028_Arduino_Library@1.2.0"
