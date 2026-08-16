@@ -177,6 +177,7 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.assertIn("subject-checksums: .attestation-subjects.txt", workflow)
         self.assertIn("Prepare unique provenance subjects", workflow)
         self.assertNotIn("firmware/sigurdos-tdeck-launcher.bin\n", workflow)
+        self.assertIn("! -name sigurdos-tdeck-launcher.bin", workflow)
         self.assertIn("attestations: write", workflow)
         self.assertIn("id-token: write", workflow)
 
