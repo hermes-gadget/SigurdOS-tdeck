@@ -251,3 +251,36 @@ third-party warnings do not spend this budget. When a warning is fixed, reduce
 
 **Status:** Window is 11.03 h / 12 h. Last sample (20:50) is 11 min before
 report time. The capture is superseded partial evidence and is **not a PASS**.
+
+## Battery measurement (Phase A3)
+
+> **Partial curve — soak did not run continuously.** The device logged for
+> ~11.5 h on 2026-08-04 then stopped reporting. The log file was last modified
+> 2026-08-04T23:42 UTC and contains no data after that timestamp. 14 days
+> elapsed since the test started but only one day of data was captured.
+
+|| Field | Value |
+||-------|-------|
+|| Log file | `/home/ben/sigurdos-soak/soak.log` |
+|| First batt sample | 2026-08-04 11:14 UTC — 100% |
+|| Last batt sample | 2026-08-04 22:42 UTC — 100% |
+|| Total elapsed | 11.47 h (0.48 days) |
+|| Total batt samples | 25 (of 51 log lines; remainder had `batt=-`) |
+|| Battery values observed | 100% throughout — zero drain detected |
+|| Drain rate (linear fit) | 0.0 %/day (indeterminate — no measurable drop) |
+|| Projected full life | **Cannot project** — no drain slope to extrapolate |
+|| Crash/reboot markers | None |
+|| Dead streak (state.json) | 0 |
+|| Soak stopped after | ~22:42 UTC 2026-08-04 (file unchanged since) |
+
+**Anomalies:** The log file is truncated at 51 lines / 3.6 KB. Battery ADC
+reporting is infrequent (25 of 51 samples had a value) and resolution appears
+to be integer-percent only. With zero drain over 11.5 h at idle, either the
+actual draw is below the ADC's detection threshold on this timescale, or the
+battery gauge is saturating at 100%. A 14-day curve requires continuous
+logging; this capture does not provide one.
+
+**Recommendation:** Re-run the soak with continuous logging (soak-watch.py
+backgrounded and supervised) until battery reaches ≤20%, or for a minimum of
+14 days. The ADC's integer-percent granularity may require a longer window or
+a voltage-mode read (mV) to resolve sub-1%/day drain.
