@@ -316,6 +316,7 @@ bool ObservedSerialBLEInterface::removeAllBonds()
             _stats.bond_purge_error_count++;
         }
     }
+    if (submitted_all) _bond_cache.clear();
     return submitted_all;
 }
 
