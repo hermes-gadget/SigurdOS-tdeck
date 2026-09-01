@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Ben
 
 #include <gtest/gtest.h>
+#include "comms/ble_bond_cache.h"
 #include "comms/ble_frame_queue.h"
 #include "comms/ble_init_gate.h"
 #include "comms/ble_auth_watchdog.h"
@@ -13,12 +14,16 @@
 
 #include <atomic>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <thread>
 #include <vector>
 
 namespace {
 
 using sigurdos::comms::BleFrameQueue;
+using sigurdos::comms::BleBondCache;
 using sigurdos::comms::BleInitGate;
 using sigurdos::comms::BleInitState;
 using sigurdos::comms::BleFrameQueuePushResult;
@@ -87,6 +92,79 @@ BlePeerAddress peer(uint8_t last)
     BlePeerAddress value{};
     value.bytes[5] = last;
     return value;
+}
+
+std::string readProjectFile(const char* path)
+{
+    const char* prefixes[] = {
+        "", "../", "../../", "../../../", "../../../../"};
+    for (const char* prefix : prefixes) {
+        std::ifstream in(std::string(prefix) + path);
+        if (in.good()) {
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        }
+    }
+    return {};
+}
+
+TEST(BleBondCache, ReplacesAndFindsKnownPeersWithoutExternalLookups)
+{
+    BleBondCache cache;
+    const BlePeerAddress peers[] = {peer(1), peer(2), peer(3)};
+    ASSERT_TRUE(cache.replace(peers, 3));
+    EXPECT_EQ(cache.size(), 3u);
+    EXPECT_TRUE(cache.contains(peer(1)));
+    EXPECT_TRUE(cache.contains(peer(3)));
+    EXPECT_FALSE(cache.contains(peer(4)));
+
+    EXPECT_TRUE(cache.add(peer(4)));
+    EXPECT_TRUE(cache.add(peer(4)));
+    EXPECT_EQ(cache.size(), 4u);
+    cache.clear();
+    EXPECT_EQ(cache.size(), 0u);
+    EXPECT_FALSE(cache.contains(peer(1)));
+}
+
+TEST(BleBondCache, RejectsInvalidOrOversizedSnapshots)
+{
+    BleBondCache cache;
+    EXPECT_FALSE(cache.replace(nullptr, 1));
+    EXPECT_FALSE(cache.replace(nullptr,
+                               sigurdos::comms::BLE_BOND_CACHE_CAPACITY + 1));
+    EXPECT_TRUE(cache.replace(nullptr, 0));
+}
+
+TEST(BleCallbackContract, BondDatabaseEnumerationStaysOffBtcTask)
+{
+    const std::string source =
+        readProjectFile("src/comms/observed_ble_interface.cpp");
+    ASSERT_FALSE(source.empty());
+
+    const size_t lookup_start = source.find(
+        "bool ObservedSerialBLEInterface::peerIsBonded");
+    const size_t lookup_end = source.find(
+        "bool ObservedSerialBLEInterface::refreshBondCache", lookup_start);
+    ASSERT_NE(lookup_start, std::string::npos);
+    ASSERT_NE(lookup_end, std::string::npos);
+    const std::string lookup =
+        source.substr(lookup_start, lookup_end - lookup_start);
+    EXPECT_NE(lookup.find("_bond_cache.contains"), std::string::npos);
+    EXPECT_EQ(lookup.find("esp_ble_get_bond_device"), std::string::npos);
+
+    const size_t first_connect = source.find(
+        "void ObservedSerialBLEInterface::onConnect(");
+    ASSERT_NE(first_connect, std::string::npos);
+    const size_t callback_start = source.find(
+        "void ObservedSerialBLEInterface::onConnect(", first_connect + 1);
+    const size_t callback_end = source.find(
+        "void ObservedSerialBLEInterface::onMtuChanged", callback_start);
+    ASSERT_NE(callback_start, std::string::npos);
+    ASSERT_NE(callback_end, std::string::npos);
+    const std::string callback =
+        source.substr(callback_start, callback_end - callback_start);
+    EXPECT_NE(callback.find("peerIsBonded"), std::string::npos);
+    EXPECT_EQ(callback.find("refreshBondCache"), std::string::npos);
+    EXPECT_EQ(callback.find("esp_ble_get_bond_device"), std::string::npos);
 }
 
 TEST(BleAuthThrottle, NewPeersRequireLocalPairingWindowButBondsReconnect)

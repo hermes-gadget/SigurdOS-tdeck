@@ -27,6 +27,10 @@ static constexpr const char* REGION_RAW_PATH = "/regions2.raw";
 // Empty string = wildcard/unscoped.
 static char g_active_name[31] = {0};
 
+static bool removeRawRegionArtifact() {
+    return !SPIFFS.exists(REGION_RAW_PATH) || SPIFFS.remove(REGION_RAW_PATH);
+}
+
 static void restoreRegionMap(const RegionMap& snapshot, bool was_dirty) {
     *g_region_map = snapshot;
     g_regions_dirty = was_dirty;
@@ -131,13 +135,13 @@ bool regionsLoad() {
         format == detail::RegionStoreFormat::Transactional;
     bool ok = format != detail::RegionStoreFormat::Invalid;
     if (ok && transactional) {
-        SPIFFS.remove(REGION_RAW_PATH);
-        ok = detail::regionStoreExtractTransactionalMap(
-            REGION_PATH, REGION_RAW_PATH);
+        ok = removeRawRegionArtifact() &&
+            detail::regionStoreExtractTransactionalMap(
+                REGION_PATH, REGION_RAW_PATH);
     }
     const char* map_path = transactional ? REGION_RAW_PATH : REGION_PATH;
     if (ok) ok = g_region_map->load(&SPIFFS, map_path);
-    if (transactional) SPIFFS.remove(REGION_RAW_PATH);
+    if (transactional && !removeRawRegionArtifact()) ok = false;
 
     // TransportKeyStore is RAM-only upstream. Rebuild it exclusively from the
     // same validated v2 snapshot as the RegionMap so names/IDs and private key
@@ -232,16 +236,19 @@ bool regionsSave() {
         return false;
     }
 
-    SPIFFS.remove(REGION_RAW_PATH);
+    if (!removeRawRegionArtifact()) {
+        g_regions_dirty = true;
+        return false;
+    }
     const bool serialized = g_region_map->save(&SPIFFS, REGION_RAW_PATH);
     const int key_count = countPrivateRegionKeys();
     const bool ok = serialized &&
         detail::regionStoreSaveTransactionalFile(
             REGION_PATH, REGION_RAW_PATH, key_count,
             readPrivateRegionKey, nullptr);
-    SPIFFS.remove(REGION_RAW_PATH);
-    g_regions_dirty = !ok;
-    return ok;
+    const bool cleaned = removeRawRegionArtifact();
+    g_regions_dirty = !ok || !cleaned;
+    return ok && cleaned;
 }
 
 bool regionsPersistenceDirty() {
