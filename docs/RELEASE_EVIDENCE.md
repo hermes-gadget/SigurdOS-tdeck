@@ -259,19 +259,19 @@ report time. The capture is superseded partial evidence and is **not a PASS**.
 > 2026-08-04T23:42 UTC and contains no data after that timestamp. 14 days
 > elapsed since the test started but only one day of data was captured.
 
-|| Field | Value |
-||-------|-------|
-|| Log file | `/home/ben/sigurdos-soak/soak.log` |
-|| First batt sample | 2026-08-04 11:14 UTC — 100% |
-|| Last batt sample | 2026-08-04 22:42 UTC — 100% |
-|| Total elapsed | 11.47 h (0.48 days) |
-|| Total batt samples | 25 (of 51 log lines; remainder had `batt=-`) |
-|| Battery values observed | 100% throughout — zero drain detected |
-|| Drain rate (linear fit) | 0.0 %/day (indeterminate — no measurable drop) |
-|| Projected full life | **Cannot project** — no drain slope to extrapolate |
-|| Crash/reboot markers | None |
-|| Dead streak (state.json) | 0 |
-|| Soak stopped after | ~22:42 UTC 2026-08-04 (file unchanged since) |
+| Field | Value |
+|-------|-------|
+| Log file | `/home/ben/sigurdos-soak/soak.log` |
+| First batt sample | 2026-08-04 11:14 UTC — 100% |
+| Last batt sample | 2026-08-04 22:42 UTC — 100% |
+| Total elapsed | 11.47 h (0.48 days) |
+| Total batt samples | 25 (of 51 log lines; remainder had `batt=-`) |
+| Battery values observed | 100% throughout — zero drain detected |
+| Drain rate (linear fit) | 0.0 %/day (indeterminate — no measurable drop) |
+| Projected full life | **Cannot project** — no drain slope to extrapolate |
+| Crash/reboot markers | None |
+| Dead streak (state.json) | 0 |
+| Soak stopped after | ~22:42 UTC 2026-08-04 (file unchanged since) |
 
 **Anomalies:** The log file is truncated at 51 lines / 3.6 KB. Battery ADC
 reporting is infrequent (25 of 51 samples had a value) and resolution appears
