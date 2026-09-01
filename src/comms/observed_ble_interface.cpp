@@ -13,26 +13,34 @@ namespace comms {
 
 bool ObservedSerialBLEInterface::peerIsBonded(const BlePeerAddress& peer) const
 {
-    int count = esp_ble_get_bond_device_num();
-    if (count <= 0) return false;
-#if defined(CONFIG_BT_SMP_MAX_BONDS)
-    static constexpr int MAX_BONDS = CONFIG_BT_SMP_MAX_BONDS;
-#else
-    static constexpr int MAX_BONDS = 15;
-#endif
-    if (count > MAX_BONDS) return false;
-    esp_ble_bond_dev_t bonds[MAX_BONDS]{};
+    return _bond_cache.contains(peer);
+}
+
+bool ObservedSerialBLEInterface::refreshBondCache()
+{
+    const int count = esp_ble_get_bond_device_num();
+    if (count < 0 || static_cast<size_t>(count) > BLE_BOND_CACHE_CAPACITY) {
+        _bond_cache.clear();
+        return false;
+    }
+    if (count == 0) {
+        _bond_cache.clear();
+        return true;
+    }
+
+    esp_ble_bond_dev_t bonds[BLE_BOND_CACHE_CAPACITY]{};
     int listed = count;
     if (esp_ble_get_bond_device_list(&listed, bonds) != ESP_OK ||
         listed < 0 || listed > count) {
+        _bond_cache.clear();
         return false;
     }
+
+    BlePeerAddress peers[BLE_BOND_CACHE_CAPACITY]{};
     for (int i = 0; i < listed; ++i) {
-        if (std::memcmp(bonds[i].bd_addr, peer.bytes, sizeof(peer.bytes)) == 0) {
-            return true;
-        }
+        std::memcpy(peers[i].bytes, bonds[i].bd_addr, sizeof(peers[i].bytes));
     }
-    return false;
+    return _bond_cache.replace(peers, static_cast<size_t>(listed));
 }
 
 void ObservedSerialBLEInterface::recordAuthenticationFailure(uint32_t now_ms)
@@ -104,6 +112,12 @@ bool ObservedSerialBLEInterface::initializeConfigured()
             rollbackInitialization();
             return false;
         }
+        // Bond enumeration enters Bluedroid's config parser and is too
+        // stack-heavy for BTC_TASK. Snapshot it here on the app task before
+        // advertising can deliver connection callbacks.
+        if (!refreshBondCache()) {
+            _stats.bond_cache_refresh_failure_count++;
+        }
         _rx_queue.clear();
         _stats.begun = true;
         _stats.begin_count++;
@@ -127,6 +141,7 @@ void ObservedSerialBLEInterface::rollbackInitialization()
     _auth_watchdog.cancel();
     _rx_queue.clear();
     _connected_server = nullptr;
+    _bond_cache.clear();
     if (BLEDevice::getInitialized()) BLEDevice::deinit(false);
     _local_disable = false;
     refreshConnectionState();
@@ -276,19 +291,17 @@ bool ObservedSerialBLEInterface::removeAllBonds()
         _stats.bond_purge_error_count++;
         return false;
     }
-    if (count == 0) return true;
+    if (count == 0) {
+        _bond_cache.clear();
+        return true;
+    }
 
-#if defined(CONFIG_BT_SMP_MAX_BONDS)
-    static constexpr int MAX_BONDS = CONFIG_BT_SMP_MAX_BONDS;
-#else
-    static constexpr int MAX_BONDS = 15;
-#endif
-    if (count > MAX_BONDS) {
+    if (static_cast<size_t>(count) > BLE_BOND_CACHE_CAPACITY) {
         _stats.bond_purge_error_count++;
         return false;
     }
 
-    esp_ble_bond_dev_t bonds[MAX_BONDS]{};
+    esp_ble_bond_dev_t bonds[BLE_BOND_CACHE_CAPACITY]{};
     int listed = count;
     if (esp_ble_get_bond_device_list(&listed, bonds) != ESP_OK ||
         listed < 0 || listed > count) {
@@ -303,6 +316,7 @@ bool ObservedSerialBLEInterface::removeAllBonds()
             _stats.bond_purge_error_count++;
         }
     }
+    if (submitted_all) _bond_cache.clear();
     return submitted_all;
 }
 
@@ -313,6 +327,7 @@ int ObservedSerialBLEInterface::bondedDeviceCount()
     const int count = esp_ble_get_bond_device_num();
     _stats.bonded_device_count = count;
     if (count < 0) _stats.bond_purge_error_count++;
+    if (count == 0) _bond_cache.clear();
     return count;
 }
 
@@ -358,6 +373,7 @@ void ObservedSerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cm
         _stats.connection_generation++;
         if (_stats.connection_generation == 0) _stats.connection_generation = 1;
         _auth_throttle.recordSuccess();
+        (void)_bond_cache.add(_connecting_peer);
     } else {
         _stats.auth_failure_count++;
         recordAuthenticationFailure(millis());

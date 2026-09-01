@@ -287,6 +287,27 @@ TEST_F(SdMessageStoreTest, MissingSdFallsBackAndMarksDegraded)
     EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 1);
 }
 
+TEST_F(SdMessageStoreTest, MissingSdRebootKeepsSpiFlashHistoryThroughMeshInit)
+{
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg(8, "before-reboot")));
+    sigurdos::mesh::sdMessageStoreSetNativeMounted(false);
+
+    // setup() selects the backend before mesh::init(). With no card, selection
+    // must leave SPIFFS active; mesh::init() then re-opens the same store.
+    ASSERT_TRUE(sigurdos::mesh::sdMessageStoreSelect(true));
+    EXPECT_FALSE(sigurdos::mesh::sdMessageStoreUsingSd());
+    EXPECT_TRUE(sigurdos::mesh::sdMessageStoreDegraded());
+    ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
+
+    StoredMessage messages[2]{};
+    ASSERT_EQ(sigurdos::mesh::messageStoreLoadAll(messages, 2), 1);
+    EXPECT_STREQ(messages[0].text, "before-reboot");
+    ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(
+        makeMsg(9, "after-reboot")));
+    EXPECT_EQ(sigurdos::mesh::messageStoreCount(), 2);
+}
+
 TEST_F(SdMessageStoreTest, MigratesSpiFlashHistoryWhenSdAppears)
 {
     ASSERT_TRUE(sigurdos::mesh::messageStoreAppend(makeMsg(10, "old-one")));

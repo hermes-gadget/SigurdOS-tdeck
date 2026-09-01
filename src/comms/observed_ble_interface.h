@@ -9,6 +9,7 @@
 #if defined(ESP32_PLATFORM) && defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 
 #include <helpers/esp32/SerialBLEInterface.h>
+#include "ble_bond_cache.h"
 #include "ble_frame_queue.h"
 #include "ble_init_gate.h"
 #include "ble_task_mutex.h"
@@ -41,6 +42,7 @@ struct BleSerialObserverStats {
     uint32_t tx_drop_count = 0;
     uint32_t bond_purge_attempt_count = 0;
     uint32_t bond_purge_error_count = 0;
+    uint32_t bond_cache_refresh_failure_count = 0;
     int bonded_device_count = -1;
     uint16_t last_conn_id = 0;
     uint16_t last_mtu = 0;
@@ -85,6 +87,7 @@ private:
     void refreshConnectionState();
     bool initializeConfigured();
     bool validateInitializedStack();
+    bool refreshBondCache();
     void rollbackInitialization();
     bool peerIsBonded(const BlePeerAddress& peer) const;
     void recordAuthenticationFailure(uint32_t now_ms);
@@ -98,6 +101,7 @@ private:
     mutable BleTaskMutex _task_mutex;
     BleAuthWatchdog _auth_watchdog;
     BleAuthThrottle _auth_throttle;
+    BleBondCache _bond_cache;
     BlePeerAddress _connecting_peer{};
     bool _connecting_peer_bonded = false;
     bool _authentication_completed = false;
