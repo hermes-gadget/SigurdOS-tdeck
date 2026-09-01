@@ -298,7 +298,7 @@ jobs:
             | `sigurdos-tdeck-firmware.bin` | App firmware (web flasher) |
             | `sigurdos-tdeck-full.bin` | Full image (web flasher) |
           draft: false
-          prerelease: true
+          prerelease: false
           generate_release_notes: true
           preserve_order: true
           files: |
