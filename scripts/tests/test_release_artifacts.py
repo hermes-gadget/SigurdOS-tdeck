@@ -173,7 +173,7 @@ class ReleaseArtifactTests(unittest.TestCase):
         self.assertIn("! -name SHA256SUMS.sigstore.json", workflow)
         self.assertIn("cosign sign-blob --yes", workflow)
         self.assertIn("artifacts/SHA256SUMS.sigstore.json", workflow)
-        self.assertIn("actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373", workflow)
+        self.assertIn("actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8", workflow)
         self.assertIn("subject-checksums: .attestation-subjects.txt", workflow)
         self.assertIn("Prepare unique provenance subjects", workflow)
         self.assertNotIn("firmware/sigurdos-tdeck-launcher.bin\n", workflow)
