@@ -2,6 +2,6 @@
 # uv pip compile ci/requirements-platformio.in \
 #   --output-file ci/requirements-platformio.txt \
 #   --generate-hashes --python-version 3.12
-platformio==6.1.19
+platformio==6.2.0
 intelhex==2.3.0
 pyyaml
