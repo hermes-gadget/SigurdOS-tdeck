@@ -19,6 +19,9 @@ pio test -e native_test
 # Exercise the pinned production MeshCore dispatcher with host radio fakes.
 pio test -e native_mesh_integration
 
+# Exercise public contact indexing against the real MeshCore backing array.
+pio test -e native_contact_index
+
 # Build the firmware image for the LilyGo T-Deck target.
 pio run -e SigurdOS_TDeck
 ```
@@ -54,6 +57,7 @@ test/
 |-- test_chat_truncation/        UTF-8 safe chat truncation
 |-- test_companion_mesh_policy/  Companion message filtering and routing policy
 |-- test_companion_protocol/     Companion protocol frame shapes and sync behavior
+|-- test_contact_index/         Public contact indexing above reserved anon slots
 |-- test_contact_paging/         Contact list paging bounds and page clamp logic
 |-- test_contact_store/          Contact persistence format, magic header, bounds checks
 |-- test_control_parser/         Strict terminal control-command tokenization

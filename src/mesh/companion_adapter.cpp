@@ -19,6 +19,7 @@
 #include "message_store.h"
 #include "contact_store.h"
 #include "regions.h"
+#include "contact_index.h"
 #include "sigurd_mesh_v2.h"
 #include "advert_blob.h"
 #include "path_codec.h"
@@ -134,7 +135,8 @@ static void fillStoredPrefixForName(const char* name, uint8_t* out)
     if (!mesh_ptr() || !name) return;
     ::ContactInfo tmp;
     for (int i = 0; i < mesh_ptr()->getNumContacts(); i++) {
-        if (mesh_ptr()->getContactByIdx((uint32_t)i, tmp) && strcmp(tmp.name, name) == 0) {
+        if (sigurdos::mesh::publicContactByIdx(*mesh_ptr(), (uint32_t)i, tmp) &&
+            strcmp(tmp.name, name) == 0) {
             memcpy(out, tmp.id.pub_key, sigurdos::mesh::SIGURDOS_MSG_PREFIX_LEN);
             return;
         }
@@ -276,7 +278,7 @@ public:
     bool getContact(int index, CompanionContact& out) const override {
         if (!mesh_ptr()) return false;
         ::ContactInfo c{};
-        if (!mesh_ptr()->getContactByIdx((uint32_t)index, c)) return false;
+        if (!sigurdos::mesh::publicContactByIdx(*mesh_ptr(), (uint32_t)index, c)) return false;
         companionContactFromInfo(c, out);
         return true;
     }
@@ -337,6 +339,7 @@ public:
         sigurdos::utf8_copy_truncate(safe_text, sizeof(safe_text), text);
         if (txt_type == sigurdos::comms::COMPANION_TXT_CLI_DATA) {
             send_result = mesh_ptr()->sendCommandData(*contact, ts, attempt,
+                                                       TXT_TYPE_CLI_DATA,
                                                        safe_text, est_timeout);
         } else {
             send_result = mesh_ptr()->sendMessage(*contact, ts, attempt, safe_text,
@@ -622,7 +625,7 @@ public:
         uint32_t high_water = 0;
         ::ContactInfo candidate;
         for (int i = 0; i < mesh_ptr()->getNumContacts(); ++i) {
-            if (!mesh_ptr()->getContactByIdx((uint32_t)i, candidate)) continue;
+            if (!sigurdos::mesh::publicContactByIdx(*mesh_ptr(), (uint32_t)i, candidate)) continue;
             if (candidate.lastmod > high_water) high_water = candidate.lastmod;
             if (std::memcmp(candidate.id.pub_key, c.pub_key, 32) != 0 &&
                 sigurdos::mesh::contactCandidateDuplicates(
@@ -759,11 +762,10 @@ public:
         RegionEntry* r = sigurdos::mesh::findRegion(active);
         if (!r) return false;
 
-        RegionMap* map = sigurdos::mesh::getRegionMap();
-        if (!map) return false;
+        if (!sigurdos::mesh::getRegionMap()) return false;
 
         TransportKey keys[1];
-        int nk = map->getTransportKeysFor(*r, keys, 1);
+        int nk = sigurdos::mesh::regionTransportKeysFor(*r, keys, 1);
         if (nk <= 0) return false;
 
         if (name_out) { memset(name_out, 0, 31); strncpy(name_out, r->name, 30); }
@@ -821,9 +823,8 @@ public:
 
         if (!r) r = sigurdos::mesh::addRegion(name);
         if (!r) return false;
-        RegionMap* map = sigurdos::mesh::getRegionMap();
         TransportKey keys[1];
-        const int count = map ? map->getTransportKeysFor(*r, keys, 1) : 0;
+        const int count = sigurdos::mesh::regionTransportKeysFor(*r, keys, 1);
         if (count <= 0 ||
             !sigurdos::mesh::setActiveRegionNameWithKey(name, nullptr)) {
             return false;
@@ -1299,8 +1300,8 @@ void sigurdos::mesh::companionAdapterInit()
     // successful enable performs the expensive BLEDevice::init lazily.
     g_ble_serial.configure("MeshCore-", ble_name, g_companion_host.blePin());
     if (CompanionBridge* b = companionBridge()) {
-        b->begin(&g_ble_serial, &g_companion_host);
-        sigurdos::comms::transports_attach_serial(&g_ble_serial);
+        b->begin(&g_ble_serial, &g_companion_host, &g_ble_serial);
+        sigurdos::comms::transports_attach_serial(&g_ble_serial, &g_ble_serial);
         const sigurdos::NodePrefs& prefs = sigurdos::prefs_get();
         if (prefs.ble_bond_reset_pending) {
             // Crash-safe resume: only the purge path initializes BLE, and it

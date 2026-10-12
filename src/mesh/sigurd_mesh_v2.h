@@ -387,6 +387,13 @@ public:
     void onCommandDataRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
                            uint32_t sender_timestamp, const char* text) override;
 
+    // Receives explicit remote-CLI commands (TXT_TYPE_CLI_COMMAND). The T-Deck
+    // has no remote-CLI engine; surface them in the admin transcript like
+    // command data and send no reply.
+    void onCLICommandRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt,
+                          uint32_t sender_timestamp, const char* text,
+                          char* reply) override;
+
 
     // ── Anonymous data (Phase 4.7) ──────────────────────
     void onAnonDataRecv(::mesh::Packet* pkt, const uint8_t* secret,

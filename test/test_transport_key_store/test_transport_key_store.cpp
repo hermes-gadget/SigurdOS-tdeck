@@ -4,10 +4,11 @@
 #include <gtest/gtest.h>
 #include <cstring>
 
-#include "helpers/TransportKeyStore.h"
+#include <helpers/TransportKeyStore.h>   // TransportKey, MAX_TKS_ENTRIES
 
-// Compile the pinned MeshCore implementation into this focused native test.
-#include "../../lib/meshcore/src/helpers/TransportKeyStore.cpp"
+// SigurdOS-owned RAM store that carries the runtime semantics on top of the
+// stubbed core methods.
+#include "mesh/region_key_store.h"
 
 namespace {
 
@@ -17,8 +18,8 @@ TransportKey keyWithByte(uint8_t value) {
     return key;
 }
 
-TEST(TransportKeyStoreTest, SavesLoadsAndReplacesPrivateRegionKeys) {
-    TransportKeyStore store;
+TEST(RegionKeyStoreTest, SavesLoadsAndReplacesPrivateRegionKeys) {
+    sigurdos::mesh::RegionKeyStore store;
     TransportKey first = keyWithByte(0x11);
     TransportKey second = keyWithByte(0x22);
     ASSERT_TRUE(store.saveKeysFor(7, &first, 1));
@@ -32,8 +33,8 @@ TEST(TransportKeyStoreTest, SavesLoadsAndReplacesPrivateRegionKeys) {
     EXPECT_EQ(std::memcmp(loaded[0].key, second.key, sizeof(second.key)), 0);
 }
 
-TEST(TransportKeyStoreTest, PreservesOtherRegionsWhenOneIsReplaced) {
-    TransportKeyStore store;
+TEST(RegionKeyStoreTest, PreservesOtherRegionsWhenOneIsReplaced) {
+    sigurdos::mesh::RegionKeyStore store;
     TransportKey one = keyWithByte(0x31);
     TransportKey two = keyWithByte(0x32);
     TransportKey replacement = keyWithByte(0x41);
@@ -46,8 +47,8 @@ TEST(TransportKeyStoreTest, PreservesOtherRegionsWhenOneIsReplaced) {
     EXPECT_EQ(std::memcmp(loaded.key, two.key, sizeof(two.key)), 0);
 }
 
-TEST(TransportKeyStoreTest, FullStoreFailureLeavesExistingKeysIntact) {
-    TransportKeyStore store;
+TEST(RegionKeyStoreTest, FullStoreFailureLeavesExistingKeysIntact) {
+    sigurdos::mesh::RegionKeyStore store;
     for (uint16_t id = 1; id <= MAX_TKS_ENTRIES; ++id) {
         TransportKey key = keyWithByte(static_cast<uint8_t>(id));
         ASSERT_TRUE(store.saveKeysFor(id, &key, 1));
@@ -62,8 +63,8 @@ TEST(TransportKeyStoreTest, FullStoreFailureLeavesExistingKeysIntact) {
     EXPECT_EQ(store.loadKeysFor(MAX_TKS_ENTRIES + 1, &loaded, 1), 0);
 }
 
-TEST(TransportKeyStoreTest, RemoveAndClearDeleteOnlyRequestedKeys) {
-    TransportKeyStore store;
+TEST(RegionKeyStoreTest, RemoveAndClearDeleteOnlyRequestedKeys) {
+    sigurdos::mesh::RegionKeyStore store;
     TransportKey one = keyWithByte(0x51);
     TransportKey two = keyWithByte(0x52);
     ASSERT_TRUE(store.saveKeysFor(1, &one, 1));
@@ -77,8 +78,8 @@ TEST(TransportKeyStoreTest, RemoveAndClearDeleteOnlyRequestedKeys) {
     EXPECT_EQ(store.loadKeysFor(2, &loaded, 1), 0);
 }
 
-TEST(TransportKeyStoreTest, RejectsInvalidIdentifiersAndArguments) {
-    TransportKeyStore store;
+TEST(RegionKeyStoreTest, RejectsInvalidIdentifiersAndArguments) {
+    sigurdos::mesh::RegionKeyStore store;
     TransportKey key = keyWithByte(0x61);
     EXPECT_FALSE(store.saveKeysFor(0, &key, 1));
     EXPECT_FALSE(store.saveKeysFor(1, nullptr, 1));

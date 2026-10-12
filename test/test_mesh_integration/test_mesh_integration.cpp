@@ -107,9 +107,18 @@ TEST(MeshCoreIntegrationTest, ProductionParserRejectsMalformedPacketTable) {
                               (PAYLOAD_TYPE_ACK << PH_TYPE_SHIFT))},
         std::vector<uint8_t>(MAX_TRANS_UNIT + 1, 0),
     };
+    // The parser contract mirrors the radio path: callers supply a frame
+    // buffer of at least MAX_TRANS_UNIT bytes and a length. Short malformed
+    // frames are copies of small payloads into that sized buffer, so this
+    // doubles as a no-out-of-bounds read probe.
+    std::array<uint8_t, MAX_TRANS_UNIT + 1> scratch{};
     for (const auto& raw : malformed) {
+        scratch.fill(0);
+        if (!raw.empty()) {
+            std::memcpy(scratch.data(), raw.data(), raw.size());
+        }
         EXPECT_FALSE(dispatcher.tryParsePacket(
-            &parsed, raw.empty() ? nullptr : raw.data(), static_cast<int>(raw.size())));
+            &parsed, scratch.data(), static_cast<int>(raw.size())));
     }
 }
 

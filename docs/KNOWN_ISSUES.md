@@ -25,13 +25,17 @@ This document tracks currently open known issues, bugs, and missing features in 
   Code 13 will not be advertised until its path-discovery, scope, login, and
   contact behaviours have complete interoperability evidence against a current
   stock companion.
-The MeshCore submodule remains pinned (c5787ee4) — it carries local fixes that
-are not a fast-forward match for current upstream. The 2026-08-01 re-pin
-(PR #1461) landed packet-shape validation, MTU-safe BLE notifications
-(#932/#934), decrypt/anonymous-request buffer bounds (#1174/#1175), and
-transient-contact indexing fixes, resolving the contact
-allocation/persistence-index concerns this entry previously flagged.
-Outstanding for the next pin: revalidate room connection keepalives.
+The MeshCore submodule is pinned to plain upstream `meshcore-dev/MeshCore`
+(`dev`). The former hermes-gadget mirror branch (`sigurdos-tdeck`) is retired
+from the pin. Behaviour the 2026-08-01 re-pin (PR #1461) landed via local core
+fixes is now owned in SigurdOS source: MTU-safe BLE notifications (#932/#934)
+in `src/comms/ble_att_policy.h` + `observed_ble_interface`, per-packet
+shape/bounds validation re-validated against upstream's own guards in
+`test/test_packet_validation`, and transient-contact indexing (#1193) in
+`src/mesh/contact_index.h`. Decrypt/anonymous-request buffer bounds
+(#1174/#1175) are tracked as upstream-parity gaps (upstream's MACThenDecrypt
+overflow fix covers the main class).
+Outstanding for the next hardware pass: revalidate room connection keepalives.
 
 ---
 

@@ -12,7 +12,7 @@
 
 namespace {
 
-class MockSerial final : public BaseSerialInterface {
+class MockSerial final : public BaseSerialInterface, public sigurdos::comms::SerialSessionSource {
 public:
     bool enabled = false;
     bool connected = true;
@@ -26,7 +26,7 @@ public:
     void disable() override { enabled = false; }
     bool isEnabled() const override { return enabled; }
     bool isConnected() const override { return connected; }
-    uint32_t connectionGeneration() const override {
+    uint32_t connectionGeneration() const {
         return connected ? generation : 0;
     }
     bool isWriteBusy() const override { return busy; }
@@ -484,7 +484,7 @@ protected:
         std::remove(store_path);
         ASSERT_TRUE(sigurdos::mesh::messageStoreBegin());
         ASSERT_TRUE(sigurdos::mesh::messageStoreClear());
-        bridge.begin(&serial, &host);
+        bridge.begin(&serial, &host, &serial);
         serial.writes.clear();
     }
 
@@ -1062,13 +1062,13 @@ TEST_F(CompanionProtocolTest, TransportHistoryReplayIsIndependentPerClient) {
     } reset_registry;
 
     sigurdos::comms::transports_test_reset();
-    bridge.begin(&serial, &host);
+    bridge.begin(&serial, &host, &serial);
     serial.writes.clear();
     sigurdos::prefs_mock_reset();
     sigurdos::NodePrefs prefs = sigurdos::prefs_get();
     prefs.transport_tcp_enabled = true;
     ASSERT_TRUE(sigurdos::prefs_set(prefs));
-    sigurdos::comms::transports_attach_serial(&serial);
+    sigurdos::comms::transports_attach_serial(&serial, &serial);
     sigurdos::comms::transports_init();
     ASSERT_TRUE(sigurdos::comms::transports_test_connect(
         sigurdos::comms::TransportId::TCP, 0));
@@ -2228,8 +2228,8 @@ TEST_F(CompanionProtocolTest, BinaryResponseRoutesOnlyToRequestingClient)
         serial.next_read.clear();
         serial.writes.clear();
         host.next_binary_tag = 0x10203040U;
-        bridge.begin(&serial, &host);
-        sigurdos::comms::transports_attach_serial(&serial);
+        bridge.begin(&serial, &host, &serial);
+        sigurdos::comms::transports_attach_serial(&serial, &serial);
         sigurdos::comms::transports_init();
         if (route.owner != sigurdos::comms::TransportId::BLE) {
             ASSERT_TRUE(sigurdos::comms::transports_test_connect(
@@ -2306,8 +2306,8 @@ TEST_F(CompanionProtocolTest, BinaryResponseRejectsStaleOwnerGeneration)
     sigurdos::comms::transports_test_reset();
     sigurdos::prefs_mock_reset();
     serial.enabled = true;
-    bridge.begin(&serial, &host);
-    sigurdos::comms::transports_attach_serial(&serial);
+    bridge.begin(&serial, &host, &serial);
+    sigurdos::comms::transports_attach_serial(&serial, &serial);
     sigurdos::comms::transports_init();
     sigurdos::comms::transports_loop();
 
@@ -2334,8 +2334,8 @@ TEST_F(CompanionProtocolTest, BinaryResponseRejectsAmbiguousSessionOwners)
     sigurdos::NodePrefs prefs = sigurdos::prefs_get();
     prefs.transport_tcp_enabled = true;
     ASSERT_TRUE(sigurdos::prefs_set(prefs));
-    bridge.begin(&serial, &host);
-    sigurdos::comms::transports_attach_serial(&serial);
+    bridge.begin(&serial, &host, &serial);
+    sigurdos::comms::transports_attach_serial(&serial, &serial);
     sigurdos::comms::transports_init();
     ASSERT_TRUE(sigurdos::comms::transports_test_connect(
         sigurdos::comms::TransportId::TCP, 0));

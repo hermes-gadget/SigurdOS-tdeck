@@ -10,6 +10,7 @@
 #include "mesh/message_store.h"
 #include "transport_iface.h"
 #include <helpers/BaseSerialInterface.h>
+#include "serial_session.h"
 
 namespace sigurdos {
 namespace comms {
@@ -396,7 +397,8 @@ public:
 
 class CompanionBridge {
 public:
-    void begin(BaseSerialInterface* serial, CompanionBridgeHost* host);
+    void begin(BaseSerialInterface* serial, CompanionBridgeHost* host,
+               SerialSessionSource* session = nullptr);
     void loop();
     bool handleFrame(const uint8_t* frame, size_t len);
 
@@ -574,6 +576,7 @@ private:
     static constexpr uint32_t BINARY_REQUEST_FALLBACK_TIMEOUT_MS = 30000;
 
     BaseSerialInterface* _serial = nullptr;
+    SerialSessionSource* _session = nullptr;
     CompanionBridgeHost* _host = nullptr;
     uint8_t _app_target_ver = 3;
     bool _version_negotiated = true;

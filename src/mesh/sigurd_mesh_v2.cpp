@@ -4,6 +4,7 @@
 // SigurdMeshV2 — method implementations split from sigurd_mesh_v2.h
 //
 #include "sigurd_mesh_v2.h"
+#include "contact_index.h"
 #include "companion_message_policy.h"
 #include "incoming_message_policy.h"
 #include "anonymous_message_policy.h"
@@ -88,7 +89,7 @@ namespace mesh {
 
     bool SigurdMeshV2::sendTrace(int contact_idx, uint32_t tag) {
         ::ContactInfo c;
-        if (!getContactByIdx((uint32_t)contact_idx, c)) return false;
+        if (!sigurdos::mesh::publicContactByIdx(*this, (uint32_t)contact_idx, c)) return false;
         if (c.out_path_len == OUT_PATH_UNKNOWN ||
             !path::encodedLengthValid(c.out_path_len)) return false;
         _has_trace_result = false;
@@ -440,7 +441,7 @@ namespace mesh {
         bool found = false;
         ::ContactInfo candidate{};
         for (int i = 0; i < getNumContacts(); ++i) {
-            if (!getContactByIdx((uint32_t)i, candidate) ||
+            if (!sigurdos::mesh::publicContactByIdx(*this, (uint32_t)i, candidate) ||
                 strcmp(candidate.name, name) != 0) {
                 continue;
             }
@@ -874,6 +875,23 @@ namespace mesh {
         // companion bridge emits the correct txt_type to official apps. The
         // normal chat queue skips CLI data; pushCmdResponse feeds the admin
         // transcript instead.
+        int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
+        float snr = pkt ? pkt->getSNR() : 0.0f;
+        uint8_t companion_path_len =
+            (pkt && pkt->isRouteFlood()) ? (uint8_t)pkt->path_len : 0xFF;
+        sigurdos::mesh::mesh_v2_queue_push(contact.name, "", text, rssi, snr,
+                                           sender_timestamp, companion_path_len,
+                                           contact.id.pub_key,
+                                           sigurdos::mesh::COMPANION_TEXT_CLI_DATA);
+    }
+
+    void SigurdMeshV2::onCLICommandRecv(const ::ContactInfo& contact, ::mesh::Packet* pkt, uint32_t sender_timestamp, const char* text, char* reply) {
+        // No remote-CLI engine on the T-Deck: surface the command in the admin
+        // transcript like command data and leave the reply empty (the base
+        // class only sends a response when the reply buffer is non-empty).
+        (void)reply;
+        BaseChatMesh::markConnectionActive(contact);
+        sigurdos::mesh::pushCmdResponse(contact.name, text, sender_timestamp);
         int rssi = pkt ? (int)_radio->getLastRSSI() : 0;
         float snr = pkt ? pkt->getSNR() : 0.0f;
         uint8_t companion_path_len =
@@ -1497,7 +1515,8 @@ namespace mesh {
         if (!text || !text[0]) return false;
         uint32_t est_timeout = 0;
         uint32_t ts = getRTCClock()->getCurrentTime();
-        int r = BaseChatMesh::sendCommandData(contact, ts, 0, text, est_timeout);
+        int r = BaseChatMesh::sendCommandData(contact, ts, 0, TXT_TYPE_CLI_DATA,
+                                              text, est_timeout);
         if (r != MSG_SEND_FAILED) {
 #if SIGURDOS_DEBUG_MESH
             Serial.printf("[mesh] Command sent to %s (result=%d)\n", contact.name, r);
@@ -1528,13 +1547,13 @@ namespace mesh {
 
     const ::ContactInfo* SigurdMeshV2::getContact(int idx) {
         if (idx < 0 || idx >= getNumContacts()) return nullptr;
-        if (!getContactByIdx((uint32_t)idx, _contact_cache)) return nullptr;
+        if (!sigurdos::mesh::publicContactByIdx(*this, (uint32_t)idx, _contact_cache)) return nullptr;
         return &_contact_cache;
     }
 
     bool SigurdMeshV2::removeContact(int idx) {
         ::ContactInfo tmp;
-        if (!getContactByIdx((uint32_t)idx, tmp)) return false;
+        if (!sigurdos::mesh::publicContactByIdx(*this, (uint32_t)idx, tmp)) return false;
         return removeContactByPubKey(tmp.id.pub_key);
     }
 
@@ -1553,7 +1572,7 @@ namespace mesh {
 
     bool SigurdMeshV2::resetPathTo(int idx) {
         ::ContactInfo tmp;
-        if (!getContactByIdx((uint32_t)idx, tmp)) return false;
+        if (!sigurdos::mesh::publicContactByIdx(*this, (uint32_t)idx, tmp)) return false;
         // resetPathTo() mutates the passed reference, so operate on the live
         // stored contact (returned by lookupContactByPubKey), not a copy.
         ::ContactInfo* live = lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);

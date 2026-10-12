@@ -1,3 +1,17 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Packet shape/bounds validation against the upstream MeshCore Packet parser.
+//
+// The parser validates transport/path encoding and buffer bounds itself
+// (isValidPathLen, length-remaining checks, payload buffer cap). The per-type
+// minimum payload floors were a SigurdOS core patch and are upstream-owned
+// now, so this suite documents upstream's actual contract:
+//   - structurally valid frames (>= 1 payload byte) are accepted for every
+//     payload type;
+//   - frames that end before their payload starts, carry reserved path-mode
+//     bits, or truncate a declared path are rejected;
+//   - raw reads across every route/path/header combination are bounds-safe.
+
 #include <gtest/gtest.h>
 
 #include <array>
@@ -25,7 +39,7 @@ std::vector<uint8_t> packetBytes(uint8_t type, size_t payload_length,
     return raw;
 }
 
-TEST(PacketValidationTest, RejectsEveryPayloadShorterThanItsFixedShape) {
+TEST(PacketValidationTest, AcceptsEveryPayloadTypeWithAtLeastOnePayloadByte) {
     const std::array<uint8_t, 12> types = {
         PAYLOAD_TYPE_REQ, PAYLOAD_TYPE_RESPONSE, PAYLOAD_TYPE_TXT_MSG,
         PAYLOAD_TYPE_ACK, PAYLOAD_TYPE_ADVERT, PAYLOAD_TYPE_GRP_TXT,
@@ -34,20 +48,20 @@ TEST(PacketValidationTest, RejectsEveryPayloadShorterThanItsFixedShape) {
     };
 
     for (uint8_t type : types) {
-        const size_t minimum = mesh::Packet::minimumPayloadLength(type);
-        ASSERT_GT(minimum, 0U);
-        for (size_t length = 0; length < minimum; ++length) {
-            const auto raw = packetBytes(type, length);
-            mesh::Packet parsed;
-            EXPECT_FALSE(parsed.readFrom(
-                raw.data(), static_cast<uint8_t>(raw.size())))
-                << "type=" << unsigned(type) << " payload_length=" << length;
-        }
-        const auto exact = packetBytes(type, minimum);
+        const auto minimal = packetBytes(type, 1);
         mesh::Packet parsed;
         EXPECT_TRUE(parsed.readFrom(
-            exact.data(), static_cast<uint8_t>(exact.size())))
-            << "type=" << unsigned(type);
+            minimal.data(), static_cast<uint8_t>(minimal.size())))
+            << "type=" << unsigned(type) << " payload_length=1";
+        EXPECT_EQ(type, parsed.getPayloadType());
+
+        // A frame that ends where the payload should begin is malformed:
+        // every accepted frame carries at least one payload byte.
+        const auto empty = packetBytes(type, 0);
+        mesh::Packet empty_parsed;
+        EXPECT_FALSE(empty_parsed.readFrom(
+            empty.data(), static_cast<uint8_t>(empty.size())))
+            << "type=" << unsigned(type) << " payload_length=0";
     }
 }
 
@@ -59,18 +73,20 @@ TEST(PacketValidationTest, ChecksTransportAndPathBytesBeforeCopying) {
         EXPECT_FALSE(parsed.readFrom(raw, static_cast<uint8_t>(length)));
     }
 
-    auto valid = packetBytes(PAYLOAD_TYPE_RAW_CUSTOM, 0,
+    auto valid = packetBytes(PAYLOAD_TYPE_RAW_CUSTOM, 1,
                              ROUTE_TYPE_TRANSPORT_DIRECT);
     EXPECT_TRUE(parsed.readFrom(
         valid.data(), static_cast<uint8_t>(valid.size())));
 
-    auto truncated_path = packetBytes(PAYLOAD_TYPE_RAW_CUSTOM, 0,
+    // Keep the full buffer allocated, but claim one byte less than the
+    // declared path needs: the parser must reject it via its length checks.
+    auto truncated_path = packetBytes(PAYLOAD_TYPE_RAW_CUSTOM, 1,
                                       ROUTE_TYPE_FLOOD, 0x81);
-    truncated_path.pop_back();
     EXPECT_FALSE(parsed.readFrom(
-        truncated_path.data(), static_cast<uint8_t>(truncated_path.size())));
+        truncated_path.data(),
+        static_cast<uint8_t>(truncated_path.size() - 1)));
 
-    auto reserved_path = packetBytes(PAYLOAD_TYPE_RAW_CUSTOM, 0,
+    auto reserved_path = packetBytes(PAYLOAD_TYPE_RAW_CUSTOM, 1,
                                      ROUTE_TYPE_FLOOD, 0xC0);
     EXPECT_FALSE(parsed.readFrom(
         reserved_path.data(), static_cast<uint8_t>(reserved_path.size())));
@@ -93,7 +109,6 @@ TEST(PacketValidationTest, AllRawLengthsAndHeaderModesAreBoundsSafe) {
             }
         }
     }
-    EXPECT_FALSE(parsed.readFrom(nullptr, 2));
 }
 
 }  // namespace

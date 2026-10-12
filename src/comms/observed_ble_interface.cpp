@@ -129,8 +129,10 @@ bool ObservedSerialBLEInterface::initializeConfigured()
 bool ObservedSerialBLEInterface::validateInitializedStack()
 {
     if (!BLEDevice::getInitialized()) return false;
-    if (BLEDevice::setMTU(MAX_FRAME_SIZE) != ESP_OK) return false;
-    if (BLEDevice::getMTU() != MAX_FRAME_SIZE) return false;
+    // Request the documented maximum MTU so a complete MAX_FRAME_SIZE frame
+    // fits inside the peer's ATT payload after negotiation (SigurdOS #934).
+    if (BLEDevice::setMTU(ble::PREFERRED_ATT_MTU) != ESP_OK) return false;
+    if (BLEDevice::getMTU() != ble::PREFERRED_ATT_MTU) return false;
     return BLEDevice::getAdvertising() != nullptr;
 }
 
@@ -229,6 +231,12 @@ size_t ObservedSerialBLEInterface::writeFrame(const uint8_t src[], size_t len)
 {
     BleTaskMutex::Guard guard(_task_mutex);
     if (!_init_gate.initialized()) return 0;
+    // Refuse to enqueue frames the peer's negotiated ATT payload cannot carry;
+    // the BLE stack would drop them mid-flight (SigurdOS #932/#934).
+    if (len > 0 && !ble::frameFitsMtu(len, _att_mtu)) {
+        _stats.tx_drop_count++;
+        return 0;
+    }
     size_t written = SerialBLEInterface::writeFrame(src, len);
     if (written > 0) {
         _stats.tx_frame_count++;
@@ -399,7 +407,9 @@ void ObservedSerialBLEInterface::onConnect(BLEServer* server,
     _stats.connect_count++;
     if (param) {
         _stats.last_conn_id = param->connect.conn_id;
-        if (server) _stats.last_mtu = server->getPeerMTU(param->connect.conn_id);
+        _att_mtu = server ? server->getPeerMTU(param->connect.conn_id)
+                          : ble::DEFAULT_ATT_MTU;
+        _stats.last_mtu = _att_mtu;
         std::memcpy(_connecting_peer.bytes, param->connect.remote_bda,
                     sizeof(_connecting_peer.bytes));
         _connecting_peer_bonded = peerIsBonded(_connecting_peer);
@@ -417,7 +427,8 @@ void ObservedSerialBLEInterface::onMtuChanged(BLEServer* server,
     _stats.mtu_change_count++;
     if (server && param) {
         _stats.last_conn_id = param->mtu.conn_id;
-        _stats.last_mtu = server->getPeerMTU(param->mtu.conn_id);
+        _att_mtu = server->getPeerMTU(param->mtu.conn_id);
+        _stats.last_mtu = _att_mtu;
     }
     SerialBLEInterface::onMtuChanged(server, param);
     refreshConnectionState();
@@ -437,6 +448,7 @@ void ObservedSerialBLEInterface::onDisconnect(BLEServer* server)
     // own buffers on the disconnect transition, mirror that for _rx_queue.
     _rx_queue.clear();
     _connected_server = nullptr;
+    _att_mtu = ble::DEFAULT_ATT_MTU;
     _authentication_completed = false;
     refreshConnectionState();
     applyAdvertisingThrottle(millis());

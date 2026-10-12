@@ -87,13 +87,56 @@ class MeshCorePinTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "public HTTPS"):
                 MODULE.declared_remote(path)
 
+    def test_declared_branch_is_required_and_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".gitmodules"
+            path.write_text(
+                '[submodule "lib/meshcore"]\n'
+                "\tpath = lib/meshcore\n"
+                "\turl = https://github.com/example/MeshCore.git\n"
+                "\tbranch = dev\n"
+            )
+            self.assertEqual(MODULE.declared_branch(path), "dev")
+            path.write_text(
+                '[submodule "lib/meshcore"]\n'
+                "\tpath = lib/meshcore\n"
+                "\turl = https://github.com/example/MeshCore.git\n"
+            )
+            with self.assertRaisesRegex(ValueError, "missing lib/meshcore branch"):
+                MODULE.declared_branch(path)
+
     @mock.patch.object(MODULE.subprocess, "run")
-    def test_remote_check_requires_exact_advertised_commit(self, run):
-        run.return_value.stdout = (
-            "a" * 40 + "\trefs/heads/main\n" + "b" * 40 + "\trefs/tags/v1\n"
-        )
-        self.assertTrue(MODULE.remote_advertises("a" * 40, "https://example.invalid/x.git"))
-        self.assertFalse(MODULE.remote_advertises("c" * 40, "https://example.invalid/x.git"))
+    def test_remote_check_requires_pin_in_declared_branch_history(self, run):
+        with tempfile.TemporaryDirectory() as directory:
+            submodule = Path(directory)
+            (submodule / ".git").write_text("gitdir: nowhere\n")
+            run.return_value.returncode = 0
+            self.assertTrue(
+                MODULE.remote_history_contains(
+                    "a" * 40, "https://example.invalid/x.git", "dev",
+                    submodule=submodule,
+                )
+            )
+            calls = run.call_args_list
+            self.assertEqual(calls[0].args[0][:2], ["git", "fetch"])
+            self.assertEqual(
+                calls[1].args[0][:3], ["git", "merge-base", "--is-ancestor"]
+            )
+            run.return_value.returncode = 1
+            self.assertFalse(
+                MODULE.remote_history_contains(
+                    "b" * 40, "https://example.invalid/x.git", "dev",
+                    submodule=submodule,
+                )
+            )
+
+    def test_remote_check_requires_initialized_submodule(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "not initialized"):
+                MODULE.remote_history_contains(
+                    "a" * 40, "https://example.invalid/x.git", "dev",
+                    submodule=Path(directory),
+                )
 
 
 if __name__ == "__main__":

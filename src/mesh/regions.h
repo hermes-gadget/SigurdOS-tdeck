@@ -37,6 +37,12 @@ bool regionsPersistenceDirty();
 /// Returns the global RegionMap instance (non-null after regionsInit).
 RegionMap* getRegionMap();
 
+/// Transport keys for a region as used by SigurdOS: private ($) regions read
+/// the SigurdOS key store, everything else delegates to the RegionMap
+/// (auto-hashtag derivation). Returns the number of keys written.
+int regionTransportKeysFor(const ::RegionEntry& region, TransportKey dest[],
+                           int max_num);
+
 /// Install and verify the single key for a private ($) region. The key store
 /// is updated atomically and unrelated region keys are preserved.
 bool installPrivateRegionKey(const ::RegionEntry& region, const uint8_t* key16);

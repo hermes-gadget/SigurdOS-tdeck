@@ -124,9 +124,11 @@ static size_t commandMinimumLength(uint8_t cmd)
 
 } // namespace
 
-void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* host)
+void CompanionBridge::begin(BaseSerialInterface* serial, CompanionBridgeHost* host,
+                            SerialSessionSource* session)
 {
     _serial = serial;
+    _session = session;
     _host = host;
     _app_target_ver = 3;
     _version_negotiated = true;
@@ -515,7 +517,7 @@ void CompanionBridge::refreshConnectionSession()
     const bool connected = currentTransportConnected();
     const uint32_t generation = _transport_request_active
         ? transports_client_generation(_request_transport, _request_client_index)
-        : (connected ? _serial->connectionGeneration() : 0);
+        : (connected ? serialSessionGenerationFor(_serial, _session) : 0);
     const bool session_changed =
         _connection_generation != 0 &&
         (!connected || generation != _connection_generation);
