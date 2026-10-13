@@ -65,7 +65,7 @@ Three repos form the SigurdOS ecosystem:
 | **`hermes-gadget/SigurdOS-tdeck`** ← **you are here** | T-Deck LVGL firmware | C++/PlatformIO, LVGL v9, LovyanGFX |
 | `hermes-gadget/SigurdOS-client` | Flutter mobile app — **deprecated** (2026-07-31), kept for reference | Dart/Flutter, BLE/USB/TCP |
 
-The `lib/meshcore/` submodule URL in `.gitmodules` resolves through the hermes-gadget mirror `hermes-gadget/MeshCore-Unified-Open` (declared branch `sigurdos-tdeck`) so CI can verify the pinned revision against a hermes-gadget-owned remote. **`MeshCore-Unified-Open` is itself a separate project** (unified companion firmware with runtime transport selection) — it is NOT the SigurdOS-tdeck MeshCore library.
+The `lib/meshcore/` submodule URL in `.gitmodules` points directly at upstream `meshcore-dev/MeshCore` (declared branch `dev`) — SigurdOS consumes the stock upstream library with no mirror and no local core patches.
 
 ---
 
@@ -88,7 +88,7 @@ pio run -e SigurdOS_TDeck
 pio test -e native_test --list-tests
 ```
 
-MeshCore is at `lib/meshcore/` — a git submodule tracking the **MeshCore core library** (upstream `meshcore-dev/MeshCore`). The `.gitmodules` URL resolves through the hermes-gadget mirror `hermes-gadget/MeshCore-Unified-Open` (declared branch `sigurdos-tdeck`) so CI can verify the pinned revision against a hermes-gadget-owned remote. `git submodule update --init` if you cloned without `--recurse-submodules`. **The submodule is pinned**: CI runs `scripts/check_meshcore_pin.py`, which fails if the gitlink, the `ci/platformio-packages.lock` entry, and the `.gitmodules` remote diverge. Never push submodule changes upstream. (`MeshCore-Unified-Open` is a separate project — unified companion firmware with runtime transport selection — not the SigurdOS-tdeck core library.)
+MeshCore is at `lib/meshcore/` — a git submodule tracking the **MeshCore core library** (upstream `meshcore-dev/MeshCore`, declared branch `dev`). `git submodule update --init` if you cloned without `--recurse-submodules`. **The submodule is pinned**: CI runs `scripts/check_meshcore_pin.py`, which fails if the gitlink, the `ci/platformio-packages.lock` entry, and the `.gitmodules` remote diverge. Never push submodule changes upstream. SigurdOS-side behaviour that used to live in core patches is owned in `src/` (e.g. `src/mesh/region_key_store.h`, `src/comms/ble_att_policy.h`, `src/mesh/contact_index.h`).
 
 ---
 

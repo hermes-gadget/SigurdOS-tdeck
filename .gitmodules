@@ -1,4 +1,4 @@
 [submodule "lib/meshcore"]
 	path = lib/meshcore
-	url = https://github.com/hermes-gadget/MeshCore-Unified-Open.git
-	branch = sigurdos-tdeck
+	url = https://github.com/meshcore-dev/MeshCore.git
+	branch = dev

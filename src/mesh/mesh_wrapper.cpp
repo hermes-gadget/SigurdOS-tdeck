@@ -48,6 +48,7 @@
 #endif
 #include "sigurd_mesh_v2.h"
 #include "regions.h"
+#include "contact_index.h"
 #include "utils/utf8_util.h"
 #include "../diagnostics/debug_cfg.h"
 #include "../diagnostics/telemetry.h"
@@ -938,7 +939,7 @@ int getLoggedInRoomServerCount() {
     int n = g_mesh->getContactCount();
     ::ContactInfo tmp;
     for (int i = 0; i < n; i++) {
-        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
+        if (sigurdos::mesh::publicContactByIdx(*g_mesh, (uint32_t)i, tmp) &&
             tmp.type == ADV_TYPE_ROOM &&
             tmp.name[0] &&
             g_mesh->isLoggedIn(tmp.id.pub_key)) {
@@ -954,7 +955,7 @@ const char* getLoggedInRoomServerName(int index) {
     int n = g_mesh->getContactCount();
     ::ContactInfo tmp;
     for (int i = 0; i < n; i++) {
-        if (g_mesh->getContactByIdx((uint32_t)i, tmp) &&
+        if (sigurdos::mesh::publicContactByIdx(*g_mesh, (uint32_t)i, tmp) &&
             tmp.type == ADV_TYPE_ROOM &&
             tmp.name[0] &&
             g_mesh->isLoggedIn(tmp.id.pub_key)) {
@@ -1421,7 +1422,7 @@ bool init(bool spiffs_ok)
             RegionEntry* r = sigurdos::mesh::findRegion(np.active_region);
             if (r) {
                 TransportKey keys[1];
-                int nk = sigurdos::mesh::getRegionMap() ? sigurdos::mesh::getRegionMap()->getTransportKeysFor(*r, keys, 1) : 0;
+                int nk = sigurdos::mesh::regionTransportKeysFor(*r, keys, 1);
                 if (nk > 0) g_mesh->setActiveScope(keys[0].key);
             }
         }
@@ -2110,7 +2111,7 @@ static bool readStoredContact(int index, sigurdos::mesh::StoredContact* out, voi
 {
     if (!g_mesh || !out) return false;
     ::ContactInfo c;
-    if (!g_mesh->getContactByIdx((uint32_t)index, c)) return false;
+    if (!sigurdos::mesh::publicContactByIdx(*g_mesh, (uint32_t)index, c)) return false;
     copyStoredContact(*out, c);
     return true;
 }
@@ -2128,8 +2129,8 @@ static bool readStoredContactWithoutKey(
     ::ContactInfo candidate;
     for (int source_index = 0;
          source_index < g_mesh->getNumContacts(); ++source_index) {
-        if (!g_mesh->getContactByIdx(
-                static_cast<uint32_t>(source_index), candidate)) {
+        if (!sigurdos::mesh::publicContactByIdx(
+                *g_mesh, static_cast<uint32_t>(source_index), candidate)) {
             return false;
         }
         if (memcmp(candidate.id.pub_key, context->pub_key,
@@ -3019,12 +3020,11 @@ bool setActiveRegion(const char* name) {
     // already available. Otherwise the reboot-time restore cannot activate
     // the scope and traffic silently falls back to wildcard routing.
     if (name && name[0]) {
-        RegionMap* map = sigurdos::mesh::getRegionMap();
         ::RegionEntry* region = sigurdos::mesh::findRegion(name);
         if (name[0] == '$' && !region) return false;
         if (region) {
             TransportKey keys[1];
-            if (!map || map->getTransportKeysFor(*region, keys, 1) <= 0) {
+            if (sigurdos::mesh::regionTransportKeysFor(*region, keys, 1) <= 0) {
                 return false;
             }
         }
@@ -3038,14 +3038,11 @@ bool setActiveRegion(const char* name) {
         if (name && name[0]) {
             ::RegionEntry* r = sigurdos::mesh::findRegion(name);
             if (r) {
-                RegionMap* map = sigurdos::mesh::getRegionMap();
-                if (map) {
-                    TransportKey keys[1];
-                    int nk = map->getTransportKeysFor(*r, keys, 1);
-                    if (nk > 0) {
-                        g_mesh->setActiveScope(keys[0].key);
-                        return true;
-                    }
+                TransportKey keys[1];
+                int nk = sigurdos::mesh::regionTransportKeysFor(*r, keys, 1);
+                if (nk > 0) {
+                    g_mesh->setActiveScope(keys[0].key);
+                    return true;
                 }
             }
             // Region name saved but key not in store — clear scope

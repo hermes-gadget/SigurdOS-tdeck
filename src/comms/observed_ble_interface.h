@@ -9,12 +9,14 @@
 #if defined(ESP32_PLATFORM) && defined(SIGURDOS_COMPANION_BLE) && SIGURDOS_COMPANION_BLE
 
 #include <helpers/esp32/SerialBLEInterface.h>
+#include "ble_att_policy.h"
 #include "ble_bond_cache.h"
 #include "ble_frame_queue.h"
 #include "ble_init_gate.h"
 #include "ble_task_mutex.h"
 #include "ble_auth_watchdog.h"
 #include "ble_auth_throttle.h"
+#include "serial_session.h"
 
 namespace sigurdos {
 namespace comms {
@@ -51,7 +53,7 @@ struct BleSerialObserverStats {
     uint8_t last_tx_code = 0;
 };
 
-class ObservedSerialBLEInterface final : public SerialBLEInterface {
+class ObservedSerialBLEInterface final : public SerialBLEInterface, public SerialSessionSource {
 public:
     void configure(const char* prefix, const char* name, uint32_t pin_code);
     void begin(const char* prefix, char* name, uint32_t pin_code);
@@ -94,6 +96,9 @@ private:
     void applyAdvertisingThrottle(uint32_t now_ms);
 
     BleSerialObserverStats _stats{};
+    // Negotiated ATT MTU of the live link. Reset to the protocol default while
+    // idle so pre-negotiation frames are sized against the guaranteed minimum.
+    uint16_t _att_mtu = ble::DEFAULT_ATT_MTU;
     BleInitGate _init_gate;
     char _configured_prefix[16]{};
     char _configured_name[32]{};

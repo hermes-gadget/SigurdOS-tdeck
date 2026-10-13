@@ -10,7 +10,7 @@
 #include "comms/ble_auth_throttle.h"
 #include "comms/secure_wipe.h"
 #include "comms/ble_task_mutex.h"
-#include "helpers/esp32/BleFramePolicy.h"
+#include "comms/ble_att_policy.h"
 
 #include <atomic>
 #include <cstring>
@@ -36,21 +36,21 @@ using sigurdos::comms::BleTaskMutex;
 
 TEST(BleAttPayloadPolicy, AccountsForThreeByteAttHeaderAtBoundaries)
 {
-    using meshcore::ble::frameFitsMtu;
+    using sigurdos::comms::ble::frameFitsMtu;
     EXPECT_TRUE(frameFitsMtu(20, 23));
     EXPECT_FALSE(frameFitsMtu(21, 23));
     EXPECT_TRUE(frameFitsMtu(173, 176));
     EXPECT_FALSE(frameFitsMtu(174, 176));
     EXPECT_FALSE(frameFitsMtu(176, 176));
     EXPECT_TRUE(frameFitsMtu(176, 179));
-    EXPECT_TRUE(frameFitsMtu(176, meshcore::ble::PREFERRED_ATT_MTU));
+    EXPECT_TRUE(frameFitsMtu(176, sigurdos::comms::ble::PREFERRED_ATT_MTU));
 }
 
 TEST(BleAttPayloadPolicy, RejectsEmptyFramesAndInvalidMtu)
 {
-    EXPECT_FALSE(meshcore::ble::frameFitsMtu(0, 23));
-    EXPECT_FALSE(meshcore::ble::frameFitsMtu(1, 3));
-    EXPECT_EQ(meshcore::ble::payloadCapacity(2), 0u);
+    EXPECT_FALSE(sigurdos::comms::ble::frameFitsMtu(0, 23));
+    EXPECT_FALSE(sigurdos::comms::ble::frameFitsMtu(1, 3));
+    EXPECT_EQ(sigurdos::comms::ble::payloadCapacity(2), 0u);
 }
 
 constexpr size_t MAX_LEN = 176;   // MAX_FRAME_SIZE on target

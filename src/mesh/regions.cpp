@@ -5,6 +5,7 @@
 #include "persistence_store.h"
 #include "scope_key_hex.h"
 #include "region_name.h"
+#include "region_key_store.h"
 #include "region_policy.h"
 #include "../hal/prefs.h"
 #include "hal/storage.h"
@@ -18,6 +19,9 @@ namespace mesh {
 
 static RegionMap*       g_region_map = nullptr;
 static TransportKeyStore* g_region_store = nullptr;
+// Private ($) region keys live here; the core store above serves the
+// auto-hashtag keys the RegionMap derives from names.
+static RegionKeyStore   g_region_keys;
 static bool g_regions_dirty = false;
 
 static constexpr const char* REGION_PATH = "/regions2";
@@ -49,6 +53,17 @@ RegionMap* getRegionMap() {
     return g_region_map;
 }
 
+int regionTransportKeysFor(const ::RegionEntry& region, TransportKey dest[],
+                           int max_num) {
+    if (region.name[0] == '$') {
+        return region.id == 0
+            ? 0
+            : g_region_keys.loadKeysFor(region.id, dest, max_num);
+    }
+    return g_region_map ? g_region_map->getTransportKeysFor(region, dest, max_num)
+                        : 0;
+}
+
 bool installPrivateRegionKey(const ::RegionEntry& region, const uint8_t* key16) {
     return region.id != 0 && region.name[0] == '$' &&
         setPrivateRegionKey(region.name, key16);
@@ -59,14 +74,14 @@ bool removePrivateRegionKey(const ::RegionEntry& region) {
         return false;
     }
     TransportKey previous[4]{};
-    const int previous_count = g_region_store->loadKeysFor(
+    const int previous_count = g_region_keys.loadKeysFor(
         region.id, previous, 4);
     const bool previous_dirty = g_regions_dirty;
-    if (previous_count <= 0 || !g_region_store->removeKeys(region.id)) {
+    if (previous_count <= 0 || !g_region_keys.removeKeys(region.id)) {
         return false;
     }
     if (regionsSave()) return true;
-    g_region_store->saveKeysFor(region.id, previous, previous_count);
+    g_region_keys.saveKeysFor(region.id, previous, previous_count);
     g_regions_dirty = previous_dirty;
     return false;
 }
@@ -78,7 +93,7 @@ static int countPrivateRegionKeys() {
         const ::RegionEntry* region = g_region_map->getByIdx(i);
         if (!region || region->name[0] != '$') continue;
         TransportKey key{};
-        if (g_region_store->loadKeysFor(region->id, &key, 1) == 1 &&
+        if (g_region_keys.loadKeysFor(region->id, &key, 1) == 1 &&
             !key.isNull()) {
             ++count;
         }
@@ -97,7 +112,7 @@ static bool readPrivateRegionKey(int index, uint16_t* region_id_out,
         const ::RegionEntry* region = g_region_map->getByIdx(i);
         if (!region || region->name[0] != '$') continue;
         TransportKey key{};
-        if (g_region_store->loadKeysFor(region->id, &key, 1) != 1 ||
+        if (g_region_keys.loadKeysFor(region->id, &key, 1) != 1 ||
             key.isNull()) {
             continue;
         }
@@ -119,7 +134,7 @@ static bool loadPrivateRegionKey(uint16_t region_id, const uint8_t key[16],
     TransportKey transport_key{};
     memcpy(transport_key.key, key, sizeof(transport_key.key));
     return !transport_key.isNull() &&
-        g_region_store->saveKeysFor(region_id, &transport_key, 1);
+        g_region_keys.saveKeysFor(region_id, &transport_key, 1);
 }
 
 bool regionsLoad() {
@@ -143,10 +158,12 @@ bool regionsLoad() {
     if (ok) ok = g_region_map->load(&SPIFFS, map_path);
     if (transactional && !removeRawRegionArtifact()) ok = false;
 
-    // TransportKeyStore is RAM-only upstream. Rebuild it exclusively from the
-    // same validated v2 snapshot as the RegionMap so names/IDs and private key
-    // material can never come from different commits.
-    g_region_store->clear();
+    // TransportKeyStore is RAM-only upstream. Rebuild the SigurdOS key store
+    // exclusively from the same validated v2 snapshot as the RegionMap so
+    // names/IDs and private key material can never come from different
+    // commits. The core store's derived auto-hashtag cache is dropped too.
+    g_region_keys.clear();
+    (void)g_region_store->clear();
     if (ok && transactional) {
         ok = detail::regionStoreLoadTransactionalKeys(
             REGION_PATH, loadPrivateRegionKey, nullptr) >= 0;
@@ -201,7 +218,7 @@ bool regionsLoad() {
             TransportKey transport_key{};
             memcpy(transport_key.key, key, sizeof(transport_key.key));
             if (!transport_key.isNull()) {
-                g_region_store->saveKeysFor(
+                g_region_keys.saveKeysFor(
                     canonical->id, &transport_key, 1);
             }
         }
@@ -302,7 +319,7 @@ bool regionsPersistenceDirty() {
 
 ::RegionEntry* addPrivateRegion(const char* name, const uint8_t key[16],
                                 const char* parent_name) {
-    if (!name || name[0] != '$' || !key || !g_region_map || !g_region_store ||
+    if (!name || name[0] != '$' || !key || !g_region_map ||
         !regionNameValid(name) ||
         (parent_name && parent_name[0] && !regionNameValid(parent_name)) ||
         g_region_map->findByName(name)) {
@@ -331,9 +348,9 @@ bool regionsPersistenceDirty() {
     }
     region->flags = 0;
     const uint16_t region_id = region->id;
-    if (!g_region_store->saveKeysFor(region_id, &transport_key, 1) ||
+    if (!g_region_keys.saveKeysFor(region_id, &transport_key, 1) ||
         !regionsSave()) {
-        g_region_store->removeKeys(region_id);
+        g_region_keys.removeKeys(region_id);
         restoreRegionMap(previous, previous_dirty);
         return nullptr;
     }
@@ -341,35 +358,35 @@ bool regionsPersistenceDirty() {
 }
 
 bool setPrivateRegionKey(const char* name, const uint8_t key[16]) {
-    if (!name || name[0] != '$' || !key || !g_region_store) return false;
+    if (!name || name[0] != '$' || !key || !g_region_map) return false;
     ::RegionEntry* region = findRegion(name);
     if (!region || region->name[0] != '$') return false;
 
     TransportKey previous[4]{};
-    const int previous_count = g_region_store->loadKeysFor(
+    const int previous_count = g_region_keys.loadKeysFor(
         region->id, previous, 4);
     const bool previous_dirty = g_regions_dirty;
     TransportKey transport_key{};
     memcpy(transport_key.key, key, sizeof(transport_key.key));
     if (transport_key.isNull()) return false;
-    if (!g_region_store->saveKeysFor(region->id, &transport_key, 1)) return false;
+    if (!g_region_keys.saveKeysFor(region->id, &transport_key, 1)) return false;
     if (regionsSave()) return true;
     if (previous_count > 0) {
-        g_region_store->saveKeysFor(region->id, previous, previous_count);
+        g_region_keys.saveKeysFor(region->id, previous, previous_count);
     } else {
-        g_region_store->removeKeys(region->id);
+        g_region_keys.removeKeys(region->id);
     }
     g_regions_dirty = previous_dirty;
     return false;
 }
 
 bool getPrivateRegionKey(const char* name, uint8_t key_out[16]) {
-    if (!name || name[0] != '$' || !key_out || !g_region_store) return false;
+    if (!name || name[0] != '$' || !key_out || !g_region_map) return false;
     ::RegionEntry* region = findRegion(name);
     if (!region || region->name[0] != '$') return false;
 
     TransportKey transport_key{};
-    if (g_region_store->loadKeysFor(region->id, &transport_key, 1) != 1) {
+    if (g_region_keys.loadKeysFor(region->id, &transport_key, 1) != 1) {
         return false;
     }
     memcpy(key_out, transport_key.key, sizeof(transport_key.key));
@@ -417,8 +434,7 @@ bool removeRegion(const char* name) {
             return false;
         }
     }
-    if (name[0] == '$' && g_region_store &&
-        !g_region_store->removeKeys(region_id)) {
+    if (name[0] == '$' && !g_region_keys.removeKeys(region_id)) {
         restoreRegionMap(previous, previous_dirty);
         memcpy(g_active_name, previous_active, sizeof(g_active_name));
         prefs_set(previous_prefs);
@@ -634,7 +650,7 @@ bool setActiveRegionNameWithKey(const char* name, const char* key_hex) {
     if (region) {
         if (region->name[0] != '$') return false;
         region_id = region->id;
-        previous_key_count = g_region_store->loadKeysFor(
+        previous_key_count = g_region_keys.loadKeysFor(
             region_id, previous_keys, 4);
     } else {
         region = g_region_map->putRegion(name, 0);
@@ -645,7 +661,7 @@ bool setActiveRegionNameWithKey(const char* name, const char* key_hex) {
 
     TransportKey transport_key{};
     memcpy(transport_key.key, checked_key, sizeof(transport_key.key));
-    if (!g_region_store->saveKeysFor(region_id, &transport_key, 1)) {
+    if (!g_region_keys.saveKeysFor(region_id, &transport_key, 1)) {
         restoreRegionMap(previous_map, previous_dirty);
         return false;
     }
@@ -657,10 +673,10 @@ bool setActiveRegionNameWithKey(const char* name, const char* key_hex) {
     // and the outer snapshot as one operation so a failed activation cannot
     // leave an uncommitted key behind.
     if (existed && previous_key_count > 0) {
-        g_region_store->saveKeysFor(region_id, previous_keys,
-                                    previous_key_count);
+        g_region_keys.saveKeysFor(region_id, previous_keys,
+                                  previous_key_count);
     } else {
-        g_region_store->removeKeys(region_id);
+        g_region_keys.removeKeys(region_id);
     }
     restoreRegionMap(previous_map, previous_dirty);
     memcpy(g_active_name, previous_active, sizeof(g_active_name));

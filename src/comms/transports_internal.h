@@ -13,9 +13,12 @@ class BaseSerialInterface;
 namespace sigurdos {
 namespace comms {
 
+class SerialSessionSource;
+
 // Internal seams used by CompanionBridge.  The public transport contract stays
 // intentionally small so UI code cannot depend on a concrete socket server.
-void transports_attach_serial(BaseSerialInterface* serial);
+void transports_attach_serial(BaseSerialInterface* serial,
+                              SerialSessionSource* session = nullptr);
 bool transports_attached();
 bool transports_client_connected(TransportId id, int client_index);
 uint32_t transports_client_generation(TransportId id, int client_index);

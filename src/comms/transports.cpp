@@ -7,6 +7,7 @@
 #include "transport_ws.h"
 
 #include <helpers/BaseSerialInterface.h>
+#include "serial_session.h"
 
 #include "hal/prefs.h"
 #include "hal/wifi_ota.h"
@@ -24,6 +25,7 @@ namespace {
 
 struct Registry {
     BaseSerialInterface* serial = nullptr;
+    SerialSessionSource* serial_session = nullptr;
     TCPCompanionServer tcp;
     WebSocketCompanionServer ws;
     TransportFrameHandler frame_handler = nullptr;
@@ -147,9 +149,11 @@ void transports_set_service_handler(TransportServiceHandler handler)
     g_registry.service_handler = handler;
 }
 
-void transports_attach_serial(BaseSerialInterface* serial)
+void transports_attach_serial(BaseSerialInterface* serial,
+                              SerialSessionSource* session)
 {
     g_registry.serial = serial;
+    g_registry.serial_session = session;
 }
 
 bool transports_attached()
@@ -180,7 +184,9 @@ void transports_loop()
         const size_t len = g_registry.serial->checkRecvFrame(frame);
         if (len > 0) {
             dispatchFrame(TransportId::BLE, 0,
-                          g_registry.serial->connectionGeneration(), frame, len);
+                          serialSessionGenerationFor(g_registry.serial,
+                                                     g_registry.serial_session),
+                          frame, len);
         }
     }
 
@@ -299,7 +305,9 @@ uint32_t transports_client_generation(TransportId id, int client_index)
 {
     if (id == TransportId::BLE) {
         return transports_client_connected(id, client_index) && g_registry.serial
-            ? g_registry.serial->connectionGeneration() : 0;
+            ? serialSessionGenerationFor(g_registry.serial,
+                                         g_registry.serial_session)
+            : 0;
     }
     if (id == TransportId::TCP) {
         return networkTransportsAllowed()
