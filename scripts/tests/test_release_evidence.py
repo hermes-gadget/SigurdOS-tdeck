@@ -41,11 +41,11 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(report["frames"], 19)
         self.assertEqual(
             report["protocol_codes_sha256"],
-            "37ed4b4636de7d9535c91b3f3087750d6f788699de180783998f5a35105c22c1",
+            "c48a6e1780f3e328aab7da0fcaf119247e09a5fbed72e8bdd2b093e0f710cb00",
         )
         self.assertEqual(
             report["reviewed_upstream"],
-            "a3a1aa5e3be34b42d8ac8c2cc244d30af6cdd71e",
+            "2dbd463eda815ae389d1694a6965e3a692d1b5bd",
         )
 
     def test_candidate_meshcore_revision_is_compared_by_git_object(self):
@@ -58,7 +58,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(report["candidate"], report["submodule"])
         self.assertEqual(
             report["protocol_codes_sha256"],
-            "37ed4b4636de7d9535c91b3f3087750d6f788699de180783998f5a35105c22c1",
+            "c48a6e1780f3e328aab7da0fcaf119247e09a5fbed72e8bdd2b093e0f710cb00",
         )
 
     def test_protocol_code_drift_blocks_golden_validation(self):

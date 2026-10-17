@@ -2,16 +2,16 @@
   "schema_version": 2,
   "source": {
     "path": "lib/meshcore/examples/companion_radio/MyMesh.cpp",
-    "sha256": "a363d3fcc8c0529bbc0a58577924d964d5f11b174d729543be69c3a7ab26208d",
-    "submodule_commit": "c5787ee46124d540944ea238ff443f8d87ca0899",
-    "protocol_codes_sha256": "37ed4b4636de7d9535c91b3f3087750d6f788699de180783998f5a35105c22c1"
+    "sha256": "4c9f283f596407dd85387ef6c9ecf6802f3c5a8c2891b7420325a97731d03be9",
+    "submodule_commit": "2dbd463eda815ae389d1694a6965e3a692d1b5bd",
+    "protocol_codes_sha256": "c48a6e1780f3e328aab7da0fcaf119247e09a5fbed72e8bdd2b093e0f710cb00"
   },
   "reviewed_upstream": {
     "repository": "https://github.com/meshcore-dev/MeshCore.git",
-    "commit": "a3a1aa5e3be34b42d8ac8c2cc244d30af6cdd71e",
-    "source_sha256": "5a177bd3cf13cd4798697edc77e35766f60974077f98be0c839dd4724ee13c89",
-    "protocol_codes_sha256": "37ed4b4636de7d9535c91b3f3087750d6f788699de180783998f5a35105c22c1",
-    "reviewed_at": "2026-07-21"
+    "commit": "2dbd463eda815ae389d1694a6965e3a692d1b5bd",
+    "source_sha256": "4c9f283f596407dd85387ef6c9ecf6802f3c5a8c2891b7420325a97731d03be9",
+    "protocol_codes_sha256": "c48a6e1780f3e328aab7da0fcaf119247e09a5fbed72e8bdd2b093e0f710cb00",
+    "reviewed_at": "2026-10-17"
   },
   "frames": [
     {
