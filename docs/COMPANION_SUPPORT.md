@@ -6,10 +6,10 @@ signing, and configuration. Recognition of a command identifier does not imply
 that its operation is supported.
 
 This matrix describes the pinned MeshCore protocol at submodule commit
-`c5787ee46124d540944ea238ff443f8d87ca0899`. Its numeric companion
-command/response/PUSH/error contract also matches reviewed public-upstream
-commit `a3a1aa5e3be34b42d8ac8c2cc244d30af6cdd71e`; the reproducible verification
-procedure is in [`RELEASE_EVIDENCE.md`](RELEASE_EVIDENCE.md#companion-interop-and-golden-frames).
+`2dbd463eda815ae389d1694a6965e3a692d1b5bd`, which is also the reviewed
+public-upstream revision: the submodule now pins plain upstream
+`meshcore-dev/MeshCore`. The reproducible verification procedure is in
+[`RELEASE_EVIDENCE.md`](RELEASE_EVIDENCE.md#companion-interop-and-golden-frames).
 
 | Command family | Status | Notes |
 |---|---|---|
@@ -24,9 +24,11 @@ procedure is in [`RELEASE_EVIDENCE.md`](RELEASE_EVIDENCE.md#companion-interop-an
 | Identity import/export and signing | Partial | Signing accepts up to 8192 bytes. Private-key import remains supported; export is disabled by default because the pinned asynchronous BLE queue cannot erase completed slots. Trusted development builds may explicitly set `SIGURDOS_ENABLE_PRIVATE_KEY_EXPORT=1`. Sensitive command, signing, key-temporary, and receive-queue storage is erased at lifecycle boundaries. BLE administration relies on bonding; companion USB has no protocol authentication |
 | `CMD_SEND_RAW_PACKET` | Unsupported | Returns `ERR_CODE_UNSUPPORTED_CMD`; arbitrary packet injection is not exposed |
 
-Of the 58 defined command IDs, `CMD_SEND_RAW_PACKET` is the only command that is
-fully refused. This is an explicit policy decision: arbitrary parsed-packet
-injection is not exposed. `CMD_SEND_RAW_DATA` is available only for an explicit
+Of the 59 defined command IDs, `CMD_SEND_RAW_PACKET` is refused as an explicit
+policy decision: arbitrary parsed-packet injection is not exposed. The v14+
+`CMD_RUN_CLI_COMMAND` stock CLI passthrough is not implemented and is likewise
+fully refused (`ERR_CODE_UNSUPPORTED_CMD`); `RESP_CODE_CLI_REPLY` is never
+emitted. `CMD_SEND_RAW_DATA` is available only for an explicit
 one-byte-hash path and rejects flood routing; `CMD_SEND_CONTROL_DATA` is
 available only for the zero-hop high-bit control form. Clients must also handle
 `ERR_CODE_UNSUPPORTED_CMD` if they send the unsupported 32-byte-secret variant
