@@ -2,6 +2,12 @@
 # uv pip compile ci/requirements-platformio.in \
 #   --output-file ci/requirements-platformio.txt \
 #   --generate-hashes --python-version 3.12
+#
+# The --python-version 3.12 target is load-bearing: a resolver targeting a
+# newer interpreter drops pins guarded by 'python_full_version < 3.13'
+# markers (anyio/starlette -> typing-extensions), and CI installs this file
+# with --require-hashes on Python 3.12.11, where those markers are active.
+# Mirror any edit of this file into ci/requirements-coverage.txt.
 platformio==6.2.0
 intelhex==2.3.0
 pyyaml
