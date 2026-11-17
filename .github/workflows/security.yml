@@ -21,7 +21,7 @@ concurrency:
 jobs:
   dependency-audit:
     name: Dependency audit and inventories
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository

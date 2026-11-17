@@ -20,7 +20,7 @@ concurrency:
 jobs:
   test:
     name: Native tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
@@ -61,7 +61,7 @@ jobs:
 
   build:
     name: Firmware build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
@@ -186,7 +186,7 @@ jobs:
 
   sanitize:
     name: Native ASan + UBSan + LSan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
@@ -219,7 +219,7 @@ jobs:
 
   coverage:
     name: Native production coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
@@ -294,7 +294,7 @@ jobs:
 
   lint:
     name: Static analysis + logging policy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository

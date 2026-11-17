@@ -12,7 +12,7 @@ jobs:
 
   test:
     name: Native tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -60,7 +60,7 @@ jobs:
 
   build:
     name: Build firmware
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [test, full-matrix]
     permissions:
       attestations: write
